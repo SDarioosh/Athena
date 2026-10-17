@@ -162,14 +162,20 @@
 
 ## Current Status Summary
 
-- [ ] Phase 1, Step 1: Feasibility test (NOT STARTED)
-- [ ] Phase 1, Step 2: Full watch app
-- [ ] Phase 1, Step 3: Side service integration
-- [ ] Phase 2, Step 4: Upload auth
-- [ ] Phase 2, Step 5: Silence detection
+- [x] Phase 2, Step 4: Upload auth (IMPLEMENTED - verified with tests)
+- [x] Phase 2, Step 5: Silence detection (IMPLEMENTED - Silero VAD integrated)
+- [ ] Phase 1, Step 1: Feasibility test (NOT STARTED - awaiting hardware)
+- [ ] Phase 1, Step 2-3: Full watch app, Side service integration
 - [ ] Phase 2, Step 6: Server pipeline
-- [ ] Phase 3, Step 7: Side service implementation
-- [ ] Phase 3, Step 8: Full mobile app UI
+- [ ] Phase 3, Step 7-8: Side service, full mobile app
+
+**Server Implementation Complete:**
+- POST /upload with token authentication
+- Silero VAD silence detection (3-min threshold triggers stop)
+- Chunk reassembly by session/sequence
+- Session management endpoints (/sessions, /sessions/{id}, /sessions/{id}/stop, etc.)
+
+**Next Step:** Hardware testing of zepp-app feasibility test (Tests A & B)
 
 ---
 
