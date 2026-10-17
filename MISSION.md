@@ -2,41 +2,85 @@ You are building convo-ai in this repository. Read AGENTS.md
 first; it describes the hardware, architecture, and checks.
 
 ## Goal
-A T-Watch S3 records VAD-gated Opus audio, uploads it over Wi-Fi
-to a server that transcribes (whisper.cpp), diarizes, and
-summarizes conversations with llama-server.
+Build a conversation-recording wearable using Amazfit T-Rex 3 Pro with:
+- Zepp OS Mini Program on watch (JavaScript, built with zeus-cli)
+- 30-second Opus chunks recorded by @zos/media Recorder
+- Chunks transferred watch → phone via @zos/ble/TransferFile
+- Side Service on phone uploads chunks to server over HTTP
+- Server runs Silero VAD for silence detection, triggers stop after N min silence
+- Full pipeline: whisper.cpp transcription, diarization, summaries, SQLite
+
+**Key changes from T-Watch plan:**
+- No firmware work; all watch code is Zepp OS Mini Program
+- Recording managed by app, not hardware-level VAD
+- Server handles silence detection and stop signaling
+- Side Service acts as bridge between watch and server
+
+**Inspiration:** Bee Frontier, Bee Pro, Plaude — but using Amazfit hardware and Zepp OS.
 
 ## Plan
 Work through these features in order, one at a time:
-1. Firmware: PlatformIO project; log AXP2101 battery % to FATFS
-   every minute.
-2. Firmware: PDM mic capture with VAD, Opus encoding, timestamped
-   ring buffer on FATFS.
-3. Firmware: Wi-Fi upload of chunks when buffer > 60%; delete only
-   after server acknowledgement.
-4. Server: HTTP endpoint that receives and stores chunks.
-5. Server: Silero VAD + whisper.cpp transcription.
-6. Server: diarization with owner voice enrollment.
-7. Server: split conversations on gaps > 3 minutes; llama-server
-   produces per-conversation JSON summaries and a daily digest.
-8. Server: SQLite storage with embedding search.
+
+### Phase 1: Watch App (Zepp OS Mini Program)
+
+1. **Feasibility Test**: Minimal app with Start/Stop button that records
+   30-second Opus chunks, logs chunk count. Test on real device with
+   screen on and off. See PROGRESS.md for build/install instructions.
+
+2. **Full Watch App**: Enhanced UI with recording state, elapsed time,
+   chunk upload count, Stop button. Screen keep-on/dimmed modes.
+   Queue chunks locally if phone/server unreachable.
+
+3. **Side Service Integration**: Integrate @zos/ble/TransferFile to send
+   chunks to Side Service, which uploads to server. Handle server
+   "stop": true response to end recording and vibrate.
+
+4. **Server Silence Detection**: POST /upload endpoint that runs Silero
+   VAD, tracks silence per session, returns {"ok": true, "stop": <bool>}.
+   Server reassembles chunks by session/sequence before transcription.
+
+5. **Upload Auth**: Add shared token header requirement for /upload to
+   prevent random devices from posting audio. Token stored outside git.
+
+6. **Server Pipeline**: whisper.cpp transcription, diarization,
+   conversation splitting on gaps > 3 min, llama.cpp summaries,
+   SQLite storage with embedding search, daily digest.
+
+### Phase 2: Server & Mobile App
+
+7. **Mobile App**: Receive chunks from Side Service, display conversation
+   list, transcripts, summaries, search. Settings for voice enrollment,
+  auto-delete raw audio.
+
+8. **Full System Integration**: End-to-end test with real device, phone,
+   and server.
 
 ## Process for each feature
 1. Create a branch: feature/<short-name>.
-2. Implement it with tests. Run every check in AGENTS.md until
-   all pass.
-3. Commit, push, and open a PR with `gh pr create`.
-4. Get a review: use delegate_task to have a subagent review the
-   PR diff (`gh pr diff`) for correctness, edge cases, embedded
-   constraints, and privacy. Ask it to end with APPROVE or
-   CHANGES plus a list of blocker/major issues.
-5. If CHANGES: fix the blocker and major issues, push, and
-   request another review. Maximum 3 rounds.
-6. If APPROVE and `gh pr checks` passes: merge with
-   `gh pr merge --squash --delete-branch`, then switch back to
-   main and pull.
-7. Update PROGRESS.md: what's done, what's next, open questions.
-   Commit it to main.
+2. For watch app: implement in zepp-app/, test build with `zeus build`,
+   install on device in developer mode.
+3. For server: implement with tests, run checks in AGENTS.md.
+4. Commit, push.
+5. Get review via delegate_task. Fix issues if needed.
+6. Merge, switch back to main and pull.
+7. Update PROGRESS.md: done, next, open questions. Commit to main.
+
+## Zepp OS Mini Program Notes
+- Use @zeppos/zeus-cli for building and testing
+- Refer to Zepp OS docs: https://docs.zepp.com
+- Media Recorder: @zos/media (create, setFormat, start, stop)
+- BLE Transfer: @zos/ble/TransferFile (watch → phone)
+- Side Service runs on phone app, handles upload to server
+- JavaScript-based, not native code
+- Test on real device; simulator may not reflect all behaviors
+- Developer mode required for installation
+
+## Server Notes
+- POST /upload: receives chunk, session ID, sequence number, timestamp
+- Run Silero VAD, track silence, return {"ok": true, "stop": <bool>}
+- Reassemble chunks by session/sequence before transcription
+- Auth: require shared token header (not committed to git)
+- Pipeline unchanged: whisper.cpp, diarization, splitting, llama.cpp, SQLite
 
 ## Rules
 - Never merge without an APPROVE review and passing checks.
