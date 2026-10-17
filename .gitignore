@@ -1,0 +1,16 @@
+# orchestrator run logs
+orchestrator/logs/
+
+# secrets
+.env
+firmware/include/secrets.h
+
+# build output
+.pio/
+__pycache__/
+*.pyc
+
+# never commit audio
+*.opus
+*.wav
+*.ogg

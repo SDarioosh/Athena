@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        if: hashFiles('firmware/platformio.ini') != ''
+        with:
+          python-version: "3.11"
+      - uses: actions/cache@v4
+        if: hashFiles('firmware/platformio.ini') != ''
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('firmware/platformio.ini') }}
+      - name: Build firmware
+        if: hashFiles('firmware/platformio.ini') != ''
+        run: |
+          pip install platformio
+          pio run -d firmware
+
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        if: hashFiles('server/pyproject.toml') != ''
+        with:
+          python-version: "3.11"
+      - name: Lint and test server
+        if: hashFiles('server/pyproject.toml') != ''
+        working-directory: server
+        run: |
+          pip install -e ".[dev]" || pip install -e . pytest ruff
+          ruff check .
+          python -m pytest -q
