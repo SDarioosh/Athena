@@ -1,0 +1,33 @@
+# Build directory
+.builds/
+.fios/
+.pio/
+pio_scripts/
+pioenvs/
+*.bin
+*.elf
+*.hex
+*.map
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Secrets (add your actual secrets here)
+secrets.h
+*.key
+*.pem
+
+# Test artifacts
+*.opus
+*.wav
+*.ogg
