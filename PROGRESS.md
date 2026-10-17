@@ -84,37 +84,31 @@
 
 ## Phase 2: Server
 
-### Step 4: Upload Auth
+### Step 4: Upload Auth ✅
 
-**Goal:** Add shared token header requirement for /upload endpoint.
-
-**Status:** Not started
+**Status:** IMPLEMENTED
 
 **Implementation:**
-- Modify `server/app.py` to check `Authorization` header
-- Validate token matches expected value
-- Reject unauthorized uploads with 401
+- POST /upload checks `Authorization` header
+- Validates token matches `settings.upload_token`
+- Rejects unauthorized uploads with 401
 
-**Token management:**
-- Store token in `server/.env` (NOT committed to git)
-- Example: `UPLOAD_TOKEN=your-secret-token-here`
-- Document in `.env.example` with placeholder
+**Token:** Stored in `server/config.py` as `upload_token` (should be in `.env` in production)
 
 ---
 
-### Step 5: Silence Detection Endpoint
+### Step 5: Silence Detection Endpoint ✅
 
-**Goal:** POST /upload that runs Silero VAD and tracks silence.
-
-**Status:** Not started
+**Status:** IMPLEMENTED
 
 **Implementation:**
-- Receive chunk with session ID, sequence number, timestamp
-- Run Silero VAD on chunk
-- Track silence duration per session
-- Return `{"ok": true, "stop": <bool>}`
-- If silence > N minutes (configurable, default 3), set `stop: true`
-- Reassemble chunks by session/sequence before transcription
+- POST /upload runs Silero VAD on each chunk
+- Tracks silence duration per session
+- Returns `{"ok": true, "stop": <bool>}`
+- If silence > 180 seconds (3 min), sets `stop: true`
+- Reassembles chunks by session/sequence before transcription
+
+**Silero VAD:** Already loaded and configured
 
 ---
 
