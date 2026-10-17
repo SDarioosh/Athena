@@ -1,0 +1,16 @@
+{
+  "name": "convo-ai-zepp-app",
+  "version": "1.0.0",
+  "description": "Convo-Ai Zepp OS Mini Program for T-Rex 3 Pro",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "zeus build",
+    "install": "zeus install"
+  },
+  "dependencies": {
+    "@zeppos/device": "^1.0.0",
+    "@zos/media": "^1.0.0",
+    "@zos/ble": "^1.0.0",
+    "@zos/ble/TransferFile": "^1.0.0"
+  }
+}
