@@ -1,15 +1,39 @@
-# convo-ai: agent guide
+# barvis-sound: agent guide
 
-convo-ai is a private conversation-memory system. Two wearables capture
+barvis-sound (formerly "convo-ai", then "barvis-ai") is a private
+conversation-memory system and the first **Barvis module**. Wearables capture
 audio; this Ubuntu server transcribes, diarizes and summarizes it with local
-models; a personal knowledge frontend answers questions about it. **Nothing in
-the data path touches the cloud.**
+models; [Barvis](https://github.com/SDarioosh/Barvis) answers questions about it
+through our MCP server. **Nothing in the data path touches the cloud.**
+
+## Names: prose vs code
+
+- In prose (docs, PR text, comments you add) call the project **barvis-sound**.
+- **Don't rename code identifiers.** They keep the old name on purpose: the
+  `convo_server` package, the `convo-server` CLI, `CONVO_*` env vars, paths such as
+  `server/data/convo.db`, the MCP server name `convo-ai`, the Barvis server name
+  `convo`, the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app ("Convo Rec Test", vendor
+  `convo-ai`). Renaming them breaks deployed configs, devices and Barvis. Don't
+  "fix" them.
+
+## This is a Barvis module
+
+- Barvis (an Odysseus fork, AGPL-3.0) is the hub: the one chat and agent UI. This repo
+  is a separate program that owns its data. Barvis reaches it only through our MCP
+  server (or the HTTP API here) and never writes `convo.db` directly.
+- The module contract is in Barvis:
+  [docs/barvis/modules.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/modules.md).
+  How Barvis connects to us:
+  [docs/barvis/modules/barvis-sound.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/modules/barvis-sound.md).
+- Never copy Odysseus/Barvis code into this repo. Talking over MCP keeps the AGPL out of
+  this module.
 
 ## Layout
 
 - `server/`: Python 3.11+ package `convo_server`: ingestion API, VAD,
   transcription, diarization, conversation splitting, summaries, SQLite
-  storage, search, digest. See `server/README.md`.
+  storage, search, digest, MCP server (`convo_server/mcp_server.py`), frontend eval
+  (`server/eval/bakeoff.py`). See `server/README.md`.
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
   recording feasibility test app; see `zepp-app/README.md`.
 - `docs/`: research and decisions (`omi-ingestion.md`,
@@ -20,8 +44,8 @@ the data path touches the cloud.**
 
 ## Privacy rules (non-negotiable)
 
-- Audio, transcripts, summaries, facts and embeddings stay on the owner's
-  network. No cloud STT (Deepgram, Omi cloud, OpenAI…), no cloud LLMs or
+- Audio, transcripts, summaries, facts, embeddings and chat content stay on the
+  owner's network. No cloud STT (Deepgram, Omi cloud, OpenAI…), no cloud LLMs or
   embedding APIs in the data path, no telemetry.
 - Cloud is fine only for development tooling (coding agents, package and
   model-weight downloads).
@@ -82,7 +106,43 @@ the data path touches the cloud.**
 7. **Store** — SQLite (`server/data/convo.db`): sessions, chunks, segments,
    conversations, action items, facts, people, digests, speakers, FTS5 index,
    optional embeddings. This is the source of truth; any frontend reads it
-   through the API (or a future MCP server), never the other way round.
+   through the MCP server or the API, never the other way round.
+
+## MCP tool contract
+
+`server/convo_server/mcp_server.py` is the interface Barvis depends on.
+
+| Tool | Annotation |
+|---|---|
+| `search_transcripts`, `search_conversations`, `get_conversation`, `get_transcript`, `list_action_items`, `list_facts`, `get_daily_digest`, `list_people` | read-only (`ro`: `readOnlyHint: true`) |
+| `update_action_item`, `name_speaker` | write (`rw`: `readOnlyHint: false`, `destructiveHint: false`) |
+
+- Barvis runs read-only tools without approval because of `readOnlyHint: true`. A tool
+  that changes anything must use `rw`. Never mark a write tool read-only.
+- Every fact in a result carries a transcript link
+  (`<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`), and every non-empty result asks
+  for the link next to each fact used: frontends don't forward the server
+  `instructions`.
+- HTTP auth accepts `Authorization: Bearer` or `?access_token=` (`BearerAuth`); Odysseus
+  can only use the query form.
+- **Changing a tool name, an argument, an annotation, the link format, or the auth is a
+  breaking change.** It needs a coordinated Barvis PR (module doc, preset text) per the
+  [versioning rules](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/modules.md#versioning),
+  and a rerun of `server/eval/bakeoff.py --frontend odysseus` against the Barvis test
+  instance (`127.0.0.1:7010`, never the owner's install on port 7000). Put the score in
+  both PRs. Current: 9/20, target ≥ 15/20.
+
+## Where work belongs
+
+| Work | Where |
+|---|---|
+| Capture, ingestion, VAD, transcription, diarization, splitting, summaries, storage | `server/` here |
+| MCP tools, their results and links | `server/convo_server/mcp_server.py` here (contract rules above) |
+| Watch app | `zepp-app/` here |
+| Pendant firmware, phone BLE relay | this repo (plans in `docs/`) |
+| Eval questions and scoring | `server/eval/bakeoff.py` here |
+| How Barvis gates, routes or shows our tools; presets; Barvis UI views | the Barvis repo |
+| Odysseus bugs | the Barvis repo (offered upstream) |
 
 ## Checks
 
@@ -111,14 +171,16 @@ runs the server checks on Python 3.11.
 
 ## Rules for agents
 
-- Work on a feature branch. Agents run by the orchestrator never push,
-  merge or open PRs (the orchestrator does). In interactive sessions, push and
-  open PRs only when the owner asks; never merge without review.
-- Never commit secrets, `.env`, databases, or audio files of any kind.
-- Frontend: the owner chose an Odysseus fork ("Barvis") on top of our MCP server
-  (`docs/frontend-decision.md`). Keep fork changes small and in new files so upstream
-  merges stay easy, and never let the fork write to our store except through MCP/API.
-- If you're stuck, end your reply with `ESCALATE: <reason>` instead of guessing.
+- Work on a feature branch (`feature/<name>`, docs: `docs/<name>`) and open a PR into
+  `main`. Small commits. Agents run by the orchestrator never push, merge or open PRs
+  (the orchestrator does). In interactive sessions, push and open PRs only when the
+  owner asks.
+- Agents **never merge** and never push to `main` directly.
+- Never commit secrets, `.env`, tokens, databases, or audio files of any kind.
+- Frontend: the owner chose an Odysseus fork, Barvis (`docs/frontend-decision.md`).
+  Barvis work happens in the Barvis repo; see "This is a Barvis module".
+- After **three failed attempts at the same problem**, stop and end your reply with
+  `ESCALATE: <reason>` instead of guessing.
 - Device code you can't verify on hardware is fine, but list what still needs
   real-device testing in the PR description and PROGRESS.md.
 - Keep PROGRESS.md current: done, next, open questions for the owner.
@@ -133,3 +195,11 @@ runs the server checks on Python 3.11.
   phone), Side Service `fetch` for upload, display keep-on, vibration; docs at
   https://docs.zepp.com.
 - **Omi**: see `docs/omi-ingestion.md`.
+
+## Instruction files per tool
+
+- `AGENTS.md` (this file) is the single source of instructions.
+- Claude Code reads `CLAUDE.md`, which imports this file (`@AGENTS.md`).
+- Google Antigravity reads `AGENTS.md` at the workspace root directly;
+  `.agents/rules/antigravity.md` adds Antigravity notes only.
+- Put shared rules here, never in the tool-specific files.
