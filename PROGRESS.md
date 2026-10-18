@@ -198,7 +198,10 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   "Error opening input"). The Recorder's `.opus` file is not a format ffmpeg probes
   (likely raw Opus frames, no Ogg). The server now keeps undecodable uploads in
   `server/data/rejected/` (newest 20) so the owner can send a hex dump of the first bytes.
-  Next: write a decoder for that layout.
+- The owner's hex dump answered it: `[u32 BE length][u32 BE final range][packet]` per
+  packet (libopus `opus_demo` layout), TOC `0x58` = SILK wideband, mono, 60 ms. The server
+  now wraps such uploads in Ogg Opus before ffmpeg (`convo_server/opus_packets.py`,
+  `tests/test_opus_packets.py`). An incomplete last packet is dropped.
 
 ## Next
 

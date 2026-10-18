@@ -9,10 +9,13 @@ import wave
 
 import numpy as np
 
+from .opus_packets import ogg_opus, parse_length_prefixed
+
 SAMPLE_RATE = 16_000
 
 # Codecs a device may declare. Anything except raw PCM goes through ffmpeg, which
-# probes the container (Ogg/Opus from the Omi relay, Zepp Recorder .opus, wav, ...).
+# probes the container (Ogg/Opus from the Omi relay, wav, ...). The Zepp Recorder's
+# container-less .opus is wrapped in Ogg first (opus_packets.py).
 KNOWN_CODECS = {"opus", "ogg", "wav", "pcm16", "mp3", "m4a", "aac", "webm"}
 
 
@@ -47,6 +50,11 @@ def decode(data: bytes, codec: str = "opus", sample_rate: int = SAMPLE_RATE) -> 
             return _decode_wav(data)
         except (wave.Error, EOFError, AudioDecodeError):
             pass  # unusual WAV flavour, let ffmpeg try
+    if codec == "opus" and not data.startswith(b"OggS"):
+        # Zepp OS Recorder: raw length-prefixed Opus packets, no container.
+        packets = parse_length_prefixed(data)
+        if packets:
+            data = ogg_opus(packets)
     return _decode_ffmpeg(data)
 
 
