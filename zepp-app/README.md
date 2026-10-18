@@ -89,10 +89,6 @@ Report back:
   work. Test D confirms it.
 - **Microphone permission:** none is documented for `@zos/media`. If `empty` > 0 or
   the screen shows `ERROR … recorder.start failed`, that's the first suspect.
-
-If a test button doesn't start recording, the screen shows `ERROR` and the failing step
-(`create recorder`, `setFormat`, `recorder.start`, or `recorder is IDLE 2 s after start`).
-The watch only buzzes when recording really started. **Clear** dismisses the error.
 - **HTTP vs HTTPS:** Android may block plain `http://` from the Zepp app. If Ping fails
   with a network error, use HTTPS via Tailscale (`tailscale serve --https=443
   http://127.0.0.1:8000` on the server, then `https://<host>.<tailnet>.ts.net` as the URL).
@@ -100,6 +96,10 @@ The watch only buzzes when recording really started. **Clear** dismisses the err
   chunk is about 60–120 KB, so live upload during recording may need tuning.
 - **appId:** `1092611` is a placeholder. If `zeus preview` complains, create the app in the
   [Zepp developer console](https://console.zepp.com/) and put its ID in `app.json`.
+
+If a test button doesn't start recording, the screen shows `ERROR` and the failing step
+(`create recorder`, `setFormat`, `recorder.start`, or `recorder is IDLE 2 s after start`).
+The watch only buzzes when recording really started. **Clear** dismisses the error.
 
 ## Layout
 
