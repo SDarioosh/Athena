@@ -61,6 +61,20 @@ class Settings(BaseSettings):
     speaker_cluster_threshold: float = 0.45  # cosine similarity to merge clusters
     owner_name: str = "Me"
 
+    # --- knowledge layer ---
+    # Base URL used in transcript links handed to the frontend, e.g. the server's
+    # Tailscale address: http://100.64.0.10:8000. Defaults to http://<host>:<port>.
+    public_url: str | None = None
+    # MCP over Streamable HTTP (for frontends that can't spawn a stdio process, e.g.
+    # Odysseus in Docker). stdio needs no token; HTTP refuses to start without one.
+    mcp_token: str | None = None
+    mcp_host: str = "127.0.0.1"
+    mcp_port: int = 8001
+
+    @property
+    def base_url(self) -> str:
+        return (self.public_url or f"http://{self.host}:{self.port}").rstrip("/")
+
     @field_validator("ingest_token")
     @classmethod
     def _not_placeholder(cls, v: str) -> str:

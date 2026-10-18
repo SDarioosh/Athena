@@ -24,10 +24,13 @@ from typing import Annotated, Any
 import numpy as np
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from . import audio as audio_mod
+from .config import Settings
 from .diarize import enrollment_embedding, load_voices
+from .links import render_conversation, transcript_link, verify
 from .pipeline import Pipeline, Worker
 from .search import search
 
@@ -55,18 +58,18 @@ def parse_ts(value: str) -> float:
     return dt.timestamp()
 
 
-def _conv_out(c: dict[str, Any], base: str = "") -> dict[str, Any]:
+def _conv_out(c: dict[str, Any], settings: Settings) -> dict[str, Any]:
     out = {k: v for k, v in c.items() if k not in ("started_at", "ended_at", "updated_at")}
     out["started_at"] = iso(c["started_at"])
     out["ended_at"] = iso(c["ended_at"])
-    out["transcript_url"] = f"{base}/v1/conversations/{c['id']}/transcript"
+    out["transcript_url"] = f"/v1/conversations/{c['id']}/transcript"
+    out["link"] = transcript_link(settings, c["id"])
     for key in ("action_items", "facts"):
         for item in out.get(key, []):
             src = item.get("source_at")
             item["source_at"] = iso(src)
             if src is not None:
-                offset = max(0, int(src - c["started_at"]))
-                item["source_url"] = f"{out['transcript_url']}#t={offset}"
+                item["source_url"] = transcript_link(settings, c["id"], src - c["started_at"])
     return out
 
 
@@ -101,6 +104,16 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     @app.get("/health")
     def health() -> dict[str, Any]:
         return {"ok": True}
+
+    @app.get("/view/{conv_id}", response_class=HTMLResponse, include_in_schema=False)
+    def view_conversation(conv_id: str, sig: str = "") -> HTMLResponse:
+        """Human-readable transcript for signed links (no bearer token needed)."""
+        conv = store.get_conversation(conv_id) if verify(settings, conv_id, sig) else None
+        if conv is None:  # same answer for bad signature and unknown id
+            raise HTTPException(404, "not found")
+        page = render_conversation(settings, conv, store.conversation_segments(conv_id))
+        return HTMLResponse(page, headers={"Cache-Control": "no-store",
+                                           "Referrer-Policy": "no-referrer"})
 
     v1 = APIRouter(prefix="/v1", dependencies=[Depends(require_token)])
 
@@ -160,14 +173,14 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         rows = store.list_conversations(
             since=parse_ts(since) if since else None, until=parse_ts(until) if until else None,
             person=person, limit=limit)
-        return {"conversations": [_conv_out(r) for r in rows]}
+        return {"conversations": [_conv_out(r, settings) for r in rows]}
 
     @v1.get("/conversations/{conv_id}")
     def get_conversation(conv_id: str) -> dict[str, Any]:
         c = store.get_conversation(conv_id)
         if c is None:
             raise HTTPException(404, "conversation not found")
-        return _conv_out(c)
+        return _conv_out(c, settings)
 
     @v1.get("/conversations/{conv_id}/transcript")
     def get_transcript(conv_id: str, start: float | None = None,
