@@ -46,10 +46,24 @@ def main(argv: list[str] | None = None) -> None:
     d = sub.add_parser("digest", help="(re)build the daily digest")
     d.add_argument("--date", help="YYYY-MM-DD, default yesterday")
     sub.add_parser("summarize-pending", help="retry conversations without a summary")
+    m = sub.add_parser("mcp", help="MCP server for knowledge frontends (stdio by default)")
+    m.add_argument("--http", action="store_true",
+                   help="serve Streamable HTTP on CONVO_MCP_HOST:CONVO_MCP_PORT/mcp")
     args = parser.parse_args(argv)
 
     settings = get_settings()
+    # logs go to stderr; stdout is the MCP stdio channel
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
+    if args.cmd == "mcp":
+        from .mcp_server import run
+
+        store = Store(settings.db_path)
+        embedder = (OpenAIEmbedder(settings.embed_base_url, settings.embed_model)
+                    if settings.embed_base_url else None)
+        run(settings, store, embedder, http=args.http)
+        return
+
     pipeline = build_pipeline(settings)
 
     if args.cmd == "serve":
