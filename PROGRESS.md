@@ -18,7 +18,7 @@ _Last updated: 2026-10-18 (round 3: frontend test done, Odysseus fork chosen, li
 | 6 | SQLite storage, FTS5 + optional embeddings, read API with transcript links | ✅ done, tested | `server/` |
 | 7 | Knowledge-layer MCP server (works with Hermes or Odysseus) | ✅ done, tested (PR #3) | `server/convo_server/mcp_server.py` |
 | 7b | Wire into Hermes + Odysseus, side-by-side test | ✅ done (20 questions): Hermes 15/20, Odysseus 3/20 | `server/eval/`, results in `docs/frontend-decision.md` |
-| 7c | Barvis: Odysseus fork fixed for our MCP tools, kept in sync with upstream | next, waiting on fork setup (owner) | `docs/frontend-decision.md` (fork plan) |
+| 7c | Barvis: Odysseus fork fixed for our MCP tools, kept in sync with upstream | in progress: 9/20 (was 3/20), target 15/20; code in `~/projects/barvis` (branch `barvis`), **GitHub fork not created yet** | `docs/frontend-decision.md` (fork plan), `BARVIS.md` in the fork |
 | 8 | Omi ingestion path (Android BLE relay) | optional, depends on how the XIAO goes | — |
 | 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | merged (PR #4), **waiting for owner's watch test**; test server is running | `zepp-app/` |
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
@@ -138,7 +138,8 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
-- Barvis fork: create `SDarioosh/barvis` on GitHub, public or private?
+- Barvis fork: public (answered). The `gh` token here can't create forks (HTTP 403); fork
+  `odysseus-dev/odysseus` as `SDarioosh/barvis` on github.com, or give the token fork rights.
 - The XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, ESP-IDF vs Arduino, server late-chunk policy, extra
 parts, microSD, Omi live-audio service). No pendant code until those are answered.
