@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Edit(//home/steam/models/odysseus/**)",
+      "Read(//home/steam/models/odysseus/.env)",
+      "Read(//home/steam/models/odysseus/data/**)",
+      "Read(**/.env)",
+      "Read(./server/data/**)",
+      "Bash(git push * main)",
+      "Bash(git push * HEAD:main)",
+      "Bash(gh pr merge *)"
+    ],
+    "ask": [
+      "Read(//home/steam/models/odysseus/**)",
+      "Bash(docker *)",
+      "Bash(docker-compose *)",
+      "Bash(sudo *)",
+      "Bash(systemctl *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f)"
+    ]
+  }
+}
