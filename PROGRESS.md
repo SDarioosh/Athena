@@ -6,7 +6,7 @@ XIAO ESP32-S3 pendant planned, Omi later) → local Ubuntu server (Silero VAD, w
 diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-18 (round 4: renamed to barvis-sound, agent docs for both repos)_
+_Last updated: 2026-10-18 (round 6: failed-summary retry, MCP annotation contract test)_
 
 ## Status
 
@@ -148,12 +148,20 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Audio path checked in the sandbox: JFK clip → Silero VAD (8.1 s speech) → whisper.cpp
   `base.en` → transcript. Diarization not tested there (needs the SpeechBrain model).
 
+## Done in round 6: MCP annotation contract test
+
+- `test_tool_annotations_match_contract` (`server/tests/test_mcp.py`) reads the
+  "MCP tool contract" table in `AGENTS.md` and checks every tool the MCP server lists:
+  read-only tools have `readOnlyHint: true`, `update_action_item` and `name_speaker`
+  have `readOnlyHint: false` and `destructiveHint: false`. A tool missing from the table
+  (or listed but not served) fails the test. The code already matched the table; no
+  annotations changed.
+
 ## Next
 
 1. **Owner: watch test.** The steps are in `zepp-app/README.md`. Server URL
    `http://100.106.28.112:8000`; the token is in that checkout's `server/.env`.
 2. **Barvis fork:** citations from 9/20 to ≥ 15/20 (Barvis `docs/barvis/roadmap.md`).
-   Add a test here that asserts every MCP tool's annotation (Barvis module contract).
 3. **Retry failed summaries:** make `summarize-pending` (and the worker) retry `failed`
    conversations, with a test.
 4. Build the real T-Rex recording app from the watch-test results.
