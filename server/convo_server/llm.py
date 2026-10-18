@@ -114,7 +114,10 @@ class LLMClient:
         }
         last: Exception | None = None
         for _ in range(retries + 1):
-            resp = self._http.post("/chat/completions", json=body)
+            try:
+                resp = self._http.post("/chat/completions", json=body)
+            except httpx.HTTPError as e:  # down, timed out, connection reset
+                raise LLMError(f"llama-server unreachable: {type(e).__name__}: {e}") from e
             if resp.status_code >= 400:
                 raise LLMError(f"llama-server HTTP {resp.status_code}: {resp.text[:300]}")
             content = resp.json()["choices"][0]["message"].get("content") or ""
