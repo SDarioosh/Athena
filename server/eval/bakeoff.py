@@ -10,7 +10,8 @@ it called a convo tool, cited a link to an expected conversation, and included a
     python eval/bakeoff.py --frontend odysseus  # Odysseus agent chat; env ODYSSEUS_URL,
         # ODYSSEUS_USER, ODYSSEUS_PASSWORD(_FILE) or ODYSSEUS_API_TOKEN, ODYSSEUS_PRESET
 
-Results are appended as JSON lines to eval/results/<frontend>.jsonl (gitignored).
+Results go to eval/results/<frontend>.jsonl (gitignored) as JSON lines. A full run replaces
+the file; --only appends to it.
 """
 
 from __future__ import annotations
@@ -60,9 +61,20 @@ CONVO_TOOLS = {"search_transcripts", "search_conversations", "get_conversation",
 def conv_ids(db: Path) -> dict[str, str]:
     import sqlite3
 
-    rows = sqlite3.connect(db).execute(
-        "SELECT DISTINCT session_id, conversation_id FROM segments WHERE session_id LIKE 'demo-%'")
-    return {sid.removeprefix("demo-"): cid for sid, cid in rows}
+    need = {k for _, keys, _ in QUESTIONS for k in keys}
+    ids: dict[str, str] = {}
+    if db.exists():  # sqlite3.connect would create an empty file
+        try:
+            rows = sqlite3.connect(db).execute(
+                "SELECT DISTINCT session_id, conversation_id FROM segments"
+                " WHERE session_id LIKE 'demo-%'")
+            ids = {sid.removeprefix("demo-"): cid for sid, cid in rows}
+        except sqlite3.OperationalError:
+            pass
+    if missing := sorted(need - ids.keys()):
+        raise SystemExit(f"{db}: demo conversations missing ({', '.join(missing)}); "
+                         "run scripts/seed_demo.py with the same CONVO_DATA_DIR first")
+    return ids
 
 
 def score(answer: str, tools: list[str], expected: list[str], keywords: list[str],
@@ -117,7 +129,11 @@ def _odysseus_client() -> httpx.Client:
     if not token:
         pw = os.environ.get("ODYSSEUS_PASSWORD")
         if not pw:
-            pw = Path(os.environ["ODYSSEUS_PASSWORD_FILE"]).read_text().strip()
+            pw_file = os.environ.get("ODYSSEUS_PASSWORD_FILE")
+            if not pw_file:
+                raise SystemExit("set ODYSSEUS_API_TOKEN, ODYSSEUS_PASSWORD or "
+                                 "ODYSSEUS_PASSWORD_FILE for --frontend odysseus")
+            pw = Path(pw_file).read_text().strip()
         r = c.post("/api/auth/login", json={"username": os.environ.get("ODYSSEUS_USER", "admin"),
                                             "password": pw, "remember": True})
         r.raise_for_status()
@@ -234,6 +250,8 @@ def main() -> int:
     out_dir = Path(__file__).parent / "results"
     out_dir.mkdir(exist_ok=True)
     out = out_dir / f"{args.frontend}.jsonl"
+    if not args.only:  # a full run replaces the previous one; --only adds to it
+        out.write_text("")
 
     def record(i, q, answer, tools, elapsed):
         _, expected, kws = QUESTIONS[i - 1]

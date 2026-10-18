@@ -92,29 +92,40 @@ def main() -> int:
     llm = LLMClient(settings.llm_base_url, settings.llm_model, settings.llm_api_key,
                     settings.llm_timeout_seconds)
     pipeline = Pipeline(settings, store, EnergyVAD(), summarizer=Summarizer(llm, ME))
+    failed = 0
     for key, start, device, lines in CONVERSATIONS:
         sid = f"demo-{key}"
         if store.get_session(sid):
-            print("exists:", sid)
-            continue
-        t0 = datetime.fromisoformat(start).replace(tzinfo=UTC).timestamp()
-        segs = [Segment(t0 + 8 * i, t0 + 8 * i + 7, text, speaker, speaker == ME)
-                for i, (speaker, text) in enumerate(lines)]
-        with store.tx() as c:
-            end = segs[-1].ended_at
-            c.execute("INSERT INTO sessions (id, device, started_at, last_chunk_at,"
-                      " last_speech_at, received_at, status, stop_reason)"
-                      " VALUES (?, ?, ?, ?, ?, ?, 'processing', 'demo')",
-                      (sid, device, t0, end, end, time.time()))
-        store.replace_segments(sid, device, segs, [(t0, end + 1)])
-        conv_ids = pipeline._assign_conversations(sid, device)
-        store.set_session_status(sid, "done")
+            # Already inserted; only retry summaries that failed on an earlier run.
+            conv_ids = sorted({s.conversation_id for s in store.session_segments(sid)
+                               if s.conversation_id})
+            conv_ids = [c for c in conv_ids
+                        if store.get_conversation(c)["status"] != "summarized"]
+            if not conv_ids:
+                print("exists:", sid)
+                continue
+        else:
+            t0 = datetime.fromisoformat(start).replace(tzinfo=UTC).timestamp()
+            segs = [Segment(t0 + 8 * i, t0 + 8 * i + 7, text, speaker, speaker == ME)
+                    for i, (speaker, text) in enumerate(lines)]
+            with store.tx() as c:
+                end = segs[-1].ended_at
+                c.execute("INSERT INTO sessions (id, device, started_at, last_chunk_at,"
+                          " last_speech_at, received_at, status, stop_reason)"
+                          " VALUES (?, ?, ?, ?, ?, ?, 'processing', 'demo')",
+                          (sid, device, t0, end, end, time.time()))
+            store.replace_segments(sid, device, segs, [(t0, end + 1)])
+            conv_ids = pipeline._assign_conversations(sid, device)
+            store.set_session_status(sid, "done")
         for cid in conv_ids:
             t = time.time()
             ok = pipeline.summarize_conversation(cid)
+            failed += not ok
             conv = store.get_conversation(cid)
             print(f"{key}: {cid} summarized={ok} ({time.time() - t:.1f}s) {conv['title']!r}")
-    return 0
+    if failed:
+        print(f"{failed} summaries failed; run again to retry them.", file=sys.stderr)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
