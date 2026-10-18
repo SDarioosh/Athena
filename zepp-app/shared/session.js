@@ -24,6 +24,7 @@ export function emptyState() {
     chunkFile: null,
     lastBeat: 0,
     relaunches: 0,
+    lastError: null, // shown on screen; cleared by the next start()
     chunks: [], // {seq, file, start, end, size, note, uploaded}
     events: [], // {t, msg}
   }
@@ -51,6 +52,11 @@ export function createTester(deps) {
     if (state.events.length > MAX_EVENTS) state.events.splice(0, state.events.length - MAX_EVENTS)
   }
 
+  function fail(msg) {
+    state.lastError = msg
+    log(msg)
+  }
+
   function persist() {
     save(state)
     onChange(state)
@@ -61,7 +67,7 @@ export function createTester(deps) {
     try {
       recorder.start(file)
     } catch (e) {
-      log(`recorder.start failed: ${e && e.message ? e.message : e}`)
+      fail(`recorder.start failed: ${e && e.message ? e.message : e}`)
       state.recording = false
       persist()
       return
@@ -163,6 +169,12 @@ export function createTester(deps) {
 
     log(msg) {
       log(msg)
+      persist()
+    },
+
+    /** Like log(), but also shown on screen until the next start(). */
+    error(msg) {
+      fail(msg)
       persist()
     },
 

@@ -113,6 +113,14 @@ test('recorder failure stops cleanly and is logged', () => {
   tester.start('screen-on')
   assert.equal(tester.state.recording, false)
   assert.ok(tester.state.events.some((e) => e.msg.includes('recorder.start failed: no mic')))
+  assert.equal(tester.state.lastError, 'recorder.start failed: no mic')
+  // The next successful start clears the on-screen error.
+  const ok = harness()
+  const again = createTester(ok.deps)
+  again.error('earlier problem')
+  again.start('screen-on')
+  assert.equal(again.state.recording, true)
+  assert.equal(again.state.lastError, null)
 })
 
 test('empty files are counted', () => {
