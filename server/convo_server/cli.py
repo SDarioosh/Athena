@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("process", help="finalize idle sessions and process everything pending")
     d = sub.add_parser("digest", help="(re)build the daily digest")
     d.add_argument("--date", help="YYYY-MM-DD, default yesterday")
-    sub.add_parser("summarize-pending", help="retry conversations without a summary")
+    sub.add_parser("summarize-pending", help="summarize pending, retry failed now")
     m = sub.add_parser("mcp", help="MCP server for knowledge frontends (stdio by default)")
     m.add_argument("--http", action="store_true",
                    help="serve Streamable HTTP on CONVO_MCP_HOST:CONVO_MCP_PORT/mcp")

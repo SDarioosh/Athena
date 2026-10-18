@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     llm_model: str = "default"
     llm_api_key: str | None = None
     llm_timeout_seconds: float = 600.0
+    # The worker retries a failed summary (e.g. llama-server was down) once its last
+    # attempt is this old. `convo-server summarize-pending` retries them right away.
+    summary_retry_seconds: float = 300.0
 
     # Optional embeddings endpoint (llama-server started with --embeddings).
     # When unset, search falls back to SQLite FTS5 keyword search only.

@@ -158,13 +158,18 @@ class Pipeline:
         return ids
 
     # ----------------------------------------------------------------- process
-    def process_pending(self) -> int:
-        """Process every ended session, then retry unsummarized conversations."""
+    def process_pending(self, now: float | None = None) -> int:
+        """Process every ended session, then summarize what is still unsummarized.
+
+        This is the worker's pass, so failed summaries are retried with the worker's
+        back-off (``CONVO_SUMMARY_RETRY_SECONDS``), not on every pass.
+        """
         n = 0
         for sid in self.store.sessions_with_status("ended"):
             self.process_session(sid)
             n += 1
-        self.summarize_pending()
+        self.summarize_pending(retry_after=self.settings.summary_retry_seconds,
+                               stop_on_failure=True, now=now)
         return n
 
     def process_session(self, session_id: str) -> None:
@@ -300,9 +305,29 @@ class Pipeline:
                 log.exception("embedding failed for %s (FTS search still works)", conv_id)
         return True
 
-    def summarize_pending(self) -> int:
-        return sum(self.summarize_conversation(c)
-                   for c in self.store.conversations_with_status("pending"))
+    def summarize_pending(self, *, retry_after: float = 0.0, stop_on_failure: bool = False,
+                          now: float | None = None) -> int:
+        """Summarize pending conversations and retry failed ones; return how many succeeded.
+
+        A failed conversation is retried once its last failure is at least
+        ``retry_after`` seconds old, oldest failure first. With ``stop_on_failure`` the
+        retries stop at the first one that fails again: llama-server is most likely
+        still down, so the rest wait for a later pass instead of each trying it now.
+        A failure refreshes the conversation's ``updated_at``, so it moves to the back
+        of the queue and a broken conversation can't block the others.
+        """
+        # Snapshot both lists first, so a pending conversation that fails below isn't
+        # retried again in the same call.
+        now = time.time() if now is None else now
+        pending = self.store.conversations_with_status("pending")
+        failed = self.store.failed_conversations(before=now - retry_after)
+        done = sum(self.summarize_conversation(c) for c in pending)
+        for conv_id in failed:
+            if self.summarize_conversation(conv_id):
+                done += 1
+            elif stop_on_failure:
+                break
+        return done
 
     # ------------------------------------------------------------------ digest
     def day_bounds(self, date: str) -> tuple[float, float]:
@@ -352,12 +377,16 @@ class Worker(threading.Thread):
 
     def run(self) -> None:  # pragma: no cover - timing loop
         while not self._stop_evt.wait(self.interval):
-            try:
-                self.pipeline.finalize_idle()
-                self.pipeline.process_pending()
-                self._maybe_digest()
-            except Exception:
-                log.exception("worker iteration failed")
+            self.tick()
+
+    def tick(self, now: float | None = None) -> None:
+        """One worker pass (``run`` calls this every ``interval`` seconds)."""
+        try:
+            self.pipeline.finalize_idle(now)
+            self.pipeline.process_pending(now)
+            self._maybe_digest()
+        except Exception:
+            log.exception("worker iteration failed")
 
     def _maybe_digest(self) -> None:  # pragma: no cover
         p = self.pipeline

@@ -567,6 +567,12 @@ class Store:
         return [r["id"] for r in self._q(
             "SELECT id FROM conversations WHERE status = ? ORDER BY started_at", (status,))]
 
+    def failed_conversations(self, before: float) -> list[str]:
+        """Failed conversations whose last attempt was at or before ``before``, oldest first."""
+        return [r["id"] for r in self._q(
+            "SELECT id FROM conversations WHERE status = 'failed' AND updated_at <= ?"
+            " ORDER BY updated_at, started_at", (before,))]
+
     def list_action_items(self, status: str | None = "open") -> list[dict[str, Any]]:
         sql = ("SELECT a.*, c.title AS conversation_title, c.started_at AS conversation_at"
                " FROM action_items a JOIN conversations c ON c.id = a.conversation_id")

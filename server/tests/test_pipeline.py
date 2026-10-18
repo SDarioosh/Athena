@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
+import httpx
 import numpy as np
-from conftest import ToneEmbedder, silence, tone, wav
+from conftest import ToneEmbedder, fake_llm_transport, silence, tone, wav
 
+from convo_server import store as store_mod
 from convo_server.conversations import split_on_gaps
 from convo_server.diarize import Diarizer, EnrolledVoice, cluster
+from convo_server.llm import LLMClient, Summarizer
+from convo_server.pipeline import Worker
 from convo_server.search import index_conversation, search
 from convo_server.store import Segment
 
@@ -153,3 +159,105 @@ def test_digest(pipeline):
     assert digest["headline"] == "A day of plans" and digest["date"] == date
     assert pipeline.store.get_digest(date) == digest
     assert pipeline.make_digest("2001-01-01") is None
+
+
+class FlakyLLM:
+    """llama-server stand-in that can be switched off; counts summary requests."""
+
+    def __init__(self) -> None:
+        self.down = False
+        self.requests = 0
+        self.ok = fake_llm_transport()
+
+    def transport(self) -> httpx.MockTransport:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.requests += 1
+            if self.down:
+                raise httpx.ConnectError("connection refused", request=request)
+            return self.ok.handle_request(request)
+
+        return httpx.MockTransport(handler)
+
+
+def flaky_pipeline(pipeline):
+    llm = FlakyLLM()
+    pipeline.summarizer = Summarizer(LLMClient("http://llm.test/v1", "test-model",
+                                               transport=llm.transport()), "Me")
+    return llm
+
+
+def record(pipeline, session, start):
+    ingest(pipeline, 0, np.concatenate([tone(200, 5), silence(25)]), session=session,
+           start=start)
+    pipeline.end_session(session)
+
+
+def test_failed_summary_is_retried(pipeline):
+    llm = flaky_pipeline(pipeline)
+    llm.down = True
+    record(pipeline, "s1", T0)
+    pipeline.process_pending()
+    conv = pipeline.store.list_conversations()[0]
+    assert conv["status"] == "failed" and "unreachable" in conv["error"]
+    assert conv["title"] is None
+
+    llm.down = False  # llama-server is back; `convo-server summarize-pending` retries now
+    assert pipeline.summarize_pending() == 1
+    conv = pipeline.store.get_conversation(conv["id"])
+    assert conv["status"] == "summarized" and conv["error"] is None
+    assert conv["title"] == "Planning the trip"
+    assert [a["text"] for a in conv["action_items"]] == ["Book flights"]
+
+
+def test_summarize_pending_tries_each_conversation_once(pipeline):
+    llm = flaky_pipeline(pipeline)
+    pipeline.summarizer, summarizer = None, pipeline.summarizer
+    record(pipeline, "s1", T0)
+    pipeline.process_pending()  # no LLM configured: the conversation stays pending
+    assert len(pipeline.store.conversations_with_status("pending")) == 1
+
+    pipeline.summarizer = summarizer
+    llm.down = True
+    assert pipeline.summarize_pending() == 0  # retry_after=0, like the CLI
+    assert llm.requests == 1  # the pending attempt fails; it isn't retried in the same call
+    assert len(pipeline.store.conversations_with_status("failed")) == 1
+
+
+def test_worker_backs_off_on_failed_summaries(pipeline, monkeypatch):
+    clock = [time.time()]
+    monkeypatch.setattr(store_mod, "time", SimpleNamespace(time=lambda: clock[0]))
+
+    def tick(seconds_later: float) -> None:
+        clock[0] += seconds_later
+        worker.tick(clock[0])
+
+    llm = flaky_pipeline(pipeline)
+    llm.down = True
+    record(pipeline, "s1", T0)
+    record(pipeline, "s2", T0 + 3600)  # a second, separate conversation
+    worker = Worker(pipeline)
+    store = pipeline.store
+    tick(0)
+    assert len(store.conversations_with_status("failed")) == 2
+    attempts = llm.requests
+    assert attempts == 2  # one attempt per conversation
+
+    # passes every 15 s inside the back-off window: no requests to the down server
+    for _ in range(19):
+        tick(15)
+    assert llm.requests == attempts
+
+    # after the delay, one retry; it fails, so the other conversation waits a pass
+    delay = pipeline.settings.summary_retry_seconds
+    tick(delay - 19 * 15)
+    assert llm.requests == attempts + 1
+    tick(15)
+    assert llm.requests == attempts + 2  # now the other one's turn
+    for _ in range(5):
+        tick(15)
+    assert llm.requests == attempts + 2  # both just failed again: back off
+
+    llm.down = False
+    tick(delay)  # both are due: one pass summarizes both
+    assert store.conversations_with_status("failed") == []
+    assert len(store.conversations_with_status("summarized")) == 2
