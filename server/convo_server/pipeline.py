@@ -1,0 +1,367 @@
+"""Device-agnostic processing pipeline.
+
+ingest_chunk  -> decode, VAD, persist, silence/max-duration stop decision
+process_session -> reassemble by sequence, transcribe speech regions (whisper.cpp),
+                   diarize, store segments, delete raw audio, split into conversations,
+                   summarize (llama-server), embed
+make_digest   -> daily digest over the day's summarized conversations
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import shutil
+import threading
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+import numpy as np
+
+from . import audio as audio_mod
+from .config import Settings
+from .conversations import split_on_gaps
+from .diarize import Diarizer
+from .llm import Summarizer
+from .search import Embedder, index_conversation
+from .store import Segment, Store
+from .transcribe import Transcriber
+from .vad import VAD, Span, merge_spans
+
+log = logging.getLogger(__name__)
+
+_SAFE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+CONTIGUOUS_TOLERANCE = 1.5  # seconds between chunk end and next chunk start
+REGION_PAD = 0.25  # seconds of context around each speech region
+REGION_MERGE_GAP = 2.0
+# Speaker embeddings on 1-2 s whisper segments are too noisy (one fast talker split into
+# 7 "speakers" in testing); embedding a >= 3 s window around each segment fixes that.
+DIARIZATION_WINDOW = 3.0
+
+
+def validate_id(value: str, what: str) -> str:
+    if not _SAFE.match(value):
+        raise ValueError(f"{what} must match {_SAFE.pattern}")
+    return value
+
+
+@dataclass
+class IngestResult:
+    stop: bool
+    reason: str | None
+    speech_seconds: float
+    trailing_silence_seconds: float
+    session_seconds: float
+    duplicate: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"ok": True, "stop": self.stop, "reason": self.reason,
+                "duplicate": self.duplicate,
+                "speech_seconds": round(self.speech_seconds, 2),
+                "trailing_silence_seconds": round(self.trailing_silence_seconds, 2),
+                "session_seconds": round(self.session_seconds, 2)}
+
+
+class Pipeline:
+    def __init__(self, settings: Settings, store: Store, vad: VAD,
+                 transcriber: Transcriber | None = None, diarizer: Diarizer | None = None,
+                 summarizer: Summarizer | None = None,
+                 embedder: Embedder | None = None) -> None:
+        self.settings = settings
+        self.store = store
+        self.vad = vad
+        self.transcriber = transcriber
+        self.diarizer = diarizer
+        self.summarizer = summarizer
+        self.embedder = embedder
+        self._process_lock = threading.Lock()
+
+    # ------------------------------------------------------------------ ingest
+    def ingest_chunk(self, *, device: str, session_id: str, sequence: int, started_at: float,
+                     codec: str, data: bytes, sample_rate: int = audio_mod.SAMPLE_RATE,
+                     now: float | None = None) -> IngestResult:
+        from .store import DuplicateChunk
+
+        validate_id(device, "device")
+        validate_id(session_id, "session_id")
+        if sequence < 0:
+            raise ValueError("sequence must be >= 0")
+        codec = codec.lower()
+        if codec not in audio_mod.KNOWN_CODECS:
+            raise ValueError(f"codec must be one of {sorted(audio_mod.KNOWN_CODECS)}")
+        if not data:
+            raise ValueError("empty audio")
+        pcm = audio_mod.decode(data, codec, sample_rate)
+        duration = audio_mod.duration_seconds(pcm)
+        spans = self.vad.detect(pcm)
+        speech = [(round(s.start, 3), round(s.end, 3)) for s in spans]
+
+        path = part = None
+        if data:
+            d = self.settings.audio_dir / device / session_id
+            d.mkdir(parents=True, exist_ok=True)
+            path = d / f"{sequence:06d}.{codec}"
+            # Unique temp name: a retry racing the original upload of the same chunk
+            # must not overwrite or delete the original's temp file.
+            part = path.with_name(f"{path.name}.{uuid.uuid4().hex}.part")
+            part.write_bytes(data)
+        try:
+            sess = self.store.add_chunk(session_id=session_id, device=device, sequence=sequence,
+                                        started_at=started_at, duration=duration, codec=codec,
+                                        audio_path=str(path) if path else None, speech=speech,
+                                        now=now)
+            duplicate = False
+            if part and path:
+                part.replace(path)
+        except DuplicateChunk:
+            # Retry of an already-stored chunk: keep the original, answer consistently.
+            sess = self.store.get_session(session_id)
+            assert sess is not None
+            duplicate = True
+        finally:
+            if part:
+                part.unlink(missing_ok=True)
+
+        speech_end = sess["last_speech_at"] or sess["started_at"]
+        trailing = max(0.0, sess["last_chunk_at"] - speech_end)
+        length = sess["last_chunk_at"] - sess["started_at"]
+        reason = None
+        if sess["status"] != "recording":
+            reason = sess["stop_reason"] or "ended"
+        elif trailing >= self.settings.silence_stop_seconds:
+            reason = "silence"
+        elif length >= self.settings.max_session_seconds:
+            reason = "max_duration"
+        if reason and sess["status"] == "recording":
+            self.store.end_session(session_id, reason)
+        return IngestResult(stop=reason is not None, reason=reason,
+                            speech_seconds=sum(e - s for s, e in speech),
+                            trailing_silence_seconds=trailing, session_seconds=length,
+                            duplicate=duplicate)
+
+    def end_session(self, session_id: str, reason: str = "client") -> bool:
+        if self.store.get_session(session_id) is None:
+            return False
+        self.store.end_session(session_id, reason)
+        return True
+
+    def finalize_idle(self, now: float | None = None) -> list[str]:
+        now = time.time() if now is None else now
+        ids = self.store.idle_sessions(now - self.settings.session_idle_seconds)
+        for sid in ids:
+            self.store.end_session(sid, "idle")
+        return ids
+
+    # ----------------------------------------------------------------- process
+    def process_pending(self) -> int:
+        """Process every ended session, then retry unsummarized conversations."""
+        n = 0
+        for sid in self.store.sessions_with_status("ended"):
+            self.process_session(sid)
+            n += 1
+        self.summarize_pending()
+        return n
+
+    def process_session(self, session_id: str) -> None:
+        with self._process_lock:
+            sess = self.store.get_session(session_id)
+            if sess is None:
+                raise KeyError(session_id)
+            self.store.set_session_status(session_id, "processing")
+            try:
+                segments, ranges = self._transcribe_session(session_id)
+            except Exception as e:  # keep audio so the session can be retried
+                log.exception("transcription failed for %s", session_id)
+                self.store.set_session_status(session_id, "failed", f"{type(e).__name__}: {e}")
+                return
+            self.store.replace_segments(session_id, sess["device"], segments, ranges)
+            if not self.settings.keep_audio:
+                self._delete_audio(session_id, sess["device"])
+            self.store.delete_empty_conversations()
+            touched = self._assign_conversations(session_id, sess["device"])
+            self.store.set_session_status(session_id, "done")
+        for conv_id in touched:
+            self.summarize_conversation(conv_id)
+
+    def _transcribe_session(
+        self, session_id: str
+    ) -> tuple[list[Segment], list[tuple[float, float]]]:
+        """Transcribe chunks that still have audio; return segments + covered time ranges."""
+        chunks = [c for c in self.store.chunks(session_id) if c["audio_path"]]
+        ranges = [(c["started_at"], c["started_at"] + c["duration"]) for c in chunks]
+        if not any(c["speech"] for c in chunks):
+            return [], ranges
+        if self.transcriber is None:
+            raise RuntimeError("no transcriber configured (set CONVO_WHISPER_SERVER_URL)")
+        pieces: list[tuple[float, float, str, np.ndarray]] = []
+        for run_start, run_audio, run_speech in self._runs(chunks):
+            regions = merge_spans(run_speech, REGION_MERGE_GAP)
+            for r in regions:
+                a = max(0.0, r.start - REGION_PAD)
+                b = min(run_audio.size / audio_mod.SAMPLE_RATE, r.end + REGION_PAD)
+                clip = run_audio[int(a * audio_mod.SAMPLE_RATE): int(b * audio_mod.SAMPLE_RATE)]
+                for p in self.transcriber.transcribe(clip):
+                    s, e = a + p.start, a + max(p.end, p.start)
+                    pieces.append((run_start + s, run_start + e, p.text,
+                                   _window(run_audio, s, e, DIARIZATION_WINDOW)))
+        pieces.sort(key=lambda p: p[0])
+        labels = None
+        if self.diarizer is not None and pieces:
+            labels = self.diarizer.label([p[3] for p in pieces],
+                                         [(p[0] + p[1]) / 2 for p in pieces])
+        segments = []
+        for i, (s, e, text, _) in enumerate(pieces):
+            name, owner = (labels[i].name, labels[i].is_owner) if labels else ("Unknown", False)
+            segments.append(Segment(started_at=s, ended_at=e, text=text, speaker=name,
+                                    is_owner=owner))
+        return segments, ranges
+
+    def _runs(self, chunks: list[dict[str, Any]]):
+        """Yield (epoch_start, audio, speech_spans) for runs of contiguous chunks."""
+        run: list[dict[str, Any]] = []
+
+        def flush():
+            if not run:
+                return None
+            start = run[0]["started_at"]
+            parts, spans, offset = [], [], 0.0
+            for c in run:
+                pcm = self._load_chunk(c)
+                parts.append(pcm)
+                spans += [Span(offset + s, offset + e) for s, e in c["speech"]]
+                offset += pcm.size / audio_mod.SAMPLE_RATE
+            return start, np.concatenate(parts) if parts else np.zeros(0, np.float32), spans
+
+        for c in chunks:
+            if c["audio_path"] is None:
+                continue
+            if run:
+                prev = run[-1]
+                gap = c["started_at"] - (prev["started_at"] + prev["duration"])
+                if abs(gap) > CONTIGUOUS_TOLERANCE or c["sequence"] != prev["sequence"] + 1:
+                    out = flush()
+                    if out:
+                        yield out
+                    run = []
+            run.append(c)
+        out = flush()
+        if out:
+            yield out
+
+    def _load_chunk(self, chunk: dict[str, Any]) -> np.ndarray:
+        data = Path(chunk["audio_path"]).read_bytes()
+        return audio_mod.decode(data, chunk["codec"])
+
+    def _delete_audio(self, session_id: str, device: str) -> None:
+        for c in self.store.chunks(session_id):
+            if c["audio_path"]:
+                Path(c["audio_path"]).unlink(missing_ok=True)
+        d = self.settings.audio_dir / device / session_id
+        shutil.rmtree(d, ignore_errors=True)
+        self.store.clear_chunk_audio(session_id)
+
+    def _assign_conversations(self, session_id: str, device: str) -> list[str]:
+        gap = self.settings.conversation_gap_seconds
+        touched: list[str] = []
+        for group in split_on_gaps(self.store.session_segments(session_id), gap):
+            start, end = group[0].started_at, max(s.ended_at for s in group)
+            near = [c["id"] for c in self.store.overlapping_conversations(device, start, end, gap)]
+            conv_id = self.store.save_conversation(near[0] if near else None, device,
+                                                   [s.id for s in group if s.id is not None],
+                                                   absorb=near[1:])
+            touched = [t for t in touched if t not in near] + [conv_id]
+        return touched
+
+    # --------------------------------------------------------------- summaries
+    def summarize_conversation(self, conv_id: str) -> bool:
+        if self.summarizer is None:
+            return False
+        segments = self.store.conversation_segments(conv_id)
+        if not segments:
+            return False
+        try:
+            summary = self.summarizer.summarize(segments)
+        except Exception as e:
+            log.exception("summary failed for %s", conv_id)
+            self.store.mark_conversation_failed(conv_id, f"{type(e).__name__}: {e}")
+            return False
+        self.store.save_summary(conv_id, summary)
+        if self.embedder is not None:
+            try:
+                index_conversation(self.store, self.embedder, conv_id)
+            except Exception:
+                log.exception("embedding failed for %s (FTS search still works)", conv_id)
+        return True
+
+    def summarize_pending(self) -> int:
+        return sum(self.summarize_conversation(c)
+                   for c in self.store.conversations_with_status("pending"))
+
+    # ------------------------------------------------------------------ digest
+    def day_bounds(self, date: str) -> tuple[float, float]:
+        tz = ZoneInfo(self.settings.timezone)
+        day = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=tz)
+        return day.timestamp(), (day + timedelta(days=1)).timestamp()
+
+    def make_digest(self, date: str) -> dict[str, Any] | None:
+        if self.summarizer is None:
+            raise RuntimeError("no LLM configured")
+        start, end = self.day_bounds(date)
+        convs = [self.store.get_conversation(c["id"]) for c in
+                 self.store.list_conversations(since=start, until=end, limit=500)]
+        convs = [c for c in convs if c and c["status"] == "summarized"
+                 and start <= c["started_at"] < end]
+        if not convs:
+            return None
+        convs.sort(key=lambda c: c["started_at"])
+        digest = self.summarizer.digest(date, convs)
+        self.store.put_digest(date, digest)
+        return digest
+
+
+def _window(audio: np.ndarray, start: float, end: float, min_seconds: float) -> np.ndarray:
+    """Slice [start, end] seconds, widened symmetrically to ``min_seconds`` where possible."""
+    sr = audio_mod.SAMPLE_RATE
+    total = audio.size / sr
+    half = max((end - start) / 2, min_seconds / 2)
+    mid = (start + end) / 2
+    a, b = max(0.0, mid - half), min(total, mid + half)
+    if b - a < min_seconds:  # near an edge: extend towards the other side
+        a, b = max(0.0, b - min_seconds), min(total, a + min_seconds)
+    return audio[int(a * sr): int(b * sr)]
+
+
+class Worker(threading.Thread):
+    """Background loop: finalize idle sessions, process, and write yesterday's digest."""
+
+    def __init__(self, pipeline: Pipeline, interval: float = 15.0) -> None:
+        super().__init__(name="convo-worker", daemon=True)
+        self.pipeline = pipeline
+        self.interval = interval
+        self._stop_evt = threading.Event()
+
+    def stop(self) -> None:
+        self._stop_evt.set()
+
+    def run(self) -> None:  # pragma: no cover - timing loop
+        while not self._stop_evt.wait(self.interval):
+            try:
+                self.pipeline.finalize_idle()
+                self.pipeline.process_pending()
+                self._maybe_digest()
+            except Exception:
+                log.exception("worker iteration failed")
+
+    def _maybe_digest(self) -> None:  # pragma: no cover
+        p = self.pipeline
+        if p.summarizer is None:
+            return
+        tz = ZoneInfo(p.settings.timezone)
+        yesterday = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
+        if p.store.get_digest(yesterday) is None and not p.store.sessions_with_status("ended"):
+            p.make_digest(yesterday)

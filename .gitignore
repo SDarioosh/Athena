@@ -5,12 +5,27 @@ orchestrator/logs/
 .env
 firmware/include/secrets.h
 
-# build output
+# build output / environments
 .pio/
 __pycache__/
 *.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+
+# server runtime data (database, queued audio, downloaded models)
+server/data/
 
 # never commit audio
 *.opus
 *.wav
 *.ogg
+*.oga
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.webm
+*.pcm
