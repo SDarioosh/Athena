@@ -14,6 +14,7 @@ import {
 } from '@zos/display'
 import { statSync, openSync, readSync, closeSync, rmSync, O_RDONLY } from '@zos/fs'
 import { LocalStorage } from '@zos/storage'
+import { queryPermission, requestPermission } from '@zos/app'
 import { Vibrator } from '@zos/sensor'
 import { BasePage } from '@zeppos/zml/base-page'
 import { createTester, summarize, BEAT_MS, CHUNK_MS } from '../shared/session'
@@ -37,6 +38,50 @@ function getRecorder(onFail) {
   }
   recorder = r
   return r
+}
+
+const MIC = 'device:os.mic'
+const GRANTED = 2
+
+function micStatus() {
+  return queryPermission({ permissions: [MIC] })[0]
+}
+
+// Calls onGranted once the app may use the microphone, or onDenied with a reason.
+// Listing the permission in app.json is not always enough: the watch can still answer
+// "PERMISSION DENIED device:os.mic" until the user allows it in a system prompt.
+function withMic(onGranted, onDenied) {
+  let done = false
+  const finish = (ok, why) => {
+    if (done) return
+    done = true
+    if (ok) onGranted()
+    else onDenied(why)
+  }
+  let status
+  try {
+    status = micStatus()
+  } catch (e) {
+    // No permission API on this firmware: try the recorder and let it report.
+    finish(true)
+    return
+  }
+  if (status === GRANTED) return finish(true)
+  const result = requestPermission({
+    permissions: [MIC],
+    callback: () => {
+      let now = null
+      try {
+        now = micStatus()
+      } catch (e) {}
+      finish(now === GRANTED, 'microphone not allowed (answer Allow on the watch prompt)')
+    },
+  })
+  if (result === GRANTED) finish(true)
+  else if (result === 1) {
+    finish(false, 'microphone cannot be requested: allow it for Convo Rec Test in the watch or Zepp app settings, or reinstall')
+  }
+  // result 0: the watch shows a prompt and the callback decides.
 }
 
 function errText(e) {
@@ -286,6 +331,16 @@ Page(
     },
 
     startTest(mode) {
+      withMic(
+        () => this.beginTest(mode),
+        (why) => {
+          this.tester.error(`mic permission: ${why}`)
+          this.scheduleRender()
+        },
+      )
+    },
+
+    beginTest(mode) {
       for (const c of this.tester.state.chunks) {
         try {
           rmSync({ path: c.file })

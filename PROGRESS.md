@@ -183,6 +183,13 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   request failed." still scored PASS (question 4, in both sandboxes), because it also had
   the date and the link (Barvis sandbox finding 5). Should `eval/bakeoff.py` count that as a failure? Not changed yet.
 
+## Done in round 8: watch app asks for the microphone
+
+- First watch test: every test button failed with `create recorder: PERMISSION DENIED
+  device:os.mic`. The app (0.1.1) now lists `device:os.mic` in `app.json` and asks for it
+  at runtime before recording starts (`withMic` in `zepp-app/page/index.js`). Built with
+  `zeus build` in the sandbox; still needs the real watch to confirm.
+
 ## Next
 
 1. **Owner: watch test.** The steps are in `zepp-app/README.md`. Server URL

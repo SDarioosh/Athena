@@ -5,14 +5,14 @@
     "appName": "Convo Rec Test",
     "appType": "app",
     "version": {
-      "code": 1,
-      "name": "0.1.0"
+      "code": 2,
+      "name": "0.1.1"
     },
     "icon": "icon.png",
     "vender": "convo-ai",
     "description": "Recording feasibility test: 30 s Opus chunks, screen on vs off"
   },
-  "permissions": ["data:os.device.info", "device:os.local_storage"],
+  "permissions": ["data:os.device.info", "device:os.local_storage", "device:os.mic"],
   "runtime": {
     "apiVersion": {
       "compatible": "3.0",
