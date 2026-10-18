@@ -88,7 +88,7 @@ Report back:
   MP3. The server decodes with ffmpeg, which probes the container, so either should
   work. Test D confirms it.
 - **Microphone permission:** none is documented for `@zos/media`. If `empty` > 0 or
-  the event log shows `recorder.start failed`, that's the first suspect.
+  the screen shows `ERROR … recorder.start failed`, that's the first suspect.
 - **HTTP vs HTTPS:** Android may block plain `http://` from the Zepp app. If Ping fails
   with a network error, use HTTPS via Tailscale (`tailscale serve --https=443
   http://127.0.0.1:8000` on the server, then `https://<host>.<tailnet>.ts.net` as the URL).
@@ -96,6 +96,10 @@ Report back:
   chunk is about 60–120 KB, so live upload during recording may need tuning.
 - **appId:** `1092611` is a placeholder. If `zeus preview` complains, create the app in the
   [Zepp developer console](https://console.zepp.com/) and put its ID in `app.json`.
+
+If a test button doesn't start recording, the screen shows `ERROR` and the failing step
+(`create recorder`, `setFormat`, `recorder.start`, or `recorder is IDLE 2 s after start`).
+The watch only buzzes when recording really started. **Clear** dismisses the error.
 
 ## Layout
 

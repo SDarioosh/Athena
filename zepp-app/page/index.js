@@ -24,17 +24,43 @@ const W = 480
 const storage = new LocalStorage()
 
 let recorder = null
-function getRecorder(tester) {
+function getRecorder(onFail) {
   if (recorder) return recorder
-  recorder = create(id.RECORDER)
+  const r = create(id.RECORDER)
+  if (!r) throw new Error('create(id.RECORDER) returned nothing')
   try {
-    recorder.addEventListener(recorder.event.START, (ok) => {
-      if (ok === false) tester.log('recorder START reported failure')
+    r.addEventListener(r.event.START, (ok) => {
+      if (ok === false) onFail('recorder START event reported failure')
     })
   } catch (e) {
     console.log('recorder event listener not available', e)
   }
-  return recorder
+  recorder = r
+  return r
+}
+
+function errText(e) {
+  return e && e.message ? e.message : String(e)
+}
+
+// Runs one recorder call and names it in the error, so the screen says which step failed.
+function step(name, fn) {
+  try {
+    return fn()
+  } catch (e) {
+    throw new Error(`${name}: ${errText(e)}`)
+  }
+}
+
+const STATUS_NAMES = ['IDLE', 'PREPARING', 'STARTING', 'RECORDING']
+
+function recorderStatus() {
+  if (!recorder || typeof recorder.getStatus !== 'function') return null
+  const status = recorder.getStatus()
+  const states = recorder.state
+  if (!states || states.RECORDING === undefined) return null
+  const name = STATUS_NAMES.find((k) => states[k] === status)
+  return { status, name: name || `unknown ${status}`, recording: status === states.RECORDING }
 }
 
 function fileSize(file) {
@@ -91,17 +117,29 @@ function fmt(sec) {
 
 Page(
   BasePage({
-    state: { widgets: [], info: null, beat: null, uploading: false, net: '' },
+    state: {
+      widgets: [], info: null, beat: null, uploading: false, net: '',
+      renderTimer: null, checkTimer: null,
+    },
 
     onInit() {
+      const failRecording = (msg) => {
+        this.tester.error(msg)
+        resetDisplay()
+      }
       this.tester = createTester({
         recorder: {
           start: (file) => {
-            const r = getRecorder(this.tester)
-            r.setFormat(codec.OPUS, { target_file: `data://${file}` })
-            r.start()
+            const r = step('create recorder', () => getRecorder(failRecording))
+            step('setFormat', () => r.setFormat(codec.OPUS, { target_file: `data://${file}` }))
+            step('recorder.start', () => r.start())
+            this.checkRecorderSoon()
           },
-          stop: () => getRecorder(this.tester).stop(),
+          stop: () => {
+            if (this.state.checkTimer) clearTimeout(this.state.checkTimer)
+            this.state.checkTimer = null
+            if (recorder) recorder.stop()
+          },
         },
         fileSize,
         load: () => storage.getItem('state'),
@@ -109,7 +147,9 @@ Page(
         now: () => Date.now(),
         setTimeout: (fn, ms) => setTimeout(fn, ms),
         clearTimeout: (t) => clearTimeout(t),
-        onChange: () => this.render(),
+        // Deferred: rebuilding widgets inside the pressed button's own click handler
+        // would delete that button while its callback is still running.
+        onChange: () => this.scheduleRender(),
       })
       if (this.tester.resumeIfInterrupted()) {
         applyDisplay(this.tester.state.mode)
@@ -129,10 +169,42 @@ Page(
 
     onDestroy() {
       if (this.state.beat) clearInterval(this.state.beat)
+      if (this.state.renderTimer) clearTimeout(this.state.renderTimer)
+      if (this.state.checkTimer) clearTimeout(this.state.checkTimer)
+      this.state.renderTimer = null
+      this.state.checkTimer = null
+      recorder = null
       this.tester.pageDestroyed()
     },
 
     // ------------------------------------------------------------------ UI
+    scheduleRender() {
+      if (this.state.renderTimer) return
+      this.state.renderTimer = setTimeout(() => {
+        this.state.renderTimer = null
+        this.render()
+      }, 10)
+    },
+
+    // Two seconds after a chunk starts, the recorder should report RECORDING.
+    checkRecorderSoon() {
+      if (this.state.checkTimer) clearTimeout(this.state.checkTimer)
+      this.state.checkTimer = setTimeout(() => {
+        this.state.checkTimer = null
+        if (!this.tester.state.recording) return
+        try {
+          const s = recorderStatus()
+          if (s && !s.recording) {
+            this.tester.error(`recorder is ${s.name} 2 s after start`)
+            resetDisplay()
+          }
+        } catch (e) {
+          this.tester.error(`getStatus: ${errText(e)}`)
+          resetDisplay()
+        }
+      }, 2000)
+    },
+
     clearWidgets() {
       for (const w of this.state.widgets) hmUI.deleteWidget(w)
       this.state.widgets = []
@@ -194,8 +266,12 @@ Page(
           `REC ${st.mode}  ${fmt(s.wallSec)}`,
           `chunk #${st.seq} ${inChunk}/${CHUNK_MS / 1000}s`,
           `done ${s.chunks} · relaunch ${s.relaunches}`,
-          last ? `last ${Math.round(last.size / 1024)} KB (${last.note})` : 'first chunk…',
+          st.lastError ? `! ${st.lastError}`
+            : last ? `last ${Math.round(last.size / 1024)} KB (${last.note})` : 'first chunk…',
         ].join('\n')
+      }
+      if (st.lastError) {
+        return ['ERROR', st.lastError, this.state.net].join('\n')
       }
       if (!st.chunks.length) {
         return ['Pick a test, record', '10 min, then Stop.', this.state.net].join('\n')
@@ -216,9 +292,16 @@ Page(
         } catch (e) {}
       }
       this.state.net = ''
-      applyDisplay(mode)
-      this.tester.start(mode)
-      vibrate()
+      try {
+        applyDisplay(mode)
+        this.tester.start(mode)
+      } catch (e) {
+        this.tester.error(`start: ${errText(e)}`)
+      }
+      // Buzz only when recording really started, so the buzz means "recording".
+      if (this.tester.state.recording) vibrate()
+      else resetDisplay()
+      this.scheduleRender()
     },
 
     clearAll() {
