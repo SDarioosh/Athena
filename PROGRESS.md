@@ -194,6 +194,11 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   instead of the audio. Uploads now pass `contentType: 'bin'` (`shared/messaging.js`);
   `tests/messaging.test.mjs` loops zml's own messaging code to check the envelope arrives
   whole. The watch also shows the full reason when an upload or ping fails (0.1.2).
+- Uploads now reach the server but fail with `422 could not decode audio` (ffmpeg:
+  "Error opening input"). The Recorder's `.opus` file is not a format ffmpeg probes
+  (likely raw Opus frames, no Ogg). The server now keeps undecodable uploads in
+  `server/data/rejected/` (newest 20) so the owner can send a hex dump of the first bytes.
+  Next: write a decoder for that layout.
 
 ## Next
 

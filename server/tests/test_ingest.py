@@ -140,3 +140,13 @@ def test_concurrent_retry_of_same_chunk_keeps_audio(pipeline, settings):
     chunk_dir = settings.audio_dir / "trex3pro" / "s1"
     assert (chunk_dir / "000000.wav").read_bytes() == data
     assert not list(chunk_dir.glob("*.part"))
+
+
+def test_undecodable_upload_is_kept_for_debugging(client, settings):
+    r = client.post("/v1/ingest/chunk", files={"audio": ("c", b"not audio at all")},
+                    data={"device": "trex3pro", "session_id": "trex-1", "sequence": "3",
+                          "timestamp": str(T0), "codec": "opus"})
+    assert r.status_code == 422
+    saved = list((settings.data_dir / "rejected").glob("*.bin"))
+    assert [p.name for p in saved] == ["trex-1-3.opus.bin"]
+    assert saved[0].read_bytes() == b"not audio at all"
