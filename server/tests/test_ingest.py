@@ -103,3 +103,25 @@ def test_iso_and_epoch_ms_timestamps(client):
                   ts=str(int(T0 * 1000))).status_code == 200
     started = client.get("/v1/sessions/s2").json()["started_at"]
     assert started.startswith("2025-10-09")
+
+
+def test_concurrent_retry_of_same_chunk_keeps_audio(pipeline, settings):
+    """A retry racing the original upload must not delete the original's temp file."""
+    real_add = pipeline.store.add_chunk
+    data = wav(tone(200, 30))
+    retried = []
+
+    def add_then_retry(**kw):
+        sess = real_add(**kw)  # original upload has committed its row...
+        if not retried:  # ...and the device's retry arrives before the file is renamed
+            retried.append(pipeline.ingest_chunk(device="trex3pro", session_id="s1", sequence=0,
+                                                 started_at=T0, codec="wav", data=data))
+        return sess
+
+    pipeline.store.add_chunk = add_then_retry
+    first = pipeline.ingest_chunk(device="trex3pro", session_id="s1", sequence=0,
+                                  started_at=T0, codec="wav", data=data)
+    assert first.duplicate is False and retried[0].duplicate is True
+    chunk_dir = settings.audio_dir / "trex3pro" / "s1"
+    assert (chunk_dir / "000000.wav").read_bytes() == data
+    assert not list(chunk_dir.glob("*.part"))
