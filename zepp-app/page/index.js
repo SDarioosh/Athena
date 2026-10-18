@@ -399,7 +399,11 @@ Page(
           this.request({ method: 'end', params: { session_id: st.sessionId } }, { timeout: 30000 })
             .catch(() => {})
           this.state.uploading = false
-          this.state.net = 'upload done'
+          // Say what failed: "upload done" alone hid errors behind "uploaded 0/1".
+          const failed = todo.filter((c) => c.uploaded !== true)
+          this.state.net = failed.length
+            ? `${failed.length} failed: ${String(failed[failed.length - 1].uploaded || 'no answer').slice(0, 48)}`
+            : 'upload done'
           this.render()
           return
         }
