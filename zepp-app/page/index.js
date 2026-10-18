@@ -19,6 +19,7 @@ import { Vibrator } from '@zos/sensor'
 import { BasePage } from '@zeppos/zml/base-page'
 import { createTester, summarize, BEAT_MS, CHUNK_MS } from '../shared/session'
 import { buildEnvelope } from '../shared/envelope'
+import { UPLOAD_OPTIONS } from '../shared/messaging'
 
 const DEVICE = 'trex3pro'
 const W = 480
@@ -428,7 +429,7 @@ Page(
           next(i + 1)
           return
         }
-        this.request(env, { timeout: 180000, dataType: 'json' })
+        this.request(env, { timeout: 180000, ...UPLOAD_OPTIONS })
           .then((r) => {
             this.tester.markUploaded(c.seq, r && r.ok ? true : `server: ${r && r.error}`)
             if (r && r.stop) this.state.net = `server says stop (${r.reason})`

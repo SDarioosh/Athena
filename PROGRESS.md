@@ -189,6 +189,11 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   device:os.mic`. The app (0.1.1) now lists `device:os.mic` in `app.json` and asks for it
   at runtime before recording starts (`withMic` in `zepp-app/page/index.js`). Built with
   `zeus build` in the sandbox; still needs the real watch to confirm.
+- With the mic fixed, every upload failed with `server: unknown request undefined`:
+  zml treats an `ArrayBuffer` as a JSON object, so the watch sent `{"jsonrpc":"hmrpcv1"}`
+  instead of the audio. Uploads now pass `contentType: 'bin'` (`shared/messaging.js`);
+  `tests/messaging.test.mjs` loops zml's own messaging code to check the envelope arrives
+  whole. The watch also shows the full reason when an upload or ping fails (0.1.2).
 
 ## Next
 
