@@ -68,7 +68,12 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         return parse_when(since, tz), parse_when(until, tz, end=True)
 
     def header(n: int, what: str) -> str:
-        return f"{n} {what} (times are {settings.timezone}):" if n else f"No {what} found."
+        # Frontends don't reliably forward server instructions (Hermes ignores them), so
+        # the citation rule also rides along with every non-empty result.
+        if not n:
+            return f"No {what} found."
+        return (f"{n} {what} (times are {settings.timezone}). When answering, put the "
+                f"link next to each fact you use:")
 
     @mcp.tool(annotations=ro)
     def search_transcripts(speaker: Person = "", query: Text = "", since: Since = "",
