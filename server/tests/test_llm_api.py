@@ -95,7 +95,7 @@ def test_enroll_speaker(client):
                     data={"name": "Bob", "codec": "wav"})
     assert r.status_code == 200, r.text
     names = {s["name"] for s in client.get("/v1/speakers").json()["speakers"]}
-    assert names == {"Bob"}  # fixture's in-memory owner voice isn't persisted
+    assert names == {"Me", "Bob"}
     too_short = client.post("/v1/speakers/enroll", files={"audio": ("v.wav", wav(tone(9, 1)))},
                             data={"name": "X", "codec": "wav"})
     assert too_short.status_code == 400

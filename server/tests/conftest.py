@@ -9,7 +9,7 @@ import pytest
 
 from convo_server.audio import SAMPLE_RATE, to_wav_bytes
 from convo_server.config import Settings
-from convo_server.diarize import Diarizer, EnrolledVoice
+from convo_server.diarize import Diarizer, load_voices
 from convo_server.llm import LLMClient, Summarizer
 from convo_server.pipeline import Pipeline
 from convo_server.store import Store
@@ -106,8 +106,8 @@ def llm_log() -> list:
 def pipeline(settings: Settings, llm_log: list) -> Pipeline:
     store = Store(settings.db_path)
     llm = LLMClient("http://llm.test/v1", "test-model", transport=fake_llm_transport(log=llm_log))
-    diarizer = Diarizer(ToneEmbedder(), [EnrolledVoice("Me", ToneEmbedder().embed(tone(200, 2)),
-                                                       True)])
+    store.put_speaker("Me", ToneEmbedder().embed(tone(200, 2)), is_owner=True)
+    diarizer = Diarizer(ToneEmbedder(), load_voices(store))
     return Pipeline(settings, store, EnergyVAD(), FakeTranscriber(), diarizer,
                     Summarizer(llm, "Me"))
 
