@@ -1,6 +1,6 @@
 {
   "name": "convo-zepp-test",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "convo-ai T-Rex 3 Pro recording feasibility test (Zepp OS Mini Program)",
   "scripts": {

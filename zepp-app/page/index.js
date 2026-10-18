@@ -399,12 +399,16 @@ Page(
         return
       }
       this.state.uploading = true
+      // Keep the screen on while uploading: with the screen off, Zepp OS closes the app
+      // after about 10 s, which drops the upload halfway with no message.
+      applyDisplay('screen-on')
       this.render()
       const next = (i) => {
         if (i >= todo.length) {
           this.request({ method: 'end', params: { session_id: st.sessionId } }, { timeout: 30000 })
             .catch(() => {})
           this.state.uploading = false
+          if (!this.tester.state.recording) resetDisplay()
           // Say what failed: "upload done" alone hid errors behind "uploaded 0/1".
           const failed = todo.filter((c) => c.uploaded !== true)
           this.state.net = failed.length
