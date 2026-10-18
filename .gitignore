@@ -3,7 +3,8 @@ orchestrator/logs/
 
 # secrets
 .env
-firmware/include/secrets.h
+secrets.h
+firmware-archive/
 
 # build output / environments
 .pio/

@@ -16,7 +16,6 @@ the data path touches the cloud.**
   `frontend-decision.md`).
 - `hermes/`: Hermes profile snippet used by the orchestrator.
 - `orchestrator/`: optional build loop. Leave it alone.
-- `firmware-archive/`: old T-Watch firmware, untracked, not part of the design.
 
 ## Privacy rules (non-negotiable)
 
