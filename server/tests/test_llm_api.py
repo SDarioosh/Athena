@@ -35,6 +35,15 @@ def test_structured_http_error():
         llm.structured("s", "u", ConversationSummary)
 
 
+def test_structured_connection_error_is_llm_error():
+    def down(req):
+        raise httpx.ConnectError("connection refused", request=req)
+
+    llm = LLMClient("http://x/v1", "m", transport=httpx.MockTransport(down))
+    with pytest.raises(LLMError, match="unreachable"):
+        llm.structured("s", "u", ConversationSummary)
+
+
 def test_strip_fences():
     assert _strip_fences("```json\n{\"a\": 1}\n```") == '{"a": 1}'
 
@@ -88,6 +97,17 @@ def test_digest_api(client, pipeline):
     assert client.get("/v1/digests/2025-10-09").status_code == 404
     assert client.post("/v1/digests/2025-10-09").json()["headline"] == "A day of plans"
     assert client.get("/v1/digests/2025-10-09").status_code == 200
+
+
+def test_digest_api_llm_down_is_502(client, pipeline):
+    _process_one(client, pipeline)
+
+    def down(req):
+        raise httpx.ConnectError("connection refused", request=req)
+
+    pipeline.summarizer.llm._http._transport = httpx.MockTransport(down)
+    r = client.post("/v1/digests/2025-10-09")
+    assert r.status_code == 502 and "unreachable" in r.json()["detail"]
 
 
 def test_enroll_speaker(client):

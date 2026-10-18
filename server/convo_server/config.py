@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -75,11 +75,11 @@ class Settings(BaseSettings):
     def base_url(self) -> str:
         return (self.public_url or f"http://{self.host}:{self.port}").rstrip("/")
 
-    @field_validator("ingest_token")
+    @field_validator("ingest_token", "mcp_token")
     @classmethod
-    def _not_placeholder(cls, v: str) -> str:
-        if v.lower().startswith("change-me"):
-            raise ValueError("CONVO_INGEST_TOKEN still has the placeholder value")
+    def _not_placeholder(cls, v: str | None, info: ValidationInfo) -> str | None:
+        if v is not None and v.lower().startswith("change-me"):
+            raise ValueError(f"CONVO_{info.field_name.upper()} still has the placeholder value")
         return v
 
     @property

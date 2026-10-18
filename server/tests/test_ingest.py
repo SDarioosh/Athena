@@ -118,3 +118,25 @@ def test_json_ingest_for_zepp_side_service(client):
                        json={**body, "audio_b64": "%%%"}).status_code == 400
     client.headers.pop("Authorization")
     assert client.post("/v1/ingest/chunk.json", json=body).status_code == 401
+
+
+def test_concurrent_retry_of_same_chunk_keeps_audio(pipeline, settings):
+    """A retry racing the original upload must not delete the original's temp file."""
+    real_add = pipeline.store.add_chunk
+    data = wav(tone(200, 30))
+    retried = []
+
+    def add_then_retry(**kw):
+        sess = real_add(**kw)  # original upload has committed its row...
+        if not retried:  # ...and the device's retry arrives before the file is renamed
+            retried.append(pipeline.ingest_chunk(device="trex3pro", session_id="s1", sequence=0,
+                                                 started_at=T0, codec="wav", data=data))
+        return sess
+
+    pipeline.store.add_chunk = add_then_retry
+    first = pipeline.ingest_chunk(device="trex3pro", session_id="s1", sequence=0,
+                                  started_at=T0, codec="wav", data=data)
+    assert first.duplicate is False and retried[0].duplicate is True
+    chunk_dir = settings.audio_dir / "trex3pro" / "s1"
+    assert (chunk_dir / "000000.wav").read_bytes() == data
+    assert not list(chunk_dir.glob("*.part"))

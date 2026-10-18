@@ -14,6 +14,7 @@ import re
 import shutil
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -105,7 +106,9 @@ class Pipeline:
             d = self.settings.audio_dir / device / session_id
             d.mkdir(parents=True, exist_ok=True)
             path = d / f"{sequence:06d}.{codec}"
-            part = path.with_name(path.name + ".part")
+            # Unique temp name: a retry racing the original upload of the same chunk
+            # must not overwrite or delete the original's temp file.
+            part = path.with_name(f"{path.name}.{uuid.uuid4().hex}.part")
             part.write_bytes(data)
         try:
             sess = self.store.add_chunk(session_id=session_id, device=device, sequence=sequence,
