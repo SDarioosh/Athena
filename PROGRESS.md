@@ -1,10 +1,12 @@
-# convo-ai progress
+# barvis-sound progress
 
-Design: two wearables (Omi pendant, Amazfit T-Rex 3 Pro) → local Ubuntu server
-(Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → personal knowledge
-frontend. See MISSION.md and AGENTS.md. Nothing in the data path leaves the network.
+barvis-sound (formerly convo-ai / barvis-ai) is the first module of
+[Barvis](https://github.com/SDarioosh/Barvis). Design: wearables (Amazfit T-Rex 3 Pro,
+XIAO ESP32-S3 pendant planned, Omi later) → local Ubuntu server (Silero VAD, whisper.cpp,
+diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
+Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-18 (round 3: frontend test done, Odysseus fork chosen, live test server running)_
+_Last updated: 2026-10-18 (round 4: renamed to barvis-sound, agent docs for both repos)_
 
 ## Status
 
@@ -18,7 +20,8 @@ _Last updated: 2026-10-18 (round 3: frontend test done, Odysseus fork chosen, li
 | 6 | SQLite storage, FTS5 + optional embeddings, read API with transcript links | ✅ done, tested | `server/` |
 | 7 | Knowledge-layer MCP server (works with Hermes or Odysseus) | ✅ done, tested (PR #3) | `server/convo_server/mcp_server.py` |
 | 7b | Wire into Hermes + Odysseus, side-by-side test | ✅ done (20 questions): Hermes 15/20, Odysseus 3/20 | `server/eval/`, results in `docs/frontend-decision.md` |
-| 7c | Barvis: Odysseus fork fixed for our MCP tools, kept in sync with upstream | next, waiting on fork setup (owner) | `docs/frontend-decision.md` (fork plan) |
+| 7c | Barvis: Odysseus fork fixed for our MCP tools, kept in sync with upstream | in progress: 9/20 (was 3/20), target ≥ 15/20; fork `SDarioosh/Barvis` (default branch `barvis`), PR SDarioosh/Barvis#1 | `docs/frontend-decision.md` (fork plan), Barvis `BARVIS.md` and `docs/barvis/roadmap.md` |
+| 7d | Agent docs: AGENTS/CLAUDE/Antigravity files, rename to barvis-sound in prose, Barvis module contract | PR open (this repo and Barvis) | `AGENTS.md`, Barvis `docs/barvis/modules.md` |
 | 8 | Omi ingestion path (Android BLE relay) | optional, depends on how the XIAO goes | — |
 | 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | merged (PR #4), **waiting for owner's watch test**; test server is running | `zepp-app/` |
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
@@ -120,15 +123,22 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   - Verified over Tailscale with a real chunk: upload, VAD, transcript, summary, link.
   - Not a service yet: it stops on reboot.
 
+## Done in round 4
+
+- Repo renamed to **barvis-sound** in prose. Code identifiers (`convo_server`,
+  `convo-server`, `CONVO_*`, paths) are unchanged on purpose.
+- `AGENTS.md`: "This is a Barvis module", the MCP tool contract, where work belongs,
+  instruction files per tool. Added `CLAUDE.md` (imports `AGENTS.md`) and
+  `.agents/rules/antigravity.md`. Root `README.md` written.
+- Barvis got the module contract (`docs/barvis/modules.md`) and a barvis-sound module
+  page.
+
 ## Next
 
 1. **Owner: watch test.** The steps are in `zepp-app/README.md`. Server URL
    `http://100.106.28.112:8000`; the token is in that checkout's `server/.env`.
-2. **Barvis fork** (needs owner go-ahead on the GitHub fork):
-   - trusted read-only MCP servers;
-   - web-intent routing fix;
-   - turn off unused built-ins;
-   - rerun the 20 questions (target ≥ 15/20).
+2. **Barvis fork:** citations from 9/20 to ≥ 15/20 (Barvis `docs/barvis/roadmap.md`).
+   Add a test here that asserts every MCP tool's annotation (Barvis module contract).
 3. Build the real T-Rex recording app from the watch-test results.
 4. systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.
 5. Owner voice enrollment, plus speaker-threshold check on real audio.
@@ -138,7 +148,7 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
-- Barvis fork: create `SDarioosh/barvis` on GitHub, public or private?
+- Barvis fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.
 - The XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, ESP-IDF vs Arduino, server late-chunk policy, extra
 parts, microSD, Omi live-audio service). No pendant code until those are answered.

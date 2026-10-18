@@ -1,11 +1,13 @@
-You are building convo-ai in this repository. Read AGENTS.md first; it describes
-the devices, architecture, privacy rules, and checks.
+You are building barvis-sound (formerly convo-ai) in this repository, the first module
+of [Barvis](https://github.com/SDarioosh/Barvis). Read AGENTS.md first; it describes the
+devices, architecture, privacy rules, the MCP tool contract, and checks.
 
 ## Goal
 
 A private, fully local system that captures conversations from two wearables,
 turns them into transcripts and structured knowledge with local models, and
-makes that knowledge available in a personal memory/knowledge frontend.
+makes that knowledge available to Barvis, the hub of the owner's local AI system,
+through an MCP server.
 
 - **Capture:** an Omi pendant (BLE Opus audio, offline storage) and an Amazfit
   T-Rex 3 Pro (Zepp OS 5 Mini Program recording 30-second Opus chunks; the
@@ -15,9 +17,9 @@ makes that knowledge available in a personal memory/knowledge frontend.
   enrolled → conversations split on gaps > 3 minutes → llama-server
   structured output (title, summary, key points, action items, people,
   topics, durable facts) and a daily digest → SQLite (+ FTS5, embeddings).
-- **Remember:** the SQLite store is the source of truth; a frontend (Hermes
-  Agent or Odysseus, decision pending in `docs/frontend-decision.md`) lets the
-  owner ask questions and get grounded answers that link to transcripts.
+- **Remember:** the SQLite store is the source of truth. Barvis (an Odysseus fork,
+  chosen in `docs/frontend-decision.md`) reaches it only through our MCP server and
+  lets the owner ask questions and get grounded answers that link to transcripts.
 
 **Privacy is the core constraint.** No audio, transcript, summary or derived
 fact leaves the owner's network. Cloud APIs are allowed only for development
@@ -67,14 +69,14 @@ doc is under review; Phase 3 waits for the owner's frontend decision.
 1. Branch from `main`: `feature/<short-name>` (docs: `docs/<short-name>`).
 2. Implement with tests; run the checks in AGENTS.md.
 3. Small commits with descriptive messages. Never commit secrets or audio.
-4. Push and open a PR. List anything that still needs real-device testing.
+4. Push and open a PR into `main` (agents never merge or push to `main`). List
+   anything that still needs real-device testing.
 5. Update PROGRESS.md: done, next, open questions for the owner.
 
 ## Rules
 - Never merge without review and passing checks.
-- If stuck after 3 attempts on the same problem, delegate to a subagent; if
-  that fails, write the blocker in PROGRESS.md and move on to the next
-  feature that doesn't depend on it.
-- Don't build the knowledge-layer integration before the owner picks a
-  frontend.
+- If stuck after 3 failed attempts on the same problem, stop and end your reply
+  with `ESCALATE: <reason>`. Write the blocker in PROGRESS.md.
+- The frontend is decided (Barvis). Barvis-side work goes in the Barvis repo; changes
+  to the MCP tool contract follow the rules in AGENTS.md.
 - Leave `orchestrator/` alone unless asked.

@@ -1,4 +1,7 @@
-# convo-ai server
+# barvis-sound server
+
+The `convo_server` package (CLI `convo-server`, env prefix `CONVO_`) keeps the project's
+old name, convo-ai. Don't rename it.
 
 Device-agnostic ingestion + processing pipeline. Everything runs on this machine:
 Silero VAD, whisper.cpp, ECAPA speaker embeddings (SpeechBrain), llama-server, SQLite.

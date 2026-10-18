@@ -34,6 +34,7 @@ conversation, and the answer contains the expected fact. "Content" counts the fa
 | **Hermes, as above + citation hint in tool results** | **15** | **20** | 20 | 15 | 16 |
 | Odysseus, "Regular tools" mode + instructions in a Custom preset | 1 | 9 | 13 | 2 | 46 |
 | **Odysseus, as above + citation hint in tool results** | **3** | 10 | 13 | 4 | 44 |
+| **Barvis fork** (trusted read-only MCP, web-routing fix, built-ins trimmed), approvals *denied* | **9** | 18 | 20 | 9 | 15 |
 
 What the test found:
 
@@ -89,6 +90,15 @@ network they must be offered the source; a public fork does that. The convo serv
 separate program reached over MCP, so the AGPL doesn't extend to it.
 
 **Done when** the fork passes the same 20 questions at least as well as tuned Hermes (15/20).
+
+**Progress (2026-10-18, fork `SDarioosh/Barvis`, PR SDarioosh/Barvis#1):**
+steps 1–3 are done, plus one extra fix: Odysseus counted every MCP call as an unverified
+external change and appended "External operation … not independently verified" to answers.
+Result: 9/20, up from 3/20. Every question now uses the convo tools, 18/20 answers contain the
+right fact, and the average time dropped from 44 s to 15 s (15 tools sent instead of 101).
+Approval prompts were denied in this run, so nothing passed by clicking "allow".
+What's left is citation: 9 of the 11 failures have the right answer but no transcript link,
+and 2 ended as a bare "Done." (the model returned empty text after its tool calls).
 
 ---
 
