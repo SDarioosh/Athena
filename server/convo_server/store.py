@@ -123,6 +123,30 @@ CREATE TABLE IF NOT EXISTS embeddings (
     PRIMARY KEY (kind, ref_id)
 );
 
+-- Voice embeddings of unnamed speakers ("Speaker 1") per session, so naming a speaker
+-- later can also teach the diarizer that voice.
+CREATE TABLE IF NOT EXISTS speaker_candidates (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    PRIMARY KEY (session_id, label)
+);
+
+-- Line-level full-text index for "what did X say about Y" (kept in sync by triggers).
+CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
+    text, content='segments', content_rowid='id', tokenize = 'porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS segments_ai AFTER INSERT ON segments BEGIN
+    INSERT INTO segments_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS segments_ad AFTER DELETE ON segments BEGIN
+    INSERT INTO segments_fts(segments_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS segments_au AFTER UPDATE OF text ON segments BEGIN
+    INSERT INTO segments_fts(segments_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    INSERT INTO segments_fts(rowid, text) VALUES (new.id, new.text);
+END;
+
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
     kind UNINDEXED, ref_id UNINDEXED, conversation_id UNINDEXED, body,
     tokenize = 'porter unicode61'
@@ -160,6 +184,10 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._conn.executescript(SCHEMA)
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 2:
+            # databases created before the line-level index existed
+            self._conn.execute("INSERT INTO segments_fts(segments_fts) VALUES ('rebuild')")
+            self._conn.execute("PRAGMA user_version = 2")
 
     def close(self) -> None:
         self._conn.close()
@@ -394,6 +422,97 @@ class Store:
             c.execute("INSERT INTO search_fts VALUES ('transcript', ?, ?, ?)",
                       (conv_id, conv_id, transcript))
 
+    def search_segments(self, *, query: str | None = None, speaker: str | None = None,
+                        since: float | None = None, until: float | None = None,
+                        limit: int = 20) -> list[dict[str, Any]]:
+        """Transcript lines filtered by speaker/time, ranked by ``query`` if given.
+
+        Without a query, lines come back in chronological order.
+        """
+        cols = ("s.id, s.conversation_id, s.started_at, s.ended_at, s.speaker, s.is_owner,"
+                " s.text, c.title AS conversation_title, c.started_at AS conversation_at")
+        where = ["s.conversation_id IS NOT NULL"]
+        params: list[Any] = []
+        if speaker:
+            where.append("s.speaker = ? COLLATE NOCASE")
+            params.append(speaker)
+        if since is not None:
+            where.append("s.started_at >= ?")
+            params.append(since)
+        if until is not None:
+            where.append("s.started_at < ?")
+            params.append(until)
+        q = _fts_query(query or "")
+        if q:
+            sql = (f"SELECT {cols}, bm25(segments_fts) AS score FROM segments_fts"
+                   " JOIN segments s ON s.id = segments_fts.rowid"
+                   " JOIN conversations c ON c.id = s.conversation_id"
+                   f" WHERE segments_fts MATCH ? AND {' AND '.join(where)}"
+                   " ORDER BY score LIMIT ?")
+            return self._q(sql, [q, *params, limit])
+        sql = (f"SELECT {cols} FROM segments s JOIN conversations c ON c.id = s.conversation_id"
+               f" WHERE {' AND '.join(where)} ORDER BY s.started_at LIMIT ?")
+        return self._q(sql, [*params, limit])
+
+    def speaker_stats(self) -> list[dict[str, Any]]:
+        return self._q(
+            "SELECT speaker AS name, MAX(is_owner) AS is_owner, COUNT(*) AS lines,"
+            " COUNT(DISTINCT conversation_id) AS conversations, MAX(started_at) AS last_heard"
+            " FROM segments WHERE conversation_id IS NOT NULL GROUP BY speaker COLLATE NOCASE"
+            " ORDER BY last_heard DESC")
+
+    def mentioned_people(self) -> list[dict[str, Any]]:
+        return self._q(
+            "SELECT p.name, COUNT(*) AS conversations, MAX(c.started_at) AS last_mentioned"
+            " FROM conversation_people p JOIN conversations c ON c.id = p.conversation_id"
+            " GROUP BY p.name ORDER BY last_mentioned DESC")
+
+    def list_facts(self, *, subject: str | None = None, query: str | None = None,
+                   limit: int = 50) -> list[dict[str, Any]]:
+        sql = ("SELECT f.*, c.title AS conversation_title, c.started_at AS conversation_at"
+               " FROM facts f JOIN conversations c ON c.id = f.conversation_id WHERE 1=1")
+        params: list[Any] = []
+        if subject:
+            sql += " AND f.subject LIKE ? COLLATE NOCASE"
+            params.append(f"%{subject}%")
+        if query:
+            ids = [r["ref_id"] for r in self.fts_search(query, limit=200) if r["kind"] == "fact"]
+            if not ids:
+                return []
+            sql += f" AND f.id IN ({','.join('?' * len(ids))})"
+            params += [int(i) for i in ids]
+        sql += " ORDER BY c.started_at DESC, f.id LIMIT ?"
+        return self._q(sql, [*params, limit])
+
+    def put_speaker_candidates(self, session_id: str, centroids: dict[str, np.ndarray]) -> None:
+        with self.tx() as c:
+            c.execute("DELETE FROM speaker_candidates WHERE session_id = ?", (session_id,))
+            c.executemany("INSERT INTO speaker_candidates VALUES (?, ?, ?)",
+                          [(session_id, label, np.asarray(v, dtype=np.float32).tobytes())
+                           for label, v in centroids.items()])
+
+    def rename_speaker(self, conv_id: str, label: str, name: str) -> tuple[int, np.ndarray | None]:
+        """Rename ``label`` to ``name`` within one conversation.
+
+        Returns (lines changed, averaged voice embedding of that label if known). The
+        conversation is marked pending so the worker re-summarizes it with the real name.
+        """
+        with self.tx() as c:
+            sessions = [r["session_id"] for r in c.execute(
+                "SELECT DISTINCT session_id FROM segments WHERE conversation_id = ?"
+                " AND speaker = ?", (conv_id, label))]
+            n = c.execute("UPDATE segments SET speaker = ? WHERE conversation_id = ?"
+                          " AND speaker = ?", (name, conv_id, label)).rowcount
+            vecs = [np.frombuffer(r["embedding"], dtype=np.float32) for r in c.execute(
+                f"SELECT embedding FROM speaker_candidates WHERE label = ? AND session_id IN"
+                f" ({','.join('?' * len(sessions))})", (label, *sessions))] if sessions else []
+            if n:
+                c.execute("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
+                          (conv_id, name))
+                c.execute("UPDATE conversations SET status = 'pending', updated_at = ?"
+                          " WHERE id = ?", (time.time(), conv_id))
+        return n, (np.mean(vecs, axis=0) if vecs else None)
+
     def delete_empty_conversations(self) -> int:
         with self.tx() as c:
             ids = [r["id"] for r in c.execute(
@@ -432,9 +551,10 @@ class Store:
             sql += " AND started_at <= ?"
             params.append(until)
         if person:
-            sql += (" AND id IN (SELECT conversation_id FROM conversation_people"
-                    " WHERE name = ?)")
-            params.append(person)
+            sql += (" AND (id IN (SELECT conversation_id FROM conversation_people"
+                    " WHERE name = ?) OR id IN (SELECT conversation_id FROM segments"
+                    " WHERE speaker = ? COLLATE NOCASE))")
+            params += [person, person]
         sql += " ORDER BY started_at DESC LIMIT ?"
         params.append(limit)
         rows = self._q(sql, params)
@@ -495,6 +615,16 @@ class Store:
         return json.loads(row["content"]) if row else None
 
     # ---------------------------------------------------------------- speakers
+    def add_voice_sample(self, name: str, embedding: np.ndarray) -> None:
+        """Teach the diarizer a voice: average into an existing speaker or create one."""
+        row = self._one("SELECT embedding, is_owner FROM speakers WHERE name = ?", (name,))
+        vec = np.asarray(embedding, dtype=np.float32)
+        if row:
+            old = np.frombuffer(row["embedding"], dtype=np.float32)
+            vec = old / (np.linalg.norm(old) or 1) + vec / (np.linalg.norm(vec) or 1)
+        self.put_speaker(name, vec / (np.linalg.norm(vec) or 1),
+                         bool(row["is_owner"]) if row else False)
+
     def put_speaker(self, name: str, embedding: np.ndarray, is_owner: bool) -> None:
         with self.tx() as c:
             if is_owner:

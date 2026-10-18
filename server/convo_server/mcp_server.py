@@ -1,0 +1,314 @@
+"""MCP server over the convo-ai store: the knowledge layer for any frontend.
+
+Frontends (Hermes Agent, Odysseus, ...) connect over stdio (``convo-server mcp``) or
+Streamable HTTP with a bearer token (``convo-server mcp --http``). The SQLite store stays
+the source of truth; tools return compact text with a link to the transcript for every
+claim so the frontend's model can cite sources.
+"""
+
+from __future__ import annotations
+
+import hmac
+from datetime import datetime, timedelta
+from typing import Annotated, Any
+from zoneinfo import ZoneInfo
+
+from pydantic import Field
+
+from .config import Settings
+from .links import local_time, transcript_link
+from .search import Embedder, search
+from .store import Store
+
+INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
+with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
+for any question about what someone said, decided, promised or mentioned, and before \
+answering from memory. Ground every claim in tool results and include the link given \
+with it. Dates are in the user's timezone; pass dates as YYYY-MM-DD. If a speaker is \
+unnamed ("Speaker 1") and the user says who it was, call name_speaker."""
+
+Text = Annotated[str, Field(description="Free-text words to look for; empty = no text filter")]
+Person = Annotated[str, Field(description="Person's name as it appears in transcripts")]
+Since = Annotated[str, Field(description="Start date YYYY-MM-DD (inclusive) or ISO time")]
+Until = Annotated[str, Field(description="End date YYYY-MM-DD (inclusive) or ISO time")]
+ConvId = Annotated[str, Field(description="conversation id from a previous result")]
+
+
+def parse_when(value: str, tz: ZoneInfo, *, end: bool = False) -> float | None:
+    """'' -> None; 'YYYY-MM-DD' -> local midnight (``end``: midnight after); ISO -> as given."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        day = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=tz)
+        return (day + timedelta(days=1) if end else day).timestamp()
+    except ValueError:
+        pass
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise ValueError(f"bad date {value!r}; use YYYY-MM-DD") from e
+    return (dt if dt.tzinfo else dt.replace(tzinfo=tz)).timestamp()
+
+
+def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None):
+    from mcp.server.mcpserver import MCPServer
+    from mcp.types import ToolAnnotations
+
+    tz = ZoneInfo(settings.timezone)
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.1.0")
+    ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+    rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
+                         open_world_hint=False)
+
+    def when(ts: float | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
+        return local_time(settings, ts, fmt) or "?"
+
+    def window(since: str, until: str) -> tuple[float | None, float | None]:
+        return parse_when(since, tz), parse_when(until, tz, end=True)
+
+    def header(n: int, what: str) -> str:
+        return f"{n} {what} (times are {settings.timezone}):" if n else f"No {what} found."
+
+    @mcp.tool(annotations=ro)
+    def search_transcripts(speaker: Person = "", query: Text = "", since: Since = "",
+                           until: Until = "", limit: int = 30) -> str:
+        """Find what was actually said: transcript lines filtered by speaker and date range,
+        optionally matching words. Use for "what did X say (about Y) (on/last DATE)".
+        Without a query, lines are returned in time order."""
+        a, b = window(since, until)
+        rows = store.search_segments(query=query or None, speaker=speaker or None,
+                                     since=a, until=b, limit=max(1, min(limit, 200)))
+        if not rows and speaker:
+            known = ", ".join(r["name"] for r in store.speaker_stats()[:20])
+            return f"No lines by {speaker!r} in that range. Known speakers: {known or 'none'}."
+        lines = [header(len(rows), "transcript lines")]
+        for r in rows:
+            link = transcript_link(settings, r["conversation_id"],
+                                   r["started_at"] - r["conversation_at"])
+            lines.append(f"- {when(r['started_at'])} {r['speaker']}: \"{r['text']}\" "
+                         f"(conversation \"{r['conversation_title'] or 'untitled'}\", "
+                         f"id {r['conversation_id']}) {link}")
+        return "\n".join(lines)
+
+    @mcp.tool(annotations=ro)
+    def search_conversations(query: Text = "", person: Person = "", since: Since = "",
+                             until: Until = "", limit: int = 10) -> str:
+        """Find conversations by topic words, a person who spoke or was mentioned, and/or a
+        date range. Returns titles, summaries and links; use get_conversation for details."""
+        a, b = window(since, until)
+        limit = max(1, min(limit, 50))
+        if query:
+            hits = search(store, query, embedder, limit=limit * 5)
+            allowed = None
+            if person or a is not None or b is not None:
+                allowed = {c["id"] for c in store.list_conversations(
+                    since=a, until=b, person=person or None, limit=10_000)}
+            convs = [store.get_conversation(h["conversation_id"]) for h in hits
+                     if allowed is None or h["conversation_id"] in allowed][:limit]
+        else:
+            convs = store.list_conversations(since=a, until=b, person=person or None,
+                                             limit=limit)
+        convs = [c for c in convs if c]
+        lines = [header(len(convs), "conversations")]
+        for c in convs:
+            lines.append(
+                f"- {when(c['started_at'])}–{when(c['ended_at'], '%H:%M')} "
+                f"\"{c['title'] or 'untitled (summary pending)'}\" id {c['id']}; people: "
+                f"{', '.join(c['people']) or '—'}\n  {c['summary'] or ''}\n  "
+                f"{transcript_link(settings, c['id'])}")
+        return "\n".join(lines)
+
+    @mcp.tool(annotations=ro)
+    def get_conversation(conversation_id: ConvId) -> str:
+        """Summary, key points, action items and facts of one conversation, with links."""
+        c = store.get_conversation(conversation_id)
+        if c is None:
+            return f"No conversation {conversation_id!r}."
+        speakers = sorted({s.speaker for s in store.conversation_segments(conversation_id)})
+        out = [f"\"{c['title'] or 'untitled'}\" — {when(c['started_at'])}–"
+               f"{when(c['ended_at'], '%H:%M')} ({settings.timezone}), device {c['device']}",
+               f"Speakers: {', '.join(speakers) or '—'}. People: {', '.join(c['people']) or '—'}",
+               f"Link: {transcript_link(settings, c['id'])}",
+               f"Summary: {c['summary'] or '(pending)'}"]
+        out += [f"* {k}" for k in c["key_points"]]
+        out += [_item(a, settings, c) for a in c["action_items"]]
+        out += [f"Fact [{f['subject']}]: {f['fact']} " + _src(f, settings, c)
+                for f in c["facts"]]
+        return "\n".join(out)
+
+    @mcp.tool(annotations=ro)
+    def get_transcript(conversation_id: ConvId, start_seconds: float = 0,
+                       end_seconds: float = -1, max_lines: int = 200) -> str:
+        """Transcript lines of a conversation. start/end are seconds from its start
+        (end -1 = to the end)."""
+        c = store.get_conversation(conversation_id)
+        if c is None:
+            return f"No conversation {conversation_id!r}."
+        origin = c["started_at"]
+        segs = [s for s in store.conversation_segments(conversation_id)
+                if s.started_at - origin >= start_seconds
+                and (end_seconds < 0 or s.started_at - origin <= end_seconds)]
+        more = len(segs) > max_lines
+        link = transcript_link(settings, c["id"])
+        out = [f"\"{c['title'] or 'untitled'}\" {when(origin)} {link}"]
+        out += [f"[{int(s.started_at - origin)}s {when(s.started_at, '%H:%M:%S')}] "
+                f"{s.speaker}: {s.text}" for s in segs[:max_lines]]
+        if more:
+            out.append(f"… {len(segs) - max_lines} more lines; call again with a later "
+                       "start_seconds.")
+        return "\n".join(out)
+
+    @mcp.tool(annotations=ro)
+    def list_action_items(status: Annotated[str, Field(description="open, done, dismissed or all")]
+                          = "open", person: Person = "", since: Since = "",
+                          until: Until = "") -> str:
+        """Action items from conversations (default: open ones), newest first."""
+        a, b = window(since, until)
+        rows = store.list_action_items(None if status == "all" else status)
+        rows = [r for r in rows
+                if (a is None or r["conversation_at"] >= a)
+                and (b is None or r["conversation_at"] < b)
+                and (not person or person.lower() in (r["owner"] or "").lower())]
+        lines = [header(len(rows), f"{status} action items")]
+        for r in rows:
+            lines.append(f"- #{r['id']} [{r['status']}] {r['text']}"
+                         + (f" (owner {r['owner']})" if r["owner"] else "")
+                         + (f" due {r['due']}" if r["due"] else "")
+                         + f" — from \"{r['conversation_title']}\" {when(r['conversation_at'])} "
+                         + transcript_link(settings, r["conversation_id"],
+                                           (r["source_at"] or r["conversation_at"])
+                                           - r["conversation_at"]))
+        return "\n".join(lines)
+
+    @mcp.tool(annotations=rw)
+    def update_action_item(item_id: int, status: Annotated[
+            str, Field(description="open, done or dismissed")]) -> str:
+        """Mark an action item done/dismissed (or reopen it). Only when the user asks."""
+        if status not in {"open", "done", "dismissed"}:
+            return "status must be open, done or dismissed"
+        ok = store.set_action_item_status(item_id, status)
+        return f"Action item #{item_id} is now {status}." if ok else f"No action item #{item_id}."
+
+    @mcp.tool(annotations=ro)
+    def list_facts(subject: Annotated[str, Field(description="Person/thing the fact is about")]
+                   = "", query: Text = "", limit: int = 50) -> str:
+        """Durable facts learned from conversations (preferences, plans, relationships...)."""
+        rows = store.list_facts(subject=subject or None, query=query or None,
+                                limit=max(1, min(limit, 200)))
+        lines = [header(len(rows), "facts")]
+        for f in rows:
+            off = (f["source_at"] or f["conversation_at"]) - f["conversation_at"]
+            lines.append(f"- [{f['subject']}] {f['fact']} (learned "
+                         f"{when(f['conversation_at'], '%Y-%m-%d')}) "
+                         + transcript_link(settings, f["conversation_id"], off))
+        return "\n".join(lines)
+
+    @mcp.tool(annotations=ro)
+    def get_daily_digest(date: Annotated[str, Field(description="YYYY-MM-DD")]) -> str:
+        """The daily digest for a date: headline, summary, highlights, open action items."""
+        d = store.get_digest(date)
+        if d is None:
+            return f"No digest for {date}. Try search_conversations with since/until = {date}."
+        out = [f"{date}: {d['headline']}", d["summary"]]
+        out += [f"* {h}" for h in d.get("highlights", [])]
+        out += [f"TODO: {t}" for t in d.get("open_action_items", [])]
+        out += [f"Conversation: {transcript_link(settings, cid)}"
+                for cid in d.get("conversation_ids", [])]
+        return "\n".join(out)
+
+    @mcp.tool(annotations=ro)
+    def list_people() -> str:
+        """Speakers heard in transcripts (named, enrolled, and unnamed 'Speaker N' labels)
+        and people mentioned in conversations."""
+        enrolled = {s["name"] for s in store.speakers()}
+        spk = store.speaker_stats()
+        out = ["Speakers:"]
+        out += [f"- {s['name']}{' (owner)' if s['is_owner'] else ''}"
+                f"{' (voice known)' if s['name'] in enrolled else ''}: {s['lines']} lines in "
+                f"{s['conversations']} conversations, last {when(s['last_heard'])}"
+                for s in spk]
+        out.append("Mentioned:")
+        out += [f"- {p['name']}: {p['conversations']} conversations, last "
+                f"{when(p['last_mentioned'], '%Y-%m-%d')}" for p in store.mentioned_people()]
+        return "\n".join(out)
+
+    @mcp.tool(annotations=rw)
+    def name_speaker(conversation_id: ConvId,
+                     speaker_label: Annotated[str, Field(description="e.g. 'Speaker 1'")],
+                     name: Annotated[str, Field(description="The person's real name")],
+                     remember_voice: bool = True) -> str:
+        """Rename an unnamed speaker in one conversation (e.g. 'Speaker 1' -> 'Alice') when
+        the user says who it was. With remember_voice, future recordings recognise them."""
+        name = name.strip()
+        if not name:
+            return "name must not be empty"
+        n, voice = store.rename_speaker(conversation_id, speaker_label, name)
+        if not n:
+            return f"No lines by {speaker_label!r} in conversation {conversation_id}."
+        msg = f"Renamed {n} lines from {speaker_label} to {name}; the summary will be redone."
+        if remember_voice:
+            if voice is not None:
+                store.add_voice_sample(name, voice)
+                msg += f" {name}'s voice will be recognised in new recordings."
+            else:
+                msg += " (No voice sample stored for that label, so it can't be remembered.)"
+        return msg
+
+    return mcp
+
+
+def _src(item: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:
+    off = (item.get("source_at") or conv["started_at"]) - conv["started_at"]
+    return transcript_link(settings, conv["id"], off)
+
+
+def _item(a: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:
+    return (f"Action #{a['id']} [{a['status']}]: {a['text']}"
+            + (f" (owner {a['owner']})" if a.get("owner") else "")
+            + (f" due {a['due']}" if a.get("due") else "") + " " + _src(a, settings, conv))
+
+
+class BearerAuth:
+    """ASGI middleware: require the MCP token on every HTTP request.
+
+    Accepts ``Authorization: Bearer <token>`` (Hermes) or ``?access_token=<token>`` in the
+    URL, because some clients (Odysseus) only support OAuth and can't send a static
+    header. Keep the HTTP transport on loopback / the docker bridge / Tailscale.
+    """
+
+    def __init__(self, app: Any, token: str) -> None:
+        self.app = app
+        self.token = token.encode()
+
+    def _ok(self, scope: dict) -> bool:
+        headers = dict(scope.get("headers") or [])
+        scheme, _, value = headers.get(b"authorization", b"").partition(b" ")
+        if scheme.lower() == b"bearer" and hmac.compare_digest(value, self.token):
+            return True
+        from urllib.parse import parse_qs
+
+        query = parse_qs((scope.get("query_string") or b"").decode())
+        given = (query.get("access_token") or [""])[0].encode()
+        return bool(given) and hmac.compare_digest(given, self.token)
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and not self._ok(scope):
+            await send({"type": "http.response.start", "status": 401,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"unauthorized"})
+            return
+        await self.app(scope, receive, send)
+
+
+def run(settings: Settings, store: Store, embedder: Embedder | None, http: bool) -> None:
+    mcp = build_mcp(store, settings, embedder)
+    if not http:
+        mcp.run("stdio")
+        return
+    if not settings.mcp_token or len(settings.mcp_token) < 16:
+        raise SystemExit("set CONVO_MCP_TOKEN (>= 16 chars) to serve MCP over HTTP")
+    import uvicorn
+
+    app = BearerAuth(mcp.streamable_http_app(host=settings.mcp_host), settings.mcp_token)
+    uvicorn.run(app, host=settings.mcp_host, port=settings.mcp_port)

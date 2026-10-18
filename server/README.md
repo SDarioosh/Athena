@@ -69,8 +69,54 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 
 Read API: `/v1/conversations`, `/v1/conversations/{id}`, `/v1/conversations/{id}/transcript`
 (`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items`, `/v1/digests/{date}`,
-`/v1/sessions`, `/v1/speakers`. Action items and facts carry `source_url`
-(`…/transcript#t=<seconds>`) so answers can link back to the transcript.
+`/v1/sessions`, `/v1/speakers`. Conversations carry a signed `link`, and action items and
+facts a `source_url`, of the form `<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`: an HTML
+transcript page that opens in a phone browser without the bearer token and jumps to that
+moment. Rotating `CONVO_INGEST_TOKEN` revokes all links.
+
+## Knowledge layer (MCP)
+
+`convo-server mcp` exposes the store to any MCP-capable frontend. The store stays the
+source of truth, so the frontend can be swapped. Tools:
+
+| tool | answers |
+|---|---|
+| `search_transcripts(speaker, query, since, until)` | "what did X say (about Y) on/since DATE": actual lines, with links |
+| `search_conversations(query, person, since, until)` | conversations by topic / person / date |
+| `get_conversation(id)`, `get_transcript(id, start_seconds, end_seconds)` | details |
+| `list_action_items(status, person, since, until)`, `update_action_item(id, status)` | to-dos |
+| `list_facts(subject, query)`, `get_daily_digest(date)`, `list_people()` | memory |
+| `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, and learns the voice so future recordings say Alice |
+
+Dates are `YYYY-MM-DD` in `CONVO_TIMEZONE`. Set `CONVO_PUBLIC_URL` to the address your
+phone uses (e.g. the server's Tailscale IP) so links work there.
+
+**Hermes** (stdio; add to the profile's `config.yaml`):
+
+```yaml
+mcp_servers:
+  convo:
+    command: /home/steam/projects/barvis-ai/server/.venv/bin/convo-server
+    args: [mcp]
+    env:
+      CONVO_INGEST_TOKEN: ${CONVO_INGEST_TOKEN}     # put the value in the profile's .env
+      CONVO_DATA_DIR: /home/steam/projects/barvis-ai/server/data
+      CONVO_TIMEZONE: Europe/Berlin
+      CONVO_PUBLIC_URL: http://<tailscale-ip>:8000
+    timeout: 120
+    connect_timeout: 30
+```
+
+**Odysseus** (Docker; Streamable HTTP). Its MCP client only does OAuth, so the token goes in
+the URL:
+
+```bash
+CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 convo-server mcp --http   # docker bridge IP
+# Odysseus → Settings → MCP → add HTTP server:
+#   http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>
+```
+
+Use only a local model in whichever frontend reads this. Results contain your transcripts.
 
 ## Checks
 

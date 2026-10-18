@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -61,11 +61,25 @@ class Settings(BaseSettings):
     speaker_cluster_threshold: float = 0.45  # cosine similarity to merge clusters
     owner_name: str = "Me"
 
-    @field_validator("ingest_token")
+    # --- knowledge layer ---
+    # Base URL used in transcript links handed to the frontend, e.g. the server's
+    # Tailscale address: http://100.64.0.10:8000. Defaults to http://<host>:<port>.
+    public_url: str | None = None
+    # MCP over Streamable HTTP (for frontends that can't spawn a stdio process, e.g.
+    # Odysseus in Docker). stdio needs no token; HTTP refuses to start without one.
+    mcp_token: str | None = None
+    mcp_host: str = "127.0.0.1"
+    mcp_port: int = 8001
+
+    @property
+    def base_url(self) -> str:
+        return (self.public_url or f"http://{self.host}:{self.port}").rstrip("/")
+
+    @field_validator("ingest_token", "mcp_token")
     @classmethod
-    def _not_placeholder(cls, v: str) -> str:
-        if v.lower().startswith("change-me"):
-            raise ValueError("CONVO_INGEST_TOKEN still has the placeholder value")
+    def _not_placeholder(cls, v: str | None, info: ValidationInfo) -> str | None:
+        if v is not None and v.lower().startswith("change-me"):
+            raise ValueError(f"CONVO_{info.field_name.upper()} still has the placeholder value")
         return v
 
     @property

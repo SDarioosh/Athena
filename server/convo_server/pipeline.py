@@ -26,7 +26,7 @@ import numpy as np
 from . import audio as audio_mod
 from .config import Settings
 from .conversations import split_on_gaps
-from .diarize import Diarizer
+from .diarize import Diarizer, load_voices
 from .llm import Summarizer
 from .search import Embedder, index_conversation
 from .store import Segment, Store
@@ -212,8 +212,10 @@ class Pipeline:
         pieces.sort(key=lambda p: p[0])
         labels = None
         if self.diarizer is not None and pieces:
-            labels = self.diarizer.label([p[3] for p in pieces],
-                                         [(p[0] + p[1]) / 2 for p in pieces])
+            self.diarizer.voices = load_voices(self.store)  # pick up newly named speakers
+            labels, unnamed = self.diarizer.diarize([p[3] for p in pieces],
+                                                    [(p[0] + p[1]) / 2 for p in pieces])
+            self.store.put_speaker_candidates(session_id, unnamed)
         segments = []
         for i, (s, e, text, _) in enumerate(pieces):
             name, owner = (labels[i].name, labels[i].is_owner) if labels else ("Unknown", False)

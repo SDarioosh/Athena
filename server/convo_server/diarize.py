@@ -105,21 +105,36 @@ class Diarizer:
         self.min_seconds = min_seconds
 
     def label(self, clips: list[np.ndarray], times: list[float]) -> list[SpeakerLabel]:
-        """Label each clip; ``times`` (clip midpoints) are used for short-clip fallback."""
+        return self.diarize(clips, times)[0]
+
+    def diarize(self, clips: list[np.ndarray], times: list[float]
+                ) -> tuple[list[SpeakerLabel], dict[str, np.ndarray]]:
+        """Label each clip; ``times`` (clip midpoints) are used for short-clip fallback.
+
+        Also returns the voice centroid of every *unnamed* speaker ("Speaker N"), so the
+        speaker can be named later and recognised from then on.
+        """
         if not clips:
-            return []
+            return [], {}
         min_len = int(self.min_seconds * SAMPLE_RATE)
         idx = [i for i, c in enumerate(clips) if c.size >= min_len]
         if not idx:
             # nothing long enough on its own: treat all clips as one speaker
             joint = np.concatenate(clips)
             label = SpeakerLabel("Speaker 1", False)
+            unnamed: dict[str, np.ndarray] = {}
             if joint.size >= min_len:
-                label = self._match(self.embedder.embed(joint), set()) or label
-            return [label] * len(clips)
+                emb = self.embedder.embed(joint)
+                match = self._match(emb, set())
+                if match:
+                    label = match
+                else:
+                    unnamed[label.name] = emb
+            return [label] * len(clips), unnamed
         embs = np.stack([self.embedder.embed(clips[i]) for i in idx])
         cids = cluster(embs, self.cluster_threshold)
         names: dict[int, SpeakerLabel] = {}
+        unnamed: dict[str, np.ndarray] = {}
         unknown = 0
         taken: set[str] = set()
         for cid in sorted(set(cids)):
@@ -128,6 +143,7 @@ class Diarizer:
             if label is None:
                 unknown += 1
                 label = SpeakerLabel(f"Speaker {unknown}", False)
+                unnamed[label.name] = centroid
             else:
                 taken.add(label.name)
             names[cid] = label
@@ -140,7 +156,7 @@ class Diarizer:
             if out[i] is None:
                 nearest = idx_arr[np.argmin(np.abs(t[idx_arr] - t[i]))]
                 out[i] = out[int(nearest)]
-        return [o for o in out if o is not None]
+        return [o for o in out if o is not None], unnamed
 
     def _match(self, centroid: np.ndarray, taken: set[str]) -> SpeakerLabel | None:
         best: tuple[float, EnrolledVoice] | None = None
