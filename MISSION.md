@@ -1,94 +1,80 @@
-You are building convo-ai in this repository. Read AGENTS.md
-first; it describes the hardware, architecture, and checks.
+You are building convo-ai in this repository. Read AGENTS.md first; it describes
+the devices, architecture, privacy rules, and checks.
 
 ## Goal
-Build a conversation-recording wearable using Amazfit T-Rex 3 Pro with:
-- Zepp OS Mini Program on watch (JavaScript, built with zeus-cli)
-- 30-second Opus chunks recorded by @zos/media Recorder
-- Chunks transferred watch → phone via @zos/ble/TransferFile
-- Side Service on phone uploads chunks to server over HTTP
-- Server runs Silero VAD for silence detection, triggers stop after N min silence
-- Full pipeline: whisper.cpp transcription, diarization, summaries, SQLite
 
-**Key changes from T-Watch plan:**
-- No firmware work; all watch code is Zepp OS Mini Program
-- Recording managed by app, not hardware-level VAD
-- Server handles silence detection and stop signaling
-- Side Service acts as bridge between watch and server
+A private, fully local system that captures conversations from two wearables,
+turns them into transcripts and structured knowledge with local models, and
+makes that knowledge available in a personal memory/knowledge frontend.
 
-**Inspiration:** Bee Frontier, Bee Pro, Plaude — but using Amazfit hardware and Zepp OS.
+- **Capture:** an Omi pendant (BLE Opus audio, offline storage) and an Amazfit
+  T-Rex 3 Pro (Zepp OS 5 Mini Program recording 30-second Opus chunks; the
+  phone-side Side Service uploads them).
+- **Process (this Ubuntu server):** one device-agnostic ingestion API →
+  Silero VAD → whisper.cpp → speaker diarization with the owner's voice
+  enrolled → conversations split on gaps > 3 minutes → llama-server
+  structured output (title, summary, key points, action items, people,
+  topics, durable facts) and a daily digest → SQLite (+ FTS5, embeddings).
+- **Remember:** the SQLite store is the source of truth; a frontend (Hermes
+  Agent or Odysseus, decision pending in `docs/frontend-decision.md`) lets the
+  owner ask questions and get grounded answers that link to transcripts.
+
+**Privacy is the core constraint.** No audio, transcript, summary or derived
+fact leaves the owner's network. Cloud APIs are allowed only for development
+tooling (coding agents, downloading model weights), never in the data path.
+Raw audio is deleted after successful transcription by default.
+
+The earlier LilyGO T-Watch / custom-firmware design is dropped.
 
 ## Plan
-Work through these features in order, one at a time:
 
-### Phase 1: Watch App (Zepp OS Mini Program)
+Work through these phases in order. Phase 2 runs while the Phase 1 decision
+doc is under review; Phase 3 waits for the owner's frontend decision.
 
-1. **Feasibility Test**: Minimal app with Start/Stop button that records
-   30-second Opus chunks, logs chunk count. Test on real device with
-   screen on and off. See PROGRESS.md for build/install instructions.
+### Phase 1: Research and docs
+1. **Omi local ingestion** (`docs/omi-ingestion.md`): the Omi app's developer
+   features, a self-hosted Omi backend, direct BLE via the Omi SDK, and
+   Chronicle; recommend a fully local path and what to adopt or borrow.
+2. **Frontend decision** (`docs/frontend-decision.md`): Hermes vs Odysseus vs a
+   hybrid (our store exposed over MCP). **Stop and wait for the owner's
+   decision.**
+3. **Rewrite AGENTS.md / MISSION.md / PROGRESS.md** for this design.
 
-2. **Full Watch App**: Enhanced UI with recording state, elapsed time,
-   chunk upload count, Stop button. Screen keep-on/dimmed modes.
-   Queue chunks locally if phone/server unreachable.
+### Phase 2: Device-agnostic server (`server/`)
+4. **Ingestion API**: `POST /v1/ingest/chunk` with device, session ID,
+   sequence, timestamp, codec; shared bearer token; idempotent retries;
+   `{"ok": true, "stop": <bool>}` after N minutes of trailing silence or the
+   max session length.
+5. **Pipeline**: reassembly by sequence, Silero VAD, whisper.cpp, diarization
+   with voice enrollment, conversation splitting, structured summaries, daily
+   digest, raw-audio deletion.
+6. **Storage and search**: SQLite with FTS5 and optional local embeddings;
+   read API with transcript links (`…/transcript#t=<seconds>`).
 
-3. **Side Service Integration**: Integrate @zos/ble/TransferFile to send
-   chunks to Side Service, which uploads to server. Handle server
-   "stop": true response to end recording and vibrate.
-
-4. **Server Silence Detection**: POST /upload endpoint that runs Silero
-   VAD, tracks silence per session, returns {"ok": true, "stop": <bool>}.
-   Server reassembles chunks by session/sequence before transcription.
-
-5. **Upload Auth**: Add shared token header requirement for /upload to
-   prevent random devices from posting audio. Token stored outside git.
-
-6. **Server Pipeline**: whisper.cpp transcription, diarization,
-   conversation splitting on gaps > 3 min, llama.cpp summaries,
-   SQLite storage with embedding search, daily digest.
-
-### Phase 2: Server & Mobile App
-
-7. **Mobile App**: Receive chunks from Side Service, display conversation
-   list, transcripts, summaries, search. Settings for voice enrollment,
-  auto-delete raw audio.
-
-8. **Full System Integration**: End-to-end test with real device, phone,
-   and server.
+### Phase 3: After the frontend decision
+7. **Knowledge-layer integration**: the chosen frontend (likely via an MCP
+   server over our store) with grounded, linked answers; action items →
+   tasks/notifications.
+8. **Omi ingestion path**: the recommended local relay feeding the ingestion
+   API, including offline-storage sync.
+9. **T-Rex 3 Pro Zepp app**: first a test app (Start/Stop, 30 s Opus chunks,
+   chunk counter) to check on the real device whether recording survives with
+   the screen off; then the full app, Side Service upload, and server-driven
+   stop with vibration.
+10. **End-to-end test** with real devices, phone and server.
 
 ## Process for each feature
-1. Create a branch: feature/<short-name>.
-2. For watch app: implement in zepp-app/, test build with `zeus build`,
-   install on device in developer mode.
-3. For server: implement with tests, run checks in AGENTS.md.
-4. Commit, push.
-5. Get review via delegate_task. Fix issues if needed.
-6. Merge, switch back to main and pull.
-7. Update PROGRESS.md: done, next, open questions. Commit to main.
-
-## Zepp OS Mini Program Notes
-- Use @zeppos/zeus-cli for building and testing
-- Refer to Zepp OS docs: https://docs.zepp.com
-- Media Recorder: @zos/media (create, setFormat, start, stop)
-- BLE Transfer: @zos/ble/TransferFile (watch → phone)
-- Side Service runs on phone app, handles upload to server
-- JavaScript-based, not native code
-- Test on real device; simulator may not reflect all behaviors
-- Developer mode required for installation
-
-## Server Notes
-- POST /upload: receives chunk, session ID, sequence number, timestamp
-- Run Silero VAD, track silence, return {"ok": true, "stop": <bool>}
-- Reassemble chunks by session/sequence before transcription
-- Auth: require shared token header (not committed to git)
-- Pipeline unchanged: whisper.cpp, diarization, splitting, llama.cpp, SQLite
+1. Branch from `main`: `feature/<short-name>` (docs: `docs/<short-name>`).
+2. Implement with tests; run the checks in AGENTS.md.
+3. Small commits with descriptive messages. Never commit secrets or audio.
+4. Push and open a PR. List anything that still needs real-device testing.
+5. Update PROGRESS.md: done, next, open questions for the owner.
 
 ## Rules
-- Never merge without an APPROVE review and passing checks.
-- If you're stuck after 3 rounds or 3 failed attempts on the same
-  problem, delegate the problem to a subagent for help. If that
-  fails too, write the blocker in PROGRESS.md, skip to the next
-  feature that doesn't depend on it, and continue.
-- Never commit secrets or audio files.
-- Note anything that needs testing on real hardware in the PR
-  description.
-- Keep going until every feature is merged or blocked.
+- Never merge without review and passing checks.
+- If stuck after 3 attempts on the same problem, delegate to a subagent; if
+  that fails, write the blocker in PROGRESS.md and move on to the next
+  feature that doesn't depend on it.
+- Don't build the knowledge-layer integration before the owner picks a
+  frontend.
+- Leave `orchestrator/` alone unless asked.
