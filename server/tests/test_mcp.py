@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -68,6 +69,53 @@ def test_lists_tools(mcp):
         "search_transcripts", "search_conversations", "get_conversation", "get_transcript",
         "list_action_items", "update_action_item", "list_facts", "get_daily_digest",
         "list_people", "name_speaker"}
+
+
+AGENTS_MD = Path(__file__).resolve().parents[2] / "AGENTS.md"
+
+
+def contract_table() -> dict[str, str]:
+    """Tool name -> "ro" or "rw", read from the "MCP tool contract" table in AGENTS.md."""
+    section = AGENTS_MD.read_text().split("## MCP tool contract", 1)[1].split("\n## ", 1)[0]
+    table: dict[str, str] = {}
+    for line in section.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) != 2 or not cells[0].startswith("`"):
+            continue
+        kind = "ro" if cells[1].startswith("read-only") else (
+            "rw" if cells[1].startswith("write") else None)
+        assert kind, f"unknown annotation in AGENTS.md: {cells[1]!r}"
+        for name in re.findall(r"`([a-z_]+)`", cells[0]):
+            table[name] = kind
+    return table
+
+
+def test_tool_annotations_match_contract(mcp):
+    """Every tool is in the AGENTS.md contract table with exactly its annotation.
+
+    Barvis runs readOnlyHint tools without approval, so a new tool must be added to the
+    table (and coordinated with Barvis) before this passes.
+    """
+    from mcp import Client
+
+    async def go():
+        async with Client(mcp) as client:
+            return (await client.list_tools()).tools
+
+    contract = contract_table()
+    assert len(contract) == 10  # the table parsed: 8 read-only + 2 write tools
+    tools = {t.name: t.annotations for t in asyncio.run(go())}
+    assert set(tools) == set(contract), (
+        f"not in the AGENTS.md table: {sorted(set(tools) - set(contract))}; "
+        f"in the table but not served: {sorted(set(contract) - set(tools))}")
+    for name, kind in contract.items():
+        a = tools[name]
+        assert a is not None, f"{name} has no annotations"
+        if kind == "ro":
+            assert a.read_only_hint is True, f"{name} must be readOnlyHint: true"
+        else:
+            assert a.read_only_hint is False, f"{name} must be readOnlyHint: false"
+            assert a.destructive_hint is False, f"{name} must be destructiveHint: false"
 
 
 def test_what_did_x_say_on_date(pipeline, mcp):
