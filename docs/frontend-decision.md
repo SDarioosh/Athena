@@ -7,7 +7,92 @@ No `.env`, `auth.json` or other credential files were read.*
 
 ---
 
-## TL;DR recommendation
+## Decision (owner, 2026-10-18)
+
+- **Knowledge layer: hybrid.** Our SQLite store is the source of truth, exposed by our MCP
+  server (`server/convo_server/mcp_server.py`).
+- **Frontend: Odysseus, as a fork named Barvis.** The fork is modified to work with our
+  system and kept in sync with upstream (see "Odysseus fork plan" below).
+- The owner chose this knowing the side-by-side numbers below. The fork's changes target
+  the specific failures the test found.
+
+## Side-by-side results (measured)
+
+Setup: 8 fictional conversations seeded with `server/scripts/seed_demo.py` and summarized
+by the real pipeline. 20 questions (`server/eval/bakeoff.py`), each in a fresh session.
+Same model (qwen3.5-35b on llama-server) and the same MCP server everywhere. Odysseus ran
+as an isolated native copy, not the owner's install.
+
+A question **passes** when the frontend called a convo tool, cited a link to the right
+conversation, and the answer contains the expected fact. "Content" counts the fact alone.
+
+| Frontend | Pass | Content | Used convo tools | Cited link | Avg s |
+|---|---|---|---|---|---|
+| Model + MCP directly (no frontend) | 18 | 18 | 20 | 19 | 7 |
+| Hermes, default config | 1 | 14 | 15 | 1 | 22 |
+| Hermes, `tool_search` off + MCP instructions in `SOUL.md` | 5 | 19 | 20 | 5 | 34 |
+| **Hermes, as above + citation hint in tool results** | **15** | **20** | 20 | 15 | 16 |
+| Odysseus, "Regular tools" mode + instructions in a Custom preset | 1 | 9 | 13 | 2 | 46 |
+| **Odysseus, as above + citation hint in tool results** | **3** | 10 | 13 | 4 | 44 |
+
+What the test found:
+
+- **Hermes.** By default it defers MCP tools behind `tool_search`, and it never forwards an
+  MCP server's `instructions`. With `tools.tool_search.enabled: off` and the instructions in
+  the profile's `SOUL.md`, it used our tools on every question. It still often cited
+  conversations by title instead of by link. The citation hint now at the top of every
+  non-empty tool result fixed most of that. (This corrects the TL;DR below: Hermes does
+  *not* offer MCP tools directly with default settings.)
+- **Odysseus.** Calls to third-party MCP tools are approved one exact operation at a time.
+  After one approved call in a message, any further call to our tools is hard-blocked ("outside
+  server request authority"), so the model can't follow up with a second search or open the
+  conversation to get its link. Other failures:
+  - Questions containing "latest" or "recommend" are classed as web requests and get an
+    instant "Web access is disabled" with no tool call.
+  - The model often picks Odysseus's built-in calendar, contacts or tasks tools over ours.
+  - In "Auto" tool mode a non-Odysseus model goes through compact routing, which offers no
+    MCP tools at all, so the test used "Regular tools".
+  - No documented setting turns the per-call gate off.
+- **Content errors the score doesn't catch.** The model sometimes gets the year wrong
+  ("January 12th, 2026" for a move announced in October 2026). Hermes once searched the
+  wrong year entirely.
+
+## Odysseus fork plan (Barvis)
+
+The goal is the smallest possible patch set, so upstream merges stay routine.
+
+1. **Trusted read-only MCP servers.** Add a per-server option that admits tools declaring
+   `readOnlyHint: true` without per-call approval or the request-authority block. Write
+   tools (`update_action_item`, `name_speaker`) keep the normal approval. This is general,
+   so offer it upstream; if accepted it leaves the fork.
+2. **Web-intent routing.** Stop words like "latest" from short-circuiting to "web access
+   disabled" when MCP tools could answer.
+3. **Tool choice.** Disable the built-ins we don't use and use "Regular tools" mode. This is
+   configuration, not code.
+4. **Barvis features**, kept in new files where possible:
+   - a conversations / transcript view;
+   - action items flowing into Odysseus tasks and CalDAV;
+   - ntfy notifications.
+5. **Branding** through theme and config, not by renaming identifiers across the codebase.
+
+**Keeping up with upstream:**
+
+- Odysseus is about 478k lines of Python, had 340 commits in the 30 days to 2026-10-18,
+  and has no releases.
+- Add an `upstream` remote and merge weekly. CI runs Odysseus's tests plus
+  `eval/bakeoff.py --frontend odysseus`.
+- Our code goes in new modules, with only small hooks in core files.
+- Expect occasional conflicts in the agent runtime, which upstream is refactoring.
+
+**License.** Odysseus is AGPL-3.0, which is fine for private use. If others use it over a
+network they must be offered the source; a public fork does that. The convo server is a
+separate program reached over MCP, so the AGPL doesn't extend to it.
+
+**Done when** the fork passes the same 20 questions at least as well as tuned Hermes (15/20).
+
+---
+
+## TL;DR recommendation (original, before the test and the owner's decision)
 
 Go with the **hybrid**. Our own SQLite + embeddings store stays the source of truth, and an MCP
 server we write exposes it (`search_conversations`, `get_conversation`, `get_transcript_excerpt`,
