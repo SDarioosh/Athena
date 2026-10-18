@@ -6,7 +6,7 @@ XIAO ESP32-S3 pendant planned, Omi later) → local Ubuntu server (Silero VAD, w
 diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-18 (round 4: renamed to barvis-sound, agent docs for both repos)_
+_Last updated: 2026-10-18 (round 6: failed-summary retry, MCP annotation contract test)_
 
 ## Status
 
@@ -143,10 +143,22 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   fail on every call). Tracked in Barvis `docs/barvis/roadmap.md`. Use MCP over HTTP.
 - The sandbox also found a barvis-sound bug: a summary that fails (e.g. llama-server
   down) marks the conversation `failed`, and `convo-server summarize-pending` only retries
-  `pending` ones (`Pipeline.summarize_pending`), so it never gets a summary. Fix is in
-  Next.
+  `pending` ones (`Pipeline.summarize_pending`), so it never gets a summary. Fixed in
+  round 6.
 - Audio path checked in the sandbox: JFK clip → Silero VAD (8.1 s speech) → whisper.cpp
   `base.en` → transcript. Diarization not tested there (needs the SpeechBrain model).
+
+## Done in round 6: failed summaries are retried
+
+- `convo-server summarize-pending` now also retries `failed` conversations, right away.
+- The background worker retries a failed summary once its last attempt is
+  `CONVO_SUMMARY_RETRY_SECONDS` old (default 300 s), oldest failure first, and stops
+  that pass at the first retry that fails again (llama-server is most likely still
+  down). So a down llama-server gets at most one retry request per 15 s worker pass,
+  and each conversation at most one every 5 min. A failure moves the conversation to
+  the back of the queue, so one broken conversation can't block the others.
+- Tests: a summary that fails and then succeeds on retry; the worker not retrying
+  inside the back-off window.
 
 ## Next
 
@@ -154,8 +166,7 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
    `http://100.106.28.112:8000`; the token is in that checkout's `server/.env`.
 2. **Barvis fork:** citations from 9/20 to ≥ 15/20 (Barvis `docs/barvis/roadmap.md`).
    Add a test here that asserts every MCP tool's annotation (Barvis module contract).
-3. **Retry failed summaries:** make `summarize-pending` (and the worker) retry `failed`
-   conversations, with a test.
+3. **Owner: server verification** of the failed-summary retry (steps in its PR).
 4. Build the real T-Rex recording app from the watch-test results.
 5. systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.
 6. Owner voice enrollment, plus speaker-threshold check on real audio.
