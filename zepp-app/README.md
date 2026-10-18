@@ -87,8 +87,12 @@ Report back:
 - **Recorder output format:** the API docs say `codec.OPUS`; the 3.0 release notes mention
   MP3. The server decodes with ffmpeg, which probes the container, so either should
   work. Test D confirms it.
-- **Microphone permission:** none is documented for `@zos/media`. If `empty` > 0 or
-  the screen shows `ERROR … recorder.start failed`, that's the first suspect.
+- **Microphone permission:** the `@zos/media` docs don't mention one, but the watch
+  refuses to record with `PERMISSION DENIED device:os.mic` without it. Since 0.1.1 the
+  app lists `device:os.mic` in `app.json` and asks for it (`@zos/app`
+  `requestPermission`) when you press a test button. If the watch shows a prompt, pick
+  **Allow**. If it still shows `ERROR mic permission: …`, allow the microphone for
+  Convo Rec Test in the watch's app settings, or uninstall the app and install it again.
 - **HTTP vs HTTPS:** Android may block plain `http://` from the Zepp app. If Ping fails
   with a network error, use HTTPS via Tailscale (`tailscale serve --https=443
   http://127.0.0.1:8000` on the server, then `https://<host>.<tailnet>.ts.net` as the URL).
