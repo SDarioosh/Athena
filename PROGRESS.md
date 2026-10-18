@@ -22,6 +22,7 @@ _Last updated: 2026-10-18 (round 2, owner decisions recorded)_
 | 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | built, **waiting for real-device tests** | PR #4 (feature/trex-test-app) |
 | 9b | Lock down host services: Tailscale-only access | not started | — |
 | 9c | Calendar/task integration for action items | later (wanted) | — |
+| 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | plan written; waiting on owner decisions | `docs/xiao-esp32s3-sense-plan.md` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -85,6 +86,9 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   loopback or the Tailscale interface, never `0.0.0.0`. That covers Odysseus' ChromaDB
   (8100), ntfy (8091), and llama-server (8082, no auth).
 - The old T-Watch `firmware/` is removed and `firmware-archive/` is deleted and ignored.
+- Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
+  (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
+  has Wi-Fi off, and is tuned for battery life.
 
 ## Done in round 2 (PR #3, stacked on #2)
 
@@ -112,7 +116,10 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 
 ## Open questions for you
 
-None right now. Answered 2026-10-18; the answers are recorded under "Decisions so far" above.
+The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
+Still open: the XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
+(battery/form factor, fallback board, ESP-IDF vs Arduino, server late-chunk policy, extra
+parts, microSD, Omi live-audio service). No pendant code until those are answered.
 
 ## Notes
 

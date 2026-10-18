@@ -13,7 +13,8 @@ the data path touches the cloud.**
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro (to be rebuilt in
   Phase 3; the current files are a non-working placeholder).
 - `docs/`: research and decisions (`omi-ingestion.md`,
-  `frontend-decision.md`).
+  `frontend-decision.md`, `xiao-esp32s3-sense-plan.md`: the plan for our own
+  XIAO ESP32-S3 Sense pendant; plan only, no code until its open decisions are answered).
 - `hermes/`: Hermes profile snippet used by the orchestrator.
 - `orchestrator/`: optional build loop. Leave it alone.
 
