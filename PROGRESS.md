@@ -21,7 +21,8 @@ _Last updated: 2026-10-18 (round 4: renamed to barvis-sound, agent docs for both
 | 7 | Knowledge-layer MCP server (works with Hermes or Odysseus) | ✅ done, tested (PR #3) | `server/convo_server/mcp_server.py` |
 | 7b | Wire into Hermes + Odysseus, side-by-side test | ✅ done (20 questions): Hermes 15/20, Odysseus 3/20 | `server/eval/`, results in `docs/frontend-decision.md` |
 | 7c | Barvis: Odysseus fork fixed for our MCP tools, kept in sync with upstream | in progress: 9/20 (was 3/20), target ≥ 15/20; fork `SDarioosh/Barvis` (default branch `barvis`), PR SDarioosh/Barvis#1 | `docs/frontend-decision.md` (fork plan), Barvis `BARVIS.md` and `docs/barvis/roadmap.md` |
-| 7d | Agent docs: AGENTS/CLAUDE/Antigravity files, rename to barvis-sound in prose, Barvis module contract | PR open (this repo and Barvis) | `AGENTS.md`, Barvis `docs/barvis/modules.md` |
+| 7d | Agent docs: AGENTS/CLAUDE/Antigravity files, rename to barvis-sound in prose, Barvis module contract | ✅ merged (PR #8, Barvis #2) | `AGENTS.md`, Barvis `docs/barvis/modules.md` |
+| 7e | Cloud sandbox stack: whole system on CPU (Qwen3-4B, whisper base.en), fictional data | ✅ working: 50 tests pass, seed 8/8 summarized, eval raw 1/3 and Barvis 1/3 on questions 1, 4, 16 | Barvis `docs/barvis/sandbox.md` |
 | 8 | Omi ingestion path (Android BLE relay) | optional, depends on how the XIAO goes | — |
 | 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | merged (PR #4), **waiting for owner's watch test**; test server is running | `zepp-app/` |
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
@@ -133,16 +134,32 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Barvis got the module contract (`docs/barvis/modules.md`) and a barvis-sound module
   page.
 
+## Done in round 5
+
+- Agents now work in a cloud sandbox; the owner runs a "Server verification" section
+  from each PR on the server (real model, real devices). `AGENTS.md` updated.
+- The sandbox stack was built and run end to end. It found two Barvis MCP bugs (HTTP
+  servers lose tool annotations, so read-only tools still need approval; stdio servers
+  fail on every call). Tracked in Barvis `docs/barvis/roadmap.md`. Use MCP over HTTP.
+- The sandbox also found a barvis-sound bug: a summary that fails (e.g. llama-server
+  down) marks the conversation `failed`, and `convo-server summarize-pending` only retries
+  `pending` ones (`Pipeline.summarize_pending`), so it never gets a summary. Fix is in
+  Next.
+- Audio path checked in the sandbox: JFK clip → Silero VAD (8.1 s speech) → whisper.cpp
+  `base.en` → transcript. Diarization not tested there (needs the SpeechBrain model).
+
 ## Next
 
 1. **Owner: watch test.** The steps are in `zepp-app/README.md`. Server URL
    `http://100.106.28.112:8000`; the token is in that checkout's `server/.env`.
 2. **Barvis fork:** citations from 9/20 to ≥ 15/20 (Barvis `docs/barvis/roadmap.md`).
    Add a test here that asserts every MCP tool's annotation (Barvis module contract).
-3. Build the real T-Rex recording app from the watch-test results.
-4. systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.
-5. Owner voice enrollment, plus speaker-threshold check on real audio.
-6. XIAO pendant, after the §10 decisions.
+3. **Retry failed summaries:** make `summarize-pending` (and the worker) retry `failed`
+   conversations, with a test.
+4. Build the real T-Rex recording app from the watch-test results.
+5. systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.
+6. Owner voice enrollment, plus speaker-threshold check on real audio.
+7. XIAO pendant, after the §10 decisions.
 
 ## Open questions for you
 

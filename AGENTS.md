@@ -128,9 +128,9 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 - **Changing a tool name, an argument, an annotation, the link format, or the auth is a
   breaking change.** It needs a coordinated Barvis PR (module doc, preset text) per the
   [versioning rules](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/modules.md#versioning),
-  and a rerun of `server/eval/bakeoff.py --frontend odysseus` against the Barvis test
-  instance (`127.0.0.1:7010`, never the owner's install on port 7000). Put the score in
-  both PRs. Current: 9/20, target ≥ 15/20.
+  and a rerun of `server/eval/bakeoff.py --frontend odysseus`: a few questions in the
+  sandbox stack, and the full run listed under Server verification for the owner. Put
+  the scores in both PRs. Current server score: 9/20, target ≥ 15/20.
 
 ## Where work belongs
 
@@ -143,6 +143,29 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 | Eval questions and scoring | `server/eval/bakeoff.py` here |
 | How Barvis gates, routes or shows our tools; presets; Barvis UI views | the Barvis repo |
 | Odysseus bugs | the Barvis repo (offered upstream) |
+
+## Where you work: the cloud sandbox
+
+- You work in a cloud sandbox, **not on the owner's server**. Never assume access to the
+  server, its services, its data, the devices or Tailscale.
+- The sandbox runs the whole system on CPU with fictional data: llama-server with a
+  small model, whisper-server, `convo-server serve` and `mcp --http`, Barvis on
+  `127.0.0.1:7010`, and the eval. Steps, timings and known issues:
+  [Barvis docs/barvis/sandbox.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/sandbox.md).
+- Small-model scores only compare with other sandbox runs. The real score
+  (`qwen3.5-35b` on the server) is measured by the owner.
+- Use only fictional data (`server/scripts/seed_demo.py`). Never ask for or use real
+  recordings, transcripts or tokens.
+
+### Server verification (owner)
+
+- Every PR that can change answers, the pipeline on real audio, devices or deployment
+  has a **Server verification** section: exact commands, the expected result, and
+  real-device steps ([format](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/sandbox.md#server-verification)).
+- The owner runs it and pastes the result into the PR; continue from that result.
+- Never write steps that touch the owner's Odysseus install (Docker,
+  `/home/steam/models/odysseus`, port 7000). Server-side evals target the Barvis test
+  instance on `127.0.0.1:7010`.
 
 ## Checks
 
@@ -182,7 +205,7 @@ runs the server checks on Python 3.11.
 - After **three failed attempts at the same problem**, stop and end your reply with
   `ESCALATE: <reason>` instead of guessing.
 - Device code you can't verify on hardware is fine, but list what still needs
-  real-device testing in the PR description and PROGRESS.md.
+  real-device testing in the PR's Server verification section and PROGRESS.md.
 - Keep PROGRESS.md current: done, next, open questions for the owner.
 
 ## Key APIs and tools
