@@ -33,6 +33,7 @@ from . import audio as audio_mod
 from .config import Settings
 from .diarize import enrollment_embedding, load_voices
 from .links import render_conversation, transcript_link, verify
+from .llm import LLMError
 from .pipeline import Pipeline, Worker
 from .search import search
 
@@ -270,7 +271,10 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
             pipeline.day_bounds(date)
         except ValueError as e:
             raise HTTPException(400, "date must be YYYY-MM-DD") from e
-        d = await run_in_threadpool(pipeline.make_digest, date)
+        try:
+            d = await run_in_threadpool(pipeline.make_digest, date)
+        except LLMError as e:
+            raise HTTPException(502, str(e)) from e
         if d is None:
             raise HTTPException(404, "no summarized conversations that day")
         return d
