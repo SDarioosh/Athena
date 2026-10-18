@@ -103,3 +103,18 @@ def test_iso_and_epoch_ms_timestamps(client):
                   ts=str(int(T0 * 1000))).status_code == 200
     started = client.get("/v1/sessions/s2").json()["started_at"]
     assert started.startswith("2025-10-09")
+
+
+def test_json_ingest_for_zepp_side_service(client):
+    import base64
+
+    body = {"device": "trex3pro", "session_id": "j1", "sequence": 0, "timestamp": str(T0),
+            "codec": "wav", "audio_b64": base64.b64encode(wav(tone(200, 5), silence(25))).decode()}
+    r = client.post("/v1/ingest/chunk.json", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["stop"] is False and r.json()["speech_seconds"] > 4
+    assert client.post("/v1/ingest/chunk.json", json=body).json()["duplicate"] is True
+    assert client.post("/v1/ingest/chunk.json",
+                       json={**body, "audio_b64": "%%%"}).status_code == 400
+    client.headers.pop("Authorization")
+    assert client.post("/v1/ingest/chunk.json", json=body).status_code == 401

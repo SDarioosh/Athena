@@ -15,6 +15,8 @@ Every /v1 route requires ``Authorization: Bearer <CONVO_INGEST_TOKEN>``.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hmac
 import logging
 from contextlib import asynccontextmanager
@@ -25,7 +27,7 @@ import numpy as np
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import audio as audio_mod
 from .config import Settings
@@ -71,6 +73,16 @@ def _conv_out(c: dict[str, Any], settings: Settings) -> dict[str, Any]:
             if src is not None:
                 item["source_url"] = transcript_link(settings, c["id"], src - c["started_at"])
     return out
+
+
+class ChunkJson(BaseModel):
+    device: str
+    session_id: str
+    sequence: int
+    timestamp: str
+    codec: str = "opus"
+    sample_rate: int = audio_mod.SAMPLE_RATE
+    audio_b64: str = Field(max_length=MAX_CHUNK_BYTES * 4 // 3 + 4)
 
 
 class ActionItemPatch(BaseModel):
@@ -140,6 +152,18 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         return {**result.as_dict(), "session_id": session_id, "sequence": sequence}
+
+    @v1.post("/ingest/chunk.json")
+    async def ingest_chunk_json(body: ChunkJson) -> dict[str, Any]:
+        """Same as /ingest/chunk with base64 audio in JSON, for clients that can only send
+        string bodies (the Zepp OS Side Service's fetch)."""
+        try:
+            audio = base64.b64decode(body.audio_b64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise HTTPException(400, "audio_b64 is not valid base64") from e
+        return await ingest_chunk(audio=audio, device=body.device, session_id=body.session_id,
+                                  sequence=body.sequence, timestamp=body.timestamp,
+                                  codec=body.codec, sample_rate=body.sample_rate)
 
     @v1.post("/sessions/{session_id}/end")
     def end_session(session_id: str) -> dict[str, Any]:
