@@ -53,6 +53,15 @@ export function createTester(deps) {
   }
 
   function fail(msg) {
+    if (rotateTimer) deps.clearTimeout(rotateTimer)
+    rotateTimer = null
+    if (state.chunkFile) {
+      try {
+        recorder.stop()
+      } catch (e) {}
+      state.chunkFile = null
+    }
+    state.recording = false
     state.lastError = msg
     log(msg)
   }
@@ -68,7 +77,6 @@ export function createTester(deps) {
       recorder.start(file)
     } catch (e) {
       fail(`recorder.start failed: ${e && e.message ? e.message : e}`)
-      state.recording = false
       persist()
       return
     }

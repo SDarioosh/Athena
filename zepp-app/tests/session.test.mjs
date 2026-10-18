@@ -121,6 +121,13 @@ test('recorder failure stops cleanly and is logged', () => {
   again.start('screen-on')
   assert.equal(again.state.recording, true)
   assert.equal(again.state.lastError, null)
+  // An async start failure (e.g. START event or 2s status check) stops recording and rotation.
+  again.error('recorder is IDLE 2 s after start')
+  assert.equal(again.state.recording, false)
+  assert.equal(again.state.lastError, 'recorder is IDLE 2 s after start')
+  assert.equal(again.state.chunks.length, 0)
+  ok.advance(CHUNK_MS * 2)
+  assert.equal(ok.started.length, 1)
 })
 
 test('empty files are counted', () => {

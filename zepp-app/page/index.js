@@ -24,13 +24,13 @@ const W = 480
 const storage = new LocalStorage()
 
 let recorder = null
-function getRecorder(tester) {
+function getRecorder(onFail) {
   if (recorder) return recorder
   const r = create(id.RECORDER)
   if (!r) throw new Error('create(id.RECORDER) returned nothing')
   try {
     r.addEventListener(r.event.START, (ok) => {
-      if (ok === false) tester.error('recorder START event reported failure')
+      if (ok === false) onFail('recorder START event reported failure')
     })
   } catch (e) {
     console.log('recorder event listener not available', e)
@@ -57,7 +57,8 @@ const STATUS_NAMES = ['IDLE', 'PREPARING', 'STARTING', 'RECORDING']
 function recorderStatus() {
   if (!recorder || typeof recorder.getStatus !== 'function') return null
   const status = recorder.getStatus()
-  const states = recorder.state || {}
+  const states = recorder.state
+  if (!states || states.RECORDING === undefined) return null
   const name = STATUS_NAMES.find((k) => states[k] === status)
   return { status, name: name || `unknown ${status}`, recording: status === states.RECORDING }
 }
@@ -116,18 +117,29 @@ function fmt(sec) {
 
 Page(
   BasePage({
-    state: { widgets: [], info: null, beat: null, uploading: false, net: '', renderPending: false },
+    state: {
+      widgets: [], info: null, beat: null, uploading: false, net: '',
+      renderTimer: null, checkTimer: null,
+    },
 
     onInit() {
+      const failRecording = (msg) => {
+        this.tester.error(msg)
+        resetDisplay()
+      }
       this.tester = createTester({
         recorder: {
           start: (file) => {
-            const r = step('create recorder', () => getRecorder(this.tester))
+            const r = step('create recorder', () => getRecorder(failRecording))
             step('setFormat', () => r.setFormat(codec.OPUS, { target_file: `data://${file}` }))
             step('recorder.start', () => r.start())
             this.checkRecorderSoon()
           },
-          stop: () => getRecorder(this.tester).stop(),
+          stop: () => {
+            if (this.state.checkTimer) clearTimeout(this.state.checkTimer)
+            this.state.checkTimer = null
+            if (recorder) recorder.stop()
+          },
         },
         fileSize,
         load: () => storage.getItem('state'),
@@ -157,28 +169,38 @@ Page(
 
     onDestroy() {
       if (this.state.beat) clearInterval(this.state.beat)
+      if (this.state.renderTimer) clearTimeout(this.state.renderTimer)
+      if (this.state.checkTimer) clearTimeout(this.state.checkTimer)
+      this.state.renderTimer = null
+      this.state.checkTimer = null
+      recorder = null
       this.tester.pageDestroyed()
     },
 
     // ------------------------------------------------------------------ UI
     scheduleRender() {
-      if (this.state.renderPending) return
-      this.state.renderPending = true
-      setTimeout(() => {
-        this.state.renderPending = false
+      if (this.state.renderTimer) return
+      this.state.renderTimer = setTimeout(() => {
+        this.state.renderTimer = null
         this.render()
       }, 10)
     },
 
     // Two seconds after a chunk starts, the recorder should report RECORDING.
     checkRecorderSoon() {
-      setTimeout(() => {
+      if (this.state.checkTimer) clearTimeout(this.state.checkTimer)
+      this.state.checkTimer = setTimeout(() => {
+        this.state.checkTimer = null
         if (!this.tester.state.recording) return
         try {
           const s = recorderStatus()
-          if (s && !s.recording) this.tester.error(`recorder is ${s.name} 2 s after start`)
+          if (s && !s.recording) {
+            this.tester.error(`recorder is ${s.name} 2 s after start`)
+            resetDisplay()
+          }
         } catch (e) {
           this.tester.error(`getStatus: ${errText(e)}`)
+          resetDisplay()
         }
       }, 2000)
     },
