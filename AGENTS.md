@@ -35,8 +35,16 @@ the data path touches the cloud.**
 ### Omi pendant (BasedHardware/omi)
 - Streams Opus audio over BLE; stores audio offline when disconnected.
   Does no transcription itself.
-- Default Omi setups use cloud STT; ours must not. The local path (relay to
-  `POST /v1/ingest/chunk`) is decided in `docs/omi-ingestion.md`.
+- Default Omi setups use cloud STT; ours must not. The official Omi app and
+  backend stay out of the data path entirely (its audio-bytes webhook is sent
+  from Omi's cloud; custom-STT mode still sends transcripts to Omi).
+- Recommended path (`docs/omi-ingestion.md`): our own BLE relay (Android
+  foreground service first, optional Linux `bleak` collector at home) reads
+  service `19b10000-e8f2-537e-4f6c-d104768a1214`, reassembles the 3-byte-header
+  Opus packets (16 kHz, 20 ms), and posts 30 s Ogg/Opus chunks to
+  `POST /v1/ingest/chunk` with `device=omi`. Offline audio is drained over the
+  storage service and acknowledged only after the server returns `ok`.
+  Borrow from Chronicle's relay app and chunk design; don't adopt its backend.
 
 ### Amazfit T-Rex 3 Pro
 - Zepp OS 5, built-in mic. App code is a Zepp OS Mini Program (JavaScript,
