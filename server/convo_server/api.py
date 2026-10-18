@@ -19,6 +19,7 @@ import base64
 import binascii
 import hmac
 import logging
+import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -90,6 +91,27 @@ class ActionItemPatch(BaseModel):
     status: str
 
 
+REJECTED_KEEP = 20  # undecodable uploads kept for debugging, newest first
+
+
+def save_rejected(settings: Settings, session_id: str, sequence: int, codec: str,
+                  data: bytes) -> str:
+    """Keep an upload ffmpeg could not decode, so its format can be inspected.
+
+    The file stays in the server's data directory, like any queued audio. Only the newest
+    REJECTED_KEEP files are kept.
+    """
+    folder = settings.data_dir / "rejected"
+    folder.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{session_id}-{sequence}.{codec}")[:120]
+    path = folder / f"{safe}.bin"
+    path.write_bytes(data)
+    old = sorted(folder.glob("*.bin"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for stale in old[REJECTED_KEEP:]:
+        stale.unlink(missing_ok=True)
+    return str(path)
+
+
 def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastAPI:
     settings = pipeline.settings
     store = pipeline.store
@@ -149,6 +171,9 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
                 pipeline.ingest_chunk, device=device, session_id=session_id, sequence=sequence,
                 started_at=started, codec=codec, data=audio, sample_rate=sample_rate)
         except audio_mod.AudioDecodeError as e:
+            saved = save_rejected(settings, session_id, sequence, codec, audio)
+            log.warning("could not decode %d bytes (%s), saved to %s: %s",
+                        len(audio), codec, saved, e)
             raise HTTPException(422, f"could not decode audio: {e}") from e
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
