@@ -209,6 +209,20 @@ def test_failed_summary_is_retried(pipeline):
     assert [a["text"] for a in conv["action_items"]] == ["Book flights"]
 
 
+def test_summarize_pending_tries_each_conversation_once(pipeline):
+    llm = flaky_pipeline(pipeline)
+    pipeline.summarizer, summarizer = None, pipeline.summarizer
+    record(pipeline, "s1", T0)
+    pipeline.process_pending()  # no LLM configured: the conversation stays pending
+    assert len(pipeline.store.conversations_with_status("pending")) == 1
+
+    pipeline.summarizer = summarizer
+    llm.down = True
+    assert pipeline.summarize_pending() == 0  # retry_after=0, like the CLI
+    assert llm.requests == 1  # the pending attempt fails; it isn't retried in the same call
+    assert len(pipeline.store.conversations_with_status("failed")) == 1
+
+
 def test_worker_backs_off_on_failed_summaries(pipeline, monkeypatch):
     clock = [time.time()]
     monkeypatch.setattr(store_mod, "time", SimpleNamespace(time=lambda: clock[0]))
@@ -244,7 +258,6 @@ def test_worker_backs_off_on_failed_summaries(pipeline, monkeypatch):
     assert llm.requests == attempts + 2  # both just failed again: back off
 
     llm.down = False
-    tick(delay)
-    tick(15)
+    tick(delay)  # both are due: one pass summarizes both
     assert store.conversations_with_status("failed") == []
     assert len(store.conversations_with_status("summarized")) == 2

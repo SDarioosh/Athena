@@ -316,10 +316,13 @@ class Pipeline:
         A failure refreshes the conversation's ``updated_at``, so it moves to the back
         of the queue and a broken conversation can't block the others.
         """
-        done = sum(self.summarize_conversation(c)
-                   for c in self.store.conversations_with_status("pending"))
+        # Snapshot both lists first, so a pending conversation that fails below isn't
+        # retried again in the same call.
         now = time.time() if now is None else now
-        for conv_id in self.store.failed_conversations(before=now - retry_after):
+        pending = self.store.conversations_with_status("pending")
+        failed = self.store.failed_conversations(before=now - retry_after)
+        done = sum(self.summarize_conversation(c) for c in pending)
+        for conv_id in failed:
             if self.summarize_conversation(conv_id):
                 done += 1
             elif stop_on_failure:
