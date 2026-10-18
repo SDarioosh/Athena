@@ -124,6 +124,22 @@ def test_conversation_tools(pipeline, mcp):
     assert call(mcp, "get_daily_digest", date="2001-01-01").startswith("No digest")
 
 
+def test_every_linked_result_asks_for_citations(pipeline, mcp):
+    # Frontends drop the server instructions, so each result with links must carry the hint.
+    process_two_speakers(pipeline)
+    conv_id = pipeline.store.list_conversations()[0]["id"]
+    pipeline.make_digest(DAY)
+    hint = "put the link next to each fact you use"
+    for tool, args in [("search_transcripts", {"speaker": "Me"}),
+                       ("search_conversations", {"since": DAY}),
+                       ("get_conversation", {"conversation_id": conv_id}),
+                       ("get_transcript", {"conversation_id": conv_id}),
+                       ("list_action_items", {}),
+                       ("list_facts", {"subject": "alice"}),
+                       ("get_daily_digest", {"date": DAY})]:
+        assert hint in call(mcp, tool, **args), tool
+
+
 def test_signed_transcript_view(client, pipeline):
     process_two_speakers(pipeline)
     conv_id = pipeline.store.list_conversations()[0]["id"]
