@@ -4,25 +4,26 @@ Design: two wearables (Omi pendant, Amazfit T-Rex 3 Pro) → local Ubuntu server
 (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → personal knowledge
 frontend. See MISSION.md and AGENTS.md. Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-18 (round 2, owner decisions recorded)_
+_Last updated: 2026-10-18 (round 3: frontend test done, Odysseus fork chosen, live test server running)_
 
 ## Status
 
 | # | Item | Status | Where |
 |---|------|--------|-------|
 | 1 | Omi local-ingestion research | ✅ done | `docs/omi-ingestion.md` (PR: docs/redesign) |
-| 2 | Frontend decision doc (Hermes vs Odysseus vs hybrid) | ✅ decided: **hybrid via MCP**; Hermes vs Odysseus settled by a side-by-side test | `docs/frontend-decision.md` |
+| 2 | Frontend decision doc (Hermes vs Odysseus vs hybrid) | ✅ decided: **hybrid via MCP**, frontend **Odysseus fork (Barvis)** | `docs/frontend-decision.md` |
 | 3 | Rewrite AGENTS.md / MISSION.md / PROGRESS.md | ✅ done | PR: docs/redesign |
 | 4 | Ingestion API (auth, idempotent chunks, silence/max-duration stop) | ✅ done, tested | `server/` (PR: feature/server-pipeline) |
 | 5 | Pipeline: reassembly, Silero VAD, whisper.cpp, diarization + enrollment, splitting, summaries, digest, audio deletion | ✅ done, tested | `server/` |
 | 6 | SQLite storage, FTS5 + optional embeddings, read API with transcript links | ✅ done, tested | `server/` |
 | 7 | Knowledge-layer MCP server (works with Hermes or Odysseus) | ✅ done, tested (PR #3) | `server/convo_server/mcp_server.py` |
-| 7b | Wire into Hermes + Odysseus, ~30-question side-by-side | in progress | `server/eval/` (not committed yet) |
-| 8 | Omi ingestion path (Android BLE relay) | later: no pendant yet | — |
-| 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | built, **waiting for real-device tests** | PR #4 (feature/trex-test-app) |
-| 9b | Lock down host services: Tailscale-only access | not started | — |
+| 7b | Wire into Hermes + Odysseus, side-by-side test | ✅ done (20 questions): Hermes 15/20, Odysseus 3/20 | `server/eval/`, results in `docs/frontend-decision.md` |
+| 7c | Barvis: Odysseus fork fixed for our MCP tools, kept in sync with upstream | next, waiting on fork setup (owner) | `docs/frontend-decision.md` (fork plan) |
+| 8 | Omi ingestion path (Android BLE relay) | optional, depends on how the XIAO goes | — |
+| 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | merged (PR #4), **waiting for owner's watch test**; test server is running | `zepp-app/` |
+| 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
 | 9c | Calendar/task integration for action items | later (wanted) | — |
-| 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | plan written; waiting on owner decisions | `docs/xiao-esp32s3-sense-plan.md` |
+| 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **main focus** with the T-Rex; plan written, waiting on owner decisions | `docs/xiao-esp32s3-sense-plan.md` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -71,8 +72,10 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 
 ## Decisions so far
 
-- Knowledge layer: **hybrid**. Our SQLite is the source of truth, exposed over MCP, so
-  Hermes or Odysseus can sit on top. Pick the frontend after a side-by-side test.
+- Knowledge layer: **hybrid**. Our SQLite is the source of truth, exposed over MCP.
+- Frontend: **Odysseus, forked as Barvis**, modified for our system and kept in sync with
+  upstream. Chosen after the side-by-side test; fork plan in `docs/frontend-decision.md`.
+- Focus: the **XIAO pendant** and the **T-Rex 3 Pro** (owned). Omi only if the XIAO falls short.
 - Phone: **Android**, with Tailscale access to the server.
 - Omi: the current consumer pendant (CV1 in Omi's firmware), not bought yet. The T-Rex 3 Pro
   comes first.
@@ -85,6 +88,8 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Security: **as tight as possible; reachable only over Tailscale.** Services bind to
   loopback or the Tailscale interface, never `0.0.0.0`. That covers Odysseus' ChromaDB
   (8100), ntfy (8091), and llama-server (8082, no auth).
+  **Deferred:** while testing, services stay open to the LAN and Tailscale. Lock down
+  before the system goes into daily use.
 - The old T-Watch `firmware/` is removed and `firmware-archive/` is deleted and ignored.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
@@ -101,23 +106,40 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Verified: Qwen3.5-35B called the right tools with the right dates on 5/5 questions
   against real data. Odysseus' own MCP client code (mcp 1.x) connects to our server.
 
+## Done in round 3
+
+- **Frontend side-by-side** (`server/eval/bakeoff.py`, fictional data from
+  `server/scripts/seed_demo.py`): Hermes 15/20 once tuned, Odysseus 3/20. Full table and
+  failure analysis are in `docs/frontend-decision.md`.
+- **MCP:** every non-empty tool result now asks for the source link, because neither
+  frontend forwards MCP server instructions.
+- **Live test server** for the watch test, from a `main` checkout at
+  `~/projects/barvis-ai-wt/main`:
+  - `convo-server serve` on `0.0.0.0:8000`, with `CONVO_PUBLIC_URL` set to the Tailscale IP.
+  - `whisper-server` (large-v3-turbo) on `127.0.0.1:8178`.
+  - Verified over Tailscale with a real chunk: upload, VAD, transcript, summary, link.
+  - Not a service yet: it stops on reboot.
+
 ## Next
 
-1. **Zepp test app** (PR #4) is built. Install it with `zeus preview` and run the 10-min
-   screen-on/off tests in `zepp-app/README.md`. Also check that the Side Service can
-   reach the server's Tailscale address.
-2. **Lock down the host:** move ChromaDB, ntfy and llama-server off `0.0.0.0` and bind
-   `convo-server` to the Tailscale IP. Add a firewall rule so nothing is reachable from
-   the LAN except over Tailscale.
-3. Wire the MCP server into a local-only Hermes profile and into Odysseus, then run the
-   ~30-question comparison.
+1. **Owner: watch test.** The steps are in `zepp-app/README.md`. Server URL
+   `http://100.106.28.112:8000`; the token is in that checkout's `server/.env`.
+2. **Barvis fork** (needs owner go-ahead on the GitHub fork):
+   - trusted read-only MCP servers;
+   - web-intent routing fix;
+   - turn off unused built-ins;
+   - rerun the 20 questions (target ≥ 15/20).
+3. Build the real T-Rex recording app from the watch-test results.
 4. systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.
-5. Omi Android relay once you have the pendant.
+5. Owner voice enrollment, plus speaker-threshold check on real audio.
+6. XIAO pendant, after the §10 decisions.
 
 ## Open questions for you
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
-Still open: the XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
+Still open:
+- Barvis fork: create `SDarioosh/barvis` on GitHub, public or private?
+- The XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, ESP-IDF vs Arduino, server late-chunk policy, extra
 parts, microSD, Omi live-audio service). No pendant code until those are answered.
 
@@ -125,7 +147,5 @@ parts, microSD, Omi live-audio service). No pendant code until those are answere
 
 - The previous untracked `server/` prototype (hardcoded token, broken VAD call) was
   replaced. A copy is in `~/barvis-ai-backups/`.
-- On `main`, `zepp-app/` is still the old placeholder that won't build. PR #4 replaces it
-  with the real Zepp OS v3 test app.
 - The ECAPA speaker model is downloaded once from Hugging Face; model weights only,
   no data goes out.

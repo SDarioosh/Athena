@@ -10,8 +10,8 @@ the data path touches the cloud.**
 - `server/`: Python 3.11+ package `convo_server`: ingestion API, VAD,
   transcription, diarization, conversation splitting, summaries, SQLite
   storage, search, digest. See `server/README.md`.
-- `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro (to be rebuilt in
-  Phase 3; the current files are a non-working placeholder).
+- `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
+  recording feasibility test app; see `zepp-app/README.md`.
 - `docs/`: research and decisions (`omi-ingestion.md`,
   `frontend-decision.md`, `xiao-esp32s3-sense-plan.md`: the plan for our own
   XIAO ESP32-S3 Sense pendant; plan only, no code until its open decisions are answered).
@@ -115,8 +115,9 @@ runs the server checks on Python 3.11.
   merge or open PRs (the orchestrator does). In interactive sessions, push and
   open PRs only when the owner asks; never merge without review.
 - Never commit secrets, `.env`, databases, or audio files of any kind.
-- Don't build the knowledge-layer/frontend integration until the owner has
-  decided (see `docs/frontend-decision.md`).
+- Frontend: the owner chose an Odysseus fork ("Barvis") on top of our MCP server
+  (`docs/frontend-decision.md`). Keep fork changes small and in new files so upstream
+  merges stay easy, and never let the fork write to our store except through MCP/API.
 - If you're stuck, end your reply with `ESCALATE: <reason>` instead of guessing.
 - Device code you can't verify on hardware is fine, but list what still needs
   real-device testing in the PR description and PROGRESS.md.

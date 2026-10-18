@@ -67,8 +67,14 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     def window(since: str, until: str) -> tuple[float | None, float | None]:
         return parse_when(since, tz), parse_when(until, tz, end=True)
 
+    # Frontends don't reliably forward server instructions (Hermes ignores them), so
+    # the citation rule also rides along with every non-empty result.
+    cite = "When answering, put the link next to each fact you use"
+
     def header(n: int, what: str) -> str:
-        return f"{n} {what} (times are {settings.timezone}):" if n else f"No {what} found."
+        if not n:
+            return f"No {what} found."
+        return f"{n} {what} (times are {settings.timezone}). {cite}:"
 
     @mcp.tool(annotations=ro)
     def search_transcripts(speaker: Person = "", query: Text = "", since: Since = "",
@@ -135,6 +141,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         out += [_item(a, settings, c) for a in c["action_items"]]
         out += [f"Fact [{f['subject']}]: {f['fact']} " + _src(f, settings, c)
                 for f in c["facts"]]
+        out.append(f"{cite}.")
         return "\n".join(out)
 
     @mcp.tool(annotations=ro)
@@ -157,6 +164,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if more:
             out.append(f"… {len(segs) - max_lines} more lines; call again with a later "
                        "start_seconds.")
+        out.append(f"{cite}.")
         return "\n".join(out)
 
     @mcp.tool(annotations=ro)
@@ -215,6 +223,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         out += [f"TODO: {t}" for t in d.get("open_action_items", [])]
         out += [f"Conversation: {transcript_link(settings, cid)}"
                 for cid in d.get("conversation_ids", [])]
+        out.append(f"{cite}.")
         return "\n".join(out)
 
     @mcp.tool(annotations=ro)
