@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from conftest import silence, tone, wav
 
+from convo_server.config import Settings
 from convo_server.links import sign, transcript_link
 from convo_server.mcp_server import BearerAuth, build_mcp, parse_when
 
@@ -162,3 +163,10 @@ def test_http_query_token_for_oauth_only_clients():
     assert c.get("/mcp?access_token=secret-token-123456").text == "ok"
     assert c.get("/mcp?access_token=nope").status_code == 401
     assert c.get("/mcp?access_token=").status_code == 401
+
+
+def test_placeholder_mcp_token_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="CONVO_MCP_TOKEN"):
+        Settings(ingest_token="real-token-0123456789", data_dir=tmp_path,
+                 mcp_token="change-me-generate-another-long-random-token")
+    assert Settings(ingest_token="real-token-0123456789", data_dir=tmp_path).mcp_token is None
