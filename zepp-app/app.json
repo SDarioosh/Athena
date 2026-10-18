@@ -1,0 +1,54 @@
+{
+  "configVersion": "v3",
+  "app": {
+    "appId": 1092611,
+    "appName": "Convo Rec Test",
+    "appType": "app",
+    "version": {
+      "code": 1,
+      "name": "0.1.0"
+    },
+    "icon": "icon.png",
+    "vender": "convo-ai",
+    "description": "Recording feasibility test: 30 s Opus chunks, screen on vs off"
+  },
+  "permissions": ["data:os.device.info", "device:os.local_storage"],
+  "runtime": {
+    "apiVersion": {
+      "compatible": "3.0",
+      "target": "4.2",
+      "minVersion": "3.0"
+    }
+  },
+  "targets": {
+    "trex3pro": {
+      "module": {
+        "page": {
+          "pages": ["page/index"]
+        },
+        "app-side": {
+          "path": "app-side/index"
+        },
+        "setting": {
+          "path": "setting/index"
+        }
+      },
+      "platforms": [
+        { "name": "trex3pro48", "deviceSource": 10551552 },
+        { "name": "trex3pro48", "deviceSource": 10551553 },
+        { "name": "trex3pro48", "deviceSource": 10551555 },
+        { "name": "trex3pro44", "deviceSource": 10682624 },
+        { "name": "trex3pro44", "deviceSource": 10682625 },
+        { "name": "trex3pro44", "deviceSource": 10682627 }
+      ],
+      "designWidth": 480
+    }
+  },
+  "i18n": {
+    "en-US": {
+      "appName": "Convo Rec Test"
+    }
+  },
+  "defaultLanguage": "en-US",
+  "debug": false
+}
