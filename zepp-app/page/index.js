@@ -321,6 +321,11 @@ Page(
       if (!st.chunks.length) {
         return ['Pick a test, record', '10 min, then Stop.', this.state.net].join('\n')
       }
+      // A long network message (an upload or ping error) doesn't fit after the five
+      // result lines, so show it on its own, with room to wrap.
+      if (this.state.net.length > 24) {
+        return [`uploaded ${s.uploaded}/${s.chunks}`, this.state.net].join('\n')
+      }
       return [
         `${st.mode}: wall ${fmt(s.wallSec)} rec ${fmt(s.recordedSec)}`,
         `${s.chunks} chunks · ${s.interrupted} interr. · ${s.late} late`,
@@ -402,7 +407,7 @@ Page(
           // Say what failed: "upload done" alone hid errors behind "uploaded 0/1".
           const failed = todo.filter((c) => c.uploaded !== true)
           this.state.net = failed.length
-            ? `${failed.length} failed: ${String(failed[failed.length - 1].uploaded || 'no answer').slice(0, 48)}`
+            ? `${failed.length} failed: ${String(failed[failed.length - 1].uploaded || 'no answer').slice(0, 90)}`
             : 'upload done'
           this.render()
           return
