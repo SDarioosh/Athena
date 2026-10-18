@@ -30,3 +30,6 @@ server/data/
 *.flac
 *.webm
 *.pcm
+
+# logs
+*.log
