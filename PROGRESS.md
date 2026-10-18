@@ -6,7 +6,7 @@ XIAO ESP32-S3 pendant planned, Omi later) → local Ubuntu server (Silero VAD, w
 diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-18 (round 6: failed-summary retry, MCP annotation contract test)_
+_Last updated: 2026-10-18 (round 7: Barvis keeps MCP annotations over HTTP)_
 
 ## Status
 
@@ -20,9 +20,9 @@ _Last updated: 2026-10-18 (round 6: failed-summary retry, MCP annotation contrac
 | 6 | SQLite storage, FTS5 + optional embeddings, read API with transcript links | ✅ done, tested | `server/` |
 | 7 | Knowledge-layer MCP server (works with Hermes or Odysseus) | ✅ done, tested (PR #3) | `server/convo_server/mcp_server.py` |
 | 7b | Wire into Hermes + Odysseus, side-by-side test | ✅ done (20 questions): Hermes 15/20, Odysseus 3/20 | `server/eval/`, results in `docs/frontend-decision.md` |
-| 7c | Barvis: Odysseus fork fixed for our MCP tools, kept in sync with upstream | in progress: 9/20 (was 3/20), target ≥ 15/20; fork `SDarioosh/Barvis` (default branch `barvis`), PR SDarioosh/Barvis#1 | `docs/frontend-decision.md` (fork plan), Barvis `BARVIS.md` and `docs/barvis/roadmap.md` |
+| 7c | Barvis: Odysseus fork fixed for our MCP tools, kept in sync with upstream | in progress: 9/20 (was 3/20), target ≥ 15/20; fork `SDarioosh/Barvis` (default branch `barvis`), PR SDarioosh/Barvis#1; HTTP annotations fix merged (SDarioosh/Barvis#5) | `docs/frontend-decision.md` (fork plan), Barvis `BARVIS.md` and `docs/barvis/roadmap.md` |
 | 7d | Agent docs: AGENTS/CLAUDE/Antigravity files, rename to barvis-sound in prose, Barvis module contract | ✅ merged (PR #8, Barvis #2) | `AGENTS.md`, Barvis `docs/barvis/modules.md` |
-| 7e | Cloud sandbox stack: whole system on CPU (Qwen3-4B, whisper base.en), fictional data | ✅ working: 50 tests pass, seed 8/8 summarized, eval raw 1/3 and Barvis 1/3 on questions 1, 4, 16 | Barvis `docs/barvis/sandbox.md` |
+| 7e | Cloud sandbox stack: whole system on CPU (Qwen3-4B, whisper base.en), fictional data | ✅ working: 50 tests pass, seed 8/8 summarized, eval raw 1/3 and Barvis 1/3 on questions 1, 4, 16; 2/3 and 3/3 in two runs with SDarioosh/Barvis#5 | Barvis `docs/barvis/sandbox.md` |
 | 8 | Omi ingestion path (Android BLE relay) | optional, depends on how the XIAO goes | — |
 | 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | merged (PR #4), **waiting for owner's watch test**; test server is running | `zepp-app/` |
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
@@ -169,12 +169,28 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Tests: a summary that fails and then succeeds on retry; the worker not retrying
   inside the back-off window.
 
+## Done in round 7: Barvis keeps MCP annotations over HTTP
+
+- Barvis bug (sandbox finding 1): when Barvis connected to an MCP server over HTTP, it
+  dropped each tool's annotations, so our `readOnlyHint: true` tools still needed
+  approval on every call. Fixed in Barvis with one line (SDarioosh/Barvis#5, merged);
+  nothing changed here. Our tool names, arguments, annotations and links are unchanged.
+- Sandbox eval (questions 1, 4, 16; Qwen3-4B), two separate sandboxes: before the fix
+  2/3 both times, with one approval per tool call; after, 2/3 and 3/3 with no approvals.
+  Earlier sandbox run: 1/3. The scores differ by noise; what the fix changes is the
+  approvals.
+- Eval question for the owner: an answer that starts with "The task is incomplete: Model
+  request failed." still scored PASS (question 4, in both sandboxes), because it also had
+  the date and the link (Barvis sandbox finding 5). Should `eval/bakeoff.py` count that as a failure? Not changed yet.
+
 ## Next
 
 1. **Owner: watch test.** The steps are in `zepp-app/README.md`. Server URL
    `http://100.106.28.112:8000`; the token is in that checkout's `server/.env`.
 2. **Barvis fork:** citations from 9/20 to ≥ 15/20 (Barvis `docs/barvis/roadmap.md`).
-3. **Owner: server verification** of the failed-summary retry (steps in its PR).
+3. **Owner: server verification** of the failed-summary retry (steps in its PR), and of
+   SDarioosh/Barvis#5 (full eval on the test instance; expect no approvals for read-only
+   tools and a score ≥ 9/20; steps in that PR).
 4. Build the real T-Rex recording app from the watch-test results.
 5. systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.
 6. Owner voice enrollment, plus speaker-threshold check on real audio.
