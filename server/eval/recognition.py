@@ -11,6 +11,7 @@ into eval/data/ (gitignored).
     python eval/recognition.py fetch
     python eval/recognition.py run --label baseline              # whisper-server + ECAPA
     python eval/recognition.py run --label pyannote --diarizer pyannote --enroll 2
+    python eval/recognition.py run --label far --mic Array1-01 --opus 16 --diarizer none
     python eval/recognition.py compare baseline pyannote
 
 Settings come from the CONVO_* environment like the server (CONVO_WHISPER_SERVER_URL,
@@ -34,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -61,7 +63,10 @@ RESULTS = HERE / "results"
 # AMI test-set meetings from three sites (Edinburgh, IDIAP, TNO).
 MEETINGS = ["ES2004a", "IS1009a", "TS3003a"]
 AUDIO_URL = ("https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/{m}/audio/"
-             "{m}.Mix-Headset.wav")
+             "{m}.{mic}.wav")
+# Mix-Headset: every speaker close-miked (clean). Array1-01: one far-field room mic, closer
+# to a wearable hearing the people around its owner.
+MICS = ["Mix-Headset", "Array1-01"]
 ANNOT_URL = "https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip"
 RTTM_URL = ("https://raw.githubusercontent.com/pyannote/AMI-diarization-setup/main/"
             "only_words/rttms/test/{m}.rttm")
@@ -86,7 +91,7 @@ def _download(url: str, dest: Path) -> None:
     tmp.replace(dest)
 
 
-def fetch(meetings: list[str]) -> None:
+def fetch(meetings: list[str], mics: list[str]) -> None:
     zip_path = DATA / "ami_public_manual_1.6.2.zip"
     _download(ANNOT_URL, zip_path)
     with zipfile.ZipFile(zip_path) as z:
@@ -94,7 +99,8 @@ def fetch(meetings: list[str]) -> None:
             if any(name.startswith(f"words/{m}.") for m in meetings):
                 z.extract(name, DATA)
     for m in meetings:
-        _download(AUDIO_URL.format(m=m), DATA / f"{m}.Mix-Headset.wav")
+        for mic in mics:
+            _download(AUDIO_URL.format(m=m, mic=mic), DATA / f"{m}.{mic}.wav")
         _download(RTTM_URL.format(m=m), DATA / f"{m}.rttm")
     print(f"AMI data in {DATA}")
 
@@ -157,10 +163,21 @@ def solo_regions(turns, speaker: str, avoid: tuple[float, float]) -> list[tuple[
 
 
 # ------------------------------------------------------------------------ run
+def opus_roundtrip(pcm: np.ndarray, kbps: float, complexity: int) -> bytes:
+    """Encode a chunk the way a recorder does (Ogg/Opus, 20 ms frames, VBR)."""
+    proc = subprocess.run(
+        ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "s16le",
+         "-ar", str(SAMPLE_RATE), "-ac", "1", "-i", "pipe:0", "-c:a", "libopus",
+         "-b:a", f"{kbps}k", "-compression_level", str(complexity), "-frame_duration", "20",
+         "-application", "voip", "-f", "ogg", "pipe:1"],
+        input=audio_mod.float_to_pcm16(pcm), capture_output=True, check=True)
+    return proc.stdout
+
+
 def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
     from pyannote.metrics.diarization import DiarizationErrorRate
 
-    full = audio_mod.decode((DATA / f"{meeting}.Mix-Headset.wav").read_bytes(), "wav")
+    full = audio_mod.decode((DATA / f"{meeting}.{args.mic}.wav").read_bytes(), "wav")
     start, end = args.offset, args.offset + args.seconds
     window = full[int(start * SAMPLE_RATE): int(end * SAMPLE_RATE)]
     turns = rttm_turns(meeting)
@@ -193,9 +210,13 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
         t = time.time()
         for i in range(0, window.size, int(CHUNK * SAMPLE_RATE)):
             part = window[i: i + int(CHUNK * SAMPLE_RATE)]
+            if args.opus:
+                codec, data = "opus", opus_roundtrip(part, args.opus, args.opus_complexity)
+            else:
+                codec, data = "wav", audio_mod.to_wav_bytes(part)
             pipeline.ingest_chunk(device="eval", session_id=sid, sequence=i // int(CHUNK *
-                                  SAMPLE_RATE), started_at=T0 + i / SAMPLE_RATE, codec="wav",
-                                  data=audio_mod.to_wav_bytes(part))
+                                  SAMPLE_RATE), started_at=T0 + i / SAMPLE_RATE, codec=codec,
+                                  data=data)
         pipeline.end_session(sid)
         pipeline.process_session(sid)
         elapsed = time.time() - t
@@ -300,9 +321,14 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     f = sub.add_parser("fetch")
     f.add_argument("--meetings", nargs="+", default=MEETINGS)
+    f.add_argument("--mics", nargs="+", default=MICS, choices=MICS)
     r = sub.add_parser("run")
     r.add_argument("--label", required=True)
     r.add_argument("--meetings", nargs="+", default=MEETINGS)
+    r.add_argument("--mic", default="Mix-Headset", choices=MICS)
+    r.add_argument("--opus", type=float, default=0.0, metavar="KBPS",
+                   help="send chunks as Ogg/Opus at this bitrate (T-Watch: 16), else WAV")
+    r.add_argument("--opus-complexity", type=int, default=1, help="T-Watch default: 1")
     r.add_argument("--offset", type=float, default=300.0, help="window start (s)")
     r.add_argument("--seconds", type=float, default=300.0, help="window length (s)")
     r.add_argument("--whisper-url", help="whisper-server URL (else CONVO_WHISPER_*)")
@@ -317,7 +343,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.cmd == "fetch":
-        fetch(args.meetings)
+        fetch(args.meetings, args.mics)
         return
     if args.cmd == "compare":
         res = {lab: json.loads((RESULTS / f"recognition-{lab}.json").read_text())
