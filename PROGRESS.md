@@ -203,6 +203,21 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   now wraps such uploads in Ogg Opus before ffmpeg (`convo_server/opus_packets.py`,
   `tests/test_opus_packets.py`). An incomplete last packet is dropped.
 
+## Done in round 9: "Speaker 2 was Jenn" renames the speaker
+
+- The owner said "/sound … Speaker 1 and Speaker 3 were both Shahyah and Speaker 2 was
+  Jenn" and the model only repeated what they said; nothing was renamed. Reproduced in
+  the sandbox: Barvis offered `name_speaker` on the `/sound` turn, but the model read the
+  sentence as a claim to check and never called it.
+- `INSTRUCTIONS` now has a "Naming speakers" paragraph (a statement of who a speaker was
+  is a request to save it; call `name_speaker` once per label), and the tool description
+  says the same. Sandbox, same message: before, only `search_conversations`; after,
+  `search_conversations`, `get_conversation`, `name_speaker` (approved) and Speaker 1
+  became Shahyah. The next model call hit the sandbox CPU's read timeout (HTTP 504), so
+  Speakers 2 and 3 still need the server run.
+- Needs the owner: paste the new `INSTRUCTIONS` into the Custom preset and rerun
+  `barvis_setup.py` so `/sound` picks it up.
+
 ## Next
 
 1. **Owner: watch test.** The steps are in `zepp-app/README.md`. Server URL

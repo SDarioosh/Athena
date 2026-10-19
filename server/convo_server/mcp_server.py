@@ -24,8 +24,12 @@ INSTRUCTIONS = """These tools search the user's own recorded conversations (tran
 with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
 for any question about what someone said, decided, promised or mentioned, and before \
 answering from memory. Ground every claim in tool results and include the link given \
-with it. Dates are in the user's timezone; pass dates as YYYY-MM-DD. If a speaker is \
-unnamed ("Speaker 1") and the user says who it was, call name_speaker."""
+with it. Dates are in the user's timezone; pass dates as YYYY-MM-DD.
+
+Naming speakers: when the user says who an unnamed speaker was ("Speaker 2 was Jenn", \
+"Speaker 1 and Speaker 3 were both Sam"), that is a request to save the name, not a claim \
+to check. Find the conversation (search_conversations by date), call name_speaker once for \
+each label, then say which labels were renamed."""
 
 Text = Annotated[str, Field(description="Free-text words to look for; empty = no text filter")]
 Person = Annotated[str, Field(description="Person's name as it appears in transcripts")]
@@ -247,8 +251,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                      speaker_label: Annotated[str, Field(description="e.g. 'Speaker 1'")],
                      name: Annotated[str, Field(description="The person's real name")],
                      remember_voice: bool = True) -> str:
-        """Rename an unnamed speaker in one conversation (e.g. 'Speaker 1' -> 'Alice') when
-        the user says who it was. With remember_voice, future recordings recognise them."""
+        """Save who an unnamed speaker was: rename 'Speaker N' to a real name in one
+        conversation. Call it whenever the user says who a speaker was ("Speaker 2 was
+        Alice"); call it once per label (two labels may get the same name). The summary is
+        redone with the name; with remember_voice, future recordings recognise them."""
         name = name.strip()
         if not name:
             return "name must not be empty"
