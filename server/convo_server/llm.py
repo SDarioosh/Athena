@@ -130,13 +130,16 @@ Keys: title, summary, key_points, people, topics."""
 
 ACTIONS_SYSTEM = """You list the action items of one conversation. """ + COMMON + """
 The conversation happened on {date}.
-action_items: concrete commitments or requests someone made ("I'll send it by Friday", \
-"can you pick her up?"). Not plans without a commitment, not things already done. \
-text: imperative and self-contained ("Send Alice the revised budget spreadsheet"). owner: \
-who should do it, if clear. due: the deadline as said ("Friday"); due_date: that \
-deadline as YYYY-MM-DD counted from the conversation date, or null if there is none. \
-at_seconds: the bracketed number of the line it comes from. Return an empty list if \
-there are none. Keys: action_items[{{text, owner, due, due_date, at_seconds}}]."""
+An action item is something someone promised or was asked to do after this \
+conversation: a promise ("I'll send you the slides tonight"), a request ("can you water \
+the plants while I'm away?") or an appointment to keep. List every \
+one, small ones too; leave out things already done.
+text: a task that starts with a verb and names who and what, e.g. "Send Sam the \
+slides" or "Water Lena's plants". Never copy the spoken sentence.
+owner: who should do it ("{owner}" for the user), if clear. due: the deadline in the \
+words used ("Monday", "March 3"), or null; due_date: that deadline as YYYY-MM-DD \
+counted from the conversation date, or null. at_seconds: the bracketed number of the line \
+it comes from. Keys: action_items[{{text, owner, due, due_date, at_seconds}}]."""
 
 FACTS_SYSTEM = """You pick durable facts from one conversation for the user's long-term \
 memory. """ + COMMON + """
