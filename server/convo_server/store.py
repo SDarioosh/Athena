@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -423,7 +424,9 @@ class Store:
     def save_summary(self, conv_id: str, summary: dict[str, Any]) -> list[int]:
         """Store structured LLM output and refresh the FTS index for the conversation.
 
-        Returns the ids of the new facts (for ``link_facts``).
+        A re-summary (e.g. after a speaker was renamed) keeps what is known about the
+        old items: action-item status, fact links and other conversations' sources.
+        Returns the ids of the new facts that still need ``link_facts``.
         """
         conv = self.get_conversation(conv_id)
         if conv is None:
@@ -437,6 +440,7 @@ class Store:
                 (summary["title"], summary["summary"], json.dumps(summary["key_points"]),
                  json.dumps(summary["topics"]), json.dumps(summary["people"]),
                  summary.get("kind"), time.time(), conv_id))
+            before = _knowledge(c, conv_id)
             self._clear_knowledge(c, conv_id)
             for item in summary["action_items"]:
                 cur = c.execute(
@@ -447,14 +451,9 @@ class Store:
                 c.execute("INSERT INTO search_fts VALUES ('action_item', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id, item["text"]))
             for fact in summary["facts"]:
-                cur = c.execute(
-                    "INSERT INTO facts (conversation_id, subject, fact, source_at)"
-                    " VALUES (?, ?, ?, ?)",
-                    (conv_id, fact.get("subject"), fact["fact"], fact.get("source_at")))
-                fact_ids.append(int(cur.lastrowid or 0))
-                c.execute("INSERT INTO search_fts VALUES ('fact', ?, ?, ?)",
-                          (str(cur.lastrowid), conv_id,
-                           f"{fact.get('subject') or ''}: {fact['fact']}"))
+                fact_ids.append(_insert_fact(c, conv_id, fact.get("subject"), fact["fact"],
+                                             fact.get("source_at")))
+            fact_ids = _carry_over(c, conv_id, before, fact_ids)
             c.executemany("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
                           [(conv_id, p) for p in summary["people"]])
             body = "\n".join([summary["title"], summary["summary"], *summary["key_points"],
@@ -476,7 +475,9 @@ class Store:
                 " summary = NULL, key_points = '[]', topics = '[]', people = '[]', kind = ?,"
                 " discard_reason = ?, updated_at = ? WHERE id = ?",
                 (kind, reason, time.time(), conv_id))
+            before = _knowledge(c, conv_id)
             self._clear_knowledge(c, conv_id)
+            _carry_over(c, conv_id, before, [])
             self._index_transcript(c, conv_id)
 
     def _clear_knowledge(self, c: sqlite3.Connection, conv_id: str) -> None:
@@ -965,6 +966,117 @@ def _segment(r: dict[str, Any]) -> Segment:
                    speaker=r["speaker"], is_owner=bool(r["is_owner"]), id=r["id"],
                    session_id=r["session_id"], device=r["device"],
                    conversation_id=r["conversation_id"])
+
+
+# ------------------------------------------------------------ re-summary carry-over
+# A re-summary replaces a conversation's action items and facts. An old and a new item
+# are the same when the text is the same, or when they come from the same transcript line
+# (source_at within _SAME_LINE seconds) and read alike ("Speaker 1 is vegetarian" ->
+# "Alice is vegetarian" after a rename).
+_SAME_LINE = 1.0
+_ALIKE = 0.6
+
+
+def _norm(text: str | None) -> str:
+    return " ".join(re.sub(r"[^\w ]+", " ", (text or "").lower()).split())
+
+
+def _same(text_a: str | None, at_a: float | None, text_b: str | None,
+          at_b: float | None) -> bool:
+    a, b = _norm(text_a), _norm(text_b)
+    if a and a == b:
+        return True
+    return (at_a is not None and at_b is not None and abs(at_a - at_b) <= _SAME_LINE
+            and SequenceMatcher(None, a, b).ratio() >= _ALIKE)
+
+
+def _insert_fact(c: sqlite3.Connection, conv_id: str, subject: str | None, fact: str,
+                 source_at: float | None) -> int:
+    cur = c.execute("INSERT INTO facts (conversation_id, subject, fact, source_at)"
+                    " VALUES (?, ?, ?, ?)", (conv_id, subject, fact, source_at))
+    c.execute("INSERT INTO search_fts VALUES ('fact', ?, ?, ?)",
+              (str(cur.lastrowid), conv_id, f"{subject or ''}: {fact}"))
+    return int(cur.lastrowid or 0)
+
+
+def _knowledge(c: sqlite3.Connection, conv_id: str) -> dict[str, Any]:
+    """What a re-summary must not lose: closed action items and the facts' links."""
+    facts = [dict(r) for r in c.execute(
+        "SELECT id, subject, fact, source_at, status, superseded_by FROM facts"
+        " WHERE conversation_id = ? ORDER BY id", (conv_id,))]
+    for f in facts:
+        f["sources"] = [dict(r) for r in c.execute(
+            "SELECT s.conversation_id, s.source_at FROM fact_sources s JOIN conversations v"
+            " ON v.id = s.conversation_id WHERE s.fact_id = ? ORDER BY v.started_at",
+            (f["id"],))]
+        f["replaced"] = [r["id"] for r in c.execute(
+            "SELECT id FROM facts WHERE superseded_by = ?", (f["id"],))]
+    return {
+        "items": [dict(r) for r in c.execute(
+            "SELECT text, source_at, status FROM action_items WHERE conversation_id = ?"
+            " AND status != 'open'", (conv_id,))],
+        "facts": facts,
+        # facts of other conversations that this one said again ("same" links)
+        "said_again": [dict(r) for r in c.execute(
+            "SELECT s.fact_id, s.source_at, f.fact FROM fact_sources s JOIN facts f"
+            " ON f.id = s.fact_id WHERE s.conversation_id = ?", (conv_id,))],
+    }
+
+
+def _carry_over(c: sqlite3.Connection, conv_id: str, before: dict[str, Any],
+                fact_ids: list[int]) -> list[int]:
+    """Re-apply ``before`` (from ``_knowledge``) to the new items; returns the new fact
+    ids that are still unlinked."""
+    items = [dict(r) for r in c.execute(
+        "SELECT id, text, source_at FROM action_items WHERE conversation_id = ?", (conv_id,))]
+    used: set[int] = set()
+    for old in before["items"]:
+        hit = next((i for i in items if i["id"] not in used
+                    and _same(i["text"], i["source_at"], old["text"], old["source_at"])), None)
+        if hit:
+            used.add(hit["id"])
+            c.execute("UPDATE action_items SET status = ? WHERE id = ?",
+                      (old["status"], hit["id"]))
+
+    new = {r["id"]: dict(r) for r in c.execute(
+        "SELECT id, subject, fact, source_at FROM facts WHERE id IN"
+        f" ({','.join('?' * len(fact_ids))})", fact_ids)} if fact_ids else {}
+    fresh = [i for i in fact_ids if i in new]
+
+    def match(fact: str, source_at: float | None) -> int | None:
+        exact = next((i for i in fresh if _norm(new[i]["fact"]) == _norm(fact)), None)
+        return exact or next((i for i in fresh if _same(new[i]["fact"], new[i]["source_at"],
+                                                         fact, source_at)), None)
+
+    for old in before["facts"]:
+        target = match(old["fact"], old["source_at"])
+        sources = old["sources"]
+        if target is not None:
+            fresh.remove(target)
+        elif sources:  # said elsewhere too: keep it, owned by the first other source
+            first, sources = sources[0], sources[1:]
+            target = _insert_fact(c, first["conversation_id"], old["subject"], old["fact"],
+                                  first["source_at"])
+        else:
+            continue
+        if old["status"] == "superseded" and old["superseded_by"] and c.execute(
+                "SELECT 1 FROM facts WHERE id = ?", (old["superseded_by"],)).fetchone():
+            c.execute("UPDATE facts SET status = 'superseded', superseded_by = ? WHERE id = ?",
+                      (old["superseded_by"], target))
+        c.executemany("INSERT OR IGNORE INTO fact_sources VALUES (?, ?, ?)",
+                      [(target, s["conversation_id"], s["source_at"]) for s in sources])
+        if old["replaced"]:
+            c.execute("UPDATE facts SET status = 'superseded', superseded_by = ? WHERE id IN"
+                      f" ({','.join('?' * len(old['replaced']))})", (target, *old["replaced"]))
+    for said in before["said_again"]:
+        hit = match(said["fact"], said["source_at"])
+        if hit is not None:  # the same statement again: stays a source, not a new fact
+            fresh.remove(hit)
+            c.execute("INSERT OR IGNORE INTO fact_sources VALUES (?, ?, ?)",
+                      (said["fact_id"], conv_id, new[hit]["source_at"]))
+            c.execute("DELETE FROM search_fts WHERE kind = 'fact' AND ref_id = ?", (str(hit),))
+            c.execute("DELETE FROM facts WHERE id = ?", (hit,))
+    return fresh
 
 
 def _fts_query(text: str) -> str:
