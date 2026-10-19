@@ -129,7 +129,13 @@ ours, random, base `f806xxxx-61c0-4fda-8b7b-26b08e916438`:
   press (or `ble pair` on the console). Outside the window, a peer that wasn't bonded
   before this connection is disconnected and its new bond is deleted as soon as
   encryption comes up. So someone nearby can't pull or delete recordings.
-- `ble forget` on the console deletes all bonds. Up to 4 bonds are kept.
+- Outside the window the watch doesn't store new bonds at all, and re-pairing a known
+  peer (a phone that lost its keys) is refused too: open the window for it.
+- `ble forget` on the console deletes all bonds. Up to 4 bonds are kept; a fifth replaces
+  the oldest.
+- A phone that paired outside the window keeps a bond the watch has deleted, so its later
+  connections fail with an authentication error. Remove `barvis-tw` in the phone's
+  Bluetooth settings and pair again in the window. The Android app shows this hint.
 - PC test: pair once during the window (`ble_relay.py --pair`, or `bluetoothctl` →
   `pair <addr>` on Linux). Android: the app calls `createBond()`; the system shows a
   pairing prompt the first time.
@@ -224,7 +230,10 @@ Windows negotiate on their own). With a smaller MTU every command answers
 - Streams bytes `[offset, offset + length)` of the chunk file (`length = 0`: to the end) as
   `DATA` notifications in order, then `READ_END` with `status` 0, the chunk's full size
   and its CRC-32 (of the whole file, not the range).
-- Resume after a disconnect with `offset` = bytes already received.
+- Resume after a disconnect with `offset` = bytes already received. An `offset` at or past
+  the end sends no `DATA`, only `READ_END`.
+- `READ_END.status` uses the error codes of §5.6: 0 = complete, 6 = card error, 3 = the
+  chunk disappeared during the read. A `READ` with no card answers `READ_END` status 6.
 - The relay checks: every `DATA` offset is the next expected byte, the total equals
   `ENTRY.bytes` and `READ_END.total_bytes`, and the CRC-32 of the whole file equals
   `ENTRY.crc32`. On a mismatch it discards the bytes and reads the chunk again: 4 reads in
@@ -266,6 +275,10 @@ Windows negotiate on their own). With a smaller MTU every command answers
 | 5 | `mtu_too_small` | ATT MTU < 64 (`arg` = current MTU) |
 | 6 | `io_error` | SD card unavailable or a read failed |
 | 7 | `bad_time` | `TIME` outside 2024–2100 |
+
+`arg` is 0 unless the table says otherwise. A command too short to have an opcode gets
+`cmd` = 0. An `ERROR busy` for a command written during a `READ` arrives between that
+`READ`'s `DATA` frames; relays never write during a `READ`, so they don't see it.
 
 ## 6. Relay algorithm (phone app and `ble_relay.py`)
 
@@ -326,9 +339,15 @@ batching: the radio is on for seconds per hour.
 The watch advertises **only when there is something to do**:
 
 - the sync window is open (2 min after a BOOT long press or `ble pair` / `sync`), or
-- a finished session is queued (a chunk with `LAST`), or
-- at least **10 min of audio** is queued (a long recording still running), or
-- chunks are queued and the last successful sync (a `BYE`) was more than 60 min ago.
+- a finished session was queued since the last `BYE` (a chunk with `LAST`), or
+- at least **10 min of audio** was queued since the last `BYE` (a long recording still
+  running), or
+- chunks are queued and the last successful sync (a `BYE`) was more than 60 min ago, or
+  there was none since boot.
+
+"Since the last `BYE`" matters for chunks a relay left on the watch (§6 step 6.5, e.g. the
+server answered `422`): they bring advertising back only through the hourly rule, so a
+rejected chunk can't keep the radio on.
 
 Otherwise it doesn't advertise, and while connected it doesn't advertise either (one
 relay at a time). Advertising is connectable, undirected, **interval 1000–1250 ms**,
