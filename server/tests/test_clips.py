@@ -163,3 +163,29 @@ def test_no_carry_over_by_default(pipeline):
     _session(pipeline)
     pipeline._transcribe_session("s1")
     assert set(fake.prompts) == {"Lisbon."}
+
+
+def test_piece_over_a_cut_is_split_by_word_times():
+    w = Window(((0.75, 3.75), (7.25, 10.25)))  # cut at clip time 3.0
+    words = ((0.5, 1.0, " Book"), (1.0, 1.6, " flights."), (3.4, 3.9, " Sure"),
+             (3.9, 4.3, " thing."))
+    piece = TranscriptPiece(0.5, 4.3, "Book flights. Sure thing.", words)
+    a, b = w.split(piece)
+    assert (a.text, a.start, a.end) == ("Book flights.", 0.5, 1.6)
+    assert (b.text, b.start, b.end) == ("Sure thing.", 3.4, 4.3)
+    assert w.to_run(b.start) == pytest.approx(7.65)
+    # no word times, or inside one part: unchanged
+    assert w.split(TranscriptPiece(0.5, 4.3, "x")) == [TranscriptPiece(0.5, 4.3, "x")]
+    inside = TranscriptPiece(0.5, 1.6, "Book flights.", words[:2])
+    assert w.split(inside) == [inside]
+
+
+def test_verbose_json_keeps_word_times():
+    from convo_server.transcribe import parse_verbose_json
+
+    (p,) = parse_verbose_json({"segments": [{"start": 0.0, "end": 1.0, "text": " Hi there",
+                                             "words": [{"word": " Hi", "start": 0.0,
+                                                        "end": 0.4},
+                                                       {"word": " there", "start": 0.4,
+                                                        "end": 1.0}]}]})
+    assert p.words == ((0.0, 0.4, " Hi"), (0.4, 1.0, " there"))

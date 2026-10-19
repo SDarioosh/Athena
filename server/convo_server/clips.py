@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .audio import SAMPLE_RATE
+from .transcribe import TranscriptPiece
 from .vad import Span
 
 
@@ -44,6 +45,34 @@ class Window:
                 return a + min(t - off, length)
             off += length
         raise AssertionError("unreachable")
+
+    def part_of(self, t: float) -> int:
+        """Index of the part clip time ``t`` falls in."""
+        off = 0.0
+        for i, (a, b) in enumerate(self.parts):
+            off += b - a
+            if t < off:
+                return i
+        return len(self.parts) - 1
+
+    def split(self, piece: TranscriptPiece) -> list[TranscriptPiece]:
+        """Split a piece that runs over a cut, by its word times, one piece per part.
+
+        Without word times (or within one part) the piece is returned as is.
+        """
+        if len(self.parts) == 1 or not piece.words or (
+                self.part_of(piece.start) == self.part_of(max(piece.start, piece.end - 1e-3))):
+            return [piece]
+        groups: dict[int, list[tuple[float, float, str]]] = {}
+        for w in piece.words:
+            groups.setdefault(self.part_of((w[0] + w[1]) / 2), []).append(w)
+        out = []
+        for i in sorted(groups):
+            ws = groups[i]
+            text = "".join(w[2] for w in ws).strip()
+            if text:
+                out.append(TranscriptPiece(ws[0][0], max(ws[-1][1], ws[0][0]), text, tuple(ws)))
+        return out or [piece]
 
 
 def plan_windows(regions: list[Span], run_seconds: float, *, pad: float, max_seconds: float,

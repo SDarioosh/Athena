@@ -28,6 +28,9 @@ class TranscriptPiece:
     start: float  # seconds relative to the audio passed in
     end: float
     text: str
+    # (start, end, text) per token when the backend reports them (verbose_json); the
+    # pipeline uses them to split a piece where a clip joins two cut-apart regions.
+    words: tuple[tuple[float, float, str], ...] = ()
 
 
 class Transcriber(Protocol):
@@ -47,7 +50,7 @@ def _clean(pieces: list[TranscriptPiece]) -> list[TranscriptPiece]:
         text = p.text.strip()
         if not text or _NON_SPEECH.match(text):
             continue
-        out.append(TranscriptPiece(p.start, max(p.end, p.start), text))
+        out.append(TranscriptPiece(p.start, max(p.end, p.start), text, p.words))
     return out
 
 
@@ -82,8 +85,13 @@ def parse_verbose_json(payload: dict) -> list[TranscriptPiece]:
     if segs is None:  # plain {"text": ...} response
         text = payload.get("text", "")
         return _clean([TranscriptPiece(0.0, 0.0, text)]) if text.strip() else []
-    return _clean([TranscriptPiece(float(s["start"]), float(s["end"]), s["text"])
-                   for s in segs])
+    return _clean([TranscriptPiece(float(s["start"]), float(s["end"]), s["text"],
+                                   _words(s)) for s in segs])
+
+
+def _words(seg: dict) -> tuple[tuple[float, float, str], ...]:
+    return tuple((float(w["start"]), float(w["end"]), w["word"])
+                 for w in seg.get("words") or () if "start" in w and "end" in w)
 
 
 class WhisperCliTranscriber:

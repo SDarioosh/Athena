@@ -232,7 +232,7 @@ class Pipeline:
             for w in windows:
                 got = self.transcriber.transcribe(
                     w.extract(run_audio), " ".join(x for x in (prompt, context) if x))
-                for p in got:
+                for p in (q for piece in got for q in w.split(piece)):
                     s = w.to_run(p.start)
                     e = max(s, w.to_run(max(p.end, p.start), end=True))
                     pieces.append((run_start + s, run_start + e, p.text,
