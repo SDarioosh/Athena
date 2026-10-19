@@ -11,7 +11,8 @@ No `.env`, `auth.json` or other credential files were read.*
 
 - **Knowledge layer: hybrid.** Our SQLite store is the source of truth, exposed by our MCP
   server (`server/convo_server/mcp_server.py`).
-- **Frontend: Odysseus, as a fork named Barvis.** The fork is modified to work with our
+- **Frontend: Odysseus, as our own fork** (repo `SDarioosh/Barvis`; the fork was called
+  Barvis until 2026-10-19 and is now simply Odysseus). The fork is modified to work with our
   system and kept in sync with upstream (see "Odysseus fork plan" below).
 - The owner chose this knowing the side-by-side numbers below. The fork's changes target
   the specific failures the test found.
@@ -34,7 +35,7 @@ conversation, and the answer contains the expected fact. "Content" counts the fa
 | **Hermes, as above + citation hint in tool results** | **15** | **20** | 20 | 15 | 16 |
 | Odysseus, "Regular tools" mode + instructions in a Custom preset | 1 | 9 | 13 | 2 | 46 |
 | **Odysseus, as above + citation hint in tool results** | **3** | 10 | 13 | 4 | 44 |
-| **Barvis fork** (trusted read-only MCP, web-routing fix, built-ins trimmed), approvals *denied* | **9** | 18 | 20 | 9 | 15 |
+| **Our Odysseus fork** (trusted read-only MCP, web-routing fix, built-ins trimmed), approvals *denied* | **9** | 18 | 20 | 9 | 15 |
 
 What the test found:
 
@@ -58,7 +59,7 @@ What the test found:
   ("January 12th, 2026" for a move announced in October 2026). Hermes once searched the
   wrong year entirely.
 
-## Odysseus fork plan (Barvis)
+## Odysseus fork plan
 
 The goal is the smallest possible patch set, so upstream merges stay routine.
 
@@ -70,7 +71,7 @@ The goal is the smallest possible patch set, so upstream merges stay routine.
    disabled" when MCP tools could answer.
 3. **Tool choice.** Disable the built-ins we don't use and use "Regular tools" mode. This is
    configuration, not code.
-4. **Barvis features**, kept in new files where possible:
+4. **Fork features**, kept in new files where possible:
    - a conversations / transcript view;
    - action items flowing into Odysseus tasks and CalDAV;
    - ntfy notifications.

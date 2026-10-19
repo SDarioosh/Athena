@@ -1,7 +1,7 @@
-# barvis-sound Android relay
+# odysseus-sound Android relay
 
 Android app that carries recordings from the LilyGO T-Watch Ultra to the owner's
-barvis-sound server:
+odysseus-sound server:
 
 ```
 watch (BLE, protocol v1) → this app → POST /v1/ingest/chunk on your server (LAN / Tailscale)
@@ -53,7 +53,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## First-time setup
 
-1. Open **Barvis Relay → Settings**. Enter the server URL, for example
+1. Open **Odysseus Sound Relay → Settings**. Enter the server URL, for example
    `https://myserver.<tailnet>.ts.net` (Tailscale HTTPS certificate) or
    `http://100.x.y.z:8000` / `http://192.168.x.y:8000`, and the server's
    `CONVO_INGEST_TOKEN`. Tap **Test connection** (checks `/health`, then the token with an

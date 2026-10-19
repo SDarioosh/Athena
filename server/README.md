@@ -1,4 +1,4 @@
-# barvis-sound server
+# odysseus-sound server
 
 The `convo_server` package (CLI `convo-server`, env prefix `CONVO_`) keeps the project's
 old name, convo-ai. Don't rename it.
@@ -104,9 +104,9 @@ It works from any directory and needs no sudo. `deploy`:
 Everything is read from `server/.env` (settings: bottom of `.env.example`). Without
 systemd it starts background processes instead (pid files and logs in
 `data/run/`, `data/logs/`). It stops with an error if a port is already taken, e.g. by a
-`serve` you started by hand: stop that first. On the server, Barvis'
-`scripts/barvis_deploy.sh deploy` runs this script before it rebuilds Barvis
-([Barvis docs/barvis/deploy.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/deploy.md)).
+`serve` you started by hand: stop that first. On the server, the hub's
+`scripts/fork_deploy.sh deploy` runs this script before it rebuilds Odysseus
+([hub docs/fork/deploy.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/deploy.md)).
 
 ## Run by hand
 

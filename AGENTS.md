@@ -1,32 +1,39 @@
-# barvis-sound: agent guide
+# odysseus-sound: agent guide
 
-barvis-sound (formerly "convo-ai", then "barvis-ai") is a private
-conversation-memory system and the first **Barvis module**. Wearables capture
+odysseus-sound (formerly "convo-ai", then "barvis-ai", then "barvis-sound") is a
+private conversation-memory system and the first **Odysseus module**. Wearables capture
 audio; this Ubuntu server transcribes, diarizes and summarizes it with local
-models; [Barvis](https://github.com/SDarioosh/Barvis) answers questions about it
-through our MCP server. **Nothing in the data path touches the cloud.**
+models; [Odysseus](https://github.com/SDarioosh/Barvis), our Odysseus fork (repo
+`SDarioosh/Barvis`), answers questions about it through our MCP server. **Nothing in
+the data path touches the cloud.**
 
 ## Names: prose vs code
 
-- In prose (docs, PR text, comments you add) call the project **barvis-sound**.
+- In prose (docs, PR text, comments you add) call the project **odysseus-sound**
+  (formerly convo-ai, barvis-ai, barvis-sound) and the hub **Odysseus** ("our Odysseus
+  fork" where it must be told apart from upstream Odysseus).
 - **Don't rename code identifiers.** They keep the old name on purpose: the
   `convo_server` package, the `convo-server` CLI, `CONVO_*` env vars, paths such as
-  `server/data/convo.db`, the MCP server name `convo-ai`, the Barvis server name
+  `server/data/convo.db`, the MCP server name `convo-ai`, the hub's server name
   `convo`, the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app ("Convo Rec Test", vendor
-  `convo-ai`). Renaming them breaks deployed configs, devices and Barvis. Don't
-  "fix" them.
+  `convo-ai`), the repo URL `SDarioosh/barvis-sound`, the `barvis-sound*` service names
+  and `BARVIS_SOUND_*` vars of `server/scripts/deploy.sh`, the Android app ID
+  `org.barvis.sound.relay`, the BLE name `barvis-tw` and its `BARVIS_UUID` /
+  `BARVIS_*` Opus tag macros, and the PC relay's `barvis_relay` package. Renaming them
+  breaks deployed servers and configs, paired watches, the installed phone app and
+  Odysseus. Don't "fix" them.
 
-## This is a Barvis module
+## This is an Odysseus module
 
-- Barvis (an Odysseus fork, AGPL-3.0) is the hub: the one chat and agent UI. This repo
-  is a separate program that owns its data. Barvis reaches it only through our MCP
+- Odysseus (our Odysseus fork, AGPL-3.0) is the hub: the one chat and agent UI. This repo
+  is a separate program that owns its data. Odysseus reaches it only through our MCP
   server (or the HTTP API here) and never writes `convo.db` directly.
-- The module contract is in Barvis:
-  [docs/barvis/modules.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/modules.md).
-  How Barvis connects to us:
-  [docs/barvis/modules/barvis-sound.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/modules/barvis-sound.md).
-- Never copy Odysseus/Barvis code into this repo. Talking over MCP keeps the AGPL out of
-  this module.
+- The module contract is in the hub repo:
+  [docs/fork/modules.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules.md).
+  How Odysseus connects to us:
+  [docs/fork/modules/odysseus-sound.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules/odysseus-sound.md).
+- Never copy Odysseus code (upstream or our fork) into this repo. Talking over MCP keeps
+  the AGPL out of this module.
 
 ## Layout
 
@@ -34,7 +41,7 @@ through our MCP server. **Nothing in the data path touches the cloud.**
   transcription, diarization, conversation splitting, summaries, SQLite
   storage, search, digest, MCP server (`convo_server/mcp_server.py`), frontend eval
   (`server/eval/bakeoff.py`). `server/scripts/deploy.sh` updates the server and runs it
-  as background services; Barvis' `barvis_deploy.sh` calls it. See `server/README.md`.
+  as background services; the hub's `scripts/fork_deploy.sh` calls it. See `server/README.md`.
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
   recording feasibility test app; see `zepp-app/README.md`.
 - `firmware/recorder/`: ESP-IDF 5.x firmware for our own recorders, one shared `main/`
@@ -121,7 +128,7 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 
 ## MCP tool contract
 
-`server/convo_server/mcp_server.py` is the interface Barvis depends on.
+`server/convo_server/mcp_server.py` is the interface Odysseus depends on.
 
 | Tool | Annotation |
 |---|---|
@@ -129,7 +136,7 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 | `update_action_item`, `name_speaker`, `reassign_line` | write (`rw`: `readOnlyHint: false`, `destructiveHint: false`) |
 | `rename_speaker_everywhere` | write, destructive (`rw_merge`: `readOnlyHint: false`, `destructiveHint: true`; merging two names can't be undone) |
 
-- Barvis runs read-only tools without approval because of `readOnlyHint: true`. A tool
+- Odysseus runs read-only tools without approval because of `readOnlyHint: true`. A tool
   that changes anything must use `rw`. Never mark a write tool read-only.
 - Every fact in a result carries a transcript link
   (`<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`), and every non-empty result asks
@@ -138,8 +145,8 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 - HTTP auth accepts `Authorization: Bearer` or `?access_token=` (`BearerAuth`); Odysseus
   can only use the query form.
 - **Changing a tool name, an argument, an annotation, the link format, or the auth is a
-  breaking change.** It needs a coordinated Barvis PR (module doc, preset text) per the
-  [versioning rules](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/modules.md#versioning),
+  breaking change.** It needs a coordinated hub PR (module doc, preset text) per the
+  [versioning rules](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules.md#versioning),
   and a rerun of `server/eval/bakeoff.py --frontend odysseus`: a few questions in the
   sandbox stack, and the full run listed under Server verification for the owner. Put
   the scores in both PRs. Current server score: 9/20, target ≥ 15/20.
@@ -153,17 +160,17 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 | Watch app | `zepp-app/` here |
 | Watch/pendant firmware, BLE protocol, phone and PC relays | this repo (`firmware/`, `android-relay/`, `docs/twatch-ble-protocol.md`) |
 | Eval questions and scoring | `server/eval/bakeoff.py` here |
-| How Barvis gates, routes or shows our tools; presets; Barvis UI views | the Barvis repo |
-| Odysseus bugs | the Barvis repo (offered upstream) |
+| How Odysseus gates, routes or shows our tools; presets; Odysseus UI views | the hub repo (`SDarioosh/Barvis`) |
+| Upstream Odysseus bugs | the hub repo (offered upstream) |
 
 ## Where you work: the cloud sandbox
 
 - You work in a cloud sandbox, **not on the owner's server**. Never assume access to the
   server, its services, its data, the devices or Tailscale.
 - The sandbox runs the whole system on CPU with fictional data: llama-server with a
-  small model, whisper-server, `convo-server serve` and `mcp --http`, Barvis on
+  small model, whisper-server, `convo-server serve` and `mcp --http`, Odysseus on
   `127.0.0.1:7010`, and the eval. Steps, timings and known issues:
-  [Barvis docs/barvis/sandbox.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/sandbox.md).
+  [hub docs/fork/sandbox.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/sandbox.md).
 - Small-model scores only compare with other sandbox runs. The real score
   (`qwen3.5-35b` on the server) is measured by the owner.
 - Use only fictional data (`server/scripts/seed_demo.py`). Never ask for or use real
@@ -173,10 +180,10 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 
 - Every PR that can change answers, the pipeline on real audio, devices or deployment
   has a **Server verification** section: exact commands, the expected result, and
-  real-device steps ([format](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/sandbox.md#server-verification)).
+  real-device steps ([format](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/sandbox.md#server-verification)).
 - The owner runs it and pastes the result into the PR; continue from that result.
-- Never write steps that touch the owner's Odysseus install (Docker,
-  `/home/steam/models/odysseus`, port 7000). Server-side evals target the Barvis test
+- Never write steps that touch the owner's production Odysseus install (Docker,
+  `/home/steam/models/odysseus`, port 7000). Server-side evals target the Odysseus test
   instance on `127.0.0.1:7010`.
 
 ## Checks
@@ -221,8 +228,8 @@ relay tests and the Android build and tests.
   owner asks.
 - Agents **never merge** and never push to `main` directly.
 - Never commit secrets, `.env`, tokens, databases, or audio files of any kind.
-- Frontend: the owner chose an Odysseus fork, Barvis (`docs/frontend-decision.md`).
-  Barvis work happens in the Barvis repo; see "This is a Barvis module".
+- Frontend: the owner chose an Odysseus fork (`docs/frontend-decision.md`), now simply
+  called Odysseus. Hub work happens in the hub repo; see "This is an Odysseus module".
 - After **three failed attempts at the same problem**, stop and end your reply with
   `ESCALATE: <reason>` instead of guessing.
 - Device code you can't verify on hardware is fine, but list what still needs

@@ -98,7 +98,7 @@ a profile recorded on a laptop.
    stays on until it is done. The watch shows how many seconds of speech the server kept.
 
 The server cuts the speech into several voice samples and replaces your earlier
-enrollment samples (with barvis-sound's multi-sample voices; otherwise it replaces your
+enrollment samples (with odysseus-sound's multi-sample voices; otherwise it replaces your
 voiceprint). Redo it any time, for example after a firmware update changes the mic.
 Diarization must be on (`CONVO_DIARIZATION=true`), or the server answers 503.
 

@@ -1,6 +1,6 @@
 ---
 trigger: always_on
-description: Antigravity-specific notes for barvis-sound. Shared rules are in AGENTS.md.
+description: Antigravity-specific notes for odysseus-sound. Shared rules are in AGENTS.md.
 ---
 
 # Antigravity notes
