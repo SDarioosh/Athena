@@ -1,0 +1,36 @@
+# Shared defaults for every board. Board-specific settings (PSRAM mode, flash size, CPU
+# frequency) live in sdkconfig.<board>. Build with both:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_ultra" build
+CONFIG_IDF_TARGET="esp32s3"
+
+# Partition table
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# Power management: DFS now, light sleep is a milestone-2 question
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+CONFIG_PM_DFS_INIT_AUTO=y
+
+# Console on the native USB (Serial/JTAG). No secondary UART console: UART0's pins
+# (GPIO43/44) go to the GPS on the T-Watch Ultra.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Logging
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+CONFIG_LOG_COLORS=n
+
+# Radios: nothing is initialised and nothing is linked (see CMakeLists.txt), so there is
+# no BT/Wi-Fi Kconfig to turn off here.
+
+# FAT on the SD card: long file names
+CONFIG_FATFS_LFN_HEAP=y
+
+# Watchdog: keep the task watchdog on the main loop
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# C library: keep printf small but with 64-bit support for the SD size
+CONFIG_NEWLIB_NANO_FORMAT=n

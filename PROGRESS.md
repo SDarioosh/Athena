@@ -6,7 +6,7 @@ T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → l
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (round 10: voice profile on the watch)_
+_Last updated: 2026-10-19 (round 11: T-Watch Ultra milestone 1, bring-up firmware)_
 
 ## Status
 
@@ -29,7 +29,7 @@ _Last updated: 2026-10-19 (round 10: voice profile on the watch)_
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
 | 9c | Calendar/task integration for action items | later (wanted) | — |
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
-| 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; owner decisions answered 2026-10-19; next: milestone 1 (bring-up test firmware) | `docs/t-watch-ultra-plan.md` |
+| 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware built in the sandbox, **waiting for the owner's watch test**; next: milestone 2 (power baseline) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -226,6 +226,42 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Needs the owner: paste the new `INSTRUCTIONS` into the Custom preset and rerun
   `barvis_setup.py` so `/sound` picks it up.
 
+## Done in round 11: T-Watch Ultra milestone 1, bring-up test firmware
+
+- `firmware/recorder/`: ESP-IDF 5.x project with the board layer from the plan (§6):
+  `main/board.h` is the interface, `boards/twatch_ultra/board/` implements it. Shared code
+  in `main/` (mic, test recorder, status screen, console, pure helpers); the XIAO becomes a
+  second board directory later. Build: `idf.py -DBOARD=twatch_ultra
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_ultra" build` (CI does this
+  on ESP-IDF v5.5.2, plus the host tests).
+- Bring-up order as in plan §2.1: I2C → AXP2101 (DC1 on; GPS, LoRa, NFC, speaker, sensor
+  and display rails off; SD rail only while the card is in use; 400 mA charge, 4.2 V;
+  charge LED off; VBAT + TS ADC; LilyGO's fuel-gauge battery model written once; RTC
+  backup cell charged) → XL9555 (haptic/display enables low, touch held in reset) →
+  PCF85063A → DRV2605 → buttons. The rails are read back from the PMU and logged at boot
+  and on `rails`. LoRa/NFC chip selects stay Hi-Z (plan §2.2).
+- Expander pin question (plan §2.1) answered from the schematic: TP_RST = P10, SD_DET =
+  P12, i.e. the hardware page's "GPIO10/12" are port names and the arduino board file's
+  8/10 are the same pins as linear indices. `pins.h` keeps both readings; `exp` logs all
+  16 inputs so the owner can confirm (SD_DET low with a card inserted).
+- Buttons: PWR short press (AXP2101 IRQ on GPIO7) shows the status screen for 5 s on the
+  CO5300 AMOLED (`espressif/esp_lcd_co5300` from the component registry, LilyGoLib init
+  sequence, 410×502 portrait, text bands, no LVGL), then powers the display rail off.
+  BOOT short press toggles mute with 1 buzz (recording) / 2 buzzes (muted); BOOT long
+  press logs "sync now". BOOT held + PWR short, or `rec` on the USB console, records 60 s
+  from the PDM mic (I2S PDM RX, 16 kHz mono 16-bit) to a WAV on the SD card.
+- Time: RTC → system clock at boot; `time 2026-10-19T12:34:56Z` on the console sets
+  both. BLE time sync comes later.
+- No Wi-Fi and no BLE: neither is initialised, and the link map has no `libnet80211`,
+  `libesp_wifi`, `libphy` or `libbt` (the project builds only main's dependencies).
+- Host tests (`firmware/recorder/test/`, plain CMake + ctest, no ESP-IDF): WAV header,
+  calendar/ISO-8601 parsing, PCF85063A BCD codec, font and text rendering.
+- Needs the real watch (owner, Server verification section of the PR): boot log with the
+  rail read-back, expander pin values, status screen, mute + buzz, battery %, RTC across a
+  reboot, the 60 s WAV through the server pipeline. Likely first-flash tweaks: PDM slot
+  (left/right), display init (LilyGoLib runs its sequence twice), SD_DET polarity,
+  ERM vs LRA haptics.
+
 ## Done in round 10: voice profile on the watch
 
 - The watch app (0.2.0) has a **Voice** button: a guided recording of 8 short prompts
@@ -251,23 +287,31 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 
 ## Next
 
-1. **Owner: watch test.** The steps are in `zepp-app/README.md`. Server URL
+1. **Owner: T-Watch Ultra milestone 1 test** (`firmware/recorder/README.md`, PR Server
+   verification). Then milestone 2: power baseline (plan §7.3, §8): current for board
+   idle, mic on, SD write, screen on; whether I2S PDM RX allows light sleep; whether the
+   AXP2101 reports discharge current (it has no battery-current ADC channel in its
+   register map, so expect a USB meter or PPK2); full-discharge run.
+2. **Owner: T-Rex watch test.** The steps are in `zepp-app/README.md`. Server URL
    `http://100.106.28.112:8000`; the token is in that checkout's `server/.env`.
-2. **Barvis fork:** citations from 9/20 to ≥ 15/20 (Barvis `docs/barvis/roadmap.md`).
-3. **Owner: server verification** of the failed-summary retry (steps in its PR), and of
+3. **Barvis fork:** citations from 9/20 to ≥ 15/20 (Barvis `docs/barvis/roadmap.md`).
+4. **Owner: server verification** of the failed-summary retry (steps in its PR), and of
    SDarioosh/Barvis#5 (full eval on the test instance; expect no approvals for read-only
    tools and a score ≥ 9/20; steps in that PR).
-4. Build the real T-Rex recording app from the watch-test results.
-5. systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.
-6. Owner voice enrollment from the watch (round 10), plus speaker-threshold check on
+5. Build the real T-Rex recording app from the watch-test results.
+6. systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.
+7. Owner voice enrollment from the watch (round 10), plus speaker-threshold check on
    real audio.
-7. T-Watch Ultra recorder: milestone 1, bring-up test firmware (`docs/t-watch-ultra-plan.md` §8).
-8. XIAO pendant, after the T-Watch Ultra.
+8. T-Watch Ultra recorder: milestones 3+ (`docs/t-watch-ultra-plan.md` §8) once the
+   power baseline says go.
+9. XIAO pendant, after the T-Watch Ultra: a second `boards/` directory on the same firmware.
 
 ## Open questions for you
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
+- T-Watch Ultra: everything under "Needs the real watch" above. Also: does the battery
+  take a 4.2 V charge target (set conservatively; LilyGoLib asks the chip for 4.288 V)?
 - Barvis fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.
 - The remaining XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, extra parts, microSD). They wait until XIAO work

@@ -21,3 +21,20 @@ jobs:
           pip install -e ".[dev]" || pip install -e . pytest ruff
           ruff check .
           python -m pytest -q
+
+  firmware-twatch-ultra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Host tests (pure logic: WAV header, calendar, RTC codec, text rendering)"
+        run: |
+          cmake -S firmware/recorder/test -B build-host
+          cmake --build build-host
+          ctest --test-dir build-host --output-on-failure
+      - name: "idf.py build (ESP-IDF v5.5.2, esp32s3, board twatch_ultra)"
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.2
+          target: esp32s3
+          path: firmware/recorder
+          command: idf.py -DBOARD=twatch_ultra -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_ultra" build

@@ -8,6 +8,13 @@ firmware-archive/
 
 # build output / environments
 .pio/
+# ESP-IDF (firmware/recorder): keep sdkconfig.defaults and sdkconfig.<board>, not the
+# generated sdkconfig, build dirs or downloaded components
+firmware/**/build/
+firmware/**/build-*/
+firmware/**/sdkconfig
+firmware/**/sdkconfig.old
+firmware/**/managed_components/
 __pycache__/
 *.pyc
 .venv/

@@ -36,11 +36,15 @@ through our MCP server. **Nothing in the data path touches the cloud.**
   (`server/eval/bakeoff.py`). See `server/README.md`.
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
   recording feasibility test app; see `zepp-app/README.md`.
+- `firmware/recorder/`: ESP-IDF 5.x firmware for our own recorders, one shared `main/`
+  and a board layer (`main/board.h`, `boards/twatch_ultra/board/`). Milestone 1
+  (bring-up test firmware for the T-Watch Ultra) is built; see
+  `firmware/recorder/README.md`.
 - `docs/`: research and decisions (`omi-ingestion.md`,
   `frontend-decision.md`, `xiao-esp32s3-sense-plan.md`: the plan for our own
   XIAO ESP32-S3 Sense pendant, which comes later; `t-watch-ultra-plan.md`: the same
   recorder on the LilyGO T-Watch Ultra, built first, with one shared ESP-IDF firmware.
-  Both are plans; nothing is implemented yet).
+  Milestone 1 of the T-Watch Ultra is implemented in `firmware/recorder/`; the rest is plan).
 - `hermes/`: Hermes profile snippet used by the orchestrator.
 - `orchestrator/`: optional build loop. Leave it alone.
 
@@ -176,11 +180,16 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 - Server tests: `cd server && .venv/bin/python -m pytest -q`
   (no models needed; fakes for whisper, LLM, embeddings)
 - Zepp app: `cd zepp-app && zeus build` once the real project exists
+- Recorder firmware host tests: `cmake -S firmware/recorder/test -B build-host &&
+  cmake --build build-host && ctest --test-dir build-host`
+- Recorder firmware build (ESP-IDF ≥ 5.4): `cd firmware/recorder && idf.py
+  -DBOARD=twatch_ultra -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_ultra"
+  build`
 - Optional end-to-end: `server/scripts/smoke_upload.py` against a running
   server with whisper-server and llama-server up.
 
 Skip a check only if its project doesn't exist yet. CI (`.github/workflows/ci.yml`)
-runs the server checks on Python 3.11.
+runs the server checks on Python 3.11 and the firmware host tests and `idf.py build`.
 
 ## Conventions
 
