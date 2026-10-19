@@ -2,8 +2,8 @@
 
 barvis-sound (formerly convo-ai / barvis-ai) is the first module of
 [Barvis](https://github.com/SDarioosh/Barvis). Design: wearables (Amazfit T-Rex 3 Pro,
-XIAO ESP32-S3 pendant planned, Omi later) → local Ubuntu server (Silero VAD, whisper.cpp,
-diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
+T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → local
+Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
 _Last updated: 2026-10-18 (round 7: Barvis keeps MCP annotations over HTTP)_
@@ -27,8 +27,8 @@ _Last updated: 2026-10-18 (round 7: Barvis keeps MCP annotations over HTTP)_
 | 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | merged (PR #4), **waiting for owner's watch test**; test server is running | `zepp-app/` |
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
 | 9c | Calendar/task integration for action items | later (wanted) | — |
-| 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **main focus** with the T-Rex; plan written, waiting on owner decisions | `docs/xiao-esp32s3-sense-plan.md` |
-| 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | plan written, waiting on owner decisions (§10) | `docs/t-watch-ultra-plan.md` |
+| 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
+| 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; owner decisions answered 2026-10-19; next: milestone 1 (bring-up test firmware) | `docs/t-watch-ultra-plan.md` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -96,6 +96,12 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   **Deferred:** while testing, services stay open to the LAN and Tailscale. Lock down
   before the system goes into daily use.
 - The old T-Watch `firmware/` is removed and `firmware-archive/` is deleted and ignored.
+- Recorder (2026-10-19): **T-Watch Ultra first, XIAO later**, one shared ESP-IDF firmware
+  (can be split later). Buttons as in `docs/t-watch-ultra-plan.md` §3, screen off until a
+  button press, microSD overflow, T-Watch S3 left out for now. Late-chunk policy: finalise
+  on `/end` + 24 h timeout, re-open on late chunks. Omi live-audio service: skip. A daily
+  charge is OK, but battery life should be as long as possible without hurting recording
+  quality.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
@@ -230,20 +236,17 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 4. Build the real T-Rex recording app from the watch-test results.
 5. systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.
 6. Owner voice enrollment, plus speaker-threshold check on real audio.
-7. XIAO pendant, after the §10 decisions.
+7. T-Watch Ultra recorder: milestone 1, bring-up test firmware (`docs/t-watch-ultra-plan.md` §8).
+8. XIAO pendant, after the T-Watch Ultra.
 
 ## Open questions for you
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
 - Barvis fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.
-- The XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
-(battery/form factor, fallback board, ESP-IDF vs Arduino, server late-chunk policy, extra
-parts, microSD, Omi live-audio service). No pendant code until those are answered.
-- The T-Watch Ultra decisions in `docs/t-watch-ultra-plan.md` §10 (Ultra first and
-  the XIAO later, one shared firmware, framework, button mapping, raise-to-wake,
-  overflow storage, T-Watch S3 as a second board, daily charge). No watch firmware until
-  those are answered.
+- The remaining XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
+(battery/form factor, fallback board, extra parts, microSD). They wait until XIAO work
+starts, after the T-Watch Ultra.
 
 ## Notes
 

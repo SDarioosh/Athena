@@ -26,7 +26,9 @@ fact leaves the owner's network. Cloud APIs are allowed only for development
 tooling (coding agents, downloading model weights), never in the data path.
 Raw audio is deleted after successful transcription by default.
 
-The earlier LilyGO T-Watch / custom-firmware design is dropped.
+The earlier LilyGO T-Watch battery-logging firmware was dropped. The owner's own
+recorder now runs on the **LilyGO T-Watch Ultra first** and the XIAO ESP32-S3 Sense
+pendant later, on one shared ESP-IDF firmware (`docs/t-watch-ultra-plan.md`).
 
 ## Plan
 

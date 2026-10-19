@@ -1,12 +1,12 @@
 # Plan: LilyGO T-Watch Ultra as a barvis-sound recorder
 
-Status: **plan only, nothing implemented.** Implementation waits for the owner to
-answer the open decisions at the end (§10).
+Status: **owner decisions answered (2026-10-19, §10). Nothing implemented yet.** Next
+step: milestone 1 (bring-up test firmware).
 
 ## Why this watch
 
 - The owner has a **T-Watch Ultra** and a **T-Watch S3**. The Ultra is the target. The S3
-  is a spare test board (§8).
+  is left out for now (§10).
 - Both use the same ESP32-S3 chip as the planned XIAO ESP32-S3 Sense pendant
   ([xiao-esp32s3-sense-plan.md](xiao-esp32s3-sense-plan.md)). So this is the same recorder
   on a second board, not a separate project.
@@ -21,11 +21,10 @@ answer the open decisions at the end (§10).
   question here. Battery life is the one big unknown, so it gets measured first (§8,
   milestone 2).
 
-**This reverses a past decision.** MISSION.md says "The earlier LilyGO T-Watch /
-custom-firmware design is dropped". That design was a PlatformIO battery-logging
-sketch, removed in commit `756339e`. This plan starts fresh on the XIAO design. Decision
-1 in §10 asks the owner to confirm the change; MISSION.md is updated once that's
-confirmed.
+**This reverses a past decision.** The earlier T-Watch design (a PlatformIO
+battery-logging sketch, removed in commit `756339e`) was dropped. The owner confirmed
+on 2026-10-19: **the Ultra comes first, the XIAO later**, on the same firmware. This
+plan starts fresh on the XIAO design.
 
 ## Decisions carried over from the XIAO plan
 
@@ -133,9 +132,8 @@ SD, LoRa and NFC share MOSI/MISO/SCK. With the LoRa and NFC rails off:
 - PSRAM queue first, then **microSD** as overflow, as in XIAO §2.
 - The SD rail (ALDO1) is turned on only for a spill or a read-back, then turned off. That
   saves the card's idle current, which the XIAO can't do because its SD power is fixed.
-- Alternative: use a FAT or raw partition in the 16 MB internal flash as overflow
-  instead of SD. That's about 80 min of speech at 16 kbps in ~10 MB. Flash writes cost
-  power and wear the flash, so this is a fallback for running without a card (§10).
+- **Decided: microSD** (§10). Internal flash (~80 min of speech at 16 kbps in ~10 MB)
+  stays only a fallback if the card turns out to be a problem.
 
 ## 3. Watch UI
 
@@ -147,7 +145,7 @@ The watch is a recorder first. The UI is small and off most of the time.
 | BOOT short press (proposal) | **Toggle mute** (mic and encoder off). The screen shows the new state; 1 buzz = recording, 2 buzzes = muted |
 | BOOT long press | "Sync now": start a BLE burst / advertise for pairing |
 | PWR 6 s hold | Hardware power-off (AXP2101, can't be changed) |
-| Raise to wake (optional) | BHI260AP wrist-tilt gesture turns the screen on. Costs sensor rail power plus loading its firmware, so measure before turning it on (§10) |
+| Raise to wake | **Not for now** (§10): the screen stays off until a button press. The BHI260AP gesture could add it later, after power is measured |
 
 - The **mute button is a requirement** (consent), as on the XIAO.
 - A short buzz also signals **low battery** and **phone unreachable for a long time**
@@ -227,7 +225,8 @@ firmware/recorder/                 # ESP-IDF 5.x
 ### 7.2 Battery-life estimate (unverified)
 
 At an average of 20–35 mA on 1100 mAh: **~30–50 h**. That means a daily charge with
-margin, or about two days at best. If milestone 2 measures much worse, the fallbacks in
+margin, or about two days at best. The owner accepts a daily charge but wants the
+longest battery life possible without hurting recording quality (§7.4). If milestone 2 measures much worse, the fallbacks in
 XIAO §7.4 apply, though the wake-on-sound mic mod is harder inside a sealed watch.
 
 ### 7.3 Measuring
@@ -238,6 +237,24 @@ XIAO §7.4 apply, though the wake-on-sound mic mod is harder inside a sealed wat
   - If not, measure total current with a USB meter while the battery is unplugged, or
     with a PPK2 on the battery leads. That means opening the case.
 - Either way, also log battery % over a full discharge as the end-to-end number.
+
+### 7.4 Rule: battery life, but never at the cost of recording quality
+
+The owner's priority (2026-10-19): **as much battery life as possible, as long as voice
+recording stays good and complete.** So:
+
+- **Quality decides first, power second.** Bitrate, gain and the speech gate are chosen
+  by transcription accuracy and missed speech on the server. Among the settings that are
+  good enough, pick the one that uses the least power.
+- **The speech gate stays permissive.** Missing the start of a sentence is worse than
+  encoding some extra noise. Pre-roll stays at 2–5 s. Silero VAD on the server remains
+  the real judge.
+- **No duty-cycled listening** (XIAO §7.4 option 2). It loses speech.
+- **Everything that isn't recording gets cut hard:** unused rails off, Wi-Fi out of the
+  image, screen off, SD powered only while in use, BLE batched with long idle intervals,
+  CPU at the lowest clock that keeps up with the mic and encoder.
+- Every power optimisation is checked against the milestone 3 recordings. If accuracy
+  or missed-speech numbers get worse, the optimisation is rolled back.
 
 ## 8. Milestones and acceptance tests
 
@@ -255,11 +272,8 @@ Milestones 4–7 are shared with the XIAO plan (XIAO §8) and are done once.
 | 7 | Server late-chunk handling | XIAO milestone 6 |
 | 8 | Wear test | 24 h on the wrist: battery life, conversations captured vs missed, false triggers, mute used |
 
-**The T-Watch S3 as a second board.** It has the same chip and a PDM mic, but no SD and
-a smaller battery (400–470 mAh). After milestone 4 it can be a second board file
-(`boards/twatch_s3/`). It's a cheap way to prove the board layer really separates
-boards before the XIAO arrives, and it can be a bench unit while the Ultra is worn.
-Optional (§10).
+**The T-Watch S3** is left out for now (§10). The board layer keeps the door open: it
+would be one more board file later.
 
 ## 9. Risks
 
@@ -275,29 +289,26 @@ Optional (§10).
 - **Android background limits, data loss on power cut, consent**: same as XIAO §9.
 - **Charging heat:** keep charge current ≤ 500 mA as LilyGO says.
 
-## 10. Open decisions (owner)
+## 10. Owner decisions (2026-10-19)
 
-1. **Confirm the device direction:** the T-Watch Ultra first, the XIAO pendant later on
-   the same firmware. This reverses "the T-Watch design is dropped" in MISSION.md. Does
-   the XIAO stay planned, or is it on hold?
-2. **One shared firmware** (`firmware/recorder/` + board layer, §6) instead of a
-   XIAO-only project. OK?
-3. **Framework:** ESP-IDF (recommended), or Arduino + LilyGoLib (faster bring-up, less
-   power control)?
-4. **Buttons:** BOOT short press = mute, PWR short press = status screen (§3). OK, or
-   another mapping?
-5. **Raise-to-wake:** skip it (recommended until power is measured), or include it?
-6. **Overflow storage:** microSD (recommended), internal flash, or both?
-7. **T-Watch S3 as a second board** (§8): yes, or keep it off the plan?
-8. **Carried over from XIAO §10:**
-   - Server late-chunk policy (§10.4): finalise on `/end` plus a 24 h safety timeout,
-     re-open on late chunks.
-   - Omi live-audio service (§10.7): skip.
+1. **Device order:** the T-Watch Ultra first, the XIAO pendant later on the same
+   firmware.
+2. **One shared firmware** (`firmware/recorder/` plus a board layer, §6), for now. It can
+   be split later if that turns out better.
+3. **Framework: ESP-IDF.**
+4. **Buttons:** as in §3. BOOT short press = mute, BOOT long press = sync now, PWR short
+   press = status screen.
+5. **Screen:** off until a button press. No raise-to-wake for now.
+6. **Overflow storage: microSD.**
+7. **T-Watch S3:** left out for now.
+8. **Carried over from the XIAO plan:**
+   - Server late-chunk policy: finalise on `/end` plus a 24 h safety timeout, re-open on
+     late chunks.
+   - Omi live-audio service: skip.
 
-   Answer once for both boards.
-9. **Daily charge:** acceptable if milestone 2 lands at ~30–50 h?
-
-**Hold:** no firmware, app or server code until these are answered.
+   Both apply to both boards.
+9. **Battery:** a daily charge is acceptable, but battery life should be as long as
+   possible while recording stays good (rule in §7.4).
 
 ## Not verified yet
 
