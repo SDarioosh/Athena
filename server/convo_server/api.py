@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 
 from . import audio as audio_mod
 from .config import Settings
-from .diarize import enrollment_embedding, load_voices
+from .diarize import enroll_voice, load_voices
 from .links import render_conversation, transcript_link, verify
 from .llm import LLMError
 from .pipeline import Pipeline, Worker
@@ -322,10 +322,10 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
             pcm = np.concatenate([pcm[int(s.start * sr):int(s.end * sr)]
                                             for s in speech])
         try:
-            emb = await run_in_threadpool(enrollment_embedding, diarizer.embedder, pcm)
+            await run_in_threadpool(enroll_voice, store, diarizer.embedder, name, pcm,
+                                    is_owner)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
-        store.put_speaker(name, emb, is_owner)
         diarizer.voices = load_voices(store)
         return {"ok": True, "name": name, "is_owner": is_owner,
                 "speech_seconds": round(audio_mod.duration_seconds(pcm), 1)}

@@ -174,6 +174,12 @@ def load_voices(store: Any) -> list[EnrolledVoice]:
     return [EnrolledVoice(s["name"], s["embedding"], s["is_owner"]) for s in store.speakers()]
 
 
+def enroll_voice(store: Any, embedder: SpeakerEmbedder, name: str, audio: np.ndarray,
+                 is_owner: bool = False) -> None:
+    """Store a voice profile for ``name`` from an enrollment recording (speech only)."""
+    store.put_speaker(name, enrollment_embedding(embedder, audio), is_owner)
+
+
 def enrollment_embedding(embedder: SpeakerEmbedder, audio: np.ndarray,
                          window_seconds: float = 3.0) -> np.ndarray:
     """Average embedding over windows of an enrollment recording (>= ~20 s of speech)."""

@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     whisper_server_url: str | None = None  # e.g. http://127.0.0.1:8178
     whisper_cli: str | None = None  # e.g. /opt/whisper.cpp/build/bin/whisper-cli
     whisper_model: str | None = None  # e.g. /opt/whisper.cpp/models/ggml-large-v3-turbo.bin
+    # Words whisper should spell right (names, places, jargon), as a short sentence or a
+    # comma list. Names of known speakers are added automatically.
+    whisper_prompt: str = ""
+    # Temperature step for whisper's fallback when a decode looks wrong (0 = no fallback).
+    whisper_temperature_inc: float = 0.2
 
     # llama-server (OpenAI-compatible)
     llm_base_url: str = "http://127.0.0.1:8080/v1"
@@ -63,6 +68,8 @@ class Settings(BaseSettings):
     speaker_match_threshold: float = 0.50  # cosine similarity to enrolled voice
     speaker_cluster_threshold: float = 0.45  # cosine similarity to merge clusters
     owner_name: str = "Me"
+    # Where downloaded model weights are cached (speaker models). Default: <data_dir>/models.
+    models_dir: Path | None = None
 
     # --- knowledge layer ---
     # Base URL used in transcript links handed to the frontend, e.g. the server's
@@ -88,6 +95,10 @@ class Settings(BaseSettings):
     @property
     def db_path(self) -> Path:
         return self.data_dir / "convo.db"
+
+    @property
+    def model_cache(self) -> Path:
+        return self.models_dir or self.data_dir / "models"
 
     @property
     def audio_dir(self) -> Path:
