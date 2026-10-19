@@ -6,7 +6,7 @@ T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → l
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (round 12: T-Watch Ultra BLE upload path and Android relay)_
+_Last updated: 2026-10-19 (round 13: T-Watch Ultra BLE connects from a Windows PC)_
 
 ## Status
 
@@ -227,6 +227,32 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Needs the owner: paste the new `INSTRUCTIONS` into the Custom preset and rerun
   `barvis_setup.py` so `/sound` picks it up.
 
+## Done in round 13: T-Watch Ultra BLE link works from a Windows PC
+
+On the owner's watch (ESP-IDF 5.5.5, COM35) with the bonded Windows desktop:
+`ble_relay.py --list` exits 0 and shows `info`, `status` and the queue. A recording session
+(`session start`/`session stop`) shows up in `--list`, both while it records and after its
+LAST chunk.
+
+- **Controller timeout at connect** (owner's log: `HCI wait for ack returned 19`, ocf 0x0022 =
+  LE Set Data Length, `host reset: 19`): the connect callback sent conn-params, PHY and
+  data-length requests while Windows was starting encryption. Now the connect callback
+  sends no HCI command: 2M PHY and 251-byte packets are controller defaults set once at
+  sync, and the fast interval is asked for after encryption. 2M/2M still comes up.
+  Not reproduced on main this round (it worked in 6 tries), so the cause isn't proven,
+  but none of the 19 runs on the new firmware showed it.
+- **Windows missed the watch**: Windows' connection scan caught the 1–1.25 s advertising
+  only after 4–10 s, and sometimes not within its 20 s timeout (the watch logged no
+  connection). In the sync window the watch now advertises at 152.5–211.25 ms (connect
+  in 1–3 s); outside it, still ~1 s.
+- **Windows phantom connections**: about 1 in 3 tries, Windows reports a connection the
+  watch never saw and closes it within a second. `--once`/`--list` now connect again (up
+  to 3 tries) when the link drops before `info` was read, and `--list` prints the failure
+  reason instead of only `0 chunk(s) queued`.
+- `ble` counters show `host resets`. Protocol doc §7.1/§7.2 updated.
+- Host tests (cmake) not run on the owner's PC (no host C compiler there); CI runs them.
+  `ble_sync.c` isn't part of them.
+
 ## Done in round 12: T-Watch Ultra BLE upload path, Android relay
 
 Nothing here has run on hardware yet; everything is built and tested off-device.
@@ -328,9 +354,10 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 ## Next
 
-0. **Owner: T-Watch Ultra upload path test** (round 12 PR, Server verification): flash,
-   record with BOOT+PWR, drain with `ble_relay.py` from a PC, then with the Android app;
-   report the `encoder … us` log line and the BLE transfer time.
+0. **Owner: T-Watch Ultra upload path test** (round 12 PR, Server verification): `--list`
+   from the Windows PC works (round 13). Still to do: drain with `ble_relay.py --once`
+   into the server, then with the Android app; report the BLE transfer time. Encoder:
+   ~10.3 ms avg per 20 ms frame at 80 MHz (about half a core).
 1. **Owner: T-Watch Ultra milestone 1 test** (`firmware/recorder/README.md`, PR Server
    verification). Then milestone 2: power baseline (plan §7.3, §8): current for board
    idle, mic on, SD write, screen on; whether I2S PDM RX allows light sleep; whether the
