@@ -1,4 +1,4 @@
-/* barvis-sound recorder (docs/t-watch-ultra-plan.md §8): recording sessions to Opus chunks
+/* odysseus-sound recorder (docs/t-watch-ultra-plan.md §8): recording sessions to Opus chunks
  * on the SD card, drained by a phone or PC relay over BLE (docs/twatch-ble-protocol.md).
  *
  * Boot: board bring-up with every unused rail off, RTC -> system clock, mic ready, chunk
@@ -448,7 +448,7 @@ static void log_battery(void)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "barvis-sound recorder %s", FW_VERSION);
+    ESP_LOGI(TAG, "odysseus-sound recorder %s", FW_VERSION);
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {

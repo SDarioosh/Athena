@@ -1,28 +1,28 @@
-# barvis-sound progress
+# odysseus-sound progress
 
-barvis-sound (formerly convo-ai / barvis-ai) is the first module of
-[Barvis](https://github.com/SDarioosh/Barvis). Design: wearables (Amazfit T-Rex 3 Pro,
-T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → local
-Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
+odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first module of
+[Odysseus](https://github.com/SDarioosh/Barvis), our Odysseus fork. Design: wearables
+(Amazfit T-Rex 3 Pro, T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → local
+Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (round 14: T-Watch Ultra BLE connects from a Windows PC)_
+_Last updated: 2026-10-19 (renamed to odysseus-sound in prose; round 14: T-Watch Ultra BLE connects from a Windows PC)_
 
 ## Status
 
 | # | Item | Status | Where |
 |---|------|--------|-------|
 | 1 | Omi local-ingestion research | ✅ done | `docs/omi-ingestion.md` (PR: docs/redesign) |
-| 2 | Frontend decision doc (Hermes vs Odysseus vs hybrid) | ✅ decided: **hybrid via MCP**, frontend **Odysseus fork (Barvis)** | `docs/frontend-decision.md` |
+| 2 | Frontend decision doc (Hermes vs Odysseus vs hybrid) | ✅ decided: **hybrid via MCP**, frontend **Odysseus fork** (called Barvis until 2026-10-19, now Odysseus) | `docs/frontend-decision.md` |
 | 3 | Rewrite AGENTS.md / MISSION.md / PROGRESS.md | ✅ done | PR: docs/redesign |
 | 4 | Ingestion API (auth, idempotent chunks, silence/max-duration stop) | ✅ done, tested | `server/` (PR: feature/server-pipeline) |
 | 5 | Pipeline: reassembly, Silero VAD, whisper.cpp, diarization + enrollment, splitting, summaries, digest, audio deletion | ✅ done, tested | `server/` |
 | 6 | SQLite storage, FTS5 + optional embeddings, read API with transcript links | ✅ done, tested | `server/` |
 | 7 | Knowledge-layer MCP server (works with Hermes or Odysseus) | ✅ done, tested (PR #3) | `server/convo_server/mcp_server.py` |
 | 7b | Wire into Hermes + Odysseus, side-by-side test | ✅ done (20 questions): Hermes 15/20, Odysseus 3/20 | `server/eval/`, results in `docs/frontend-decision.md` |
-| 7c | Barvis: Odysseus fork fixed for our MCP tools, kept in sync with upstream | in progress: 9/20 (was 3/20), target ≥ 15/20; fork `SDarioosh/Barvis` (default branch `barvis`), PR SDarioosh/Barvis#1; HTTP annotations fix merged (SDarioosh/Barvis#5) | `docs/frontend-decision.md` (fork plan), Barvis `BARVIS.md` and `docs/barvis/roadmap.md` |
-| 7d | Agent docs: AGENTS/CLAUDE/Antigravity files, rename to barvis-sound in prose, Barvis module contract | ✅ merged (PR #8, Barvis #2) | `AGENTS.md`, Barvis `docs/barvis/modules.md` |
-| 7e | Cloud sandbox stack: whole system on CPU (Qwen3-4B, whisper base.en), fictional data | ✅ working: 50 tests pass, seed 8/8 summarized, eval raw 1/3 and Barvis 1/3 on questions 1, 4, 16; 2/3 and 3/3 in two runs with SDarioosh/Barvis#5 | Barvis `docs/barvis/sandbox.md` |
+| 7c | Odysseus fork fixed for our MCP tools, kept in sync with upstream | in progress: 9/20 (was 3/20), target ≥ 15/20; fork `SDarioosh/Barvis` (default branch `barvis`), PR SDarioosh/Barvis#1; HTTP annotations fix merged (SDarioosh/Barvis#5) | `docs/frontend-decision.md` (fork plan), hub `FORK.md` and `docs/fork/roadmap.md` |
+| 7d | Agent docs: AGENTS/CLAUDE/Antigravity files, rename to barvis-sound in prose, module contract | ✅ merged (PR #8, SDarioosh/Barvis#2) | `AGENTS.md`, hub `docs/fork/modules.md` |
+| 7e | Cloud sandbox stack: whole system on CPU (Qwen3-4B, whisper base.en), fictional data | ✅ working: 50 tests pass, seed 8/8 summarized, eval raw 1/3 and Odysseus fork 1/3 on questions 1, 4, 16; 2/3 and 3/3 in two runs with SDarioosh/Barvis#5 | hub `docs/fork/sandbox.md` |
 | 8 | Omi ingestion path (Android BLE relay) | optional, depends on how the XIAO goes | — |
 | 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | merged (PR #4), **waiting for owner's watch test**; test server is running | `zepp-app/` |
 | 9d | Watch voice profile (guided 60–90 s owner enrollment) | PR open, **needs the real watch** | `zepp-app/page/enroll.js`, `POST /v1/speakers/enroll.json` |
@@ -31,7 +31,7 @@ _Last updated: 2026-10-19 (round 14: T-Watch Ultra BLE connects from a Windows P
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
 | 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **running on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, buttons, haptics and recording work (mic timeout fix; stop early with BOOT+PWR again, `stop` or mute). Mic: raw level was nearly inaudible and muffled; now high-pass + T-Watch EQ (+9 dB 1.6 kHz, -6 dB 3.6 kHz) + 30 dB gain + limiter, speech ~-24 dBFS, owner says it sounds best; `gain`/`eq` on the console. Recordings copy off over USB (`tools/pull.py`). SD_DET confirmed (P12 LOW with card, HIGH without; expander question §2.1 answered); RTC set, files get dated names. Still to check: one recording of fictional speech through `smoke_upload.py` on the server (owner). **Round 12: BLE upload path built, not yet on hardware**: BOOT+PWR records an Opus session (libopus, 16 kbps) as 30 s Ogg/Opus chunks into a queue on the SD card that survives reboots; NimBLE GATT service drains it (protocol `docs/twatch-ble-protocol.md`); `tools/ble_relay.py` is the PC relay; Wi-Fi still not linked. Needs the owner: flash, record, drain with the PC relay and the phone (PR Server verification). Then milestone 2 (power baseline), milestone 3 (gain/EQ/bitrate by transcription) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` §11, `docs/twatch-ble-protocol.md` |
 | 11c | Android relay app (T-Watch → BLE → phone → server) | **built, unit-tested (67 tests), not yet on a phone**: foreground service, scan/bond/drain per the protocol, uploads with the bearer token over LAN/Tailscale, acks only after the server's ok, backoff; settings (URL, token in Keystore) and status screen; no Google services, no analytics. CI builds the APK | `android-relay/` |
-| 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; Barvis' `barvis_deploy.sh deploy` runs it first | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, Barvis `docs/barvis/deploy.md` |
+| 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; the hub's `fork_deploy.sh deploy` runs it first | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, hub `docs/fork/deploy.md` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -81,8 +81,8 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 ## Decisions so far
 
 - Knowledge layer: **hybrid**. Our SQLite is the source of truth, exposed over MCP.
-- Frontend: **Odysseus, forked as Barvis**, modified for our system and kept in sync with
-  upstream. Chosen after the side-by-side test; fork plan in `docs/frontend-decision.md`.
+- Frontend: **Odysseus, forked** (the fork was called Barvis until 2026-10-19), modified
+  for our system and kept in sync with upstream. Chosen after the side-by-side test; fork plan in `docs/frontend-decision.md`.
 - Focus: the **XIAO pendant** and the **T-Rex 3 Pro** (owned). Omi only if the XIAO falls short.
 - Phone: **Android**, with Tailscale access to the server.
 - Omi: the current consumer pendant (CV1 in Omi's firmware), not bought yet. The T-Rex 3 Pro
@@ -138,20 +138,20 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 
 - Repo renamed to **barvis-sound** in prose. Code identifiers (`convo_server`,
   `convo-server`, `CONVO_*`, paths) are unchanged on purpose.
-- `AGENTS.md`: "This is a Barvis module", the MCP tool contract, where work belongs,
-  instruction files per tool. Added `CLAUDE.md` (imports `AGENTS.md`) and
+- `AGENTS.md`: "This is a Barvis module" (now "This is an Odysseus module"), the MCP
+  tool contract, where work belongs, instruction files per tool. Added `CLAUDE.md` (imports `AGENTS.md`) and
   `.agents/rules/antigravity.md`. Root `README.md` written.
-- Barvis got the module contract (`docs/barvis/modules.md`) and a barvis-sound module
-  page.
+- The hub got the module contract (now `docs/fork/modules.md`) and a module page for
+  this repo (now `docs/fork/modules/odysseus-sound.md`).
 
 ## Done in round 5
 
 - Agents now work in a cloud sandbox; the owner runs a "Server verification" section
   from each PR on the server (real model, real devices). `AGENTS.md` updated.
-- The sandbox stack was built and run end to end. It found two Barvis MCP bugs (HTTP
+- The sandbox stack was built and run end to end. It found two MCP bugs in our Odysseus fork (HTTP
   servers lose tool annotations, so read-only tools still need approval; stdio servers
-  fail on every call). Tracked in Barvis `docs/barvis/roadmap.md`. Use MCP over HTTP.
-- The sandbox also found a barvis-sound bug: a summary that fails (e.g. llama-server
+  fail on every call). Tracked in the hub's `docs/fork/roadmap.md`. Use MCP over HTTP.
+- The sandbox also found a bug here: a summary that fails (e.g. llama-server
   down) marks the conversation `failed`, and `convo-server summarize-pending` only retries
   `pending` ones (`Pipeline.summarize_pending`), so it never gets a summary. Fixed in
   round 6.
@@ -179,11 +179,11 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Tests: a summary that fails and then succeeds on retry; the worker not retrying
   inside the back-off window.
 
-## Done in round 7: Barvis keeps MCP annotations over HTTP
+## Done in round 7: Odysseus keeps MCP annotations over HTTP
 
-- Barvis bug (sandbox finding 1): when Barvis connected to an MCP server over HTTP, it
+- Odysseus fork bug (sandbox finding 1): when Odysseus connected to an MCP server over HTTP, it
   dropped each tool's annotations, so our `readOnlyHint: true` tools still needed
-  approval on every call. Fixed in Barvis with one line (SDarioosh/Barvis#5, merged);
+  approval on every call. Fixed in our fork with one line (SDarioosh/Barvis#5, merged);
   nothing changed here. Our tool names, arguments, annotations and links are unchanged.
 - Sandbox eval (questions 1, 4, 16; Qwen3-4B), two separate sandboxes: before the fix
   2/3 both times, with one approval per tool call; after, 2/3 and 3/3 with no approvals.
@@ -191,7 +191,7 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   approvals.
 - Eval question for the owner: an answer that starts with "The task is incomplete: Model
   request failed." still scored PASS (question 4, in both sandboxes), because it also had
-  the date and the link (Barvis sandbox finding 5). Should `eval/bakeoff.py` count that as a failure? Not changed yet.
+  the date and the link (hub sandbox finding 5). Should `eval/bakeoff.py` count that as a failure? Not changed yet.
 
 ## Done in round 8: watch app asks for the microphone
 
@@ -217,7 +217,7 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 
 - The owner said "/sound … Speaker 1 and Speaker 3 were both Shahyah and Speaker 2 was
   Jenn" and the model only repeated what they said; nothing was renamed. Reproduced in
-  the sandbox: Barvis offered `name_speaker` on the `/sound` turn, but the model read the
+  the sandbox: Odysseus offered `name_speaker` on the `/sound` turn, but the model read the
   sentence as a claim to check and never called it.
 - `INSTRUCTIONS` now has a "Naming speakers" paragraph (a statement of who a speaker was
   is a request to save it; call `name_speaker` once per label), and the tool description
@@ -226,7 +226,19 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   became Shahyah. The next model call hit the sandbox CPU's read timeout (HTTP 504), so
   Speakers 2 and 3 still need the server run.
 - Needs the owner: paste the new `INSTRUCTIONS` into the Custom preset and rerun
-  `barvis_setup.py` so `/sound` picks it up.
+  `modules_setup.py` (was `barvis_setup.py`) so `/sound` picks it up.
+
+## Done on 2026-10-19: renamed to odysseus-sound in prose
+
+- The owner dropped the "Barvis" name: the hub is now simply **Odysseus** (our fork, repo
+  still `SDarioosh/Barvis`, branch `barvis`) and this module is **odysseus-sound** in
+  prose and visible names (docs, comments, log and help text, the Android app label
+  "Odysseus Sound Relay", `deploy.sh` messages and unit descriptions, the firmware boot
+  log). Links into the hub point at its renamed `docs/fork/` pages.
+- Unchanged on purpose (see AGENTS.md "Names: prose vs code"): the repo URL, the
+  `barvis-sound*` service names and `BARVIS_SOUND_*` vars, the Android app ID
+  `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
+  vendor string, the `barvis_relay` package, and all `convo` identifiers.
 
 ## Done in round 14: T-Watch Ultra BLE link works from a Windows PC
 
@@ -263,8 +275,9 @@ LAST chunk.
   up, it goes back to the previous one. whisper-server is only restarted when its command
   changes, so the model stays loaded. Also `status`, `logs`, `start`, `stop`, `restart`.
 - Without systemd (the sandbox) it runs them as background processes with pid files.
-- Barvis' `scripts/barvis_deploy.sh deploy` runs every module's deploy command first
-  (`BARVIS_MODULES` in `~/.config/barvis/deploy.env`), then rebuilds Barvis: one command
+- The hub's `scripts/fork_deploy.sh deploy` runs every module's deploy command first
+  (`FORK_MODULES`, formerly `BARVIS_MODULES`, in `~/.config/barvis/deploy.env`), then
+  rebuilds Odysseus: one command
   updates everything.
 - Fix: a session that was being processed when the server stopped stayed `processing`
   forever. The worker now sends such sessions back to the queue when it starts.
@@ -383,7 +396,7 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
    register map, so expect a USB meter or PPK2); full-discharge run.
 2. **Owner: T-Rex watch test.** The steps are in `zepp-app/README.md`. Server URL
    `http://100.106.28.112:8000`; the token is in that checkout's `server/.env`.
-3. **Barvis fork:** citations from 9/20 to ≥ 15/20 (Barvis `docs/barvis/roadmap.md`).
+3. **Odysseus fork:** citations from 9/20 to ≥ 15/20 (hub `docs/fork/roadmap.md`).
 4. **Owner: server verification** of the failed-summary retry (steps in its PR), and of
    SDarioosh/Barvis#5 (full eval on the test instance; expect no approvals for read-only
    tools and a score ≥ 9/20; steps in that PR).
@@ -405,7 +418,7 @@ Still open:
   6-digit passkey on the watch screen.)
 - T-Watch Ultra: everything under "Needs the real watch" above. Also: does the battery
   take a 4.2 V charge target (set conservatively; LilyGoLib asks the chip for 4.288 V)?
-- Barvis fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.
+- Odysseus fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.
 - The remaining XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, extra parts, microSD). They wait until XIAO work
 starts, after the T-Watch Ultra.

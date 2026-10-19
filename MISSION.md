@@ -1,12 +1,13 @@
-You are building barvis-sound (formerly convo-ai) in this repository, the first module
-of [Barvis](https://github.com/SDarioosh/Barvis). Read AGENTS.md first; it describes the
+You are building odysseus-sound (formerly convo-ai, barvis-ai, barvis-sound) in this
+repository, the first module of [Odysseus](https://github.com/SDarioosh/Barvis), our
+Odysseus fork. Read AGENTS.md first; it describes the
 devices, architecture, privacy rules, the MCP tool contract, and checks.
 
 ## Goal
 
 A private, fully local system that captures conversations from two wearables,
 turns them into transcripts and structured knowledge with local models, and
-makes that knowledge available to Barvis, the hub of the owner's local AI system,
+makes that knowledge available to Odysseus, the hub of the owner's local AI system,
 through an MCP server.
 
 - **Capture:** an Omi pendant (BLE Opus audio, offline storage) and an Amazfit
@@ -17,7 +18,7 @@ through an MCP server.
   enrolled → conversations split on gaps > 3 minutes → llama-server
   structured output (title, summary, key points, action items, people,
   topics, durable facts) and a daily digest → SQLite (+ FTS5, embeddings).
-- **Remember:** the SQLite store is the source of truth. Barvis (an Odysseus fork,
+- **Remember:** the SQLite store is the source of truth. Odysseus (our Odysseus fork,
   chosen in `docs/frontend-decision.md`) reaches it only through our MCP server and
   lets the owner ask questions and get grounded answers that link to transcripts.
 
@@ -79,6 +80,6 @@ doc is under review; Phase 3 waits for the owner's frontend decision.
 - Never merge without review and passing checks.
 - If stuck after 3 failed attempts on the same problem, stop and end your reply
   with `ESCALATE: <reason>`. Write the blocker in PROGRESS.md.
-- The frontend is decided (Barvis). Barvis-side work goes in the Barvis repo; changes
+- The frontend is decided (our Odysseus fork). Hub-side work goes in the hub repo; changes
   to the MCP tool contract follow the rules in AGENTS.md.
 - Leave `orchestrator/` alone unless asked.
