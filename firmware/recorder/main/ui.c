@@ -41,8 +41,12 @@ static esp_err_t clear_screen(void)
     return ESP_OK;
 }
 
-esp_err_t ui_show_status(const ui_status_t *s)
+static bool s_pairing; /* the pairing code is on screen, not the status */
+
+/* Power the panel on if needed; clear it when it was off or showed the other view. */
+static esp_err_t screen_begin(bool pairing)
 {
+    const bool clear = !s_shown || s_pairing != pairing;
     if (!s_shown) {
         ESP_RETURN_ON_ERROR(board_display_on(&s_info), TAG, "display on");
         if (!s_band) {
@@ -51,8 +55,14 @@ esp_err_t ui_show_status(const ui_status_t *s)
             ESP_RETURN_ON_FALSE(s_band, ESP_ERR_NO_MEM, TAG, "band buffer");
         }
         s_shown = true;
-        ESP_RETURN_ON_ERROR(clear_screen(), TAG, "clear");
     }
+    s_pairing = pairing;
+    return clear ? clear_screen() : ESP_OK;
+}
+
+esp_err_t ui_show_status(const ui_status_t *s)
+{
+    ESP_RETURN_ON_ERROR(screen_begin(false), TAG, "screen");
 
     const uint16_t white = textfb_rgb(255, 255, 255);
     const uint16_t grey = textfb_rgb(140, 140, 140);
@@ -128,6 +138,24 @@ esp_err_t ui_show_status(const ui_status_t *s)
     push_line(y, "BOOT+PWR: REC  BOOT: MUTE", SMALL_SCALE, grey);
     /* The init sequence leaves the panel at brightness 0; raise it once the frame is in. */
     return board_display_set_brightness(BRIGHTNESS_PERCENT);
+}
+
+esp_err_t ui_show_passkey(uint32_t passkey)
+{
+    ESP_RETURN_ON_ERROR(screen_begin(true), TAG, "screen");
+    const uint16_t white = textfb_rgb(255, 255, 255);
+    const uint16_t grey = textfb_rgb(140, 140, 140);
+    char line[16];
+    push_line(120, "PAIRING CODE", TEXT_SCALE, grey);
+    snprintf(line, sizeof(line), "%03u %03u", (unsigned)(passkey / 1000), (unsigned)(passkey % 1000));
+    push_line(220, line, TEXT_SCALE, white);
+    push_line(330, "TYPE IT ON THE PHONE", SMALL_SCALE, grey);
+    return board_display_set_brightness(BRIGHTNESS_PERCENT);
+}
+
+bool ui_is_pairing(void)
+{
+    return s_shown && s_pairing;
 }
 
 esp_err_t ui_hide(void)

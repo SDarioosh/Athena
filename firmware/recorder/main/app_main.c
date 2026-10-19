@@ -38,6 +38,7 @@
 static const char *TAG = "app";
 
 #define SCREEN_ON_MS 5000
+#define PASSKEY_ON_MS 30000 /* pairing code: the SMP timeout, pairing fails after it anyway */
 #define TEST_RECORDING_SECONDS 60
 #define BATTERY_LOG_PERIOD_MS 60000
 #define FW_VERSION "0.2.0"
@@ -136,6 +137,11 @@ static void ble_on_time(int64_t epoch_ms)
     ESP_LOGI(TAG, "time from the relay: %s (RTC write %s)", buf, esp_err_to_name(err));
 }
 
+static void ble_on_passkey(int32_t passkey)
+{
+    app_post(APP_EV_PASSKEY, (int)passkey);
+}
+
 static void gather_status(ui_status_t *s)
 {
     recorder_state_t rs;
@@ -226,7 +232,7 @@ static void show_screen(void)
 
 static void refresh_screen_if_shown(void)
 {
-    if (ui_is_shown()) {
+    if (ui_is_shown() && !ui_is_pairing()) {
         ui_status_t s;
         gather_status(&s);
         ui_show_status(&s);
@@ -346,6 +352,18 @@ static void handle(const app_event_t *ev)
         break;
     case APP_EV_SESSION_STOP:
         stop_session("console");
+        break;
+    case APP_EV_PASSKEY:
+        if (ev->arg >= 0) {
+            if (ui_show_passkey((uint32_t)ev->arg) == ESP_OK) {
+                esp_timer_stop(s_screen_timer);
+                esp_timer_start_once(s_screen_timer, (uint64_t)PASSKEY_ON_MS * 1000);
+            }
+            board_haptic_pulse(1);
+        } else if (ui_is_pairing()) {
+            esp_timer_stop(s_screen_timer);
+            ui_hide();
+        }
         break;
     case APP_EV_SESSION_TICK:
     case APP_EV_QUEUE_CHANGED:
@@ -470,7 +488,8 @@ void app_main(void)
     }
     chunk_store_set_listener(on_queue_changed, NULL);
     static const ble_sync_hooks_t hooks = {
-        .fw_version = FW_VERSION, .get_state = ble_get_state, .on_time = ble_on_time};
+        .fw_version = FW_VERSION, .get_state = ble_get_state, .on_time = ble_on_time,
+        .on_passkey = ble_on_passkey};
     ESP_ERROR_CHECK(ble_sync_init(&hooks));
 
     /* One buzz: haptics work and the recorder starts unmuted. */

@@ -5,8 +5,8 @@
  * Radio policy (§7): no advertising unless there is something to do (sync window, a
  * finished session, >= 10 min of audio, or chunks queued with no sync for 60 min); one
  * relay at a time; short bursts; the relay is dropped after 30 s without a command.
- * Pairing (§3.1): Just Works, LE Secure Connections, bonding; new bonds only in the 2-min
- * sync window. */
+ * Pairing (§3.1): passkey shown on the watch, LE Secure Connections, bonding; new bonds
+ * only in the 2-min sync window. */
 #pragma once
 
 #include <stdbool.h>
@@ -36,6 +36,9 @@ typedef struct {
      * clock and the RTC. Called from the BLE task; may take a few ms of I2C. ble_sync then
      * converts TIME_UNSET chunks itself (chunk_store_fix_time). */
     void (*on_time)(int64_t epoch_ms);
+    /* Pairing (§3.1): show this 6-digit code on the screen until called with -1 (paired,
+     * failed or disconnected). Called from the NimBLE host task: post an event, don't draw. */
+    void (*on_passkey)(int32_t passkey);
 } ble_sync_hooks_t;
 
 /* Start the controller and NimBLE host, register the service, start the BLE task.

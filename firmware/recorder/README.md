@@ -90,10 +90,11 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 16 kbps VBR, complexity 1) -> 30 s Ogg
   `tools/pull.py --queue` copy chunks over USB for debugging without BLE (they stay
   queued). Recording stops when the card has less than 8 MB free.
 - **BLE**: `ble` prints the state (advertising and why, connected relay, MTU, PHY, bonds,
-  sync window, last sync, counters). `ble forget` deletes every pairing. Pairing is Just
-  Works with LE Secure Connections, only in the sync window (protocol §3.1). If a phone
-  paired outside the window, remove `barvis-tw` in its Bluetooth settings and pair again
-  in the window.
+  sync window, last sync, counters). `ble forget` deletes every pairing. Pairing is passkey
+  entry with LE Secure Connections: the watch shows a 6-digit code (also logged on the USB
+  console) and you type it on the phone or PC, only in the sync window (protocol §3.1). If
+  a phone paired outside the window, remove `barvis-tw` in its Bluetooth settings and pair
+  again in the window.
 
 ### Drain from a PC: `tools/ble_relay.py`
 
@@ -105,10 +106,13 @@ and a Bluetooth adapter. The token comes from `CONVO_INGEST_TOKEN` or `--token-f
 python3 -m venv ~/.venvs/barvis-relay
 ~/.venvs/barvis-relay/bin/pip install -r firmware/recorder/tools/requirements.txt
 
-# first time: open the sync window on the watch (BOOT long press), then pair and look
-~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py --pair --list
-#   Linux alternative: bluetoothctl -> scan on -> pair <address>
-#   macOS: accept the system pairing prompt (bleak can't pair there itself)
+# first time: open the sync window on the watch (BOOT long press); when the PC pairs, the
+# watch shows a 6-digit code.
+# bleak can't type it, so pair through the OS and type the code:
+#   Linux:   bluetoothctl -> agent on -> default-agent -> scan on -> pair <address>
+#   Windows: Settings > Bluetooth & devices > Add device > Bluetooth > barvis-tw
+#   macOS:   run the --list below; macOS asks for the code
+~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py --list
 
 export BARVIS_SERVER=http://<server>:8000
 export CONVO_INGEST_TOKEN=...            # or --token-file ~/.config/barvis/token (chmod 600)

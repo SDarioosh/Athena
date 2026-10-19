@@ -127,14 +127,19 @@ ours, random, base `f806xxxx-61c0-4fda-8b7b-26b08e916438`:
 | `data` | `f8060004-61c0-4fda-8b7b-26b08e916438` | notify | encrypted | responses and chunk bytes (§5) |
 
 - All integers are **little-endian**. `session_id` is the 8 raw bytes in order (§2.2).
-- "Encrypted" means the link must be encrypted with a bonded key (LE Secure Connections).
+- "Encrypted" means the link must be encrypted with a bonded, authenticated key (LE Secure
+  Connections, passkey entry, §3.1).
   Accessing those characteristics on an unencrypted link fails with *Insufficient
   Encryption*, which makes Android and BlueZ start pairing.
 
 ### 3.1 Pairing and bonding
 
-- Just Works, LE Secure Connections, bonding. The watch has `NoInputNoOutput` IO in v1
-  (a passkey on the AMOLED is a possible later upgrade: it adds MITM protection).
+- **Passkey entry**, LE Secure Connections, bonding. The watch's IO capability is
+  `DisplayOnly`: it shows a random 6-digit code on the AMOLED (and logs it on the USB
+  console), and the user types it on the phone or PC. This protects against a
+  man-in-the-middle during pairing. The code stays on screen for 30 s, the SMP timeout.
+- `status`, `ctrl` and `data` need an **authenticated** (passkey) key, not just
+  encryption: a link encrypted with an unauthenticated key is disconnected.
 - **New bonds are accepted only in the sync window**: for 2 minutes after a BOOT long
   press (or `ble pair` on the console). Outside the window, a peer that wasn't bonded
   before this connection is disconnected and its new bond is deleted as soon as
@@ -146,9 +151,10 @@ ours, random, base `f806xxxx-61c0-4fda-8b7b-26b08e916438`:
 - A phone that paired outside the window keeps a bond the watch has deleted, so its later
   connections fail with an authentication error. Remove `barvis-tw` in the phone's
   Bluetooth settings and pair again in the window. The Android app shows this hint.
-- PC test: pair once during the window (`ble_relay.py --pair`, or `bluetoothctl` →
-  `pair <addr>` on Linux). Android: the app calls `createBond()`; the system shows a
-  pairing prompt the first time.
+- PC test: bleak can't type a passkey, so the operating system pairs, once, during the
+  window: Linux `bluetoothctl` (`agent on`, `default-agent`, `scan on`, `pair <addr>`, type
+  the code), Windows *Settings → Bluetooth & devices → Add device*, macOS the system prompt
+  on first connect. Android: the app calls `createBond()` and Android asks for the code.
 
 ## 4. Characteristic values
 

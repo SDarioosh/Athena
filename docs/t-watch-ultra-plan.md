@@ -331,8 +331,9 @@ building it, some of which change the XIAO plan's §3:
   still the plan if it matters.
 - **Opus**: libopus via `78/esp-opus`, 16 kbps, complexity 1, `codec=ogg` uploads.
 - **`device=twatch-ultra`**, without the `-<mac4>` suffix of §5, while there is one watch.
-- **Pairing**: Just Works LE Secure Connections, new bonds only in a 2-minute sync window
-  (BOOT long press). A passkey on the AMOLED is a later upgrade.
+- **Pairing**: passkey entry with LE Secure Connections (owner decision 2026-10-19): the
+  watch shows a 6-digit code on the AMOLED, the phone or PC types it. New bonds only in a
+  2-minute sync window (BOOT long press).
 - **Server**: no protocol change was needed. One fix: chunks that arrive while their
   session is being processed are no longer lost (they come in bursts now).
 

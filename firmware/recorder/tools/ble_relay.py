@@ -17,17 +17,23 @@ The token comes from the CONVO_INGEST_TOKEN environment variable or --token-file
 holding only the token); there is deliberately no --token option, so it can't end up in your
 shell history. The server URL comes from --server or BARVIS_SERVER.
 
-First pairing (the watch accepts new bonds only in its 2-minute sync window: hold BOOT, or
-`ble pair` on the console), and look at the queue without changing anything:
+First pairing. The watch accepts new bonds only in its 2-minute sync window (hold BOOT, or
+`ble pair` on the console) and shows a 6-digit code on its screen, which you type on the PC.
+bleak can't type it, so the operating system pairs:
 
-    python firmware/recorder/tools/ble_relay.py --pair --list
-    # Linux alternative: bluetoothctl, then `scan on` and `pair <address>`
-    # macOS: --pair isn't available; accept the system pairing prompt that appears
-    # Windows: --pair works; or pair "barvis-tw" in Settings > Bluetooth
+    # Linux: bluetoothctl -> `agent on`, `default-agent`, `scan on`, `pair <address>`, type the
+    #   code. (Or keep bluetoothctl open with its agent and run --pair below: BlueZ asks
+    #   for the code in the bluetoothctl window.)
+    # Windows: Settings > Bluetooth & devices > Add device > Bluetooth > "barvis-tw", type the code
+    # macOS: run --list below; macOS asks for the code when the relay first connects
+
+Then look at the queue without changing anything:
+
+    python firmware/recorder/tools/ble_relay.py --list
 
 Drain once and exit (exit code 0 = all delivered):
 
-    export BARVIS_SERVER=http://<server>:8080 CONVO_INGEST_TOKEN=...   # or --token-file
+    export BARVIS_SERVER=http://<server>:8000 CONVO_INGEST_TOKEN=...   # or --token-file
     python firmware/recorder/tools/ble_relay.py --once
 
 Keep running (scan, drain whenever the watch advertises, back off 1/2/5/10/15 min while the
@@ -162,7 +168,8 @@ async def connect_and_run(relay: d.Relay, device, *, pair: bool) -> d.Report:
             except NotImplementedError:
                 log.info("this OS pairs on first encrypted access; accept the system prompt")
             except BleakError as e:
-                log.error("pairing failed (is the watch's sync window open?): %s", e)
+                log.error("pairing failed: %s. Open the watch's sync window and pair through the "
+                          "OS so you can type the code from the watch screen (see --help)", e)
         backend = str(getattr(client, "backend_id", ""))
         if "bluez" not in backend.lower():  # BlueZ always reports 23 here
             with contextlib.suppress(Exception):
@@ -172,8 +179,8 @@ async def connect_and_run(relay: d.Relay, device, *, pair: bool) -> d.Report:
             await t.open()
         except d.LinkLost as e:
             return d.Report(outcome=d.LINK_LOST,
-                            message=f"subscribe failed ({e}); not bonded? Open the watch's "
-                                    "sync window and run with --pair")
+                            message=f"subscribe failed ({e}); not paired? Open the watch's "
+                                    "sync window and pair through the OS (see the docstring)")
         return await relay.run(t)
     finally:
         with contextlib.suppress(Exception):
@@ -298,7 +305,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--address", help="watch address (macOS: its CoreBluetooth UUID); "
                                       "default: scan for the service")
     ap.add_argument("--pair", action="store_true",
-                    help="pair/bond after connecting (open the watch's sync window first)")
+                    help="ask the OS to pair after connecting (Linux with bluetoothctl's agent "
+                         "running; type the code shown on the watch)")
     ap.add_argument("--once", action="store_true", help="drain once and exit")
     ap.add_argument("--list", action="store_true",
                     help="show info, status and the queue; change nothing")

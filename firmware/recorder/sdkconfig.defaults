@@ -45,8 +45,8 @@ CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT=y
 CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_2M_PHY=y
 CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_CODED_PHY=n
 CONFIG_BT_NIMBLE_EXT_ADV=n
-# Pairing (§3.1): LE Secure Connections only (legacy pairing compiled out), Just Works,
-# bonds kept in NVS, at most 4.
+# Pairing (§3.1): LE Secure Connections only (legacy pairing compiled out), passkey shown
+# on the watch screen (MITM-protected), bonds kept in NVS, at most 4.
 CONFIG_BT_NIMBLE_SECURITY_ENABLE=y
 CONFIG_BT_NIMBLE_SM_LEGACY=n
 CONFIG_BT_NIMBLE_SM_SC=y

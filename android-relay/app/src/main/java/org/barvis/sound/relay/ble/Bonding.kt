@@ -11,7 +11,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Bonds with the watch (LE Secure Connections, Just Works, §3.1). The watch accepts new bonds
+ * Bonds with the watch (LE Secure Connections, passkey entry: Android asks the user for the
+ * 6-digit code shown on the watch, §3.1). The watch accepts new bonds
  * only during its sync window (BOOT long press). Returns true when bonded.
  */
 @SuppressLint("MissingPermission")

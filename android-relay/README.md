@@ -62,7 +62,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
    accepted then.
 3. Tap **Start relay** and grant *Nearby devices* (Android 12+) or *Location* (Android 8–11:
    BLE scans need it there, and Location must be switched on), and notifications.
-   Accept Android's pairing prompt when it appears.
+   When Android asks for a pairing code, type the 6 digits shown on the watch screen.
 4. Tap **Let the relay run in the background** and allow it. On phones with aggressive
    battery managers (Xiaomi, Huawei, OnePlus, Samsung "sleeping apps"…) also exclude the
    app there; see <https://dontkillmyapp.com> for your model.
@@ -125,7 +125,8 @@ fields, bearer header, error classes, no redirects, token never in logs).
 Everything BLE-side runs only in tests against a fake watch so far. Still to check on a
 real phone and watch:
 
-- Pairing during the sync window (Just Works prompt, `createBond()` on an open link), and
+- Pairing during the sync window (passkey entry with the code from the watch screen,
+  `createBond()` on an open link), and
   the stale-bond case above.
 - Throughput with MTU 517 / 2M PHY / high priority (expected: a 60 KB chunk in 1–2 s).
 - Scanning and connecting with the screen off, in Doze, and after hours in the background;

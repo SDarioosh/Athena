@@ -236,7 +236,8 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
   `data` characteristics, LIST/READ/ACK/TIME/BYE with byte layouts and test vectors, 30 s
   Ogg/Opus chunks with session id, sequence and RTC start time, delivery rule (watch
   deletes only after ACK; relay acks only after the server's `ok`; LAST chunk → `/end`
-  first), pairing only in a 2-minute sync window, advertising only when something is
+  first), passkey pairing (6-digit code on the watch screen) only in a 2-minute sync
+  window, advertising only when something is
   waiting, drain-then-disconnect with 15–30 ms bursts, MTU 517.
 - **Firmware** (`firmware/recorder/`): Opus session recorder (libopus via `78/esp-opus`,
   complexity 1), pure-C Ogg/Opus writer and page scanner, chunk queue on `/sdcard/q` with
@@ -354,8 +355,8 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
 - T-Watch upload path: is Opus complexity 1 at 16 kbps good enough for whisper on your
-  recordings (milestone 3 decides; 12/16/24 kbps comparison)? Is the 2-minute pairing
-  window with Just Works OK, or do you want a passkey shown on the watch screen?
+  recordings (milestone 3 decides; 12/16/24 kbps comparison)? (Pairing: answered, a
+  6-digit passkey on the watch screen.)
 - T-Watch Ultra: everything under "Needs the real watch" above. Also: does the battery
   take a 4.2 V charge target (set conservatively; LilyGoLib asks the chip for 4.288 V)?
 - Barvis fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.

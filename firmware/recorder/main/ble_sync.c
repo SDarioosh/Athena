@@ -17,6 +17,7 @@
 #include "board.h"
 #include "chunk_store.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -91,21 +92,25 @@ static const struct ble_gatt_svc_def s_svcs[] = {
                     .uuid = &s_status_uuid.u,
                     .access_cb = on_access,
                     .arg = (void *)CHR_STATUS,
-                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY |
-                             BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC |
+                             BLE_GATT_CHR_F_READ_AUTHEN | BLE_GATT_CHR_F_NOTIFY |
+                             BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC |
+                             BLE_GATT_CHR_F_NOTIFY_INDICATE_AUTHEN,
                     .val_handle = &s_status_handle,
                 },
                 {
                     .uuid = &s_ctrl_uuid.u,
                     .access_cb = on_access,
                     .arg = (void *)CHR_CTRL,
-                    .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
+                    .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC |
+                             BLE_GATT_CHR_F_WRITE_AUTHEN,
                 },
                 {
                     .uuid = &s_data_uuid.u,
                     .access_cb = on_access,
                     .arg = (void *)CHR_DATA,
-                    .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC,
+                    .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC |
+                             BLE_GATT_CHR_F_NOTIFY_INDICATE_AUTHEN,
                     .val_handle = &s_data_handle,
                 },
                 {0},
@@ -875,8 +880,45 @@ static void on_connect(uint16_t handle)
     post_job(JOB_CONNECTED, gen);
 }
 
+/* The pairing code on the watch screen (§3.1); -1 hides it. */
+static void show_passkey(int32_t passkey)
+{
+    if (s_hooks.on_passkey) {
+        s_hooks.on_passkey(passkey);
+    }
+}
+
+/* Passkey entry (§3.1): the watch displays a random 6-digit code, the relay's user types it.
+ * Only in the sync window: outside it no new pairing starts at all. */
+static void on_passkey_action(uint16_t handle, uint8_t action)
+{
+    if (action != BLE_SM_IOACT_DISP) {
+        ESP_LOGW(TAG, "pairing action %u not supported (display only)", action);
+        ble_gap_terminate(handle, BLE_ERR_AUTH_FAIL);
+        return;
+    }
+    if (!ble_sync_window_is_open()) {
+        ESP_LOGW(TAG, "pairing outside the sync window refused");
+        ble_gap_terminate(handle, BLE_ERR_AUTH_FAIL);
+        s_stats.rejected++;
+        return;
+    }
+    struct ble_sm_io io = {.action = BLE_SM_IOACT_DISP, .passkey = esp_random() % 1000000};
+    const int rc = ble_sm_inject_io(handle, &io);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "passkey inject: %d", rc);
+        return;
+    }
+    /* Logged too: the USB console is local, and it helps when the screen is off. */
+    ESP_LOGI(TAG, "pairing code %06" PRIu32 " (type it on the phone/PC)", io.passkey);
+    show_passkey((int32_t)io.passkey);
+    /* Typing the code takes a while; SMP itself gives up after 30 s (Core spec, SMP timeout). */
+    restart_timer(s_idle_timer, IDLE_DISCONNECT_MS + 15000);
+}
+
 static void on_enc_change(uint16_t handle, int status)
 {
+    show_passkey(-1);
     if (status != 0) {
         ESP_LOGW(TAG, "encryption failed: %d", status);
         return;
@@ -888,6 +930,16 @@ static void on_enc_change(uint16_t handle, int status)
     taskENTER_CRITICAL(&s_lock);
     const bool window = window_open_locked();
     taskEXIT_CRITICAL(&s_lock);
+    if (!desc.sec_state.authenticated) {
+        /* Only passkey (MITM-protected) keys open the service; a Just Works bond doesn't. */
+        ESP_LOGW(TAG, "link encrypted without an authenticated key: disconnecting");
+        if (!was_bonded(&desc.peer_id_addr)) {
+            ble_store_util_delete_peer(&desc.peer_id_addr);
+        }
+        ble_gap_terminate(handle, BLE_ERR_AUTH_FAIL);
+        s_stats.rejected++;
+        return;
+    }
     if (!window && !was_bonded(&desc.peer_id_addr)) {
         /* §3.1: outside the sync window only peers bonded before this connection. */
         ESP_LOGW(TAG, "unknown peer outside the sync window: deleting its bond, disconnecting");
@@ -932,9 +984,14 @@ static int on_gap_event(struct ble_gap_event *ev, void *arg)
         esp_timer_stop(s_bye_timer);
         esp_timer_stop(s_status_timer);
         ESP_LOGI(TAG, "disconnected: 0x%x", ev->disconnect.reason);
+        show_passkey(-1);
         post_job(JOB_DISCONNECTED, gen);
         return 0;
     }
+
+    case BLE_GAP_EVENT_PASSKEY_ACTION:
+        on_passkey_action(ev->passkey.conn_handle, ev->passkey.params.action);
+        return 0;
 
     case BLE_GAP_EVENT_ENC_CHANGE:
         on_enc_change(ev->enc_change.conn_handle, ev->enc_change.status);
@@ -1152,12 +1209,13 @@ esp_err_t ble_sync_init(const ble_sync_hooks_t *hooks)
     ble_hs_cfg.reset_cb = on_reset;
     /* Bond table full (4): drop the oldest bond to make room for the new one. */
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
-    /* Just Works, LE Secure Connections (legacy pairing is compiled out), bonding only while
-     * the sync window is open (refresh()). Identity keys are exchanged so phones with
-     * private addresses are recognised when they come back. */
-    ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT;
+    /* Passkey entry with LE Secure Connections (legacy pairing is compiled out): the watch
+     * shows a 6-digit code, the relay's user types it, so pairing is MITM-protected.
+     * Bonding only while the sync window is open (refresh()). Identity keys are exchanged so
+     * phones with private addresses are recognised when they come back. */
+    ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
     ble_hs_cfg.sm_bonding = 0;
-    ble_hs_cfg.sm_mitm = 0;
+    ble_hs_cfg.sm_mitm = 1;
     ble_hs_cfg.sm_sc = 1;
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
