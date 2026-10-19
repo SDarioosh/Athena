@@ -37,6 +37,7 @@ from .links import render_conversation, transcript_link, verify
 from .llm import LLMError
 from .pipeline import Pipeline, Worker
 from .search import search
+from .speakers import relabel_matches
 
 log = logging.getLogger(__name__)
 MAX_CHUNK_BYTES = 25 * 1024 * 1024
@@ -327,8 +328,11 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         diarizer.voices = load_voices(store)
+        # the new voice may be an unnamed speaker in earlier recordings
+        relabeled = relabel_matches(store, name, pipeline.settings.speaker_relabel_threshold)
         return {"ok": True, "name": name, "is_owner": is_owner,
-                "speech_seconds": round(audio_mod.duration_seconds(pcm), 1)}
+                "speech_seconds": round(audio_mod.duration_seconds(pcm), 1),
+                "relabeled_lines": sum(r.lines for r in relabeled)}
 
     @v1.get("/speakers")
     def speakers() -> dict[str, Any]:
