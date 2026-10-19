@@ -139,5 +139,6 @@ See `PROGRESS.md`. On the owner's watch (2026-10-19) the rails, battery, RTC, SD
 status screen, buttons, haptics and recording work, and recorded speech is audible and no
 longer muffled after the conditioning above (owner listening test). The right PDM slot,
 stereo capture, the inverted clock edge and a 2.048 MHz PDM clock all read the same as the
-defaults. Still open: SD_DET with the card out, a recording through the server pipeline,
-and tuning gain and EQ by transcription accuracy (milestone 3).
+defaults. SD card detect is confirmed (P12: LOW with a card, HIGH without). Still open: a
+recording through the server pipeline, and tuning gain and EQ by transcription accuracy
+(milestone 3).

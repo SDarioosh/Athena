@@ -58,11 +58,10 @@
  * The schematic (U22, XL9555QF24) shows: P06 = M_EN (haptics), P07 = VCI_EN (display),
  * P10 = TP_RST, P11 = n.c., P12 = SD_DET, P13 = LORA_SEL (RF switch).
  * So the hardware page uses the chip's port names (P10, P12) and the board file uses
- * linear indices (8, 10): the same pins. The firmware uses the schematic reading below
- * and logs every expander input at boot so the owner can confirm on the watch:
- * with a card inserted P12 (index 10) must read LOW, without it HIGH.
- * If the "other" reading were right instead, P12 would be the touch reset and the SD
- * detect would be P14 (index 12). EXP_PIN_SD_DET_ALT names it for that check.
+ * linear indices (8, 10): the same pins. The firmware uses the schematic reading below.
+ * CONFIRMED on the owner's watch (2026-10-19): P12 (index 10) reads LOW with a card in and
+ * HIGH with it out, while P14 (index 12) stays HIGH either way. The "other" reading (P12 =
+ * touch reset, SD detect = P14) is wrong; the _ALT names below only document it.
  * --------------------------------------------------------------------------------- */
 #define EXP_PIN_HAPTIC_EN 6  /* P06, M_EN: DRV2605 enable */
 #define EXP_PIN_DISP_EN 7    /* P07, VCI_EN: AMOLED panel power enable */
