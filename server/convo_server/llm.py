@@ -6,7 +6,8 @@ import json
 import logging
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
@@ -20,6 +21,9 @@ class ActionItem(BaseModel):
     text: str = Field(description="What needs to be done, imperative, self-contained")
     owner: str | None = Field(default=None, description="Who should do it, if stated")
     due: str | None = Field(default=None, description="Deadline as stated, e.g. 'Friday'")
+    due_date: str | None = Field(default=None,
+                                 description="The deadline as YYYY-MM-DD, if a date can be "
+                                             "worked out from the conversation date")
     at_seconds: int | None = Field(default=None,
                                    description="Offset in seconds where it was mentioned")
 
@@ -30,7 +34,47 @@ class Fact(BaseModel):
     at_seconds: int | None = None
 
 
+Kind = Literal["meeting", "call", "casual", "appointment", "other"]
+DiscardReason = Literal["none", "tv_or_media", "background_noise", "gibberish",
+                        "not_a_conversation"]
+
+
+class Triage(BaseModel):
+    """Cheap first call: is this worth summarizing, and what kind of conversation is it?"""
+    discard: bool
+    reason: DiscardReason
+    kind: Kind
+
+
+class SummaryNotes(BaseModel):
+    title: str
+    summary: str
+    key_points: list[str]
+    people: list[str]
+    topics: list[str]
+
+
+class ActionItemList(BaseModel):
+    action_items: list[ActionItem]
+
+
+class FactList(BaseModel):
+    facts: list[Fact]
+
+
+class FactLink(BaseModel):
+    new: int = Field(description="Number of the new fact")
+    relation: Literal["new", "same", "updates"]
+    existing: int | None = Field(default=None, description="id of the known fact it repeats "
+                                                           "or updates")
+
+
+class FactLinks(BaseModel):
+    links: list[FactLink]
+
+
 class ConversationSummary(BaseModel):
+    """Everything about one conversation (the shape before the calls were split)."""
     title: str
     summary: str
     key_points: list[str]
@@ -48,26 +92,73 @@ class DailyDigest(BaseModel):
     people: list[str]
 
 
-SUMMARY_SYSTEM = """You turn conversation transcripts into structured notes for the \
-user's private memory. Lines look like "[73] Speaker: text" where the number is the \
-offset in seconds from the start of the conversation. "{owner}" is the user (the person \
-wearing the recorder). Rules:
-- Only state what the transcript supports; never invent names, dates or commitments.
-- people: names of people who took part or were discussed (not "Speaker 1"); include \
-"{owner}" only if they spoke.
-- action_items: concrete commitments or requests. Set owner when clear.
-- facts: durable, specific facts worth remembering for months (preferences, plans, \
-relationships, decisions, numbers). Skip small talk and one-off logistics. Each fact is a \
-complete sentence that names its subject and makes sense on its own, e.g. \
-{{"subject": "Alice", "fact": "Alice is vegetarian."}} — never a bare value like "May".
-- at_seconds: the bracketed number of the line that supports the item (copy it exactly).
-- Use the transcript's language for content. Be concise. Output JSON only with keys: \
-title, summary, key_points, action_items[{{text, owner, due, at_seconds}}], people, topics, \
-facts[{{subject, fact, at_seconds}}]."""
+COMMON = """Lines look like "[73] Speaker: text" where the number is the offset in seconds \
+from the start of the conversation. "{owner}" is the user (the person wearing the \
+recorder). Only state what the transcript supports; never invent names, dates or \
+commitments. Use the transcript's language for content. Be concise. Output JSON only."""
 
-MERGE_SYSTEM = """You merge partial structured notes of ONE long conversation (given in \
-order) into a single set of notes with the same JSON shape. Deduplicate; keep at_seconds \
-values as given. Output JSON only."""
+TRIAGE_SYSTEM = """You sort recordings from a wearable microphone before they are \
+summarized. """ + COMMON + """
+discard=true only if it is not a real conversation the user took part in or listened to: \
+a TV, radio, video or podcast playing (reason tv_or_media), noise or fragments \
+(background_noise), unintelligible text (gibberish), or not people talking to each \
+other (not_a_conversation). When in doubt, keep it: discard=false, reason "none".
+kind: meeting (work discussion with an agenda or several people), call (phone/video \
+call), appointment (doctor, dentist, landlord, bank, any service visit), casual (friends, \
+family, small talk), other."""
+
+TEMPLATES: dict[str, str] = {
+    "meeting": "This is a meeting. summary: purpose and outcome. key_points: decisions "
+               "made, open questions, deadlines and who is responsible.",
+    "call": "This is a call. summary: who called whom, why, and the outcome. key_points: "
+            "what was agreed and any follow-up.",
+    "appointment": "This is an appointment. summary: with whom and about what. key_points: "
+                   "findings, instructions to follow, the next appointment (date, time, "
+                   "place), costs.",
+    "casual": "This is a casual conversation. summary: one or two sentences. key_points: "
+              "news, plans and personal details worth remembering; skip small talk.",
+    "other": "summary: the gist. key_points: the most important points.",
+}
+
+SUMMARY_SYSTEM = """You write notes about one conversation for the user's private \
+memory. """ + COMMON + """
+{template}
+title: short and specific (who/what). people: names of people who took part or were \
+discussed (not "Speaker 1"); include "{owner}" only if they spoke. topics: a few keywords. \
+Keys: title, summary, key_points, people, topics."""
+
+ACTIONS_SYSTEM = """You list the action items of one conversation. """ + COMMON + """
+The conversation happened on {date}.
+action_items: concrete commitments or requests someone made ("I'll send it by Friday", \
+"can you pick her up?"). Not plans without a commitment, not things already done. \
+text: imperative and self-contained ("Send Alice the revised budget spreadsheet"). owner: \
+who should do it, if clear. due: the deadline as said ("Friday"); due_date: that \
+deadline as YYYY-MM-DD counted from the conversation date, or null if there is none. \
+at_seconds: the bracketed number of the line it comes from. Return an empty list if \
+there are none. Keys: action_items[{{text, owner, due, due_date, at_seconds}}]."""
+
+FACTS_SYSTEM = """You pick durable facts from one conversation for the user's long-term \
+memory. """ + COMMON + """
+facts: specific facts worth remembering for months: preferences, allergies, plans, \
+relationships, jobs, moves, decisions, prices, dates of future events. Skip small talk, \
+one-off logistics and anything only true for today. Each fact is a complete sentence that \
+names its subject and makes sense on its own, e.g. \
+{{"subject": "Alice", "fact": "Alice is vegetarian."}}, never a bare value like "May". \
+at_seconds: the bracketed number of the supporting line. Return an empty list if there \
+are none. Keys: facts[{{subject, fact, at_seconds}}]."""
+
+LINK_SYSTEM = """You keep the user's memory of facts up to date. You get facts already \
+known (with id and the date they were learned) and new facts from a conversation on \
+{date}. For every new fact (by its number) say:
+- "same": it says the same thing as a known fact (give its id);
+- "updates": it is about the same thing as a known fact but the value changed or \
+  conflicts, e.g. a new amount, date, place or decision (give its id);
+- "new": anything else.
+Only link facts about the same subject and the same thing. Output JSON only: \
+{{"links": [{{"new": <number>, "relation": "...", "existing": <id or null>}}]}}."""
+
+MERGE_SYSTEM = """You merge partial notes of ONE long conversation (given in order) into \
+a single set of notes with the same JSON shape. Deduplicate. Output JSON only."""
 
 DIGEST_SYSTEM = """You write a short daily digest of the user's conversations for {date} \
 from their structured notes. Only use the given notes. Output JSON only."""
@@ -138,31 +229,78 @@ def _strip_fences(text: str) -> str:
 
 
 class Summarizer:
+    """Summaries in small focused calls (easier for a small local model than one big one).
+
+    1. triage: discard junk (TV, noise) and pick the conversation kind;
+    2. notes: title, summary, key points, people, topics with a template for that kind;
+    3. action items, with due dates resolved against the conversation date;
+    4. durable facts.
+    ``link_facts`` then relates new facts to the ones already known (pipeline).
+    """
+
     def __init__(self, llm: LLMClient, owner_name: str = "Me",
-                 max_chars_per_call: int = 120_000) -> None:
+                 max_chars_per_call: int = 120_000, timezone: str = "UTC",
+                 min_words: int = 3) -> None:
         self.llm = llm
         self.owner = owner_name
         self.max_chars = max_chars_per_call
+        self.tz = ZoneInfo(timezone)
+        # fewer words than this in the whole conversation: discarded without a model call
+        self.min_words = min_words
 
     def summarize(self, segments: list[Segment]) -> dict[str, Any]:
-        """Return a storage-ready dict (absolute ``source_at`` timestamps)."""
+        """Return a storage-ready dict (absolute ``source_at`` timestamps).
+
+        Discarded conversations come back as ``{"discard": True, "discard_reason",
+        "kind"}`` only.
+        """
         if not segments:
             raise ValueError("no segments to summarize")
         origin = segments[0].started_at
-        system = SUMMARY_SYSTEM.format(owner=self.owner)
         parts = self._split(segments, origin)
-        if len(parts) == 1:
-            result = self.llm.structured(system, parts[0], ConversationSummary)
+        if sum(len(s.text.split()) for s in segments) < self.min_words:
+            return {"discard": True, "discard_reason": "too_short", "kind": "other"}
+        fmt = {"owner": self.owner}
+        triage = self.llm.structured(TRIAGE_SYSTEM.format(**fmt), parts[0], Triage)
+        assert isinstance(triage, Triage)
+        if triage.discard and triage.reason != "none":
+            return {"discard": True, "discard_reason": triage.reason, "kind": triage.kind}
+        date = datetime.fromtimestamp(origin, self.tz).strftime("%A %Y-%m-%d")
+        notes_sys = SUMMARY_SYSTEM.format(template=TEMPLATES[triage.kind], **fmt)
+        actions_sys = ACTIONS_SYSTEM.format(date=date, **fmt)
+        facts_sys = FACTS_SYSTEM.format(**fmt)
+        notes = [self.llm.structured(notes_sys, p, SummaryNotes) for p in parts]
+        if len(notes) > 1:
+            merged = self.llm.structured(MERGE_SYSTEM, json.dumps(
+                [n.model_dump() for n in notes]), SummaryNotes)
         else:
-            partials = [self.llm.structured(system, p, ConversationSummary).model_dump()
-                        for p in parts]
-            result = self.llm.structured(MERGE_SYSTEM, json.dumps(partials),
-                                         ConversationSummary)
-        assert isinstance(result, ConversationSummary)
+            merged = notes[0]
+        actions = [a for p in parts for a in self.llm.structured(  # type: ignore[attr-defined]
+            actions_sys, p, ActionItemList).action_items]
+        facts = [f for p in parts for f in self.llm.structured(  # type: ignore[attr-defined]
+            facts_sys, p, FactList).facts]
+        result = ConversationSummary(**merged.model_dump(), action_items=_unique(actions),
+                                     facts=_unique(facts))
         out = to_storage(result, origin)
+        out["kind"] = triage.kind
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
         return out
+
+    def link_facts(self, date: str, new: list[dict[str, Any]],
+                   known: list[dict[str, Any]]) -> list[FactLink]:
+        """Relate ``new`` facts (by index) to ``known`` ones (with ``id``)."""
+        if not new or not known:
+            return []
+        user = json.dumps({
+            "known": [{"id": k["id"], "learned": k.get("learned"), "subject": k["subject"],
+                       "fact": k["fact"]} for k in known],
+            "new": [{"number": i, "subject": f["subject"], "fact": f["fact"]}
+                    for i, f in enumerate(new)]})
+        result = self.llm.structured(LINK_SYSTEM.format(date=date), user, FactLinks)
+        ids = {k["id"] for k in known}
+        return [lk for lk in result.links  # type: ignore[attr-defined]
+                if 0 <= lk.new < len(new) and (lk.relation == "new" or lk.existing in ids)]
 
     def _split(self, segments: list[Segment], origin: float) -> list[str]:
         parts: list[list[Segment]] = [[]]
@@ -191,6 +329,30 @@ class Summarizer:
         return out
 
 
+def _unique(items: list[Any]) -> list[Any]:
+    seen: set[str] = set()
+    out = []
+    for i in items:
+        key = (getattr(i, "text", None) or getattr(i, "fact", "")).strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(i)
+    return out
+
+
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _iso_date(value: str | None) -> str | None:
+    """A valid YYYY-MM-DD or None (models sometimes return 'Friday' or '2026-02-30')."""
+    if not value or not _DATE.match(value.strip()):
+        return None
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
 def to_storage(s: ConversationSummary, origin: float) -> dict[str, Any]:
     def at(x: int | None) -> float | None:
         return origin + x if x is not None and x >= 0 else None
@@ -202,7 +364,8 @@ def to_storage(s: ConversationSummary, origin: float) -> dict[str, Any]:
         "topics": _dedupe(s.topics),
         "people": [p for p in _dedupe(s.people) if not _PLACEHOLDER.match(p)],
         "action_items": [{"text": a.text, "owner": a.owner, "due": a.due,
-                          "source_at": at(a.at_seconds)} for a in s.action_items],
+                          "due_date": _iso_date(a.due_date), "source_at": at(a.at_seconds)}
+                         for a in s.action_items],
         "facts": [{"subject": f.subject, "fact": f.fact, "source_at": at(f.at_seconds)}
                   for f in s.facts],
     }

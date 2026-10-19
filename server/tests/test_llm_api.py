@@ -132,7 +132,9 @@ def test_summary_filters_placeholder_people_and_absent_owner():
                "people": ["Speaker 1", "Me", "Alice", "alice", "Unknown"], "topics": [],
                "facts": []}
     llm = LLMClient("http://x/v1", "m", transport=fake_llm_transport(summary=summary))
-    out = Summarizer(llm, "Me").summarize([Segment(0, 1, "hi", "Speaker 1")])
+    out = Summarizer(llm, "Me").summarize([Segment(0, 1, "hi there, how are you",
+                                                   "Speaker 1")])
     assert out["people"] == ["Alice"]
-    out = Summarizer(llm, "Me").summarize([Segment(0, 1, "hi", "Me", is_owner=True)])
+    out = Summarizer(llm, "Me").summarize([Segment(0, 1, "hi there, how are you", "Me",
+                                                   is_owner=True)])
     assert out["people"] == ["Me", "Alice"]

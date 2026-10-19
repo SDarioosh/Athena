@@ -56,7 +56,8 @@ def build_pipeline(settings: Settings) -> Pipeline:
                 if settings.embed_base_url else None)
     return Pipeline(settings, store, make_vad(settings.vad_backend),
                     build_transcriber(settings), build_diarizer(settings, store),
-                    Summarizer(llm, settings.owner_name), embedder)
+                    Summarizer(llm, settings.owner_name, timezone=settings.timezone),
+                    embedder)
 
 
 def main(argv: list[str] | None = None) -> None:

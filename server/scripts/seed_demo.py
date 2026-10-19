@@ -83,6 +83,13 @@ CONVERSATIONS: list[tuple[str, str, str, list[tuple[str, str]]]] = [
         ("Maria", "Aunt Rosa takes the train. Can you pick her up from the train station that afternoon?"),
         (ME, "Sure, I'll pick up Aunt Rosa from the station."),
     ]),
+    # A TV left on: should be discarded, not summarized (no answers come from it).
+    ("tv-news", "2026-10-17T21:00", "omi", [
+        ("Speaker 1", "Good evening, and welcome to the nine o'clock news."),
+        ("Speaker 1", "Tonight's top story: heavy rain is expected across the northern region over the weekend."),
+        ("Speaker 2", "In sport, the home side won three to one after a late goal in the final minutes."),
+        ("Speaker 1", "Stay with us after the break for the full weather forecast."),
+    ]),
 ]
 
 
@@ -91,7 +98,8 @@ def main() -> int:
     store = Store(settings.db_path)
     llm = LLMClient(settings.llm_base_url, settings.llm_model, settings.llm_api_key,
                     settings.llm_timeout_seconds)
-    pipeline = Pipeline(settings, store, EnergyVAD(), summarizer=Summarizer(llm, ME))
+    pipeline = Pipeline(settings, store, EnergyVAD(),
+                        summarizer=Summarizer(llm, ME, timezone=settings.timezone))
     failed = 0
     for key, start, device, lines in CONVERSATIONS:
         sid = f"demo-{key}"
@@ -100,7 +108,7 @@ def main() -> int:
             conv_ids = sorted({s.conversation_id for s in store.session_segments(sid)
                                if s.conversation_id})
             conv_ids = [c for c in conv_ids
-                        if store.get_conversation(c)["status"] != "summarized"]
+                        if store.get_conversation(c)["status"] not in ("summarized", "discarded")]
             if not conv_ids:
                 print("exists:", sid)
                 continue
@@ -122,7 +130,9 @@ def main() -> int:
             ok = pipeline.summarize_conversation(cid)
             failed += not ok
             conv = store.get_conversation(cid)
-            print(f"{key}: {cid} summarized={ok} ({time.time() - t:.1f}s) {conv['title']!r}")
+            print(f"{key}: {cid} summarized={ok} ({time.time() - t:.1f}s) {conv['title']!r}"
+                  + (f" discarded: {conv['discard_reason']}" if conv["status"] == "discarded"
+                     else ""))
     if failed:
         print(f"{failed} summaries failed; run again to retry them.", file=sys.stderr)
     return 1 if failed else 0

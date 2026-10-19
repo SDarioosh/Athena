@@ -311,13 +311,36 @@ class Pipeline:
             log.exception("summary failed for %s", conv_id)
             self.store.mark_conversation_failed(conv_id, f"{type(e).__name__}: {e}")
             return False
-        self.store.save_summary(conv_id, summary)
+        if summary.get("discard"):
+            log.info("conversation %s discarded: %s", conv_id, summary["discard_reason"])
+            self.store.save_discarded(conv_id, summary["discard_reason"], summary.get("kind"))
+            return True
+        fact_ids = self.store.save_summary(conv_id, summary)
+        try:
+            self._link_facts(conv_id, fact_ids, segments[0].started_at)
+        except Exception:  # the summary is saved; facts just stay unlinked
+            log.exception("linking facts failed for %s", conv_id)
         if self.embedder is not None:
             try:
                 index_conversation(self.store, self.embedder, conv_id)
             except Exception:
                 log.exception("embedding failed for %s (FTS search still works)", conv_id)
         return True
+
+    def _link_facts(self, conv_id: str, fact_ids: list[int], started_at: float) -> None:
+        """Merge new facts with known ones: drop repeats, let newer facts replace older."""
+        assert self.summarizer is not None
+        new = self.store.facts_by_id(fact_ids)
+        known = self.store.related_facts(conv_id, new)
+        if not new or not known:
+            return
+        tz = ZoneInfo(self.settings.timezone)
+        for k in known:
+            k["learned"] = datetime.fromtimestamp(k["conversation_at"], tz).strftime("%Y-%m-%d")
+        date = datetime.fromtimestamp(started_at, tz).strftime("%Y-%m-%d")
+        for link in self.summarizer.link_facts(date, new, known):
+            if link.relation != "new" and link.existing is not None:
+                self.store.link_fact(new[link.new]["id"], link.relation, link.existing)
 
     def summarize_pending(self, *, retry_after: float = 0.0, stop_on_failure: bool = False,
                           now: float | None = None) -> int:

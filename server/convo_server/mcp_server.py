@@ -134,7 +134,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         for c in convs:
             lines.append(
                 f"- {when(c['started_at'])}–{when(c['ended_at'], '%H:%M')} "
-                f"\"{c['title'] or 'untitled (summary pending)'}\" id {c['id']}; people: "
+                f"\"{_title(c)}\" id {c['id']}; people: "
                 f"{', '.join(c['people']) or '—'}\n  {c['summary'] or ''}\n  "
                 f"{transcript_link(settings, c['id'])}")
         return "\n".join(lines)
@@ -146,8 +146,9 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if c is None:
             return f"No conversation {conversation_id!r}."
         speakers = sorted({s.speaker for s in store.conversation_segments(conversation_id)})
-        out = [f"\"{c['title'] or 'untitled'}\" — {when(c['started_at'])}–"
-               f"{when(c['ended_at'], '%H:%M')} ({settings.timezone}), device {c['device']}",
+        out = [f"\"{_title(c)}\" — {when(c['started_at'])}–"
+               f"{when(c['ended_at'], '%H:%M')} ({settings.timezone}), device {c['device']}"
+               + (f", type {c['kind']}" if c.get("kind") else ""),
                f"Speakers: {', '.join(speakers) or '—'}. People: {', '.join(c['people']) or '—'}",
                f"Link: {transcript_link(settings, c['id'])}",
                f"Summary: {c['summary'] or '(pending)'}"]
@@ -196,7 +197,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         for r in rows:
             lines.append(f"- #{r['id']} [{r['status']}] {r['text']}"
                          + (f" (owner {r['owner']})" if r["owner"] else "")
-                         + (f" due {r['due']}" if r["due"] else "")
+                         + _due(r)
                          + f" — from \"{r['conversation_title']}\" {when(r['conversation_at'])} "
                          + transcript_link(settings, r["conversation_id"],
                                            (r["source_at"] or r["conversation_at"])
@@ -215,7 +216,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     @mcp.tool(annotations=ro)
     def list_facts(subject: Annotated[str, Field(description="Person/thing the fact is about")]
                    = "", query: Text = "", limit: int = 50) -> str:
-        """Durable facts learned from conversations (preferences, plans, relationships...)."""
+        """Durable facts learned from conversations (preferences, plans, relationships...).
+        Only the latest version of each fact; older values it replaced are listed under it."""
         rows = store.list_facts(subject=subject or None, query=query or None,
                                 limit=max(1, min(limit, 200)))
         lines = [header(len(rows), "facts")]
@@ -224,6 +226,17 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             lines.append(f"- [{f['subject']}] {f['fact']} (learned "
                          f"{when(f['conversation_at'], '%Y-%m-%d')}) "
                          + transcript_link(settings, f["conversation_id"], off))
+            for s in store.fact_sources(f["id"]):
+                lines.append(f"  said again {when(s['conversation_at'], '%Y-%m-%d')} "
+                             + transcript_link(settings, s["conversation_id"],
+                                               (s["source_at"] or s["conversation_at"])
+                                               - s["conversation_at"]))
+            for old in store.fact_history(f["id"]):
+                lines.append(f"  replaces: {old['fact']} (from "
+                             f"{when(old['conversation_at'], '%Y-%m-%d')}) "
+                             + transcript_link(settings, old["conversation_id"],
+                                               (old["source_at"] or old["conversation_at"])
+                                               - old["conversation_at"]))
         return "\n".join(lines)
 
     @mcp.tool(annotations=ro)
@@ -365,6 +378,18 @@ def _relabel_note(store: Store, name: str, settings: Settings) -> str:
             f"to {name} in {lines} lines across {len(convs)} other conversation(s).")
 
 
+def _title(c: dict[str, Any]) -> str:
+    if c.get("status") == "discarded":
+        return f"(not summarized: looked like {c.get('discard_reason') or 'junk'})"
+    return c.get("title") or "untitled (summary pending)"
+
+
+def _due(a: dict[str, Any]) -> str:
+    if a.get("due_date"):
+        return f" due {a['due_date']}" + (f" ({a['due']})" if a.get("due") else "")
+    return f" due {a['due']}" if a.get("due") else ""
+
+
 def _src(item: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:
     off = (item.get("source_at") or conv["started_at"]) - conv["started_at"]
     return transcript_link(settings, conv["id"], off)
@@ -373,7 +398,7 @@ def _src(item: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:
 def _item(a: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:
     return (f"Action #{a['id']} [{a['status']}]: {a['text']}"
             + (f" (owner {a['owner']})" if a.get("owner") else "")
-            + (f" due {a['due']}" if a.get("due") else "") + " " + _src(a, settings, conv))
+            + _due(a) + " " + _src(a, settings, conv))
 
 
 class BearerAuth:
