@@ -81,6 +81,33 @@ int chunk_store_fix_time(int64_t now_epoch_ms);
 /* Console `queue`: print the index. */
 void chunk_store_print(void);
 
+/* ---- recording side (session_rec.c) ----
+ * One chunk is open at a time and is not listed until chunk_store_end(). Call these between
+ * chunk_store_media_open() and chunk_store_media_close(), from one task. */
+typedef struct {
+    uint8_t session_id[8];
+    uint32_t sequence;
+    uint64_t start_ms; /* epoch ms, or session-relative ms with CHUNK_FLAG_TIME_UNSET */
+    uint8_t flags;     /* CHUNK_FLAG_TIME_UNSET or 0 */
+    uint64_t mono_ms;  /* esp_timer ms at the chunk start (for the TIME fix-up) */
+} chunk_store_new_t;
+
+/* Start a chunk (its record says "open" until it is ended). */
+esp_err_t chunk_store_begin(const chunk_store_new_t *c, uint32_t *chunk_id);
+esp_err_t chunk_store_append(const void *data, size_t len);
+/* Flush what was appended to the card (fsync), so a power cut keeps it. */
+esp_err_t chunk_store_sync(void);
+/* Close the open chunk; it becomes listable. last = the session ends with it. */
+esp_err_t chunk_store_end(uint32_t duration_ms, bool last);
+/* The open chunk can't be finished (write error): keep what the card holds up to the last
+ * complete Ogg page, as a closed chunk with LAST; without audio, delete it and give LAST to
+ * the session's previous chunk. *kept_id = 0 if it was deleted. */
+esp_err_t chunk_store_abandon(uint32_t *kept_id);
+/* Give a closed chunk LAST (the session ended before its next chunk could start). */
+esp_err_t chunk_store_set_last(uint32_t chunk_id);
+/* Free space on the card. Needs chunk_store_media_open(). */
+esp_err_t chunk_store_free_bytes(uint64_t *free_bytes);
+
 #ifdef __cplusplus
 }
 #endif
