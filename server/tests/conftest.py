@@ -65,13 +65,15 @@ class ToneEmbedder:
 
 
 def fake_llm_transport(summary: dict | None = None, digest: dict | None = None,
-                       log: list | None = None) -> httpx.MockTransport:
+                       log: list | None = None, triage: dict | None = None,
+                       links: list | None = None) -> httpx.MockTransport:
+    """Fake llama-server: answers each structured call by its schema name."""
     summary = summary or {
         "title": "Planning the trip",
         "summary": "Alice and the user planned a trip to Lisbon.",
         "key_points": ["Trip to Lisbon in May"],
         "action_items": [{"text": "Book flights", "owner": "Me", "due": "Friday",
-                          "at_seconds": 1}],
+                          "due_date": "2025-10-10", "at_seconds": 1}],
         "people": ["Alice", "Me"],
         "topics": ["travel"],
         "facts": [{"subject": "Alice", "fact": "Alice is vegetarian", "at_seconds": 2}],
@@ -79,13 +81,20 @@ def fake_llm_transport(summary: dict | None = None, digest: dict | None = None,
     digest = digest or {"headline": "A day of plans", "summary": "Trip planning.",
                         "highlights": ["Lisbon"], "open_action_items": ["Book flights"],
                         "people": ["Alice"]}
+    triage = triage or {"discard": False, "reason": "none", "kind": "casual"}
+    notes = {k: summary[k] for k in ("title", "summary", "key_points", "people", "topics")}
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         if log is not None:
             log.append(body)
         name = body["response_format"]["json_schema"]["name"]
-        content = digest if name == "DailyDigest" else summary
+        content = {
+            "DailyDigest": digest, "Triage": triage, "SummaryNotes": notes,
+            "ActionItemList": {"action_items": summary["action_items"]},
+            "FactList": {"facts": summary["facts"]},
+            "FactLinks": {"links": links or []},
+        }.get(name, summary)
         return httpx.Response(200, json={"choices": [{"message": {
             "content": json.dumps(content)}}]})
 

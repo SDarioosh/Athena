@@ -12,8 +12,9 @@ device/phone ──POST /v1/ingest/chunk──▶ decode (ffmpeg) ─▶ Silero 
 
 session ended (Stop, server stop, idle) ─▶ reassemble by sequence ─▶ whisper.cpp on speech
   ─▶ diarize (enrolled voices) ─▶ segments ─▶ delete raw audio ─▶ split on >3 min gaps
-  ─▶ llama-server JSON summary (title, summary, key points, action items, people,
-     topics, facts) ─▶ FTS5 (+ optional embeddings) ─▶ daily digest
+  ─▶ llama-server, small focused calls: triage (discard TV/noise, pick the kind) ─▶
+     notes with a per-kind template ─▶ action items (+ due dates) ─▶ facts ─▶ link
+     facts to known ones ─▶ FTS5 (+ optional embeddings) ─▶ daily digest
 ```
 
 ## Setup
@@ -157,6 +158,26 @@ CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 convo-server mcp --http   # docker
 ```
 
 Use only a local model in whichever frontend reads this. Results contain your transcripts.
+
+## Summaries
+
+Each conversation gets several small `json_schema` calls instead of one big one (a
+small local model does better on narrow questions):
+
+1. **Triage**: discard a TV, radio or podcast playing, noise, gibberish or no real
+   conversation (kept when in doubt; under 3 words is discarded without a call), and pick
+   the kind: meeting, call, appointment, casual, other. A discarded conversation keeps
+   its transcript (still searchable; `POST /v1/conversations/{id}/summarize` retries) but
+   gets no summary, action items or facts, and stays out of digests.
+2. **Notes** (title, summary, key points, people, topics) with a template per kind, e.g.
+   decisions and owners for meetings, instructions and the next date for appointments.
+3. **Action items**, with `due_date` (YYYY-MM-DD) worked out from the conversation date
+   in `CONVO_TIMEZONE` ("by Friday" said on Wednesday 2026-10-14 → 2026-10-16).
+4. **Facts**, then a **linking** call against related known facts (same subject or
+   matching words): a repeat becomes another source of the known fact; a changed value
+   replaces the older one (by conversation time, so re-summarizing an old conversation
+   can't overwrite newer knowledge). `list_facts` shows only current facts, each with
+   "said again" and "replaces:" lines that link every source transcript.
 
 ## Recognition eval
 

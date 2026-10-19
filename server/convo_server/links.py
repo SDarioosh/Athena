@@ -95,7 +95,14 @@ def render_conversation(settings: Settings, conv: dict[str, Any], segments: list
         when=e(f"{local_time(settings, origin)} – {local_time(settings, conv['ended_at'], '%H:%M')}"
                f" ({settings.timezone})"),
         people=e(", ".join(conv.get("people", [])) or "—"),
-        summary=f"<p>{e(conv.get('summary') or 'Summary pending.')}</p>",
+        summary=f"<p>{e(conv.get('summary') or _no_summary(conv))}</p>",
         lists=lists,
         lines="".join(lines) or "<p>No transcript.</p>",
     )
+
+
+def _no_summary(conv: dict) -> str:
+    if conv.get("status") == "discarded":
+        return (f"Not summarized: this looked like {conv.get('discard_reason') or 'junk'} "
+                "(TV, noise or no real conversation).")
+    return "Summary pending."

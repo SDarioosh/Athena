@@ -135,6 +135,15 @@ CREATE TABLE IF NOT EXISTS voice_samples (
 );
 CREATE INDEX IF NOT EXISTS voice_samples_speaker ON voice_samples(speaker_id);
 
+-- Every conversation that mentioned a fact again ("same" link), so a fact keeps links
+-- to all the transcripts it came from.
+CREATE TABLE IF NOT EXISTS fact_sources (
+    fact_id INTEGER NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    source_at REAL,
+    PRIMARY KEY (fact_id, conversation_id)
+);
+
 -- Voice embeddings of unnamed speakers ("Speaker 1") per session, so naming a speaker
 -- later can also teach the diarizer that voice.
 CREATE TABLE IF NOT EXISTS speaker_candidates (
@@ -210,6 +219,19 @@ class Store:
                 " SELECT id, embedding, 'legacy', created_at FROM speakers WHERE id NOT IN"
                 " (SELECT speaker_id FROM voice_samples)")
             self._conn.execute("PRAGMA user_version = 3")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 4:
+            # focused summaries: conversation kind, discarded junk, due dates, fact history
+            self._add_column("conversations", "kind", "TEXT")
+            self._add_column("conversations", "discard_reason", "TEXT")
+            self._add_column("action_items", "due_date", "TEXT")  # YYYY-MM-DD
+            self._add_column("facts", "status", "TEXT NOT NULL DEFAULT 'current'")
+            self._add_column("facts", "superseded_by", "INTEGER")
+            self._conn.execute("PRAGMA user_version = 4")
+
+    def _add_column(self, table: str, column: str, decl: str) -> None:
+        cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def close(self) -> None:
         self._conn.close()
@@ -398,29 +420,30 @@ class Store:
                 " WHERE id = ?", (conv_id, conv_id, conv_id))
         return conv_id
 
-    def save_summary(self, conv_id: str, summary: dict[str, Any]) -> None:
-        """Store structured LLM output and refresh the FTS index for the conversation."""
+    def save_summary(self, conv_id: str, summary: dict[str, Any]) -> list[int]:
+        """Store structured LLM output and refresh the FTS index for the conversation.
+
+        Returns the ids of the new facts (for ``link_facts``).
+        """
         conv = self.get_conversation(conv_id)
         if conv is None:
             raise KeyError(conv_id)
+        fact_ids: list[int] = []
         with self.tx() as c:
             c.execute(
                 "UPDATE conversations SET status = 'summarized', error = NULL, title = ?,"
-                " summary = ?, key_points = ?, topics = ?, people = ?, updated_at = ?"
-                " WHERE id = ?",
+                " summary = ?, key_points = ?, topics = ?, people = ?, kind = ?,"
+                " discard_reason = NULL, updated_at = ? WHERE id = ?",
                 (summary["title"], summary["summary"], json.dumps(summary["key_points"]),
-                 json.dumps(summary["topics"]), json.dumps(summary["people"]), time.time(),
-                 conv_id))
-            for table in ("action_items", "facts", "conversation_people"):
-                c.execute(f"DELETE FROM {table} WHERE conversation_id = ?", (conv_id,))
-            c.execute("DELETE FROM search_fts WHERE conversation_id = ?", (conv_id,))
-            c.execute("DELETE FROM embeddings WHERE conversation_id = ?", (conv_id,))
+                 json.dumps(summary["topics"]), json.dumps(summary["people"]),
+                 summary.get("kind"), time.time(), conv_id))
+            self._clear_knowledge(c, conv_id)
             for item in summary["action_items"]:
                 cur = c.execute(
-                    "INSERT INTO action_items (conversation_id, text, owner, due, source_at)"
-                    " VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO action_items (conversation_id, text, owner, due, due_date,"
+                    " source_at) VALUES (?, ?, ?, ?, ?, ?)",
                     (conv_id, item["text"], item.get("owner"), item.get("due"),
-                     item.get("source_at")))
+                     item.get("due_date"), item.get("source_at")))
                 c.execute("INSERT INTO search_fts VALUES ('action_item', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id, item["text"]))
             for fact in summary["facts"]:
@@ -428,6 +451,7 @@ class Store:
                     "INSERT INTO facts (conversation_id, subject, fact, source_at)"
                     " VALUES (?, ?, ?, ?)",
                     (conv_id, fact.get("subject"), fact["fact"], fact.get("source_at")))
+                fact_ids.append(int(cur.lastrowid or 0))
                 c.execute("INSERT INTO search_fts VALUES ('fact', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id,
                            f"{fact.get('subject') or ''}: {fact['fact']}"))
@@ -437,12 +461,114 @@ class Store:
                               " ".join(summary["topics"]), " ".join(summary["people"])])
             c.execute("INSERT INTO search_fts VALUES ('conversation', ?, ?, ?)",
                       (conv_id, conv_id, body))
-            transcript = "\n".join(
-                f"{r['speaker']}: {r['text']}" for r in c.execute(
-                    "SELECT speaker, text FROM segments WHERE conversation_id = ?"
-                    " ORDER BY started_at", (conv_id,)))
-            c.execute("INSERT INTO search_fts VALUES ('transcript', ?, ?, ?)",
-                      (conv_id, conv_id, transcript))
+            self._index_transcript(c, conv_id)
+        return fact_ids
+
+    def save_discarded(self, conv_id: str, reason: str, kind: str | None) -> None:
+        """Mark a conversation as junk (TV, noise): no summary, out of digests.
+
+        The transcript stays and is still searchable; ``POST
+        /v1/conversations/{id}/summarize`` (or a speaker rename) tries again.
+        """
+        with self.tx() as c:
+            c.execute(
+                "UPDATE conversations SET status = 'discarded', error = NULL, title = NULL,"
+                " summary = NULL, key_points = '[]', topics = '[]', people = '[]', kind = ?,"
+                " discard_reason = ?, updated_at = ? WHERE id = ?",
+                (kind, reason, time.time(), conv_id))
+            self._clear_knowledge(c, conv_id)
+            self._index_transcript(c, conv_id)
+
+    def _clear_knowledge(self, c: sqlite3.Connection, conv_id: str) -> None:
+        # facts of other conversations that this one's facts had replaced become current
+        c.execute("UPDATE facts SET status = 'current', superseded_by = NULL"
+                  " WHERE superseded_by IN (SELECT id FROM facts WHERE conversation_id = ?)",
+                  (conv_id,))
+        c.execute("DELETE FROM fact_sources WHERE conversation_id = ?", (conv_id,))
+        for table in ("action_items", "facts", "conversation_people"):
+            c.execute(f"DELETE FROM {table} WHERE conversation_id = ?", (conv_id,))
+        c.execute("DELETE FROM search_fts WHERE conversation_id = ?", (conv_id,))
+        c.execute("DELETE FROM embeddings WHERE conversation_id = ?", (conv_id,))
+
+    def _index_transcript(self, c: sqlite3.Connection, conv_id: str) -> None:
+        transcript = "\n".join(
+            f"{r['speaker']}: {r['text']}" for r in c.execute(
+                "SELECT speaker, text FROM segments WHERE conversation_id = ?"
+                " ORDER BY started_at", (conv_id,)))
+        c.execute("INSERT INTO search_fts VALUES ('transcript', ?, ?, ?)",
+                  (conv_id, conv_id, transcript))
+
+    # ------------------------------------------------------------- fact links
+    def facts_by_id(self, ids: Iterable[int]) -> list[dict[str, Any]]:
+        ids = list(ids)
+        if not ids:
+            return []
+        return self._q(
+            "SELECT f.*, c.started_at AS conversation_at FROM facts f JOIN conversations c"
+            f" ON c.id = f.conversation_id WHERE f.id IN ({','.join('?' * len(ids))})"
+            " ORDER BY f.id", ids)
+
+    def related_facts(self, conv_id: str, facts: list[dict[str, Any]],
+                      limit: int = 15) -> list[dict[str, Any]]:
+        """Current facts of other conversations that may repeat or conflict with ``facts``:
+        same subject, or matching words."""
+        ids: dict[int, None] = {}
+        subjects = {(f.get("subject") or "").strip().lower() for f in facts} - {""}
+        for subj in subjects:
+            for r in self._q("SELECT id FROM facts WHERE status = 'current' AND"
+                             " conversation_id != ? AND lower(subject) = ?"
+                             " ORDER BY id DESC LIMIT ?", (conv_id, subj, limit)):
+                ids[r["id"]] = None
+        for f in facts:
+            for hit in self.fts_search(f"{f.get('subject') or ''} {f['fact']}", limit=5):
+                if hit["kind"] == "fact" and hit["conversation_id"] != conv_id:
+                    ids[int(hit["ref_id"])] = None
+        rows = [r for r in self.facts_by_id(ids) if r["status"] == "current"]
+        return rows[:limit]
+
+    def link_fact(self, new_id: int, relation: str, existing_id: int) -> None:
+        """Record that fact ``new_id`` repeats ("same") or updates ("updates") a known one.
+
+        "same": the new row is dropped and its conversation becomes another source of
+        the known fact. "updates": the older of the two (by conversation time) is marked
+        superseded by the newer, so re-summarizing an old conversation can't overwrite
+        newer knowledge.
+        """
+        with self.tx() as c:
+            rows = {r["id"]: r for r in c.execute(
+                "SELECT f.id, f.conversation_id, f.source_at, c.started_at FROM facts f"
+                " JOIN conversations c ON c.id = f.conversation_id WHERE f.id IN (?, ?)",
+                (new_id, existing_id))}
+            if len(rows) != 2:
+                return
+            new, old = rows[new_id], rows[existing_id]
+            if relation == "same":
+                c.execute("INSERT OR IGNORE INTO fact_sources VALUES (?, ?, ?)",
+                          (existing_id, new["conversation_id"], new["source_at"]))
+                c.execute("DELETE FROM search_fts WHERE kind = 'fact' AND ref_id = ?",
+                          (str(new_id),))
+                c.execute("DELETE FROM facts WHERE id = ?", (new_id,))
+            elif relation == "updates":
+                newer, older = (new, old) if new["started_at"] >= old["started_at"] else (old, new)
+                c.execute("UPDATE facts SET status = 'superseded', superseded_by = ?"
+                          " WHERE id = ?", (newer["id"], older["id"]))
+                # whatever the older one had replaced now points at the newer one
+                c.execute("UPDATE facts SET superseded_by = ? WHERE superseded_by = ?",
+                          (newer["id"], older["id"]))
+
+    def fact_history(self, fact_id: int) -> list[dict[str, Any]]:
+        """Facts this one replaced (newest first), each with its conversation."""
+        return self._q(
+            "SELECT f.*, c.title AS conversation_title, c.started_at AS conversation_at"
+            " FROM facts f JOIN conversations c ON c.id = f.conversation_id"
+            " WHERE f.superseded_by = ? ORDER BY c.started_at DESC", (fact_id,))
+
+    def fact_sources(self, fact_id: int) -> list[dict[str, Any]]:
+        """Other conversations that said the same fact again, oldest first."""
+        return self._q(
+            "SELECT s.*, c.title AS conversation_title, c.started_at AS conversation_at"
+            " FROM fact_sources s JOIN conversations c ON c.id = s.conversation_id"
+            " WHERE s.fact_id = ? ORDER BY c.started_at", (fact_id,))
 
     def search_segments(self, *, query: str | None = None, speaker: str | None = None,
                         since: float | None = None, until: float | None = None,
@@ -491,20 +617,30 @@ class Store:
 
     def list_facts(self, *, subject: str | None = None, query: str | None = None,
                    limit: int = 50) -> list[dict[str, Any]]:
-        sql = ("SELECT f.*, c.title AS conversation_title, c.started_at AS conversation_at"
-               " FROM facts f JOIN conversations c ON c.id = f.conversation_id WHERE 1=1")
+        """Current facts matching ``subject``/``query``, newest first.
+
+        A match on an older, replaced fact returns the fact that replaced it.
+        """
+        sql = "SELECT id, status, superseded_by FROM facts WHERE 1=1"
         params: list[Any] = []
         if subject:
-            sql += " AND f.subject LIKE ? COLLATE NOCASE"
+            sql += " AND subject LIKE ? COLLATE NOCASE"
             params.append(f"%{subject}%")
         if query:
             ids = [r["ref_id"] for r in self.fts_search(query, limit=200) if r["kind"] == "fact"]
             if not ids:
                 return []
-            sql += f" AND f.id IN ({','.join('?' * len(ids))})"
+            sql += f" AND id IN ({','.join('?' * len(ids))})"
             params += [int(i) for i in ids]
-        sql += " ORDER BY c.started_at DESC, f.id LIMIT ?"
-        return self._q(sql, [*params, limit])
+        current = {r["superseded_by"] if r["status"] == "superseded" and r["superseded_by"]
+                   else r["id"] for r in self._q(sql, params)}
+        if not current:
+            return []
+        return self._q(
+            "SELECT f.*, c.title AS conversation_title, c.started_at AS conversation_at"
+            " FROM facts f JOIN conversations c ON c.id = f.conversation_id"
+            f" WHERE f.status = 'current' AND f.id IN ({','.join('?' * len(current))})"
+            " ORDER BY c.started_at DESC, f.id LIMIT ?", [*current, limit])
 
     def put_speaker_candidates(self, session_id: str, centroids: dict[str, np.ndarray]) -> None:
         with self.tx() as c:
