@@ -47,6 +47,10 @@ static const char *TAG = "ble";
 #define MSYS_RESERVE 8
 #define ADV_ITVL_MIN 1600   /* 1000 ms, 0.625 ms units */
 #define ADV_ITVL_MAX 2000   /* 1250 ms */
+/* In the sync window someone is connecting right now. Windows' connection scan is slow
+ * enough that at ~1 s it sometimes missed the watch for its whole 20 s connect timeout. */
+#define ADV_FAST_ITVL_MIN 244 /* 152.5 ms */
+#define ADV_FAST_ITVL_MAX 338 /* 211.25 ms */
 #define CONN_ITVL_MIN 12    /* 15 ms, 1.25 ms units */
 #define CONN_ITVL_MAX 24    /* 30 ms */
 #define CONN_SUPERVISION 400 /* 4 s, 10 ms units */
@@ -157,13 +161,14 @@ static int64_t s_last_sync_ms = -1; /* a BYE ended a sync; -1 = not since boot *
 static uint32_t s_bye_seen_id;
 static int64_t s_batt_ms = -BATTERY_MAX_AGE_MS;
 static ble_adv_reason_t s_adv_reason;
+static bool s_adv_fast; /* the running advertising uses the fast interval */
 static uint8_t s_status_sent[BLE_PROTO_STATUS_LEN];
 static bool s_status_sent_valid;
 static int64_t s_status_sent_ms;
 static uint8_t s_frame[BLE_PROTO_FRAME_MAX];
 static char s_info[96];
 static struct {
-    uint32_t connections, rejected, commands, frames, acked, retries, link_lost;
+    uint32_t connections, rejected, commands, frames, acked, retries, link_lost, host_resets;
     uint64_t bytes;
 } s_stats;
 
@@ -424,20 +429,22 @@ static void maybe_notify_status(void)
 
 /* ---- advertising (§7.1) ---- */
 
-static void adv_start(void)
+static void adv_start(bool fast)
 {
     const struct ble_gap_adv_params params = {
         .conn_mode = BLE_GAP_CONN_MODE_UND,
         .disc_mode = BLE_GAP_DISC_MODE_GEN,
-        .itvl_min = ADV_ITVL_MIN,
-        .itvl_max = ADV_ITVL_MAX,
+        .itvl_min = fast ? ADV_FAST_ITVL_MIN : ADV_ITVL_MIN,
+        .itvl_max = fast ? ADV_FAST_ITVL_MAX : ADV_ITVL_MAX,
     };
     const int rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER, &params, on_gap_event,
                                      NULL);
     if (rc != 0) {
         ESP_LOGW(TAG, "advertising start failed: %d", rc);
     } else {
-        ESP_LOGI(TAG, "advertising (%s)", ble_proto_adv_reason_name(s_adv_reason));
+        s_adv_fast = fast;
+        ESP_LOGI(TAG, "advertising (%s%s)", ble_proto_adv_reason_name(s_adv_reason),
+                 fast ? ", fast" : "");
     }
 }
 
@@ -525,9 +532,13 @@ static void refresh(void)
     const ble_adv_reason_t reason = ble_proto_adv_reason(&in);
     s_adv_reason = reason;
     if (s_synced && !connected) {
-        const bool active = ble_gap_adv_active();
+        bool active = ble_gap_adv_active();
+        if (active && reason != BLE_ADV_NONE && s_adv_fast != window) {
+            ble_gap_adv_stop(); /* the window opened or closed: restart at the other interval */
+            active = false;
+        }
         if (reason != BLE_ADV_NONE && !active) {
-            adv_start();
+            adv_start(window);
         } else if (reason == BLE_ADV_NONE && active) {
             ble_gap_adv_stop();
             ESP_LOGI(TAG, "advertising stopped");
@@ -855,29 +866,29 @@ static void on_connect(uint16_t handle)
              desc.peer_id_addr.val[4], desc.peer_id_addr.val[3], desc.peer_id_addr.val[2],
              desc.peer_id_addr.val[1], desc.peer_id_addr.val[0]);
 
-    /* A short burst: fast interval, 2M PHY, long packets. The relay may refuse any of it. */
+    /* No HCI commands here. A bonded Windows PC starts encryption ~0.4 s after connecting;
+     * an LE Set Data Length sent from this callback then went unanswered by the controller,
+     * so the host timed out (BLE_HS_ETIMEOUT_HCI, ocf 0x0022), reset and dropped the link.
+     * 2M PHY and long packets are controller defaults set once at sync (set_link_defaults);
+     * the faster interval is asked for once the link is encrypted. */
+    restart_timer(s_idle_timer, IDLE_DISCONNECT_MS);
+    post_job(JOB_CONNECTED, gen);
+}
+
+/* A short burst: fast interval for the transfer. The relay may refuse it. Asked after
+ * encryption, so it doesn't overlap the peer's own procedures at connect. */
+static void request_fast_interval(uint16_t handle)
+{
     const struct ble_gap_upd_params params = {
         .itvl_min = CONN_ITVL_MIN,
         .itvl_max = CONN_ITVL_MAX,
         .latency = 0,
         .supervision_timeout = CONN_SUPERVISION,
     };
-    int rc = ble_gap_update_params(handle, &params);
+    const int rc = ble_gap_update_params(handle, &params);
     if (rc != 0) {
         ESP_LOGD(TAG, "conn params request: %d", rc);
     }
-    rc = ble_gap_set_prefered_le_phy(handle, BLE_GAP_LE_PHY_1M_MASK | BLE_GAP_LE_PHY_2M_MASK,
-                                     BLE_GAP_LE_PHY_1M_MASK | BLE_GAP_LE_PHY_2M_MASK,
-                                     BLE_GAP_LE_PHY_CODED_ANY);
-    if (rc != 0) {
-        ESP_LOGD(TAG, "2M PHY request: %d", rc);
-    }
-    rc = ble_gap_set_data_len(handle, DLE_TX_OCTETS, DLE_TX_TIME);
-    if (rc != 0) {
-        ESP_LOGD(TAG, "data length request: %d", rc);
-    }
-    restart_timer(s_idle_timer, IDLE_DISCONNECT_MS);
-    post_job(JOB_CONNECTED, gen);
 }
 
 /* The pairing code on the watch screen (§3.1); -1 hides it. */
@@ -955,6 +966,7 @@ static void on_enc_change(uint16_t handle, int status)
     }
     taskEXIT_CRITICAL(&s_lock);
     ESP_LOGI(TAG, "encrypted (%s)", desc.sec_state.bonded ? "bonded" : "not bonded");
+    request_fast_interval(handle);
     post_kick();
 }
 
@@ -1142,14 +1154,31 @@ static int on_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt
     return BLE_ATT_ERR_UNLIKELY;
 }
 
+/* 2M PHY and long packets for every connection, as controller defaults: the controller
+ * negotiates them itself, so no per-connection HCI command races the peer at connect. */
+static void set_link_defaults(void)
+{
+    int rc = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_1M_MASK | BLE_GAP_LE_PHY_2M_MASK,
+                                                 BLE_GAP_LE_PHY_1M_MASK | BLE_GAP_LE_PHY_2M_MASK);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "default PHY: %d", rc);
+    }
+    rc = ble_gap_write_sugg_def_data_len(DLE_TX_OCTETS, DLE_TX_TIME);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "default data length: %d", rc);
+    }
+}
+
 static void on_sync(void)
 {
+    set_link_defaults();
     post_job(JOB_SYNCED, 0);
 }
 
 static void on_reset(int reason)
 {
     s_synced = false;
+    s_stats.host_resets++;
     ESP_LOGW(TAG, "host reset: %d", reason);
 }
 
@@ -1314,7 +1343,7 @@ void ble_sync_print(void)
     }
     printf("counters: %" PRIu32 " connections, %" PRIu32 " refused, %" PRIu32 " commands, %" PRIu32
            " frames, %" PRIu64 " bytes read, %" PRIu32 " acked, %" PRIu32 " send retries, %" PRIu32
-           " links lost\n",
+           " links lost, %" PRIu32 " host resets\n",
            s_stats.connections, s_stats.rejected, s_stats.commands, s_stats.frames, s_stats.bytes,
-           s_stats.acked, s_stats.retries, s_stats.link_lost);
+           s_stats.acked, s_stats.retries, s_stats.link_lost, s_stats.host_resets);
 }

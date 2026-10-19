@@ -367,7 +367,9 @@ server answered `422`): they bring advertising back only through the hourly rule
 rejected chunk can't keep the radio on.
 
 Otherwise it doesn't advertise, and while connected it doesn't advertise either (one
-relay at a time). Advertising is connectable, undirected, **interval 1000–1250 ms**,
+relay at a time). Advertising is connectable, undirected, **interval 1000–1250 ms**, or
+**152.5–211.25 ms while the sync window is open** (someone is connecting right then; at
+~1 s Windows' connection scan sometimes missed the watch for its whole 20 s timeout),
 advertising data = flags + the 128-bit service UUID, scan response = name `barvis-tw`.
 
 So a recording that runs on reaches the phone every ~10 min, and a stopped one within
@@ -375,9 +377,12 @@ seconds of the phone being in range.
 
 ### 7.2 Connection (watch and relay)
 
-- After connecting, the watch asks for **interval 15–30 ms, latency 0, supervision
-  timeout 4 s** for the burst; the Android relay sets `CONNECTION_PRIORITY_HIGH`. 2M PHY
-  and data-length extension (251 bytes) are preferred when both sides support them.
+- Once the link is encrypted, the watch asks for **interval 15–30 ms, latency 0,
+  supervision timeout 4 s** for the burst; the Android relay sets
+  `CONNECTION_PRIORITY_HIGH`. 2M PHY and data-length extension (251 bytes) are preferred
+  when both sides support them; the watch sets them as controller defaults, so it sends no
+  per-connection request at connect time (one raced Windows' encryption start and the
+  controller stopped answering).
 - **MTU**: the watch supports up to 517; at 517 a `DATA` frame carries 505 bytes, so a
   60 KB chunk is ~120 notifications.
 - The watch disconnects a relay that sent no command for **30 s**, so a stuck relay can't
