@@ -44,16 +44,45 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+def _server_dir() -> Path:
+    """--server-dir: run the eval against another checkout's server code (e.g. an older
+    commit, for a baseline). Read before the imports below."""
+    for i, a in enumerate(sys.argv):
+        if a == "--server-dir" and i + 1 < len(sys.argv):
+            return Path(sys.argv[i + 1]).resolve()
+        if a.startswith("--server-dir="):
+            return Path(a.split("=", 1)[1]).resolve()
+    return Path(__file__).resolve().parents[1]
+
+
+sys.path.insert(0, str(_server_dir()))
 
 from convo_server import audio as audio_mod  # noqa: E402
 from convo_server.audio import SAMPLE_RATE  # noqa: E402
-from convo_server.cli import build_diarizer, build_transcriber  # noqa: E402
 from convo_server.config import Settings  # noqa: E402
-from convo_server.diarize import enroll_voice  # noqa: E402
 from convo_server.pipeline import Pipeline  # noqa: E402
 from convo_server.store import Store  # noqa: E402
 from convo_server.vad import make_vad  # noqa: E402
+
+try:
+    from convo_server.cli import build_diarizer, build_transcriber
+    from convo_server.diarize import enroll_voice
+except ImportError:  # server code from before PR #24 (no prompt, one voiceprint each)
+    from convo_server.diarize import Diarizer, EcapaEmbedder, enrollment_embedding, load_voices
+    from convo_server.transcribe import WhisperServerTranscriber
+
+    def build_transcriber(settings):  # type: ignore[no-redef]
+        return WhisperServerTranscriber(settings.whisper_server_url, settings.language)
+
+    def build_diarizer(settings, store):  # type: ignore[no-redef]
+        if not settings.diarization:
+            return None
+        return Diarizer(EcapaEmbedder(DATA.parent / "models"), load_voices(store),
+                        settings.speaker_match_threshold, settings.speaker_cluster_threshold)
+
+    def enroll_voice(store, embedder, name, audio, is_owner=False):  # type: ignore[no-redef]
+        store.put_speaker(name, enrollment_embedding(embedder, audio), is_owner)
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data" / "ami"
@@ -157,65 +186,135 @@ def solo_regions(turns, speaker: str, avoid: tuple[float, float]) -> list[tuple[
 
 
 # ------------------------------------------------------------------------ run
+# Enrolled AMI speakers get these fictional names (AMI ids like "MEE006" are not words,
+# so they would be a meaningless whisper prompt). Results map them back to the ids.
+NAMES = ["Maria", "Tom", "Priya", "Jonas"]
+
+
+def boost_speaker(audio: np.ndarray, turns, speaker: str, db: float) -> np.ndarray:
+    """Make ``speaker`` ``db`` louder wherever they talk alone (a wearer is closer to the
+    mic than the people around them), then scale the whole recording back below 0 dBFS."""
+    out = audio.copy()
+    gain = 10 ** (db / 20)
+    for a, b in solo_regions(turns, speaker, (0.0, 0.0)):
+        out[int(a * SAMPLE_RATE): int(b * SAMPLE_RATE)] *= gain
+    peak = float(np.max(np.abs(out))) or 1.0
+    return out / peak * 0.9 if peak > 0.9 else out
+
+
+def _process(pipeline: Pipeline, sid: str, audio: np.ndarray, t0: float) -> None:
+    step = int(CHUNK * SAMPLE_RATE)
+    for i in range(0, audio.size, step):
+        pipeline.ingest_chunk(device="eval", session_id=sid, sequence=i // step,
+                              started_at=t0 + i / SAMPLE_RATE, codec="wav",
+                              data=audio_mod.to_wav_bytes(audio[i: i + step]))
+    pipeline.end_session(sid)
+    pipeline.process_session(sid)
+    sess = pipeline.store.get_session(sid)
+    if sess and sess["status"] != "done":
+        raise RuntimeError(f"{sid}: session {sess['status']}: {sess['error']}")
+
+
+def _enroll_audio(full, turns, spk, avoid, seconds) -> tuple[np.ndarray | None, float]:
+    parts, total = [], 0.0
+    for a, b in solo_regions(turns, spk, avoid):
+        if total >= seconds:
+            break
+        parts.append(full[int(a * SAMPLE_RATE): int(b * SAMPLE_RATE)])
+        total += b - a
+    return (np.concatenate(parts) if parts else None), total
+
+
+def _name_by_overlap(store: Store, sid: str, t0: float, turns, spk: str, name: str,
+                     offset: float, threshold: float) -> int:
+    """What a user does with name_speaker: name the label that covers most of ``spk``'s
+    speech in session ``sid``. Returns how many lines elsewhere were relabelled."""
+    from convo_server.speakers import relabel_matches
+
+    segs = store.session_segments(sid)
+    cover: dict[tuple[str, str], float] = {}
+    for sg in segs:
+        a, b = sg.started_at - t0 + offset, sg.ended_at - t0 + offset
+        o = sum(max(0.0, min(b, y) - max(a, x)) for x, y, s in turns if s == spk)
+        if sg.conversation_id and sg.speaker.startswith("Speaker "):
+            key = (sg.conversation_id, sg.speaker)
+            cover[key] = cover.get(key, 0.0) + o
+    if not cover:
+        return 0
+    conv, label = max(cover, key=lambda k: cover[k])
+    _, voice = store.rename_speaker(conv, label, name)
+    if voice is None:
+        return 0
+    store.add_voice_sample(name, voice)
+    return sum(r.lines for r in relabel_matches(store, name, threshold))
+
+
 def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
     from pyannote.metrics.diarization import DiarizationErrorRate
 
     full = audio_mod.decode((DATA / f"{meeting}.Mix-Headset.wav").read_bytes(), "wav")
     start, end = args.offset, args.offset + args.seconds
-    window = full[int(start * SAMPLE_RATE): int(end * SAMPLE_RATE)]
     turns = rttm_turns(meeting)
     ref = annotation(turns, start, end)
+    by_time = sorted(ref.labels(), key=lambda s: -ref.label_duration(s))
+    if args.owner_boost_db:
+        full = boost_speaker(full, turns, by_time[0], args.owner_boost_db)
+    window = full[int(start * SAMPLE_RATE): int(end * SAMPLE_RATE)]
+    relabeled = 0
 
     with tempfile.TemporaryDirectory(prefix="convo-eval-") as tmp:
-        settings = Settings(**{**base, "data_dir": Path(tmp)})
+        # an older --server-dir lacks newer settings; say which ones are ignored
+        dropped = sorted(set(base) - set(Settings.model_fields))
+        if dropped:
+            print(f"  settings not in this server code, ignored: {', '.join(dropped)}")
+        settings = Settings(**{k: v for k, v in {**base, "data_dir": Path(tmp)}.items()
+                               if k not in dropped})
         store = Store(settings.db_path)
         diarizer = build_diarizer(settings, store)
-        enrolled: list[str] = []
-        if args.enroll and diarizer is not None:
-            by_time = sorted(ref.labels(), key=lambda s: -ref.label_duration(s))
-            for i, spk in enumerate(by_time[: args.enroll]):
-                regions = solo_regions(turns, spk, (start, end))
-                parts, total = [], 0.0
-                for a, b in regions:
-                    if total >= args.enroll_seconds:
-                        break
-                    parts.append(full[int(a * SAMPLE_RATE): int(b * SAMPLE_RATE)])
-                    total += b - a
-                if total < 10:
+        named: dict[str, str] = {}  # fictional name -> AMI speaker id
+        targets = by_time[: args.enroll] if diarizer is not None else []
+        if not args.relabel:
+            for i, spk in enumerate(targets):
+                pcm, total = _enroll_audio(full, turns, spk, (start, end), args.enroll_seconds)
+                if pcm is None or total < 10:
                     print(f"  {meeting}: only {total:.0f}s solo speech for {spk}, skipped")
                     continue
-                enroll_voice(store, diarizer.embedder, spk, np.concatenate(parts),
-                             is_owner=(i == 0))
-                enrolled.append(spk)
+                enroll_voice(store, diarizer.embedder, NAMES[i], pcm, is_owner=(i == 0))
+                named[NAMES[i]] = spk
         pipeline = Pipeline(settings, store, make_vad(settings.vad_backend),
                             build_transcriber(settings), diarizer)
         sid = f"eval-{meeting}"
         t = time.time()
-        for i in range(0, window.size, int(CHUNK * SAMPLE_RATE)):
-            part = window[i: i + int(CHUNK * SAMPLE_RATE)]
-            pipeline.ingest_chunk(device="eval", session_id=sid, sequence=i // int(CHUNK *
-                                  SAMPLE_RATE), started_at=T0 + i / SAMPLE_RATE, codec="wav",
-                                  data=audio_mod.to_wav_bytes(part))
-        pipeline.end_session(sid)
-        pipeline.process_session(sid)
+        _process(pipeline, sid, window, T0)
         elapsed = time.time() - t
-        sess = store.get_session(sid)
-        if sess and sess["status"] != "done":
-            raise RuntimeError(f"{meeting}: session {sess['status']}: {sess['error']}")
-        segs = store.session_segments(sid)
+        if args.relabel:
+            # name the speakers in a later recording (the window before this one) and let
+            # relabelling rename them here
+            a = max(0.0, start - args.seconds)
+            t1 = T0 + 86_400
+            _process(pipeline, sid + "-later", full[int(a * SAMPLE_RATE): int(start
+                                                                              * SAMPLE_RATE)],
+                     t1)
+            for i, spk in enumerate(targets):
+                relabeled += _name_by_overlap(store, sid + "-later", t1, turns, spk, NAMES[i],
+                                              a, settings.speaker_relabel_threshold)
+                named[NAMES[i]] = spk
+        segs = [(sg.started_at - T0, sg.ended_at - T0, named.get(sg.speaker, sg.speaker),
+                 sg.text) for sg in store.session_segments(sid)]
         store.close()
 
     import jiwer
 
     ref_text = normalize(reference_words(meeting, start, end))
-    hyp_text = normalize(" ".join(s.text for s in segs))
+    hyp_text = normalize(" ".join(sg[3] for sg in segs))
     m = jiwer.process_words(ref_text, hyp_text)
-    hyp = annotation([(s.started_at - T0, s.ended_at - T0, s.speaker) for s in segs])
+    hyp = annotation([(a, b, spk) for a, b, spk, _ in segs])
     der = DiarizationErrorRate(collar=0.25)
     from pyannote.core import Segment as PSeg
     from pyannote.core import Timeline
 
     d = der(ref, hyp, uem=Timeline([PSeg(0, args.seconds)]), detailed=True)
+    enrolled = list(named.values())
     out = {
         "meeting": meeting, "window": [start, end], "seconds_to_process": round(elapsed, 1),
         "ref_words": len(ref_text.split()), "wer": m.wer, "substitutions": m.substitutions,
@@ -224,9 +323,8 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
         "missed": d["missed detection"], "false_alarm": d["false alarm"],
         "confusion": d["confusion"], "ref_speakers": len(ref.labels()),
         "hyp_speakers": len(hyp.labels()), "hyp_labels": sorted(hyp.labels()),
-        "enrolled": enrolled, "lines": len(segs),
-        "hypothesis": [[round(s.started_at - T0, 2), round(s.ended_at - T0, 2), s.speaker,
-                        s.text] for s in segs],
+        "enrolled": enrolled, "lines": len(segs), "relabeled_lines": relabeled,
+        "hypothesis": [[round(a, 2), round(b, 2), spk, text] for a, b, spk, text in segs],
     }
     out.update(_naming(turns, start, end, segs, enrolled))
     return out
@@ -239,7 +337,7 @@ def _naming(turns, start, end, segs, enrolled) -> dict:
     step = 0.1
     frames = np.arange(start, end, step)
     right = wrong = enrolled_n = n = 0
-    seg_t = [(s.started_at - T0 + start, s.ended_at - T0 + start, s.speaker) for s in segs]
+    seg_t = [(a + start, b + start, spk) for a, b, spk, _ in segs]
     for t in frames:
         refs = {s for a, b, s in turns if a <= t < b}
         if len(refs) != 1:
@@ -302,6 +400,8 @@ def main() -> None:
     f.add_argument("--meetings", nargs="+", default=MEETINGS)
     r = sub.add_parser("run")
     r.add_argument("--label", required=True)
+    r.add_argument("--server-dir", help="server/ of another checkout to evaluate "
+                   "(default: this one)")
     r.add_argument("--meetings", nargs="+", default=MEETINGS)
     r.add_argument("--offset", type=float, default=300.0, help="window start (s)")
     r.add_argument("--seconds", type=float, default=300.0, help="window length (s)")
@@ -310,6 +410,11 @@ def main() -> None:
     r.add_argument("--prompt", help="CONVO_WHISPER_PROMPT override")
     r.add_argument("--enroll", type=int, default=0, help="enroll the N most active speakers")
     r.add_argument("--enroll-seconds", type=float, default=60.0)
+    r.add_argument("--relabel", action="store_true",
+                   help="don't enroll; process the window, then name the --enroll speakers "
+                        "in the window before it and measure the relabelled window")
+    r.add_argument("--owner-boost-db", type=float, default=0.0,
+                   help="make the most active speaker this much louder (a wearer)")
     r.add_argument("--set", nargs="*", default=[], metavar="FIELD=VALUE",
                    help="extra Settings overrides, e.g. speaker_cluster_threshold=0.5")
     c = sub.add_parser("compare")

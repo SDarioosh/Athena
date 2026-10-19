@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     # Words whisper should spell right (names, places, jargon), as a short sentence or a
     # comma list. Names of known speakers are added automatically.
     whisper_prompt: str = ""
+    # Add the names of known speakers to that prompt.
+    whisper_prompt_names: bool = True
     # Temperature step for whisper's fallback when a decode looks wrong (0 = no fallback).
     whisper_temperature_inc: float = 0.2
 
