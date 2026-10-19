@@ -3,7 +3,8 @@
  * Boot: board bring-up with every unused rail off, RTC -> system clock, mic ready, USB console.
  * PWR short press: status screen for ~5 s. BOOT short press: toggle mute (1 buzz = recording,
  * 2 = muted). BOOT long press: "sync now" placeholder. BOOT held + PWR short press, or the
- * console command `rec`: record 60 s from the mic to a WAV on the SD card.
+ * console command `rec`: record 60 s from the mic to a WAV on the SD card; the same
+ * combination, `stop`, or muting stops it early.
  * No Wi-Fi, no BLE: neither is initialised, and neither is linked (CMakeLists.txt). */
 #include <inttypes.h>
 #include <stdio.h>
@@ -169,9 +170,22 @@ static void start_test_recording(int seconds)
     refresh_screen_if_shown();
 }
 
+static void stop_test_recording(const char *why)
+{
+    if (recorder_stop()) {
+        ESP_LOGI(TAG, "%s: stopping the test recording", why);
+    } else {
+        ESP_LOGI(TAG, "%s: nothing is recording", why);
+    }
+}
+
 static void toggle_mute(void)
 {
     s_muted = !s_muted;
+    if (s_muted) {
+        /* Muting must never leave the mic recording. */
+        recorder_stop();
+    }
     ESP_LOGI(TAG, "%s", s_muted ? "MUTED (2 buzzes)" : "RECORDING (1 buzz)");
     refresh_screen_if_shown();
     board_haptic_pulse(s_muted ? 2 : 1);
@@ -182,8 +196,15 @@ static void handle(const app_event_t *ev)
     switch (ev->type) {
     case APP_EV_PWR_SHORT:
         if (board_button_is_down(BOARD_BUTTON_BOOT)) {
-            ESP_LOGI(TAG, "BOOT + PWR: test recording");
-            start_test_recording(TEST_RECORDING_SECONDS);
+            /* Same combination starts and stops the test recording. */
+            recorder_state_t rs;
+            recorder_get_state(&rs);
+            if (rs.running) {
+                stop_test_recording("BOOT + PWR");
+            } else {
+                ESP_LOGI(TAG, "BOOT + PWR: test recording");
+                start_test_recording(TEST_RECORDING_SECONDS);
+            }
         } else {
             show_screen();
         }
@@ -208,6 +229,9 @@ static void handle(const app_event_t *ev)
     case APP_EV_RECORD:
         start_test_recording(ev->arg);
         break;
+    case APP_EV_REC_STOP:
+        stop_test_recording("console");
+        break;
     case APP_EV_REC_TICK:
         refresh_screen_if_shown();
         break;
@@ -216,7 +240,9 @@ static void handle(const app_event_t *ev)
         recorder_get_state(&rs);
         if (ev->arg == ESP_OK) {
             ESP_LOGI(TAG, "recording finished: %s", rs.path);
-            board_haptic_pulse(1);
+            if (!s_muted) { /* stopped by mute: the 2 mute buzzes already said so */
+                board_haptic_pulse(1);
+            }
         } else {
             ESP_LOGE(TAG, "recording failed: %s", esp_err_to_name((esp_err_t)ev->arg));
             board_haptic_pulse(3);
@@ -289,7 +315,7 @@ void app_main(void)
     board_haptic_pulse(1);
 
     ESP_ERROR_CHECK(console_start());
-    ESP_LOGI(TAG, "ready: PWR = status screen, BOOT = mute, BOOT+PWR = 60 s test recording, "
+    ESP_LOGI(TAG, "ready: PWR = status screen, BOOT = mute, BOOT+PWR = start/stop 60 s test recording, "
                   "type `help` on the USB console");
 
     TickType_t last_batt = xTaskGetTickCount();

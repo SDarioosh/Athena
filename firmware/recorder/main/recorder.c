@@ -22,6 +22,7 @@ static recorder_done_cb_t s_done;
 static recorder_tick_cb_t s_tick;
 static void *s_ctx;
 static int s_seconds;
+static volatile bool s_stop; /* set by recorder_stop(), read by the recorder task */
 
 #define READ_SAMPLES 1024              /* 64 ms per mic read */
 #define WRITE_CHUNK_BYTES (16 * 1024)  /* one fwrite per 16 KB: large sequential card writes */
@@ -59,7 +60,7 @@ static esp_err_t record(const char *path, int seconds, uint8_t *wbuf)
         err = mic_start();
     }
     const bool mic_started = err == ESP_OK;
-    while (err == ESP_OK && written + pending < total_bytes) {
+    while (err == ESP_OK && written + pending < total_bytes && !s_stop) {
         size_t got = 0;
         int16_t *const dst = (int16_t *)(wbuf + pending);
         const esp_err_t r = mic_read(dst, READ_SAMPLES, &got, 500);
@@ -100,6 +101,18 @@ static esp_err_t record(const char *path, int seconds, uint8_t *wbuf)
         char level[128];
         audio_stats_describe(&stats, level, sizeof(level));
         ESP_LOGI(TAG, "level: %s", level);
+    }
+    /* Stopped early: write what is buffered, so the file ends where the stop came. */
+    if (err == ESP_OK && pending) {
+        if (fwrite(wbuf, 1, pending, f) == pending) {
+            written += pending;
+        } else {
+            ESP_LOGE(TAG, "card write failed");
+            err = ESP_FAIL;
+        }
+    }
+    if (s_stop) {
+        ESP_LOGI(TAG, "stopped after %lu s", (unsigned long)(written / (MIC_SAMPLE_RATE * 2)));
     }
 
     if (err == ESP_OK) {
@@ -151,6 +164,7 @@ esp_err_t recorder_start(int seconds, recorder_done_cb_t done, recorder_tick_cb_
     s_done = done;
     s_tick = tick;
     s_ctx = ctx;
+    s_stop = false;
     s_state.running = true;
     s_state.elapsed_s = 0;
     s_state.total_s = seconds;
@@ -165,4 +179,13 @@ esp_err_t recorder_start(int seconds, recorder_done_cb_t done, recorder_tick_cb_
 void recorder_get_state(recorder_state_t *out)
 {
     *out = s_state;
+}
+
+bool recorder_stop(void)
+{
+    if (!s_state.running) {
+        return false;
+    }
+    s_stop = true;
+    return true;
 }

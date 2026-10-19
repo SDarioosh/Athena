@@ -24,14 +24,17 @@ Wi-Fi (not initialised and not linked), no Opus, no speech gate yet.
 - **BOOT held + PWR short press**, or `rec` on the console: records 60 s from the PDM mic
   (16 kHz, mono, 16-bit) to `/sdcard/rec_<UTC time>.wav`, then powers the card off. The
   log line `recorder: level: ...` gives the file's RMS, peak, DC offset and clipped samples.
+  **Stop early** with BOOT held + PWR short press again, `stop` on the console, or mute
+  (BOOT short press): the file keeps what was recorded so far. Releasing BOOT after the
+  combination doesn't count as a BOOT press.
 - **`level [s]`** on the console: reads the mic for N seconds (default 5) without the SD
   card and prints the level once a second. A quiet room reads about -55 dBFS; all zeros or
-  no audio means a mic problem.
+  no audio means a mic problem. Talk during it: the level should rise well above that.
 - The mic drops its first 250 ms after each start: the PDM filter starts with a
   near-full-scale click and a settling DC offset. The S3 has no PDM high-pass filter, so a
   DC offset of about +600 stays in the data.
-- USB console (`help`): `status`, `batt`, `rails`, `exp`, `time`, `rec [s]`, `level [s]`,
-  `mute`, `screen`, `sync`, `sd`, `reboot`.
+- USB console (`help`): `status`, `batt`, `rails`, `exp`, `time`, `rec [s]`, `stop`,
+  `level [s]`, `mute`, `screen`, `sync`, `sd`, `reboot`.
 
 ## Build
 
@@ -114,6 +117,9 @@ firmware/recorder/
 ## Not verified on hardware yet
 
 See `PROGRESS.md`. On the owner's watch (2026-10-19) the rails, battery, RTC, SD card,
-status screen, buttons, haptics and recording work, and `level` shows real audio with the
-left PDM slot. Still open: listening to a recording (speech quality), SD_DET with the card
-out, and a recording through the server pipeline.
+status screen, buttons, haptics and recording work. In a quiet room `level` shows a
+plausible noise floor (about -55 dBFS, never stuck at zero) with the default left PDM slot,
+but speech hasn't been checked. Switching to the right slot at runtime gave the same data,
+so which slot the mic really uses is still unproven. Still open: talking during `level` or
+listening to a recording, SD_DET with the card out, and a recording through the server
+pipeline.

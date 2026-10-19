@@ -12,6 +12,7 @@ typedef enum {
     APP_EV_SCREEN_SHOW,   /* console: screen */
     APP_EV_MUTE_TOGGLE,   /* console: mute */
     APP_EV_RECORD,        /* console: rec <seconds>; arg = seconds */
+    APP_EV_REC_STOP,      /* console: stop */
     APP_EV_SYNC_NOW,      /* console: sync (placeholder) */
     APP_EV_REC_TICK,      /* recorder progress; arg = elapsed seconds */
     APP_EV_REC_DONE,      /* recorder finished; arg = esp_err_t */

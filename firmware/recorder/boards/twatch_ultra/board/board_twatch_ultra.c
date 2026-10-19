@@ -29,6 +29,9 @@ static const char *TAG = "board";
 static board_button_cb_t s_button_cb;
 static void *s_button_ctx;
 static TaskHandle_t s_button_task;
+/* PWR was pressed while BOOT was held (the BOOT + PWR combination): the BOOT press belongs to
+ * the combination, so its release must not also count as a BOOT press. Button task only. */
+static bool s_boot_in_combo;
 static bool s_have_pmu, s_have_expander, s_have_rtc, s_have_haptic;
 
 #define BOOT_LONG_PRESS_MS 1000
@@ -284,6 +287,9 @@ static void handle_pmu_irq(void)
         return;
     }
     if (st & AXP_IRQ_PKEY_SHORT) {
+        if (gpio_get_level(PIN_BOOT_BUTTON) == 0) {
+            s_boot_in_combo = true;
+        }
         emit(BOARD_BUTTON_PWR, BOARD_PRESS_SHORT);
     }
     if (st & AXP_IRQ_PKEY_LONG) {
@@ -324,16 +330,17 @@ static void button_task(void *arg)
         const bool down = gpio_get_level(PIN_BOOT_BUTTON) == 0;
         if (down) {
             held_ms += BUTTON_POLL_MS;
-            if (!long_fired && held_ms >= BOOT_LONG_PRESS_MS) {
+            if (!long_fired && !s_boot_in_combo && held_ms >= BOOT_LONG_PRESS_MS) {
                 long_fired = true;
                 emit(BOARD_BUTTON_BOOT, BOARD_PRESS_LONG);
             }
         } else if (was_down) {
-            if (!long_fired && held_ms >= BOOT_DEBOUNCE_MS) {
+            if (!long_fired && !s_boot_in_combo && held_ms >= BOOT_DEBOUNCE_MS) {
                 emit(BOARD_BUTTON_BOOT, BOARD_PRESS_SHORT);
             }
             held_ms = 0;
             long_fired = false;
+            s_boot_in_combo = false;
         }
         was_down = down;
     }

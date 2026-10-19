@@ -143,6 +143,14 @@ static int cmd_level(int argc, char **argv)
     return 0;
 }
 
+static int cmd_stop(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    app_post(APP_EV_REC_STOP, 0);
+    return 0;
+}
+
 static int cmd_mute(int argc, char **argv)
 {
     (void)argc;
@@ -211,7 +219,8 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "time", .help = "Show time; `time 2026-10-19T12:34:56Z` sets system + RTC", .func = cmd_time},
     {.command = "rec", .help = "Record N seconds (default 60) from the mic to the SD card as WAV", .func = cmd_rec},
     {.command = "level", .help = "Print mic level for N s (default 5): `level [s]`", .func = cmd_level},
-    {.command = "mute",.help = "Toggle mute (same as a BOOT short press)", .func = cmd_mute},
+    {.command = "stop", .help = "Stop the running recording early (keeps what was recorded)", .func = cmd_stop},
+    {.command = "mute", .help = "Toggle mute (same as a BOOT short press)", .func = cmd_mute},
     {.command = "screen", .help = "Show the status screen for ~5 s (same as a PWR short press)", .func = cmd_screen},
     {.command = "sync", .help = "Log 'sync now' (BLE comes in a later milestone)", .func = cmd_sync},
     {.command = "sd", .help = "Power, mount and report the SD card, then power it off", .func = cmd_sd},
