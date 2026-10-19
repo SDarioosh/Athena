@@ -17,7 +17,7 @@ import java.net.URL
 import java.security.SecureRandom
 
 /**
- * Talks to the owner's barvis-sound server (server/convo_server/api.py) with
+ * Talks to the owner's odysseus-sound server (server/convo_server/api.py) with
  * [HttpURLConnection]. Only [baseUrl] is ever contacted; redirects are not followed so the
  * token can't be sent anywhere else. The token is read from [token] per request and never
  * logged. Timeouts stay below the watch's 30 s idle disconnect (§7.2): an upload that is
@@ -48,7 +48,8 @@ class HttpUploader(
         val body = multipart(boundary, chunk)
         val r = request("POST", "/v1/ingest/chunk", auth = true,
             body = body, contentType = "multipart/form-data; boundary=$boundary")
-        log.log(Level.INFO, "POST /v1/ingest/chunk session ${chunk.sessionId} seq ${chunk.sequence} " +
+        log.log(Level.INFO, "POST /v1/ingest/chunk session ${chunk.sessionId} seq ${chunk.sequence}" +
+            (if (chunk.kind != null) " kind ${chunk.kind}" else "") + " " +
             "(${chunk.audio.size} B) -> ${describe(r)}")
         return r
     }
@@ -74,6 +75,8 @@ class HttpUploader(
         field("sequence", c.sequence.toString())
         field("timestamp", Timestamps.iso(c.timestampMs))
         field("codec", "ogg")
+        // Omitted for ordinary chunks so their uploads stay byte-identical to before.
+        c.kind?.let { field("kind", it) }
         line("--$boundary")
         line("Content-Disposition: form-data; name=\"audio\"; filename=\"${c.sessionId}-${c.sequence}.opus\"")
         line("Content-Type: audio/ogg")
@@ -133,7 +136,7 @@ class HttpUploader(
         fun classify(code: Int, body: String, needOkField: Boolean = true): ServerResult = when {
             code in 200..299 ->
                 if (!needOkField || OK_TRUE.containsMatchIn(body)) ServerResult.Ok(DUP_TRUE.containsMatchIn(body))
-                else ServerResult.Transient("HTTP $code without \"ok\": true (is this the barvis-sound server?)")
+                else ServerResult.Transient("HTTP $code without \"ok\": true (is this the odysseus-sound server?)")
             code == 401 || code == 403 -> ServerResult.AuthRejected(code)
             code == 408 || code == 429 || code >= 500 -> ServerResult.Transient("HTTP $code")
             code in 300..399 -> ServerResult.Transient("HTTP $code redirect (not followed; check the URL)")

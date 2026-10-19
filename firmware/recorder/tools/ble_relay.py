@@ -71,6 +71,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 LINK_RETRY_SECONDS = 5
 SCAN_ERROR_RETRY_SECONDS = 30
 NOT_FOUND = 4
+# --once/--list: connections that drop before the watch's info is read are tried this often
+# (Windows sometimes reports a connection the watch never saw, then closes it at once).
+CONNECT_ATTEMPTS = 3
+CONNECT_RETRY_SECONDS = 2
 
 
 class BleakTransport:
@@ -187,6 +191,11 @@ async def connect_and_run(relay: d.Relay, device, *, pair: bool) -> d.Report:
             await client.disconnect()
 
 
+def connect_again(report: d.Report, attempt: int) -> bool:
+    """Whether a one-shot run connects again: the link was lost before it carried anything."""
+    return report.outcome == d.LINK_LOST and report.info is None and attempt < CONNECT_ATTEMPTS
+
+
 def print_list(report: d.Report) -> None:
     if report.info:
         i = report.info
@@ -275,10 +284,17 @@ async def main_async(args: argparse.Namespace) -> int:
                 return NOT_FOUND
             continue
         report = await connect_and_run(relay, device, pair=args.pair)
+        attempt = 1
+        while once and connect_again(report, attempt):
+            attempt += 1
+            log.warning("%s; connecting again (%d of %d)", report.message or "link lost",
+                        attempt, CONNECT_ATTEMPTS)
+            await asyncio.sleep(CONNECT_RETRY_SECONDS)
+            report = await connect_and_run(relay, device, pair=args.pair)
         if args.list:
             print_list(report)
         if once:
-            if report.outcome != d.DONE and report.message and not args.list:
+            if report.outcome != d.DONE and report.message:
                 log.error("%s", report.message)
             return exit_code(report)
         if report.outcome == d.DONE:

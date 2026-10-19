@@ -54,6 +54,7 @@ class FakeWatch(
         size: Int = 3000,
         last: Boolean = false,
         timeUnset: Boolean = false,
+        note: Boolean = false,
         fixableOnTime: Boolean = false,
         startMs: Long = 1792411200000L + sequence * 30_000,
     ): ChunkEntry {
@@ -61,6 +62,7 @@ class FakeWatch(
         var flags = 0
         if (last) flags = flags or ChunkEntry.FLAG_LAST
         if (timeUnset) flags = flags or ChunkEntry.FLAG_TIME_UNSET
+        if (note) flags = flags or ChunkEntry.FLAG_NOTE
         val e = ChunkEntry(flags, nextId++, hexToBytes(sessionHex), sequence, startMs, 30_000, size.toLong(), crc32(data))
         chunks[e.chunkId] = Chunk(e, data, fixableOnTime)
         return e

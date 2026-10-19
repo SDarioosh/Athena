@@ -79,6 +79,25 @@ def test_full_drain(server) -> None:
     assert server.paths()[0] == "/health"
 
 
+def test_note_session_uploads_with_kind_note(server) -> None:
+    w = FakeWatch()
+    link(w, server)
+    conv = make_session(w, 1, first_id=1)
+    note = make_session(w, 2, first_id=2, start_ms=T0_MS + 60_000, flags=p.FLAG_NOTE)
+    rep = run(relay_for(server), w)
+
+    assert rep.outcome == d.DONE, rep.message
+    assert rep.acked == [1, 2, 3] and not w.chunks
+    ingests = server.ingests()
+    assert "kind" not in ingests[0].fields  # ordinary chunk: field omitted
+    for req, c in zip(ingests[1:], note, strict=True):
+        assert req.fields == {"device": "twatch-ultra", "session_id": c.session_id.hex(),
+                              "sequence": str(c.sequence), "timestamp": p.iso_ms(c.start_ms),
+                              "codec": "ogg", "kind": "note"}
+    assert f"/v1/sessions/{note[0].session_id.hex()}/end" in server.paths()
+    assert f"/v1/sessions/{conv[0].session_id.hex()}/end" in server.paths()
+
+
 def test_list_paging(server) -> None:
     w = FakeWatch()
     make_session(w, 70, size=200)
@@ -408,6 +427,16 @@ def test_upload_answer_without_ok(server, monkeypatch) -> None:
     with pytest.raises(UploadError) as e:
         up.upload_chunk(device="d", session_id="s", sequence=0, timestamp="t", audio=b"")
     assert e.value.kind == RETRY
+
+
+def test_upload_chunk_kind_field(server) -> None:
+    up = Uploader(server.url, TOKEN)
+    up.upload_chunk(device="d", session_id="s", sequence=0, timestamp="t", audio=b"x")
+    up.upload_chunk(device="d", session_id="s", sequence=1, timestamp="t", audio=b"x",
+                    kind="note")
+    plain, note = server.ingests()
+    assert "kind" not in plain.fields
+    assert note.fields["kind"] == "note"
 
 
 def test_backoff() -> None:

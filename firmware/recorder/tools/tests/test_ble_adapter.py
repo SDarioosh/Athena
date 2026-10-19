@@ -86,6 +86,16 @@ def test_exit_codes_and_repo_guard(tmp_path) -> None:
     assert not ble_relay.inside_repo(tmp_path)
 
 
+def test_connect_again_only_before_the_link_carried_anything() -> None:
+    lost = d.Report(outcome=d.LINK_LOST, message="connect failed")
+    assert ble_relay.connect_again(lost, 1)
+    assert not ble_relay.connect_again(lost, ble_relay.CONNECT_ATTEMPTS)
+    info = p.Info(proto=1, device="twatch-ultra", fw="0.2.0", board="twatch_ultra")
+    assert not ble_relay.connect_again(d.Report(outcome=d.LINK_LOST, info=info), 1)
+    assert not ble_relay.connect_again(d.Report(outcome=d.WATCH_RETRY), 1)
+    assert not ble_relay.connect_again(d.Report(), 1)
+
+
 def test_token_file(tmp_path, monkeypatch) -> None:
     f = tmp_path / "tok"
     f.write_text(TOKEN + "\n")

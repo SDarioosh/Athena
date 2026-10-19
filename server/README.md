@@ -1,4 +1,4 @@
-# barvis-sound server
+# odysseus-sound server
 
 The `convo_server` package (CLI `convo-server`, env prefix `CONVO_`) keeps the project's
 old name, convo-ai. Don't rename it.
@@ -104,9 +104,9 @@ It works from any directory and needs no sudo. `deploy`:
 Everything is read from `server/.env` (settings: bottom of `.env.example`). Without
 systemd it starts background processes instead (pid files and logs in
 `data/run/`, `data/logs/`). It stops with an error if a port is already taken, e.g. by a
-`serve` you started by hand: stop that first. On the server, Barvis'
-`scripts/barvis_deploy.sh deploy` runs this script before it rebuilds Barvis
-([Barvis docs/barvis/deploy.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/deploy.md)).
+`serve` you started by hand: stop that first. On the server, the hub's
+`scripts/fork_deploy.sh deploy` runs this script before it rebuilds Odysseus
+([hub docs/fork/deploy.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/deploy.md)).
 
 ## Run by hand
 
@@ -136,6 +136,14 @@ curl -H "Authorization: Bearer $CONVO_INGEST_TOKEN" -F name=Me -F is_owner=true 
 | `timestamp`   | wall-clock start of the chunk: ISO-8601 or epoch s/ms              |
 | `codec`       | `opus` (default), `ogg`, `wav`, `pcm16`, `mp3`, `m4a`, `aac`, `webm` |
 | `sample_rate` | only for `pcm16` (default 16000)                                   |
+| `kind`        | `conversation` (default) or `note` (voice note); fixed per session  |
+
+A **voice note** (`kind=note`) is the owner talking to themselves: no speaker matching
+(every line is the owner), never split on gaps or joined with nearby conversations, never
+discarded as too short, and summarized with a note prompt (the idea, plus the to-dos it
+implies). It shows up as a conversation with `kind` `note`. A chunk whose `kind` differs
+from its session's is rejected with 400. `POST /v1/ingest/chunk.json` takes the same
+`kind` field.
 
 Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client"|"idle"|null,
 "duplicate": bool, "speech_seconds", "trailing_silence_seconds", "session_seconds"}`.

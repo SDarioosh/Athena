@@ -1,4 +1,4 @@
-"""Client for the barvis-sound server's ingest API, standard library only.
+"""Client for the odysseus-sound server's ingest API, standard library only.
 
 - `GET /health` (no token) before any chunk is pulled (§6 step 5).
 - `POST /v1/ingest/chunk` (multipart) and `POST /v1/sessions/{id}/end`, bearer token.
@@ -122,11 +122,17 @@ class Uploader:
         self._request("GET", "/health", auth=False)
 
     def upload_chunk(self, *, device: str, session_id: str, sequence: int, timestamp: str,
-                     audio: bytes) -> dict[str, Any]:
-        """POST /v1/ingest/chunk. Returns the server's answer, which has `"ok": true`."""
+                     audio: bytes, kind: str | None = None) -> dict[str, Any]:
+        """POST /v1/ingest/chunk. Returns the server's answer, which has `"ok": true`.
+
+        `kind` ("note" for a voice note) is sent only when given, so ordinary uploads stay
+        as they were (the server defaults to "conversation")."""
+        fields = {"device": device, "session_id": session_id, "sequence": str(sequence),
+                  "timestamp": timestamp, "codec": "ogg"}
+        if kind is not None:
+            fields["kind"] = kind
         body, ctype = multipart(
-            {"device": device, "session_id": session_id, "sequence": str(sequence),
-             "timestamp": timestamp, "codec": "ogg"},
+            fields,
             "audio", f"{session_id}-{sequence}.opus", "audio/ogg", audio)
         answer = self._request("POST", "/v1/ingest/chunk", body=body, content_type=ctype)
         if answer.get("ok") is not True:

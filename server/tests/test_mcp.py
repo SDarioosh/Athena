@@ -95,8 +95,8 @@ def contract_table() -> dict[str, str]:
 def test_tool_annotations_match_contract(mcp):
     """Every tool is in the AGENTS.md contract table with exactly its annotation.
 
-    Barvis runs readOnlyHint tools without approval, so a new tool must be added to the
-    table (and coordinated with Barvis) before this passes.
+    Odysseus runs readOnlyHint tools without approval, so a new tool must be added to the
+    table (and coordinated with Odysseus) before this passes.
     """
     from mcp import Client
 

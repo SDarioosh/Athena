@@ -539,7 +539,7 @@ int cq_begin(chunk_queue_t *q, const cq_new_t *c, uint32_t *chunk_id)
     memcpy(cur->session_id, c->session_id, 8);
     cur->sequence = c->sequence;
     cur->start_ms = c->start_ms;
-    cur->flags = c->flags & CQ_FLAG_TIME_UNSET;
+    cur->flags = c->flags & (CQ_FLAG_TIME_UNSET | CQ_FLAG_NOTE);
     cur->state = CQ_STATE_OPEN;
     cur->boot_id = c->boot_id;
     cur->mono_ms = c->mono_ms;
