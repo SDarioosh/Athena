@@ -225,7 +225,8 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
         "confusion": d["confusion"], "ref_speakers": len(ref.labels()),
         "hyp_speakers": len(hyp.labels()), "hyp_labels": sorted(hyp.labels()),
         "enrolled": enrolled, "lines": len(segs),
-        "hypothesis": [[round(s.started_at - T0, 2), s.speaker, s.text] for s in segs],
+        "hypothesis": [[round(s.started_at - T0, 2), round(s.ended_at - T0, 2), s.speaker,
+                        s.text] for s in segs],
     }
     out.update(_naming(turns, start, end, segs, enrolled))
     return out
