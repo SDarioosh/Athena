@@ -45,9 +45,13 @@ typedef enum {
     BOARD_BUTTON_BOOT, /* GPIO button */
 } board_button_t;
 
+/* GPIO buttons report SHORT (a single press, after the double-press window has passed),
+ * DOUBLE and LONG (while still held), see button_gesture.h. The PMIC button reports SHORT
+ * and LONG only (the PMIC's own long-press time, ~1 s). */
 typedef enum {
     BOARD_PRESS_SHORT,
     BOARD_PRESS_LONG,
+    BOARD_PRESS_DOUBLE,
 } board_press_t;
 
 /* Called from the board's button task, never from an ISR. Keep it short: post an event. */
@@ -57,6 +61,13 @@ typedef struct {
     int clk_gpio;
     int data_gpio;
 } board_mic_pins_t;
+
+/* One peaking-EQ band that corrects the board's mic acoustics (port, case cavity). */
+typedef struct {
+    float hz;
+    float gain_db;
+    float q;
+} board_mic_eq_band_t;
 
 typedef struct {
     int width;
@@ -88,14 +99,17 @@ esp_err_t board_rtc_set(int64_t epoch);
 
 /* ---- buttons and haptics ---- */
 void board_buttons_set_callback(board_button_cb_t cb, void *ctx);
-/* Live level of a button, for combinations. Only GPIO buttons can answer; the PWR
- * button reports false. */
+/* Live level of a button. Only GPIO buttons can answer; the PWR button reports false. */
 bool board_button_is_down(board_button_t button);
-/* `count` short buzzes (1 = recording, 2 = muted). Blocks for the duration. */
+/* `count` short buzzes (1 = started, 2 = stopped or muted). Blocks for the duration. */
 esp_err_t board_haptic_pulse(int count);
+/* One long buzz (~0.5 s; unmuted). Blocks for the duration. */
+esp_err_t board_haptic_long(void);
 
 /* ---- microphone ---- */
 board_mic_pins_t board_mic_pins(void);
+/* EQ bands for this board's mic, measured on the device; *bands may be NULL (count 0). */
+int board_mic_eq(const board_mic_eq_band_t **bands);
 
 /* ---- storage (card powered only while mounted) ---- */
 bool board_storage_card_present(void);

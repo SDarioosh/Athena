@@ -1,7 +1,9 @@
-# Plan: LilyGO T-Watch Ultra as a barvis-sound recorder
+# Plan: LilyGO T-Watch Ultra as an odysseus-sound recorder
 
-Status: **owner decisions answered (2026-10-19, §10). Nothing implemented yet.** Next
-step: milestone 1 (bring-up test firmware).
+Status: **milestone 1 verified on the owner's watch (2026-10-19). The BLE upload path
+(milestones 5 and 6: Opus chunks, queue, BLE service, PC relay, Android app) is built and
+tested off-device, not yet on hardware** (§11). Milestones 2–4 (power, mic quality, speech
+gate) are still open.
 
 ## Why this watch
 
@@ -139,13 +141,31 @@ SD, LoRa and NFC share MOSI/MISO/SCK. With the LoRa and NFC rails off:
 
 The watch is a recorder first. The UI is small and off most of the time.
 
+Layout chosen by the owner on 2026-10-19:
+
 | Input | Action |
 |---|---|
-| PWR short press | Screen on for ~5 s: **recording / speech / muted**, battery %, queue (minutes waiting), last phone sync, time |
-| BOOT short press (proposal) | **Toggle mute** (mic and encoder off). The screen shows the new state; 1 buzz = recording, 2 buzzes = muted |
-| BOOT long press | "Sync now": start a BLE burst / advertise for pairing |
-| PWR 6 s hold | Hardware power-off (AXP2101, can't be changed) |
+| BOOT press | Screen on for a few seconds: **recording / speech / muted**, battery %, queue (minutes waiting), last phone sync, time. It waits ~0.3 s first to rule out a double-click |
+| BOOT double-click | **Toggle mute** (mic and encoder off). 2 buzzes = muted, 1 long buzz = unmuted |
+| BOOT hold ~1 s | Open the 2-minute BLE sync/pairing window (a stand-in until a touch UI exists) |
+| PWR short press | Start / stop a conversation recording session. 1 buzz = started, 2 buzzes = stopped |
+| PWR hold ~1 s | Start a **voice note**. A PWR press stops it; it stops by itself after 5 min. The AXP2101 long-press time is set to 1 s (register 0x27 bits[5:4]) |
+| PWR hold ~6 s | Hardware power-off (AXP2101 power-off time, left as shipped) |
 | Raise to wake | **Not for now** (§10): the screen stays off until a button press. The BHI260AP gesture could add it later, after power is measured |
+
+- Every action lights the screen for a few seconds with what happened: "Recording",
+  "Stopped", "Note 0:12", "Note saved", "Muted", "Unmuted", "Sync open".
+- The old BOOT+PWR combo is gone. Sync stays automatic (protocol §7.1). Touch stays out of
+  scope (held in reset).
+
+**Voice notes.** A voice note is a short recording the owner starts on purpose, for
+example a reminder or an idea. It is its own session: a new session ID, 30 s chunks as
+usual, each chunk flagged `NOTE` (protocol §4.3). It stops on a PWR press or after 5 min
+(10 chunks). If a conversation session is recording, the watch ends it cleanly first,
+records the note, and then starts a new conversation session (unless muted meanwhile). The
+mic has one owner, so notes and conversations never mix. The server's gap rule joins the
+two conversation halves; notes are never joined. Mute ends whatever is recording and
+cancels the resume.
 
 - The **mute button is a requirement** (consent), as on the XIAO.
 - A short buzz also signals **low battery** and **phone unreachable for a long time**
@@ -296,8 +316,9 @@ would be one more board file later.
 2. **One shared firmware** (`firmware/recorder/` plus a board layer, §6), for now. It can
    be split later if that turns out better.
 3. **Framework: ESP-IDF.**
-4. **Buttons:** as in §3. BOOT short press = mute, BOOT long press = sync now, PWR short
-   press = status screen.
+4. **Buttons:** the owner changed the layout on 2026-10-19; see §3. BOOT press = status
+   screen, BOOT double-click = mute, BOOT hold = sync window, PWR short press = start/stop
+   a session, PWR hold ~1 s = voice note.
 5. **Screen:** off until a button press. No raise-to-wake for now.
 6. **Overflow storage: microSD.**
 7. **T-Watch S3:** left out for now.
@@ -310,6 +331,32 @@ would be one more board file later.
 9. **Battery:** a daily charge is acceptable, but battery life should be as long as
    possible while recording stays good (rule in §7.4).
 
+## 11. Upload path as built (2026-10-19)
+
+The protocol is [twatch-ble-protocol.md](twatch-ble-protocol.md). Decisions made while
+building it, some of which change the XIAO plan's §3:
+
+- **The phone acks a chunk only after the server accepted it** (not after storing it, as
+  XIAO §3.2 proposed). The phone keeps no audio of its own; a chunk stays on the watch until
+  the server has it, and a phone that can't reach the server doesn't pull chunks.
+- **Drain, then disconnect.** No idle long-interval connection (XIAO §3.1): the watch
+  advertises only when something is waiting (finished session, 10 min queued, or hourly),
+  the relay drains it in a 15–30 ms burst and disconnects.
+- **Sessions are button-driven for now** (PWR short press starts/stops, PWR hold ~1 s
+  records a voice note, mute stops; §3). The speech
+  gate (§8 milestone 4) will start and end sessions on its own later; the protocol doesn't
+  change.
+- **Chunks go to the SD card directly**, no PSRAM queue yet; the card stays mounted while a
+  session records. Milestone 2 measures what that costs; the PSRAM-first queue of §2.3 is
+  still the plan if it matters.
+- **Opus**: libopus via `78/esp-opus`, 16 kbps, complexity 1, `codec=ogg` uploads.
+- **`device=twatch-ultra`**, without the `-<mac4>` suffix of §5, while there is one watch.
+- **Pairing**: passkey entry with LE Secure Connections (owner decision 2026-10-19): the
+  watch shows a 6-digit code on the AMOLED, the phone or PC types it. New bonds only in a
+  2-minute sync window (BOOT hold ~1 s).
+- **Server**: no protocol change was needed. One fix: chunks that arrive while their
+  session is being processed are no longer lost (they come in bursts now).
+
 ## Not verified yet
 
 - Every current figure in §7, and whether I2S PDM RX blocks light sleep (XIAO §7.2).
@@ -320,3 +367,6 @@ would be one more board file later.
 - Leakage on the shared SPI bus with the LoRa/NFC rails off.
 - Whether a CO5300 driver exists in the ESP-IDF component registry.
 - T3902 mic quality at the wrist, and whisper accuracy at 12–16 kbps Opus from it.
+- Everything in §11 on hardware: Opus CPU load at 80 MHz, BLE throughput, pairing with
+  Android and BlueZ, Android background limits, power-cut recovery on a real card, and the
+  battery cost of advertising, bursts and the card staying mounted while recording.

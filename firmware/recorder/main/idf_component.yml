@@ -1,0 +1,6 @@
+## Dependencies of the shared firmware (IDF component registry).
+dependencies:
+  idf: ">=5.4"
+  # libopus (BSD-3-Clause, Xiph.Org) packaged for ESP-IDF (MIT wrapper): fixed-point build
+  # with Xtensa LX7 multiply macros. The session recorder's Opus encoder (opus_enc.c).
+  78/esp-opus: "^1.0.5"

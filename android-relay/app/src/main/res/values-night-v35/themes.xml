@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Relay" parent="android:Theme.Material">
+        <item name="android:colorPrimary">#1E5B7A</item>
+        <item name="android:colorPrimaryDark">#0E2633</item>
+        <item name="android:colorAccent">#5CC9B6</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>

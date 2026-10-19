@@ -37,9 +37,9 @@ def test_whisper_server_gets_prompt_and_temperature_fallback():
 
 def test_whisper_cli_command_has_prompt_and_fallback():
     t = WhisperCliTranscriber("whisper-cli", "model.bin", temperature_inc=0.2)
-    cmd = t.command(Path("a.wav"), Path("out"), "Barvis, Jenn.")
+    cmd = t.command(Path("a.wav"), Path("out"), "Odysseus, Jenn.")
     assert cmd[cmd.index("-tpi") + 1] == "0.2"
-    assert cmd[-2:] == ["--prompt", "Barvis, Jenn."]
+    assert cmd[-2:] == ["--prompt", "Odysseus, Jenn."]
     assert "--prompt" not in t.command(Path("a.wav"), Path("out"))
 
 
@@ -51,13 +51,13 @@ def test_non_speech_tags_are_dropped():
 
 
 def test_prompt_has_vocabulary_and_known_names(pipeline):
-    pipeline.settings.whisper_prompt = "Barvis, Tailscale."
+    pipeline.settings.whisper_prompt = "Odysseus, Tailscale."
     pipeline.store.put_speaker("Jenn", np.ones(16, np.float32), is_owner=False)
-    assert pipeline.whisper_prompt() == "Barvis, Tailscale. Jenn."
+    assert pipeline.whisper_prompt() == "Odysseus, Tailscale. Jenn."
     ingest(pipeline, 0, np.concatenate([tone(200, 4), tone(600, 4)]))
     pipeline.end_session("s1")
     pipeline.process_pending()
-    assert pipeline.transcriber.prompts == ["Barvis, Tailscale. Jenn."]
+    assert pipeline.transcriber.prompts == ["Odysseus, Tailscale. Jenn."]
 
 
 # ------------------------------------------------------------------ voice samples

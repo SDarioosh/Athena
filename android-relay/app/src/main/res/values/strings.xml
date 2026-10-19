@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Odysseus Sound Relay</string>
+    <string name="settings_title">Relay settings</string>
+    <string name="channel_name">Relay status</string>
+    <string name="channel_description">Shows what the watch relay is doing</string>
+    <string name="start_relay">Start relay</string>
+    <string name="stop_relay">Stop relay</string>
+    <string name="settings">Settings</string>
+    <string name="battery_exemption">Let the relay run in the background (battery optimisation)</string>
+    <string name="permission_note">The relay needs the Bluetooth (\"Nearby devices\") permission. Tap Start relay to grant it.</string>
+    <string name="state_heading">Relay</string>
+    <string name="watch_heading">Watch</string>
+    <string name="uploads_heading">Uploads</string>
+    <string name="error_heading">Last error</string>
+    <string name="log_heading">Recent events</string>
+    <string name="no_watch_yet">Not seen yet. Long-press BOOT on the watch to open its sync window the first time.</string>
+    <string name="counters">This run: %1$d · total: %2$d\nLast sync: %3$s</string>
+    <string name="never">never</string>
+    <string name="none">none</string>
+    <string name="server_url">Server URL</string>
+    <string name="server_url_hint">For example https://myserver.example-tailnet.ts.net or http://100.101.102.103:8000</string>
+    <string name="token">Ingest token</string>
+    <string name="token_hint">No token saved yet. Paste the server\'s CONVO_INGEST_TOKEN.</string>
+    <string name="token_saved_hint">Token saved (hidden). Type a new one to replace it.</string>
+    <string name="test_unreachable">Server not reachable: %1$s</string>
+    <string name="test_no_token">Server reachable. Enter the token to check it.</string>
+    <string name="test_ok">OK: server reachable and token accepted.</string>
+    <string name="test_rejected">Server reachable, but the token was rejected (HTTP %1$d).</string>
+    <string name="test_failed">Server reachable, token check failed: %1$s</string>
+    <string name="start_on_boot">Start the relay after the phone restarts (if it was running)</string>
+    <string name="save">Save</string>
+    <string name="test_connection">Test connection</string>
+    <string name="testing">Testing…</string>
+    <string name="saved">Saved.</string>
+    <string name="privacy_note">Audio goes only from the watch to this server. The token is encrypted on this phone and never shown, logged or backed up.</string>
+</resources>

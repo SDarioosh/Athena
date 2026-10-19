@@ -9,12 +9,14 @@
 #include <string.h>
 
 #include "axp2101.h"
+#include "button_gesture.h"
 #include "display.h"
 #include "driver/gpio.h"
 #include "drv2605.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "i2c_bus.h"
 #include "isotime.h"
@@ -31,9 +33,8 @@ static void *s_button_ctx;
 static TaskHandle_t s_button_task;
 static bool s_have_pmu, s_have_expander, s_have_rtc, s_have_haptic;
 
-#define BOOT_LONG_PRESS_MS 1000
-#define BOOT_DEBOUNCE_MS 30
 #define BUTTON_POLL_MS 10
+#define PWR_LONG_PRESS_MS 1000 /* PKEY_LONG IRQ time (AXP2101 reg 0x27 bits[5:4]) */
 
 /* AXP2101 fuel-gauge battery model for the T-Watch Ultra's 1100 mAh cell.
  * Copied from LilyGoLib src/LilyGoWatchUltra.cpp (BATTER_PARAMS), MIT License,
@@ -130,6 +131,14 @@ static esp_err_t pmu_init(void)
     /* VBAT and the battery thermistor (the charger uses TS; LilyGoLib enables it too). */
     axp2101_adc_enable(0x03);
     gauge_params_once();
+
+    /* PWR held ~1 s = PKEY_LONG (starts a voice note). The hardware power-off hold time
+     * (bits[3:2], >= 4 s) is left as it is. */
+    esp_err_t kerr = axp2101_set_pkey_long_ms(PWR_LONG_PRESS_MS);
+    int long_ms = -1, off_ms = -1, on_ms = -1;
+    axp2101_get_pkey_times(&long_ms, &off_ms, &on_ms);
+    ESP_LOGI(TAG, "PWR key: long press %d ms (%s), power-off hold %d ms, power-on %d ms", long_ms,
+             esp_err_to_name(kerr), off_ms, on_ms);
 
     axp2101_irq_enable(AXP_IRQ_PKEY_SHORT | AXP_IRQ_PKEY_LONG | AXP_IRQ_VBUS_INSERT |
                        AXP_IRQ_VBUS_REMOVE | AXP_IRQ_CHG_START | AXP_IRQ_CHG_DONE);
@@ -271,7 +280,7 @@ static void IRAM_ATTR pmu_isr(void *arg)
 static void emit(board_button_t b, board_press_t p)
 {
     ESP_LOGI(TAG, "button %s %s", b == BOARD_BUTTON_PWR ? "PWR" : "BOOT",
-             p == BOARD_PRESS_SHORT ? "short" : "long");
+             p == BOARD_PRESS_SHORT ? "short" : p == BOARD_PRESS_LONG ? "long" : "double");
     if (s_button_cb) {
         s_button_cb(b, p, s_button_ctx);
     }
@@ -311,8 +320,9 @@ static void handle_pmu_irq(void)
 static void button_task(void *arg)
 {
     (void)arg;
-    int held_ms = 0;
-    bool was_down = false, long_fired = false;
+    button_gesture_t boot;
+    button_gesture_init(&boot);
+    TickType_t last = xTaskGetTickCount();
     for (;;) {
         if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(BUTTON_POLL_MS)) > 0) {
             handle_pmu_irq();
@@ -321,21 +331,26 @@ static void button_task(void *arg)
         if (gpio_get_level(PIN_PMU_IRQ) == 0) {
             handle_pmu_irq();
         }
+        /* BOOT: single / double / long press from the gesture machine, fed the real time
+         * since the last poll (an IRQ wakes the task early, a busy I2C bus makes it late). */
+        const TickType_t now = xTaskGetTickCount();
+        const uint32_t elapsed_ms = (uint32_t)((now - last) * portTICK_PERIOD_MS);
+        last = now;
         const bool down = gpio_get_level(PIN_BOOT_BUTTON) == 0;
-        if (down) {
-            held_ms += BUTTON_POLL_MS;
-            if (!long_fired && held_ms >= BOOT_LONG_PRESS_MS) {
-                long_fired = true;
-                emit(BOARD_BUTTON_BOOT, BOARD_PRESS_LONG);
-            }
-        } else if (was_down) {
-            if (!long_fired && held_ms >= BOOT_DEBOUNCE_MS) {
-                emit(BOARD_BUTTON_BOOT, BOARD_PRESS_SHORT);
-            }
-            held_ms = 0;
-            long_fired = false;
+        switch (button_gesture_update(&boot, down, elapsed_ms)) {
+        case BUTTON_GESTURE_SINGLE:
+            emit(BOARD_BUTTON_BOOT, BOARD_PRESS_SHORT);
+            break;
+        case BUTTON_GESTURE_DOUBLE:
+            emit(BOARD_BUTTON_BOOT, BOARD_PRESS_DOUBLE);
+            break;
+        case BUTTON_GESTURE_LONG:
+            emit(BOARD_BUTTON_BOOT, BOARD_PRESS_LONG);
+            break;
+        case BUTTON_GESTURE_NONE:
+        default:
+            break;
         }
-        was_down = down;
     }
 }
 
@@ -391,11 +406,40 @@ esp_err_t board_haptic_pulse(int count)
     return err;
 }
 
+esp_err_t board_haptic_long(void)
+{
+    ESP_RETURN_ON_FALSE(s_have_haptic, ESP_ERR_NOT_SUPPORTED, TAG, "no haptics");
+    ESP_RETURN_ON_ERROR(xl9555_write(EXP_PIN_HAPTIC_EN, true), TAG, "en");
+    vTaskDelay(pdMS_TO_TICKS(5));
+    esp_err_t err = drv2605_init(I2C_ADDR_DRV2605);
+    /* Library effect 47 "Buzz 1 - 100 %", played back to back: one continuous long buzz. */
+    for (int i = 0; i < 2 && err == ESP_OK; i++) {
+        err = drv2605_play(47, 1000);
+    }
+    drv2605_standby();
+    xl9555_write(EXP_PIN_HAPTIC_EN, false);
+    return err;
+}
+
 /* -------------------------------------------------------------- mic/sd/ui ---- */
 
 board_mic_pins_t board_mic_pins(void)
 {
     return (board_mic_pins_t){.clk_gpio = PIN_MIC_CLK, .data_gpio = PIN_MIC_DATA};
+}
+
+int board_mic_eq(const board_mic_eq_band_t **bands)
+{
+    /* Measured 2026-10-19 (20 s of speech at ~30 cm, third-octave spectrum): the mic's port
+     * in the case leaves a ~10 dB hole at 1-2.5 kHz and a ~10 dB peak at 3-4 kHz, which
+     * sounds muffled. These two bands bring it close to a normal speech spectrum; the owner
+     * picked this version in a listening test. Milestone 3 refines it by transcription. */
+    static const board_mic_eq_band_t eq[] = {
+        {.hz = 1600.0f, .gain_db = 9.0f, .q = 1.0f},
+        {.hz = 3600.0f, .gain_db = -6.0f, .q = 2.0f},
+    };
+    *bands = eq;
+    return (int)(sizeof(eq) / sizeof(eq[0]));
 }
 
 bool board_storage_card_present(void)
@@ -407,30 +451,47 @@ bool board_storage_card_present(void)
     return !high; /* card-detect switch pulls low when a card is in */
 }
 
+/* The recorder and console commands can use the card at the same time: count the users and
+ * power the card off only when the last one unmounts. */
+static SemaphoreHandle_t s_storage_lock;
+static StaticSemaphore_t s_storage_lock_buf;
+static int s_storage_users;
+
 esp_err_t board_storage_mount(const char **mount_point)
 {
-    if (sdcard_is_mounted()) {
+    xSemaphoreTake(s_storage_lock, portMAX_DELAY);
+    esp_err_t err = ESP_OK;
+    if (!sdcard_is_mounted()) {
+        if (!board_storage_card_present()) {
+            ESP_LOGW(TAG, "no card detected (SD_DET high); trying anyway in case the pin map is wrong");
+        }
+        err = board_rail_set(BOARD_RAIL_SD, true);
+        if (err == ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            err = sdcard_mount();
+            if (err != ESP_OK) {
+                board_rail_set(BOARD_RAIL_SD, false);
+            }
+        }
+    }
+    if (err == ESP_OK) {
+        s_storage_users++;
         *mount_point = SDCARD_MOUNT_POINT;
-        return ESP_OK;
     }
-    if (!board_storage_card_present()) {
-        ESP_LOGW(TAG, "no card detected (SD_DET high); trying anyway in case the pin map is wrong");
-    }
-    ESP_RETURN_ON_ERROR(board_rail_set(BOARD_RAIL_SD, true), TAG, "rail");
-    vTaskDelay(pdMS_TO_TICKS(20));
-    const esp_err_t err = sdcard_mount();
-    if (err != ESP_OK) {
-        board_rail_set(BOARD_RAIL_SD, false);
-        return err;
-    }
-    *mount_point = SDCARD_MOUNT_POINT;
-    return ESP_OK;
+    xSemaphoreGive(s_storage_lock);
+    return err;
 }
 
 esp_err_t board_storage_unmount(void)
 {
-    sdcard_unmount();
-    return board_rail_set(BOARD_RAIL_SD, false);
+    xSemaphoreTake(s_storage_lock, portMAX_DELAY);
+    esp_err_t err = ESP_OK;
+    if (s_storage_users > 0 && --s_storage_users == 0) {
+        sdcard_unmount();
+        err = board_rail_set(BOARD_RAIL_SD, false);
+    }
+    xSemaphoreGive(s_storage_lock);
+    return err;
 }
 
 bool board_storage_is_mounted(void)
@@ -481,6 +542,7 @@ esp_err_t board_display_off(void)
 
 esp_err_t board_init(void)
 {
+    s_storage_lock = xSemaphoreCreateMutexStatic(&s_storage_lock_buf);
     ESP_LOGI(TAG, "T-Watch Ultra bring-up");
     ESP_RETURN_ON_ERROR(i2c_bus_init(PIN_I2C_SDA, PIN_I2C_SCL), TAG, "i2c");
 

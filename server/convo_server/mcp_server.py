@@ -107,7 +107,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             link = transcript_link(settings, r["conversation_id"],
                                    r["started_at"] - r["conversation_at"])
             lines.append(f"- #{r['id']} {when(r['started_at'])} {r['speaker']}: \"{r['text']}\" "
-                         f"(conversation \"{r['conversation_title'] or 'untitled'}\", "
+                         f"(conversation \"{r['conversation_title'] or 'untitled'}\""
+                         f"{_note(r.get('conversation_kind'))}, "
                          f"id {r['conversation_id']}) {link}")
         return "\n".join(lines)
 
@@ -134,7 +135,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         for c in convs:
             lines.append(
                 f"- {when(c['started_at'])}–{when(c['ended_at'], '%H:%M')} "
-                f"\"{_title(c)}\" id {c['id']}; people: "
+                f"\"{_title(c)}\"{_note(c.get('kind'))} id {c['id']}; people: "
                 f"{', '.join(c['people']) or '—'}\n  {c['summary'] or ''}\n  "
                 f"{transcript_link(settings, c['id'])}")
         return "\n".join(lines)
@@ -146,7 +147,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if c is None:
             return f"No conversation {conversation_id!r}."
         speakers = sorted({s.speaker for s in store.conversation_segments(conversation_id)})
-        out = [f"\"{_title(c)}\" — {when(c['started_at'])}–"
+        out = [f"\"{_title(c)}\"{_note(c.get('kind'))} — {when(c['started_at'])}–"
                f"{when(c['ended_at'], '%H:%M')} ({settings.timezone}), device {c['device']}"
                + (f", type {c['kind']}" if c.get("kind") else ""),
                f"Speakers: {', '.join(speakers) or '—'}. People: {', '.join(c['people']) or '—'}",
@@ -198,7 +199,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             lines.append(f"- #{r['id']} [{r['status']}] {r['text']}"
                          + (f" (owner {r['owner']})" if r["owner"] else "")
                          + _due(r)
-                         + f" — from \"{r['conversation_title']}\" {when(r['conversation_at'])} "
+                         + f" — from \"{r['conversation_title']}\""
+                         + f"{_note(r.get('conversation_kind'))} {when(r['conversation_at'])} "
                          + transcript_link(settings, r["conversation_id"],
                                            (r["source_at"] or r["conversation_at"])
                                            - r["conversation_at"]))
@@ -248,8 +250,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         out = [f"{date}: {d['headline']}", d["summary"]]
         out += [f"* {h}" for h in d.get("highlights", [])]
         out += [f"TODO: {t}" for t in d.get("open_action_items", [])]
-        out += [f"Conversation: {transcript_link(settings, cid)}"
-                for cid in d.get("conversation_ids", [])]
+        for cid in d.get("conversation_ids", []):
+            conv = store.get_conversation(cid)
+            what = "Voice note" if conv and conv.get("kind") == "note" else "Conversation"
+            out.append(f"{what}: {transcript_link(settings, cid)}")
         out.append(f"{cite}.")
         return "\n".join(out)
 
@@ -385,6 +389,11 @@ def _title(c: dict[str, Any]) -> str:
     if c.get("status") == "discarded":
         return f"(not summarized: looked like {c.get('discard_reason') or 'junk'})"
     return c.get("title") or "untitled (summary pending)"
+
+
+def _note(kind: str | None) -> str:
+    """Marks a voice note (the owner talking to themselves) next to its title."""
+    return " (voice note)" if kind == "note" else ""
 
 
 def _due(a: dict[str, Any]) -> str:

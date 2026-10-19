@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Relay" parent="android:Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">#1E5B7A</item>
+        <item name="android:colorPrimaryDark">#163F55</item>
+        <item name="android:colorAccent">#1E7A6B</item>
+    </style>
+</resources>

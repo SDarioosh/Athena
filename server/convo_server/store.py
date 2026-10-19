@@ -177,6 +177,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
 
 _PLACEHOLDER_SPEAKER = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
 
+# Session kinds (sessions.kind). A voice note's conversation also gets conversations.kind
+# NOTE; ordinary conversations get the kind the summary triage picks.
+CONVERSATION = "conversation"
+NOTE = "note"
+SESSION_KINDS = (CONVERSATION, NOTE)
+
 
 class DuplicateChunk(Exception):
     pass
@@ -227,6 +233,10 @@ class Store:
             self._add_column("facts", "status", "TEXT NOT NULL DEFAULT 'current'")
             self._add_column("facts", "superseded_by", "INTEGER")
             self._conn.execute("PRAGMA user_version = 4")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 5:
+            # voice notes: a session is a conversation recording or a voice note
+            self._add_column("sessions", "kind", f"TEXT NOT NULL DEFAULT '{CONVERSATION}'")
+            self._conn.execute("PRAGMA user_version = 5")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -272,11 +282,13 @@ class Store:
         audio_path: str | None,
         speech: list[tuple[float, float]],
         now: float | None = None,
+        kind: str = CONVERSATION,
     ) -> dict[str, Any]:
         """Record a chunk and update the session's silence bookkeeping.
 
         Returns the updated session row. Raises DuplicateChunk on a repeated
-        (session, sequence) so device retries are idempotent.
+        (session, sequence) so device retries are idempotent, and ValueError if the
+        session belongs to another device or is of another ``kind``.
         """
         now = time.time() if now is None else now
         end = started_at + duration
@@ -286,11 +298,14 @@ class Store:
             if sess is None:
                 c.execute(
                     "INSERT INTO sessions (id, device, started_at, last_chunk_at, last_speech_at,"
-                    " received_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    (session_id, device, started_at, end, last_speech, now),
+                    " received_at, kind) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (session_id, device, started_at, end, last_speech, now, kind),
                 )
             elif sess["device"] != device:
                 raise ValueError("session_id already belongs to another device")
+            elif sess["kind"] != kind:
+                raise ValueError(f"session {session_id} is a {sess['kind']} session, "
+                                 f"not {kind}")
             try:
                 c.execute(
                     "INSERT INTO chunks (session_id, sequence, started_at, duration, codec,"
@@ -308,7 +323,10 @@ class Store:
                     " last_speech_at = CASE WHEN ? IS NULL THEN last_speech_at"
                     "   ELSE MAX(COALESCE(last_speech_at, 0), ?) END,"
                     " received_at = ?,"
-                    " status = CASE WHEN status IN ('done','failed') THEN 'ended' ELSE status END"
+                    # A chunk for a session being processed or already processed sends
+                    # it back for another pass (store-and-forward relays upload late).
+                    " status = CASE WHEN status IN ('processing','done','failed') THEN 'ended'"
+                    " ELSE status END"
                     " WHERE id = ?",
                     (started_at, end, last_speech, last_speech, now, session_id),
                 )
@@ -322,15 +340,27 @@ class Store:
                 (reason, session_id),
             )
 
-    def set_session_status(self, session_id: str, status: str, error: str | None = None) -> None:
+    def set_session_status(self, session_id: str, status: str, error: str | None = None,
+                           *, only_if: str | None = None) -> bool:
+        """Set the status; with ``only_if``, only while the session still has that status."""
+        sql, params = "UPDATE sessions SET status = ?, error = ? WHERE id = ?", [status, error,
+                                                                                session_id]
+        if only_if is not None:
+            sql += " AND status = ?"
+            params.append(only_if)
         with self.tx() as c:
-            c.execute("UPDATE sessions SET status = ?, error = ? WHERE id = ?",
-                      (status, error, session_id))
+            return c.execute(sql, params).rowcount > 0
 
     def idle_sessions(self, received_before: float) -> list[str]:
         rows = self._q("SELECT id FROM sessions WHERE status = 'recording' AND received_at < ?",
                        (received_before,))
         return [r["id"] for r in rows]
+
+    def requeue_interrupted(self) -> int:
+        """Send sessions left in 'processing' (server stopped mid-run) back to 'ended'."""
+        with self.tx() as c:
+            return c.execute(
+                "UPDATE sessions SET status = 'ended' WHERE status = 'processing'").rowcount
 
     def sessions_with_status(self, status: str) -> list[str]:
         return [r["id"] for r in self._q(
@@ -348,9 +378,16 @@ class Store:
             r["speech"] = [tuple(s) for s in json.loads(r["speech"])]
         return rows
 
-    def clear_chunk_audio(self, session_id: str) -> None:
+    def clear_chunk_audio(self, session_id: str, sequences: Iterable[int] | None = None) -> None:
+        """Forget the audio of the given chunks (all chunks of the session if None)."""
         with self.tx() as c:
-            c.execute("UPDATE chunks SET audio_path = NULL WHERE session_id = ?", (session_id,))
+            if sequences is None:
+                c.execute("UPDATE chunks SET audio_path = NULL WHERE session_id = ?",
+                          (session_id,))
+            else:
+                c.executemany(
+                    "UPDATE chunks SET audio_path = NULL WHERE session_id = ? AND sequence = ?",
+                    [(session_id, seq) for seq in sequences])
 
     # ---------------------------------------------------------------- segments
     def replace_segments(self, session_id: str, device: str, segments: list[Segment],
@@ -390,21 +427,36 @@ class Store:
     # ----------------------------------------------------------- conversations
     def overlapping_conversations(self, device: str, start: float, end: float,
                                   gap: float) -> list[dict[str, Any]]:
-        """Conversations on ``device`` within ``gap`` seconds of [start, end]."""
+        """Conversations on ``device`` within ``gap`` seconds of [start, end].
+
+        Voice notes are left out: they are never joined with anything.
+        """
         return self._q(
             "SELECT * FROM conversations WHERE device = ? AND ended_at >= ? AND started_at <= ?"
-            " ORDER BY started_at", (device, start - gap, end + gap))
+            " AND kind IS NOT ? ORDER BY started_at", (device, start - gap, end + gap, NOTE))
+
+    def session_conversations(self, session_id: str) -> list[str]:
+        """Ids of the conversations holding segments of ``session_id``, oldest first."""
+        return [r["conversation_id"] for r in self._q(
+            "SELECT conversation_id, MIN(started_at) AS first FROM segments"
+            " WHERE session_id = ? AND conversation_id IS NOT NULL"
+            " GROUP BY conversation_id ORDER BY first", (session_id,))]
 
     def save_conversation(self, conv_id: str | None, device: str,
-                          segment_ids: list[int], absorb: Iterable[str] = ()) -> str:
-        """Create/extend a conversation from segments; ``absorb`` ids are merged into it."""
+                          segment_ids: list[int], absorb: Iterable[str] = (),
+                          kind: str | None = None) -> str:
+        """Create/extend a conversation from segments; ``absorb`` ids are merged into it.
+
+        ``kind`` is set on a new conversation (voice notes: NOTE); an existing one keeps
+        its kind.
+        """
         conv_id = conv_id or uuid.uuid4().hex
         now = time.time()
         with self.tx() as c:
             c.execute(
-                "INSERT INTO conversations (id, device, started_at, ended_at, updated_at)"
-                " VALUES (?, ?, 0, 0, ?) ON CONFLICT(id) DO UPDATE SET status = 'pending',"
-                " updated_at = excluded.updated_at", (conv_id, device, now))
+                "INSERT INTO conversations (id, device, started_at, ended_at, updated_at, kind)"
+                " VALUES (?, ?, 0, 0, ?, ?) ON CONFLICT(id) DO UPDATE SET status = 'pending',"
+                " updated_at = excluded.updated_at", (conv_id, device, now, kind))
             for other in absorb:
                 if other == conv_id:
                     continue
@@ -578,7 +630,8 @@ class Store:
         Without a query, lines come back in chronological order.
         """
         cols = ("s.id, s.conversation_id, s.started_at, s.ended_at, s.speaker, s.is_owner,"
-                " s.text, c.title AS conversation_title, c.started_at AS conversation_at")
+                " s.text, c.title AS conversation_title, c.started_at AS conversation_at,"
+                " c.kind AS conversation_kind")
         where = ["s.conversation_id IS NOT NULL"]
         params: list[Any] = []
         if speaker:
@@ -803,7 +856,8 @@ class Store:
             " ORDER BY updated_at, started_at", (before,))]
 
     def list_action_items(self, status: str | None = "open") -> list[dict[str, Any]]:
-        sql = ("SELECT a.*, c.title AS conversation_title, c.started_at AS conversation_at"
+        sql = ("SELECT a.*, c.title AS conversation_title, c.started_at AS conversation_at,"
+               " c.kind AS conversation_kind"
                " FROM action_items a JOIN conversations c ON c.id = a.conversation_id")
         params: tuple[Any, ...] = ()
         if status:
