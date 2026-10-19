@@ -6,7 +6,7 @@ T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → l
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (round 12: T-Watch Ultra BLE upload path and Android relay)_
+_Last updated: 2026-10-19 (round 13: one-command deploy, services in the background)_
 
 ## Status
 
@@ -31,6 +31,7 @@ _Last updated: 2026-10-19 (round 12: T-Watch Ultra BLE upload path and Android r
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
 | 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **running on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, buttons, haptics and recording work (mic timeout fix; stop early with BOOT+PWR again, `stop` or mute). Mic: raw level was nearly inaudible and muffled; now high-pass + T-Watch EQ (+9 dB 1.6 kHz, -6 dB 3.6 kHz) + 30 dB gain + limiter, speech ~-24 dBFS, owner says it sounds best; `gain`/`eq` on the console. Recordings copy off over USB (`tools/pull.py`). SD_DET confirmed (P12 LOW with card, HIGH without; expander question §2.1 answered); RTC set, files get dated names. Still to check: one recording of fictional speech through `smoke_upload.py` on the server (owner). **Round 12: BLE upload path built, not yet on hardware**: BOOT+PWR records an Opus session (libopus, 16 kbps) as 30 s Ogg/Opus chunks into a queue on the SD card that survives reboots; NimBLE GATT service drains it (protocol `docs/twatch-ble-protocol.md`); `tools/ble_relay.py` is the PC relay; Wi-Fi still not linked. Needs the owner: flash, record, drain with the PC relay and the phone (PR Server verification). Then milestone 2 (power baseline), milestone 3 (gain/EQ/bitrate by transcription) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` §11, `docs/twatch-ble-protocol.md` |
 | 11c | Android relay app (T-Watch → BLE → phone → server) | **built, unit-tested (67 tests), not yet on a phone**: foreground service, scan/bond/drain per the protocol, uploads with the bearer token over LAN/Tailscale, acks only after the server's ok, backoff; settings (URL, token in Keystore) and status screen; no Google services, no analytics. CI builds the APK | `android-relay/` |
+| 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; Barvis' `barvis_deploy.sh deploy` runs it first | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, Barvis `docs/barvis/deploy.md` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -227,6 +228,23 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Needs the owner: paste the new `INSTRUCTIONS` into the Custom preset and rerun
   `barvis_setup.py` so `/sound` picks it up.
 
+## Done in round 13: one-command deploy
+
+- `server/scripts/deploy.sh deploy` fetches and fast-forwards `main`, installs into
+  `.venv`, (re)starts `convo-server serve`, `convo-server mcp --http` (when
+  `CONVO_MCP_TOKEN` is set) and `whisper-server` (when `BARVIS_SOUND_WHISPER_CMD` is set)
+  as systemd user services, and waits until each answers. If the new commit doesn't come
+  up, it goes back to the previous one. whisper-server is only restarted when its command
+  changes, so the model stays loaded. Also `status`, `logs`, `start`, `stop`, `restart`.
+- Without systemd (the sandbox) it runs them as background processes with pid files.
+- Barvis' `scripts/barvis_deploy.sh deploy` runs every module's deploy command first
+  (`BARVIS_MODULES` in `~/.config/barvis/deploy.env`), then rebuilds Barvis: one command
+  updates everything.
+- Fix: a session that was being processed when the server stopped stayed `processing`
+  forever. The worker now sends such sessions back to the queue when it starts.
+- Needs the owner: the PR's Server verification (move the hand-started `serve` and MCP
+  to the services).
+
 ## Done in round 12: T-Watch Ultra BLE upload path, Android relay
 
 Nothing here has run on hardware yet; everything is built and tested off-device.
@@ -343,7 +361,8 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
    SDarioosh/Barvis#5 (full eval on the test instance; expect no approvals for read-only
    tools and a score ≥ 9/20; steps in that PR).
 5. Build the real T-Rex recording app from the watch-test results.
-6. systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.
+6. ~~systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.~~ Built
+   (round 13, `server/scripts/deploy.sh`); owner: Server verification.
 7. Owner voice enrollment from the watch (round 10), plus speaker-threshold check on
    real audio.
 8. T-Watch Ultra recorder: milestones 3+ (`docs/t-watch-ultra-plan.md` §8) once the

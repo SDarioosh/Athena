@@ -33,7 +33,8 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 - `server/`: Python 3.11+ package `convo_server`: ingestion API, VAD,
   transcription, diarization, conversation splitting, summaries, SQLite
   storage, search, digest, MCP server (`convo_server/mcp_server.py`), frontend eval
-  (`server/eval/bakeoff.py`). See `server/README.md`.
+  (`server/eval/bakeoff.py`). `server/scripts/deploy.sh` updates the server and runs it
+  as background services; Barvis' `barvis_deploy.sh` calls it. See `server/README.md`.
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
   recording feasibility test app; see `zepp-app/README.md`.
 - `firmware/recorder/`: ESP-IDF 5.x firmware for our own recorders, one shared `main/`
