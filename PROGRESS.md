@@ -29,7 +29,7 @@ _Last updated: 2026-10-19 (round 11: T-Watch Ultra milestone 1, bring-up firmwar
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
 | 9c | Calendar/task integration for action items | later (wanted) | — |
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
-| 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **flashed on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, mute, buzz and BOOT+PWR / `rec` recording work after the mic timeout fix; still to check: audio content (PDM slot), SD_DET with the card out, `smoke_upload.py` run; next: milestone 2 (power baseline) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` |
+| 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **flashed on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, mute, buzz and BOOT+PWR / `rec` recording work after the mic timeout fix; the mic delivers real audio (`level`: ~-55 dBFS quiet room, start-up click now dropped); still to check: listening to a recording, SD_DET with the card out, `smoke_upload.py` run; next: milestone 2 (power baseline) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round

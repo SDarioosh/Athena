@@ -10,8 +10,11 @@ static i2s_chan_handle_t s_rx;
 static bool s_running;
 
 /* Which PDM slot the T3902 answers on depends on how its L/R select pin is wired. LilyGoLib
- * reads the left slot on this watch. If a recording is silent, try I2S_PDM_SLOT_RIGHT. */
+ * reads the left slot on this watch, and `level` on the console shows real audio with it
+ * (2026-10-19; switching to the right slot at runtime gave the same data in mono mode). */
 #define MIC_PDM_SLOT I2S_PDM_SLOT_LEFT
+
+#define MIC_SETTLE_SAMPLES (MIC_SAMPLE_RATE / 4) /* 250 ms, discarded by mic_start() */
 
 esp_err_t mic_init(board_mic_pins_t pins)
 {
@@ -45,11 +48,30 @@ esp_err_t mic_init(board_mic_pins_t pins)
 esp_err_t mic_start(void)
 {
     ESP_RETURN_ON_FALSE(s_rx, ESP_ERR_INVALID_STATE, TAG, "init first");
-    if (s_running) {
-        return ESP_OK;
+    /* One user at a time: the recorder or the console's `level`. */
+    bool expected = false;
+    ESP_RETURN_ON_FALSE(__atomic_compare_exchange_n(&s_running, &expected, true, false,
+                                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE),
+                        ESP_ERR_INVALID_STATE, TAG, "mic in use");
+    const esp_err_t err = i2s_channel_enable(s_rx);
+    if (err != ESP_OK) {
+        __atomic_store_n(&s_running, false, __ATOMIC_RELEASE);
+        ESP_LOGE(TAG, "enable: %s", esp_err_to_name(err));
+        return err;
     }
-    ESP_RETURN_ON_ERROR(i2s_channel_enable(s_rx), TAG, "enable");
-    s_running = true;
+    /* Drop the start-up transient. Measured on the T-Watch Ultra (2026-10-19): the first
+     * ~16 ms are near full scale (a click at the start of every file), then the DC offset
+     * settles from ~+2600 to ~+540 over ~250 ms. The S3 has no PDM RX high-pass filter, so
+     * the remaining offset stays in the data. */
+    static int16_t settle[1024];
+    for (size_t dropped = 0; dropped < MIC_SETTLE_SAMPLES;) {
+        size_t got = 0;
+        mic_read(settle, sizeof(settle) / sizeof(settle[0]), &got, 500);
+        if (got == 0) {
+            break; /* let the caller's reads report the problem */
+        }
+        dropped += got;
+    }
     return ESP_OK;
 }
 

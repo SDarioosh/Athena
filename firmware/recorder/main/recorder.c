@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/time.h>
 
+#include "audio_stats.h"
 #include "board.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
@@ -51,13 +52,17 @@ static esp_err_t record(const char *path, int seconds, uint8_t *wbuf)
     const uint32_t total_bytes = wav_data_bytes(MIC_SAMPLE_RATE, MIC_CHANNELS, MIC_BITS, seconds);
     uint32_t written = 0, pending = 0, next_tick = MIC_SAMPLE_RATE * 2;
     size_t dropped_reads = 0;
+    audio_stats_t stats;
+    audio_stats_reset(&stats);
 
     if (err == ESP_OK) {
         err = mic_start();
     }
+    const bool mic_started = err == ESP_OK;
     while (err == ESP_OK && written + pending < total_bytes) {
         size_t got = 0;
-        const esp_err_t r = mic_read((int16_t *)(wbuf + pending), READ_SAMPLES, &got, 500);
+        int16_t *const dst = (int16_t *)(wbuf + pending);
+        const esp_err_t r = mic_read(dst, READ_SAMPLES, &got, 500);
         /* A timed-out read can still return part of a buffer: keep it. Give up only after
          * 20 reads in a row return nothing (~10 s without audio). */
         if (got == 0) {
@@ -68,6 +73,7 @@ static esp_err_t record(const char *path, int seconds, uint8_t *wbuf)
             continue;
         }
         dropped_reads = 0;
+        audio_stats_add(&stats, dst, got);
         pending += got * sizeof(int16_t);
         if (written + pending > total_bytes) {
             pending = total_bytes - written;
@@ -89,7 +95,12 @@ static esp_err_t record(const char *path, int seconds, uint8_t *wbuf)
             }
         }
     }
-    mic_stop();
+    if (mic_started) {
+        mic_stop();
+        char level[128];
+        audio_stats_describe(&stats, level, sizeof(level));
+        ESP_LOGI(TAG, "level: %s", level);
+    }
 
     if (err == ESP_OK) {
         wav_header_write(header, MIC_SAMPLE_RATE, MIC_CHANNELS, MIC_BITS, written);

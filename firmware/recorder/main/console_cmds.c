@@ -6,12 +6,14 @@
 #include <sys/time.h>
 
 #include "app.h"
+#include "audio_stats.h"
 #include "board.h"
 #include "esp_check.h"
 #include "esp_console.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "isotime.h"
+#include "mic.h"
 #include "recorder.h"
 
 static const char *TAG = "console";
@@ -96,6 +98,51 @@ static int cmd_rec(int argc, char **argv)
     return 0;
 }
 
+/* `level [seconds]`: read the mic without the SD card and print its level once a second, then
+ * a summary. Answers "is the mic delivering real audio" over USB. */
+static int cmd_level(int argc, char **argv)
+{
+    int seconds = 5;
+    if (argc >= 2) {
+        seconds = atoi(argv[1]);
+        if (seconds <= 0 || seconds > 60) {
+            printf("usage: level [seconds 1..60]\n");
+            return 1;
+        }
+    }
+    const esp_err_t err = mic_start();
+    if (err != ESP_OK) {
+        printf("mic busy or failed (%s); is a recording running?\n", esp_err_to_name(err));
+        return 1;
+    }
+    static int16_t buf[1024]; /* only the console task uses it */
+    audio_stats_t total, second;
+    audio_stats_reset(&total);
+    audio_stats_reset(&second);
+    printf("listening %d s; talk, then stay quiet\n", seconds);
+    const uint64_t target = (uint64_t)seconds * MIC_SAMPLE_RATE;
+    while (total.count < target) {
+        size_t got = 0;
+        mic_read(buf, sizeof(buf) / sizeof(buf[0]), &got, 500);
+        if (got == 0) {
+            printf("no audio from the mic\n");
+            break;
+        }
+        audio_stats_add(&total, buf, got);
+        audio_stats_add(&second, buf, got);
+        if (second.count >= MIC_SAMPLE_RATE || total.count >= target) {
+            printf("  %2d s: rms %5.1f dBFS, peak %5lu\n", (int)(total.count / MIC_SAMPLE_RATE),
+                   (double)audio_stats_rms_dbfs(&second), (unsigned long)second.peak);
+            audio_stats_reset(&second);
+        }
+    }
+    mic_stop();
+    char line[128];
+    audio_stats_describe(&total, line, sizeof(line));
+    printf("level: %s\n", line);
+    return 0;
+}
+
 static int cmd_mute(int argc, char **argv)
 {
     (void)argc;
@@ -163,7 +210,8 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "exp", .help = "Log the XL9555 expander pins (pin-map check)", .func = cmd_exp},
     {.command = "time", .help = "Show time; `time 2026-10-19T12:34:56Z` sets system + RTC", .func = cmd_time},
     {.command = "rec", .help = "Record N seconds (default 60) from the mic to the SD card as WAV", .func = cmd_rec},
-    {.command = "mute", .help = "Toggle mute (same as a BOOT short press)", .func = cmd_mute},
+    {.command = "level", .help = "Print mic level for N s (default 5): `level [s]`", .func = cmd_level},
+    {.command = "mute",.help = "Toggle mute (same as a BOOT short press)", .func = cmd_mute},
     {.command = "screen", .help = "Show the status screen for ~5 s (same as a PWR short press)", .func = cmd_screen},
     {.command = "sync", .help = "Log 'sync now' (BLE comes in a later milestone)", .func = cmd_sync},
     {.command = "sd", .help = "Power, mount and report the SD card, then power it off", .func = cmd_sd},

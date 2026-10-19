@@ -22,9 +22,16 @@ Wi-Fi (not initialised and not linked), no Opus, no speech gate yet.
 - **BOOT short press**: toggle mute. 1 buzz = recording, 2 buzzes = muted.
 - **BOOT long press (1 s)**: logs "sync now" (placeholder for BLE).
 - **BOOT held + PWR short press**, or `rec` on the console: records 60 s from the PDM mic
-  (16 kHz, mono, 16-bit) to `/sdcard/rec_<UTC time>.wav`, then powers the card off.
-- USB console (`help`): `status`, `batt`, `rails`, `exp`, `time`, `rec [s]`, `mute`,
-  `screen`, `sync`, `sd`, `reboot`.
+  (16 kHz, mono, 16-bit) to `/sdcard/rec_<UTC time>.wav`, then powers the card off. The
+  log line `recorder: level: ...` gives the file's RMS, peak, DC offset and clipped samples.
+- **`level [s]`** on the console: reads the mic for N seconds (default 5) without the SD
+  card and prints the level once a second. A quiet room reads about -55 dBFS; all zeros or
+  no audio means a mic problem.
+- The mic drops its first 250 ms after each start: the PDM filter starts with a
+  near-full-scale click and a settling DC offset. The S3 has no PDM high-pass filter, so a
+  DC offset of about +600 stays in the data.
+- USB console (`help`): `status`, `batt`, `rails`, `exp`, `time`, `rec [s]`, `level [s]`,
+  `mute`, `screen`, `sync`, `sd`, `reboot`.
 
 ## Build
 
@@ -83,7 +90,7 @@ firmware/recorder/
 │   ├── recorder.[ch]         # milestone-1 WAV test recorder
 │   ├── ui.[ch]               # status screen (text bands, no LVGL)
 │   ├── console_cmds.[ch]     # esp_console commands over USB Serial/JTAG
-│   ├── wav.[ch] isotime.[ch] font5x7.[ch] textfb.[ch]   # pure, host-tested
+│   ├── wav isotime font5x7 textfb audio_stats .[ch]  # pure, host-tested
 ├── boards/twatch_ultra/board/
 │   ├── pins.h                # pin map, expander map (both candidate readings)
 │   ├── board_twatch_ultra.c  # implements board.h
@@ -106,7 +113,7 @@ firmware/recorder/
 
 ## Not verified on hardware yet
 
-See the Server verification section of the PR and `PROGRESS.md`. In short: the whole
-thing has only been built in the sandbox. Things most likely to need a tweak on the real
-watch: the PDM slot (`MIC_PDM_SLOT` in `mic.c`), the display init (LilyGoLib runs its
-sequence twice), the SD_DET polarity, and the ERM/LRA haptics setting.
+See `PROGRESS.md`. On the owner's watch (2026-10-19) the rails, battery, RTC, SD card,
+status screen, buttons, haptics and recording work, and `level` shows real audio with the
+left PDM slot. Still open: listening to a recording (speech quality), SD_DET with the card
+out, and a recording through the server pipeline.
