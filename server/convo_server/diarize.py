@@ -1,25 +1,42 @@
-"""Speaker diarization with an enrolled owner voice.
+"""Speaker diarization with enrolled voices.
 
-Approach (kept deliberately simple and fully local):
+Two backends behind one interface (``Diarizer.diarize_runs``):
 
-1. Every transcript piece of at least ``min_seconds`` gets a speaker embedding
-   (ECAPA-TDNN via SpeechBrain in production).
-2. Pieces are grouped with average-linkage agglomerative clustering on cosine
-   similarity.
-3. Each cluster centroid is matched against enrolled voices (the owner and any
-   named people). Unmatched clusters become "Speaker 1", "Speaker 2", ...
-4. Pieces too short to embed inherit the label of the nearest piece in time.
+* ``Diarizer`` (default, ``CONVO_DIARIZER=ecapa``): every transcript piece gets an
+  ECAPA-TDNN embedding of a >= 3 s window around it; pieces are grouped with
+  average-linkage agglomerative clustering on cosine similarity.
+* ``PyannoteDiarizer`` (``CONVO_DIARIZER=pyannote``, optional extra, see
+  ``diarize_pyannote.py``): pyannote.audio finds who spoke when on the whole recording;
+  each pyannote speaker then gets an ECAPA embedding from its own speech.
+
+Either way, each speaker cluster is then named the same way (``name_clusters``):
+
+1. It is matched against enrolled voices. A person has several voice samples (enrollment
+   windows, named speakers); the score is the mean of the closest few, so one odd sample
+   doesn't decide. The best (cluster, person) pairs are assigned first.
+2. Owner hint: the wearer is usually the loudest voice. If the owner wasn't matched and
+   the clearly loudest cluster is a borderline match for the owner's voice, it is the
+   owner.
+3. Unmatched clusters become "Speaker 1", "Speaker 2", ... and their voice embedding is
+   returned so the speaker can be named later and recognised from then on.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
 
 from .audio import SAMPLE_RATE
+
+# Speaker embeddings on 1-2 s whisper segments are too noisy (one fast talker split into
+# 7 "speakers" in testing); embedding a >= 3 s window around each segment fixes that.
+DIARIZATION_WINDOW = 3.0
+# A person's score is the mean similarity of their closest voice samples: up to this
+# many, and at most a third of them (so 1 of 2 samples, 3 of 9 or more).
+TOP_SAMPLES = 3
 
 
 class SpeakerEmbedder(Protocol):
@@ -53,6 +70,17 @@ class EnrolledVoice:
     name: str
     embedding: np.ndarray
     is_owner: bool
+    # (n, dim) voice samples; empty = use ``embedding`` alone
+    samples: np.ndarray = field(default_factory=lambda: np.zeros((0, 0), np.float32))
+
+    def score(self, vec: np.ndarray) -> float:
+        """Similarity of ``vec`` to this voice: mean of the closest few samples."""
+        vec = _normalize(vec)
+        if self.samples.size == 0:
+            return float(vec @ _normalize(self.embedding))
+        sims = _normalize_rows(self.samples) @ vec
+        k = max(1, min(TOP_SAMPLES, len(sims) // 3))
+        return float(np.sort(sims)[-k:].mean())
 
 
 @dataclass(frozen=True)
@@ -61,10 +89,44 @@ class SpeakerLabel:
     is_owner: bool
 
 
+@dataclass(frozen=True)
+class PieceRef:
+    """A transcript piece: which run (contiguous audio) and where in it, in seconds."""
+    run: int
+    start: float
+    end: float
+
+
 def _normalize(v: np.ndarray) -> np.ndarray:
     v = np.asarray(v, dtype=np.float32).ravel()
     n = float(np.linalg.norm(v))
     return v / n if n > 0 else v
+
+
+def _normalize_rows(m: np.ndarray) -> np.ndarray:
+    m = np.asarray(m, dtype=np.float32)
+    n = np.linalg.norm(m, axis=1, keepdims=True)
+    return m / np.where(n > 0, n, 1)
+
+
+def rms_db(audio: np.ndarray) -> float:
+    """Loudness of a clip in dBFS (silence = -120)."""
+    if audio.size == 0:
+        return -120.0
+    return float(20 * np.log10(max(float(np.sqrt(np.mean(np.square(audio)))), 1e-6)))
+
+
+def window(audio: np.ndarray, start: float, end: float,
+           min_seconds: float = DIARIZATION_WINDOW) -> np.ndarray:
+    """Slice [start, end] seconds, widened symmetrically to ``min_seconds`` where possible."""
+    sr = SAMPLE_RATE
+    total = audio.size / sr
+    half = max((end - start) / 2, min_seconds / 2)
+    mid = (start + end) / 2
+    a, b = max(0.0, mid - half), min(total, mid + half)
+    if b - a < min_seconds:  # near an edge: extend towards the other side
+        a, b = max(0.0, b - min_seconds), min(total, a + min_seconds)
+    return audio[int(a * sr): int(b * sr)]
 
 
 def cluster(embeddings: np.ndarray, threshold: float) -> list[int]:
@@ -97,17 +159,39 @@ def cluster(embeddings: np.ndarray, threshold: float) -> list[int]:
 class Diarizer:
     def __init__(self, embedder: SpeakerEmbedder, voices: list[EnrolledVoice],
                  match_threshold: float = 0.50, cluster_threshold: float = 0.45,
-                 min_seconds: float = 1.0) -> None:
+                 min_seconds: float = 1.0, owner_hint_margin: float = 0.10,
+                 owner_hint_db: float = 3.0) -> None:
         self.embedder = embedder
         self.voices = voices
         self.match_threshold = match_threshold
         self.cluster_threshold = cluster_threshold
         self.min_seconds = min_seconds
+        # Owner hint: a cluster within this margin below match_threshold of the owner's
+        # voice, and at least owner_hint_db louder than every other cluster, is the owner.
+        # A margin of 0 turns the hint off.
+        self.owner_hint_margin = owner_hint_margin
+        self.owner_hint_db = owner_hint_db
+
+    def diarize_runs(self, runs: list[np.ndarray], pieces: list[PieceRef]
+                     ) -> tuple[list[SpeakerLabel], dict[str, np.ndarray]]:
+        """Label each piece of the given audio runs; see ``diarize`` for the return value."""
+        clips = [window(runs[p.run], p.start, p.end) for p in pieces]
+        loud = [rms_db(runs[p.run][int(p.start * SAMPLE_RATE): int(p.end * SAMPLE_RATE)])
+                for p in pieces]
+        # pieces of different runs are far apart in time; offset runs so "nearest piece"
+        # fallbacks stay within a run
+        offset, starts = 0.0, []
+        for r in runs:
+            starts.append(offset)
+            offset += r.size / SAMPLE_RATE + 3600
+        times = [starts[p.run] + (p.start + p.end) / 2 for p in pieces]
+        return self.diarize(clips, times, loud)
 
     def label(self, clips: list[np.ndarray], times: list[float]) -> list[SpeakerLabel]:
         return self.diarize(clips, times)[0]
 
-    def diarize(self, clips: list[np.ndarray], times: list[float]
+    def diarize(self, clips: list[np.ndarray], times: list[float],
+                loudness: list[float] | None = None
                 ) -> tuple[list[SpeakerLabel], dict[str, np.ndarray]]:
         """Label each clip; ``times`` (clip midpoints) are used for short-clip fallback.
 
@@ -125,28 +209,18 @@ class Diarizer:
             unnamed: dict[str, np.ndarray] = {}
             if joint.size >= min_len:
                 emb = self.embedder.embed(joint)
-                match = self._match(emb, set())
-                if match:
-                    label = match
-                else:
-                    unnamed[label.name] = emb
+                (label,), unnamed = self.name_clusters([emb])
             return [label] * len(clips), unnamed
         embs = np.stack([self.embedder.embed(clips[i]) for i in idx])
         cids = cluster(embs, self.cluster_threshold)
-        names: dict[int, SpeakerLabel] = {}
-        unnamed: dict[str, np.ndarray] = {}
-        unknown = 0
-        taken: set[str] = set()
-        for cid in sorted(set(cids)):
-            centroid = _normalize(embs[[j for j, c in enumerate(cids) if c == cid]].mean(axis=0))
-            label = self._match(centroid, taken)
-            if label is None:
-                unknown += 1
-                label = SpeakerLabel(f"Speaker {unknown}", False)
-                unnamed[label.name] = centroid
-            else:
-                taken.add(label.name)
-            names[cid] = label
+        n = max(cids) + 1
+        centroids = [_normalize(embs[[j for j, c in enumerate(cids) if c == cid]].mean(axis=0))
+                     for cid in range(n)]
+        loud = None
+        if loudness is not None:
+            loud = [float(np.mean([loudness[idx[j]] for j, c in enumerate(cids) if c == cid]))
+                    for cid in range(n)]
+        names, unnamed = self.name_clusters(centroids, loud)
         out: list[SpeakerLabel | None] = [None] * len(clips)
         for j, i in enumerate(idx):
             out[i] = names[cids[j]]
@@ -158,33 +232,94 @@ class Diarizer:
                 out[i] = out[int(nearest)]
         return [o for o in out if o is not None], unnamed
 
-    def _match(self, centroid: np.ndarray, taken: set[str]) -> SpeakerLabel | None:
-        best: tuple[float, EnrolledVoice] | None = None
-        for v in self.voices:
-            if v.name in taken:
+    def name_clusters(self, centroids: list[np.ndarray], loudness: list[float] | None = None
+                      ) -> tuple[list[SpeakerLabel], dict[str, np.ndarray]]:
+        """Name each cluster (in order of first appearance) from the enrolled voices."""
+        scores = np.array([[v.score(c) for v in self.voices] for c in centroids],
+                          dtype=np.float32).reshape(len(centroids), len(self.voices))
+        names: dict[int, SpeakerLabel] = {}
+        # best pairs first, so a weak early cluster can't take a voice a later one fits better
+        pairs = sorted(((float(scores[c, v]), c, v) for c in range(len(centroids))
+                        for v in range(len(self.voices))), reverse=True)
+        used: set[int] = set()
+        for s, c, v in pairs:
+            if s < self.match_threshold:
+                break
+            if c in names or v in used:
                 continue
-            s = float(centroid @ _normalize(v.embedding))
-            if s >= self.match_threshold and (best is None or s > best[0]):
-                best = (s, v)
-        return SpeakerLabel(best[1].name, best[1].is_owner) if best else None
+            names[c] = SpeakerLabel(self.voices[v].name, self.voices[v].is_owner)
+            used.add(v)
+        owner = self._owner_hint(scores, names, used, loudness)
+        if owner is not None:
+            c, v = owner
+            names[c] = SpeakerLabel(self.voices[v].name, True)
+        out: list[SpeakerLabel] = []
+        unnamed: dict[str, np.ndarray] = {}
+        unknown = 0
+        for c in range(len(centroids)):
+            if c not in names:
+                unknown += 1
+                names[c] = SpeakerLabel(f"Speaker {unknown}", False)
+                unnamed[names[c].name] = centroids[c]
+            out.append(names[c])
+        return out, unnamed
+
+    def _owner_hint(self, scores: np.ndarray, names: dict[int, SpeakerLabel], used: set[int],
+                    loudness: list[float] | None) -> tuple[int, int] | None:
+        owner = next((v for v, voice in enumerate(self.voices) if voice.is_owner), None)
+        if (owner is None or owner in used or loudness is None or len(loudness) < 2
+                or self.owner_hint_margin <= 0):
+            return None
+        loudest = int(np.argmax(loudness))
+        others = [x for i, x in enumerate(loudness) if i != loudest]
+        if loudest in names or loudness[loudest] - max(others) < self.owner_hint_db:
+            return None
+        if scores[loudest, owner] < self.match_threshold - self.owner_hint_margin:
+            return None
+        # not if the cluster looks more like someone else than like the owner
+        if int(np.argmax(scores[loudest])) != owner:
+            return None
+        return loudest, owner
 
 
 def load_voices(store: Any) -> list[EnrolledVoice]:
     """Enrolled voices from ``Store.speakers()``."""
-    return [EnrolledVoice(s["name"], s["embedding"], s["is_owner"]) for s in store.speakers()]
+    return [EnrolledVoice(s["name"], s["embedding"], s["is_owner"],
+                          s.get("samples", np.zeros((0, 0), np.float32)))
+            for s in store.speakers()]
+
+
+# Enrollment audio is cut into samples of this length, so a profile keeps several
+# voice samples (different words, pitch, loudness) instead of one average.
+ENROLL_SAMPLE_SECONDS = 9.0
 
 
 def enroll_voice(store: Any, embedder: SpeakerEmbedder, name: str, audio: np.ndarray,
-                 is_owner: bool = False) -> None:
-    """Store a voice profile for ``name`` from an enrollment recording (speech only)."""
-    store.put_speaker(name, enrollment_embedding(embedder, audio), is_owner)
+                 is_owner: bool = False) -> int:
+    """Store a voice profile for ``name`` from an enrollment recording (speech only).
+
+    Replaces the person's earlier enrollment samples (samples learned from named
+    speakers are kept). Returns the number of samples stored.
+    """
+    samples = enrollment_samples(embedder, audio)
+    store.put_speaker(name, _normalize(np.mean(samples, axis=0)), is_owner,
+                      samples=samples, source="enrolled")
+    return len(samples)
 
 
-def enrollment_embedding(embedder: SpeakerEmbedder, audio: np.ndarray,
-                         window_seconds: float = 3.0) -> np.ndarray:
-    """Average embedding over windows of an enrollment recording (>= ~20 s of speech)."""
+def enrollment_samples(embedder: SpeakerEmbedder, audio: np.ndarray,
+                       window_seconds: float = DIARIZATION_WINDOW,
+                       sample_seconds: float = ENROLL_SAMPLE_SECONDS) -> list[np.ndarray]:
+    """One sample per ``sample_seconds`` of speech (mean of 3 s window embeddings)."""
     win = int(window_seconds * SAMPLE_RATE)
     if audio.size < win:
         raise ValueError("enrollment audio must contain at least a few seconds of speech")
     vecs = [embedder.embed(audio[i:i + win]) for i in range(0, audio.size - win + 1, win)]
-    return _normalize(np.mean(vecs, axis=0))
+    per = max(1, int(round(sample_seconds / window_seconds)))
+    return [_normalize(np.mean(vecs[i:i + per], axis=0)) for i in range(0, len(vecs), per)]
+
+
+def enrollment_embedding(embedder: SpeakerEmbedder, audio: np.ndarray,
+                         window_seconds: float = DIARIZATION_WINDOW) -> np.ndarray:
+    """Average embedding over windows of an enrollment recording (>= ~20 s of speech)."""
+    return _normalize(np.mean(enrollment_samples(embedder, audio, window_seconds), axis=0))

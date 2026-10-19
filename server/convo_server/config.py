@@ -65,8 +65,22 @@ class Settings(BaseSettings):
 
     # Diarization
     diarization: bool = True
+    # "ecapa": cluster one voiceprint per transcript piece (no extra install).
+    # "pyannote": pyannote.audio community-1 pipeline, local (extra `pyannote`).
+    diarizer: str = "ecapa"
+    # Hugging Face id or a local directory. Cloud (pyannoteAI) pipelines are refused.
+    pyannote_model: str = "pyannote-community/speaker-diarization-community-1"
+    pyannote_device: str = "auto"  # auto (cuda if available), cuda or cpu
     speaker_match_threshold: float = 0.50  # cosine similarity to enrolled voice
     speaker_cluster_threshold: float = 0.45  # cosine similarity to merge clusters
+    # After a speaker is named, unnamed speakers in other conversations whose voice is at
+    # least this close are renamed too (stricter than the match threshold).
+    speaker_relabel_threshold: float = 0.60
+    # Owner hint: the wearer is usually the loudest voice. A cluster that is at least
+    # owner_hint_db louder than all others and within owner_hint_margin below the match
+    # threshold of the owner's voice is labelled as the owner. 0 margin = off.
+    owner_hint_margin: float = 0.10
+    owner_hint_db: float = 3.0
     owner_name: str = "Me"
     # Where downloaded model weights are cached (speaker models). Default: <data_dir>/models.
     models_dir: Path | None = None

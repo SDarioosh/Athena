@@ -31,8 +31,20 @@ def build_transcriber(settings: Settings) -> Transcriber | None:
 def build_diarizer(settings: Settings, store: Store) -> Diarizer | None:
     if not settings.diarization:
         return None
-    return Diarizer(EcapaEmbedder(settings.model_cache), load_voices(store),
-                    settings.speaker_match_threshold, settings.speaker_cluster_threshold)
+    args = dict(match_threshold=settings.speaker_match_threshold,
+                cluster_threshold=settings.speaker_cluster_threshold,
+                owner_hint_margin=settings.owner_hint_margin,
+                owner_hint_db=settings.owner_hint_db)
+    embedder = EcapaEmbedder(settings.model_cache)
+    if settings.diarizer == "pyannote":
+        from .diarize_pyannote import PyannoteDiarizer, PyannoteSegmenter
+
+        segmenter = PyannoteSegmenter(settings.pyannote_model, settings.model_cache / "pyannote",
+                                      settings.pyannote_device)
+        return PyannoteDiarizer(embedder, load_voices(store), segmenter, **args)
+    if settings.diarizer != "ecapa":
+        raise SystemExit("CONVO_DIARIZER must be ecapa or pyannote")
+    return Diarizer(embedder, load_voices(store), **args)
 
 
 def build_pipeline(settings: Settings) -> Pipeline:
