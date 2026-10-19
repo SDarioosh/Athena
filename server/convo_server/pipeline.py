@@ -9,9 +9,9 @@ make_digest   -> daily digest over the day's summarized conversations
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
-import shutil
 import threading
 import time
 import uuid
@@ -179,28 +179,34 @@ class Pipeline:
                 raise KeyError(session_id)
             self.store.set_session_status(session_id, "processing")
             try:
-                segments, ranges = self._transcribe_session(session_id)
+                segments, ranges, done = self._transcribe_session(session_id)
             except Exception as e:  # keep audio so the session can be retried
                 log.exception("transcription failed for %s", session_id)
-                self.store.set_session_status(session_id, "failed", f"{type(e).__name__}: {e}")
+                self.store.set_session_status(session_id, "failed", f"{type(e).__name__}: {e}",
+                                              only_if="processing")
                 return
             self.store.replace_segments(session_id, sess["device"], segments, ranges)
             if not self.settings.keep_audio:
-                self._delete_audio(session_id, sess["device"])
+                # Only the chunks transcribed here: one uploaded meanwhile waits for the
+                # next pass (add_chunk set the session back to 'ended').
+                self._delete_audio(session_id, sess["device"], done)
             self.store.delete_empty_conversations()
             touched = self._assign_conversations(session_id, sess["device"])
-            self.store.set_session_status(session_id, "done")
+            self.store.set_session_status(session_id, "done", only_if="processing")
         for conv_id in touched:
             self.summarize_conversation(conv_id)
 
     def _transcribe_session(
         self, session_id: str
-    ) -> tuple[list[Segment], list[tuple[float, float]]]:
-        """Transcribe chunks that still have audio; return segments + covered time ranges."""
+    ) -> tuple[list[Segment], list[tuple[float, float]], list[dict[str, Any]]]:
+        """Transcribe chunks that still have audio.
+
+        Returns segments, the covered time ranges and the chunks that were transcribed.
+        """
         chunks = [c for c in self.store.chunks(session_id) if c["audio_path"]]
         ranges = [(c["started_at"], c["started_at"] + c["duration"]) for c in chunks]
         if not any(c["speech"] for c in chunks):
-            return [], ranges
+            return [], ranges, chunks
         if self.transcriber is None:
             raise RuntimeError("no transcriber configured (set CONVO_WHISPER_SERVER_URL)")
         prompt = self.whisper_prompt()
@@ -228,7 +234,7 @@ class Pipeline:
             name, owner = (labels[i].name, labels[i].is_owner) if labels else ("Unknown", False)
             segments.append(Segment(started_at=s, ended_at=e, text=text, speaker=name,
                                     is_owner=owner))
-        return segments, ranges
+        return segments, ranges, chunks
 
     def whisper_prompt(self) -> str:
         """CONVO_WHISPER_PROMPT plus the names of known speakers, for whisper's spelling."""
@@ -278,13 +284,15 @@ class Pipeline:
         data = Path(chunk["audio_path"]).read_bytes()
         return audio_mod.decode(data, chunk["codec"])
 
-    def _delete_audio(self, session_id: str, device: str) -> None:
-        for c in self.store.chunks(session_id):
+    def _delete_audio(self, session_id: str, device: str,
+                      chunks: list[dict[str, Any]]) -> None:
+        for c in chunks:
             if c["audio_path"]:
                 Path(c["audio_path"]).unlink(missing_ok=True)
-        d = self.settings.audio_dir / device / session_id
-        shutil.rmtree(d, ignore_errors=True)
-        self.store.clear_chunk_audio(session_id)
+        self.store.clear_chunk_audio(session_id, [c["sequence"] for c in chunks])
+        # rmdir, not rmtree: an upload in flight has its .part file in this folder.
+        with contextlib.suppress(OSError):
+            (self.settings.audio_dir / device / session_id).rmdir()
 
     def _assign_conversations(self, session_id: str, device: str) -> list[str]:
         gap = self.settings.conversation_gap_seconds

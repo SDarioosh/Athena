@@ -5,8 +5,13 @@ ESP-IDF firmware for the wearable recorders. One firmware, one board layer:
 Plan: [`docs/t-watch-ultra-plan.md`](../../docs/t-watch-ultra-plan.md) (§6 layout, §8
 milestones) and [`docs/xiao-esp32s3-sense-plan.md`](../../docs/xiao-esp32s3-sense-plan.md).
 
-**Status: milestone 1, bring-up test firmware for the LilyGO T-Watch Ultra.** No BLE, no
-Wi-Fi (not initialised and not linked), no Opus, no speech gate yet.
+**Status: milestone 1 verified on the owner's watch; the BLE upload path (plan milestones
+5–6) is built and host-tested but not yet run on hardware.** Recording sessions are encoded
+to Opus and queued on the SD card; a phone ([`android-relay/`](../../android-relay)) or a PC
+([`tools/ble_relay.py`](tools/ble_relay.py)) drains them over BLE and uploads them to the
+server. The protocol: [`docs/twatch-ble-protocol.md`](../../docs/twatch-ble-protocol.md).
+Wi-Fi is never initialised and not linked. No speech gate yet (milestone 4): a session
+records everything between start and stop.
 
 ## What it does (T-Watch Ultra)
 
@@ -20,14 +25,22 @@ Wi-Fi (not initialised and not linked), no Opus, no speech gate yet.
 - **PWR short press**: status screen for ~5 s (recording/muted, battery %, voltage, time,
   SD), then the display rail goes off again.
 - **BOOT short press**: toggle mute. 1 buzz = recording, 2 buzzes = muted.
-- **BOOT long press (1 s)**: logs "sync now" (placeholder for BLE).
-- **BOOT held + PWR short press**, or `rec` on the console: records 60 s from the PDM mic
-  (16 kHz, mono, 16-bit) to `/sdcard/rec_<UTC time>.wav`, then powers the card off. The
-  log line `recorder: level at ...` gives the file's RMS, peak, DC offset, clipped samples
-  and how often the limiter acted.
-  **Stop early** with BOOT held + PWR short press again, `stop` on the console, or mute
-  (BOOT short press): the file keeps what was recorded so far. Releasing BOOT after the
-  combination doesn't count as a BOOT press.
+- **BOOT held + PWR short press**, or `session start`: starts a **recording session**
+  (1 buzz). The mic is encoded to Opus and written as 30 s Ogg/Opus chunks to
+  `/sdcard/q/` (the upload queue). The same combination again, `session stop`, or mute
+  ends it (1 buzz; 3 buzzes if it ended on its own: card full or an error). Releasing BOOT
+  after the combination doesn't count as a BOOT press.
+- **BOOT long press (1 s)**, or `sync` / `ble pair`: opens the **BLE sync window** for 2
+  minutes (1 buzz): the watch advertises and a new phone or PC may pair. Outside the window
+  only already-paired relays get in.
+- **Uploads**: the watch advertises only when something is waiting (a finished session, or
+  10 min of audio from a running one, or anything queued after an hour without a sync).
+  The relay connects, sets the watch's clock, pulls each chunk, uploads it to the server,
+  and only then tells the watch to delete it (protocol §1, §6).
+- **`rec [s]`** (console only): the milestone-1 test, N seconds (default 60) from the mic to
+  `/sdcard/rec_<UTC time>.wav`. The log line `recorder: level at ...` gives the file's RMS,
+  peak, DC offset, clipped samples and how often the limiter acted. `stop` or mute ends it
+  early.
 - **Mic conditioning** (`main/audio_dsp.c`, applied inside `mic_read()`): 100 Hz high-pass,
   the board's EQ, gain (default +30 dB), and a limiter at -1 dBFS. The ESP32-S3's PDM
   converter adds no gain and no high-pass, so the raw mic level (speech at ~30 cm around
@@ -49,9 +62,73 @@ Wi-Fi (not initialised and not linked), no Opus, no speech gate yet.
   ```bash
   python firmware/recorder/tools/pull.py --port COM35 --out ~/barvis-recordings
   ```
-- USB console (`help`): `status`, `batt`, `rails`, `exp`, `time`, `rec [s]`, `stop`,
-  `level [s]`, `gain [dB]`, `eq [on|off]`, `ls`, `get <file>`, `mute`, `screen`, `sync`,
-  `sd`, `reboot`.
+- USB console (`help`): `status`, `batt`, `rails`, `exp`, `time`, `session [start|stop]`,
+  `queue [drop <id>]`, `ble [pair|forget]`, `sync`, `rec [s]`, `stop`, `level [s]`,
+  `gain [dB]`, `eq [on|off]`, `ls [q]`, `get <file>`, `mute`, `screen`, `sd`, `reboot`.
+
+## Upload path (BLE)
+
+```
+mic -> Opus (libopus, 16 kHz mono, 20 ms, 16 kbps VBR, complexity 1) -> 30 s Ogg/Opus chunks
+    -> /sdcard/q (survives reboots) -> BLE (NimBLE GATT) -> relay -> POST /v1/ingest/chunk
+```
+
+- **Opus**: [`78/esp-opus`](https://components.espressif.com/components/78/esp-opus)
+  (upstream libopus, BSD-3-Clause, fixed point with Xtensa multiply macros, MIT packaging).
+  Complexity 1: better than 0 for ~10 % more CPU; 2 and up cost ~30 % more. Estimated
+  load from instruction counts on a PC: **~0.67 M instructions per 20 ms frame, roughly
+  40–60 % of one core at 80 MHz** (so DFS will rarely drop to 40 MHz while recording).
+  The session logs the real figure: `encoder N us avg / M us max per 20 ms frame` (20000
+  us = a full core) at every chunk and at the end. If it's too high: complexity 0, cache
+  settings, or Espressif's `esp_audio_codec` (only `opus_enc.c` changes).
+- **Chunks**: each a standalone Ogg/Opus stream that decodes to exactly its length;
+  start times are contiguous; pages are written and fsynced every second, so a power cut
+  loses at most ~1 s, and the chunk being written is recovered at the next boot. Details:
+  protocol §2.
+- **Queue**: `queue` lists it (id, session, sequence, start, length, size, flags);
+  `queue drop <id>` deletes one without uploading. `ls q` / `get q/<file>` and
+  `tools/pull.py --queue` copy chunks over USB for debugging without BLE (they stay
+  queued). Recording stops when the card has less than 8 MB free.
+- **BLE**: `ble` prints the state (advertising and why, connected relay, MTU, PHY, bonds,
+  sync window, last sync, counters). `ble forget` deletes every pairing. Pairing is passkey
+  entry with LE Secure Connections: the watch shows a 6-digit code (also logged on the USB
+  console) and you type it on the phone or PC, only in the sync window (protocol §3.1). If
+  a phone paired outside the window, remove `barvis-tw` in its Bluetooth settings and pair
+  again in the window.
+
+### Drain from a PC: `tools/ble_relay.py`
+
+The phone's part, for testing before (or instead of) the Android app. Needs Python 3.10+
+and a Bluetooth adapter. The token comes from `CONVO_INGEST_TOKEN` or `--token-file`
+(there is no `--token` option, so it never lands in shell history).
+
+```bash
+python3 -m venv ~/.venvs/barvis-relay
+~/.venvs/barvis-relay/bin/pip install -r firmware/recorder/tools/requirements.txt
+
+# first time: open the sync window on the watch (BOOT long press); when the PC pairs, the
+# watch shows a 6-digit code.
+# bleak can't type it, so pair through the OS and type the code:
+#   Linux:   bluetoothctl -> agent on -> default-agent -> scan on -> pair <address>
+#   Windows: Settings > Bluetooth & devices > Add device > Bluetooth > barvis-tw
+#   macOS:   run the --list below; macOS asks for the code
+~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py --list
+
+export BARVIS_SERVER=http://<server>:8000
+export CONVO_INGEST_TOKEN=...            # or --token-file ~/.config/barvis/token (chmod 600)
+~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py --once   # drain once
+~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py          # keep relaying
+```
+
+Windows (PowerShell): `py -m venv $HOME\venvs\barvis-relay`, then
+`$env:BARVIS_SERVER="http://<server>:8000"; $env:CONVO_INGEST_TOKEN="..."` and
+`& $HOME\venvs\barvis-relay\Scripts\python firmware\recorder\tools\ble_relay.py --once`.
+
+Other options: `--list` (show the watch's status and queue, change nothing), `--dry-run
+--save DIR` (pull and check chunks into a folder outside the repo, no upload, no ack),
+`--address`, `--scan-timeout`, `-v`. Exit codes: 0 ok, 1 some chunks skipped, 2 retry
+later (server, link or no adapter), 3 token rejected or bad settings, 4 watch not found.
+Tests (no Bluetooth needed): `python -m pytest -q firmware/recorder/tools`.
 
 ## Build
 
@@ -88,7 +165,8 @@ Exit the monitor with `Ctrl-]`. Log output and the `recorder>` console share the
 ## Host tests
 
 The pure parts (WAV header, calendar/ISO-8601, PCF85063A BCD codec, 5x7 font and text
-rendering) build and run on the host without ESP-IDF:
+rendering, CRC-32, the Ogg/Opus writer and page scanner, the chunk queue, the BLE protocol
+codec and command handler) build and run on the host without ESP-IDF:
 
 ```bash
 cmake -S firmware/recorder/test -B build-host && cmake --build build-host
@@ -107,7 +185,15 @@ firmware/recorder/
 │   ├── board.h               # the board interface
 │   ├── app_main.c            # events: buttons, console, recorder, screen timer
 │   ├── mic.[ch]              # I2S PDM RX + conditioning (shared; pins, EQ from the board)
-│   ├── recorder.[ch]         # milestone-1 WAV test recorder
+│   ├── session_rec.[ch]      # recording session: mic -> Opus -> chunks
+│   ├── opus_enc.[ch]         # libopus wrapper (78/esp-opus)
+│   ├── ogg_opus.[ch]         # Ogg/Opus writer + page scanner (pure, host-tested)
+│   ├── chunk_queue.[ch]      # the queue on /sdcard/q (pure, host-tested)
+│   ├── chunk_store.[ch]      # thread-safe queue with card access, used by BLE and the recorder
+│   ├── ble_proto.[ch]        # BLE protocol codec + command handler (pure, host-tested)
+│   ├── ble_sync.[ch]         # NimBLE GATT server, advertising, pairing window
+│   ├── crc32.[ch]            # zlib-compatible CRC-32
+│   ├── recorder.[ch]         # milestone-1 WAV test recorder (console `rec`)
 │   ├── ui.[ch]               # status screen (text bands, no LVGL)
 │   ├── console_cmds.[ch]     # esp_console commands over USB Serial/JTAG
 │   ├── audio_dsp.[ch]        # high-pass, EQ, gain, limiter (pure, host-tested)
@@ -120,12 +206,15 @@ firmware/recorder/
 │   ├── sdcard.[ch]           # SD over SPI (bus shared with LoRa/NFC, their CS Hi-Z)
 │   └── idf_component.yml
 ├── test/                     # host tests (plain CMake + ctest)
-└── tools/pull.py             # copy recordings off the card over USB
+├── tools/pull.py             # copy recordings (or --queue chunks) off the card over USB
+└── tools/ble_relay.py        # PC relay: drain the watch over BLE, upload (barvis_relay/, tests/)
 ```
 
 ## Third-party code
 
 - `espressif/esp_lcd_co5300` (Apache-2.0) from the ESP-IDF component registry.
+- `78/esp-opus` (libopus, BSD-3-Clause, Xiph.Org; MIT packaging) from the registry.
+- NimBLE (Apache-2.0), part of ESP-IDF.
 - The CO5300 init sequence in `display.c` and the fuel-gauge battery model in
   `board_twatch_ultra.c` are copied from
   [LilyGoLib](https://github.com/Xinyuan-LilyGO/LilyGoLib) (MIT, Copyright (c) 2024
@@ -142,3 +231,8 @@ stereo capture, the inverted clock edge and a 2.048 MHz PDM clock all read the s
 defaults. SD card detect is confirmed (P12: LOW with a card, HIGH without). Still open: a
 recording through the server pipeline, and tuning gain and EQ by transcription accuracy
 (milestone 3).
+
+The BLE upload path has not run on hardware at all yet: Opus encode time and CPU load at
+80 MHz, BLE throughput, pairing with Android and BlueZ, power-cut recovery on a real card,
+`fsync` once a second (SD power and wear), the advertising and connection current, and
+the runtime heap after BLE starts. The PR's Server verification section has the steps.

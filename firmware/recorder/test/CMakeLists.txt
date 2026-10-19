@@ -21,14 +21,28 @@ add_library(recorder_pure STATIC
     ${FW}/main/textfb.c
     ${FW}/boards/twatch_ultra/board/pcf85063a_codec.c
 )
+# Pure modules of the BLE upload path (docs/twatch-ble-protocol.md), added when present.
+foreach(src ogg_opus.c chunk_queue.c ble_proto.c crc32.c)
+    if(EXISTS ${FW}/main/${src})
+        target_sources(recorder_pure PRIVATE ${FW}/main/${src})
+    endif()
+endforeach()
 target_include_directories(recorder_pure PUBLIC ${FW}/main ${FW}/boards/twatch_ultra/board)
 if(UNIX)
     target_link_libraries(recorder_pure PUBLIC m) # libm: audio_stats.c, audio_dsp.c
 endif()
 
 enable_testing()
-foreach(t test_audio_dsp test_audio_stats test_wav test_isotime test_textfb test_pcf85063a_codec)
+set(TESTS test_audio_dsp test_audio_stats test_wav test_isotime test_textfb test_pcf85063a_codec)
+foreach(t test_ogg_opus test_chunk_queue test_ble_proto test_crc32)
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${t}.c)
+        list(APPEND TESTS ${t})
+    endif()
+endforeach()
+foreach(t ${TESTS})
     add_executable(${t} ${t}.c)
     target_link_libraries(${t} recorder_pure)
     add_test(NAME ${t} COMMAND ${t})
+    # Tests that need scratch files get their own folder in the build tree.
+    set_tests_properties(${t} PROPERTIES ENVIRONMENT "TEST_TMPDIR=${CMAKE_CURRENT_BINARY_DIR}/tmp_${t}")
 endforeach()

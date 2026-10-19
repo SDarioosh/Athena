@@ -308,7 +308,10 @@ class Store:
                     " last_speech_at = CASE WHEN ? IS NULL THEN last_speech_at"
                     "   ELSE MAX(COALESCE(last_speech_at, 0), ?) END,"
                     " received_at = ?,"
-                    " status = CASE WHEN status IN ('done','failed') THEN 'ended' ELSE status END"
+                    # A chunk for a session being processed or already processed sends
+                    # it back for another pass (store-and-forward relays upload late).
+                    " status = CASE WHEN status IN ('processing','done','failed') THEN 'ended'"
+                    " ELSE status END"
                     " WHERE id = ?",
                     (started_at, end, last_speech, last_speech, now, session_id),
                 )
@@ -322,10 +325,16 @@ class Store:
                 (reason, session_id),
             )
 
-    def set_session_status(self, session_id: str, status: str, error: str | None = None) -> None:
+    def set_session_status(self, session_id: str, status: str, error: str | None = None,
+                           *, only_if: str | None = None) -> bool:
+        """Set the status; with ``only_if``, only while the session still has that status."""
+        sql, params = "UPDATE sessions SET status = ?, error = ? WHERE id = ?", [status, error,
+                                                                                session_id]
+        if only_if is not None:
+            sql += " AND status = ?"
+            params.append(only_if)
         with self.tx() as c:
-            c.execute("UPDATE sessions SET status = ?, error = ? WHERE id = ?",
-                      (status, error, session_id))
+            return c.execute(sql, params).rowcount > 0
 
     def idle_sessions(self, received_before: float) -> list[str]:
         rows = self._q("SELECT id FROM sessions WHERE status = 'recording' AND received_at < ?",
@@ -348,9 +357,16 @@ class Store:
             r["speech"] = [tuple(s) for s in json.loads(r["speech"])]
         return rows
 
-    def clear_chunk_audio(self, session_id: str) -> None:
+    def clear_chunk_audio(self, session_id: str, sequences: Iterable[int] | None = None) -> None:
+        """Forget the audio of the given chunks (all chunks of the session if None)."""
         with self.tx() as c:
-            c.execute("UPDATE chunks SET audio_path = NULL WHERE session_id = ?", (session_id,))
+            if sequences is None:
+                c.execute("UPDATE chunks SET audio_path = NULL WHERE session_id = ?",
+                          (session_id,))
+            else:
+                c.executemany(
+                    "UPDATE chunks SET audio_path = NULL WHERE session_id = ? AND sequence = ?",
+                    [(session_id, seq) for seq in sequences])
 
     # ---------------------------------------------------------------- segments
     def replace_segments(self, session_id: str, device: str, segments: list[Segment],

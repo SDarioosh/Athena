@@ -23,8 +23,48 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 CONFIG_LOG_COLORS=n
 
-# Radios: nothing is initialised and nothing is linked (see CMakeLists.txt), so there is
-# no BT/Wi-Fi Kconfig to turn off here.
+# Radios: BLE only, NimBLE host (main/ble_sync.c, docs/twatch-ble-protocol.md). Wi-Fi is
+# never initialised and not linked (CMakeLists.txt builds only what main pulls in).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+# Peripheral / GATT server only: the relay is the central.
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_GATT_CLIENT=n
+CONFIG_BT_NIMBLE_GATT_SERVER=y
+# One relay at a time: one connection, plus one advertising set in the controller.
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_CTRL_BLE_MAX_ACT=2
+# ATT MTU up to 517: a DATA frame then carries 505 bytes.
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=517
+# BLE 5: 2M PHY for the transfer burst. Coded PHY and extended advertising aren't used
+# (legacy advertising keeps the relay's scan filter simple).
+CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT=y
+CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_2M_PHY=y
+CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_CODED_PHY=n
+CONFIG_BT_NIMBLE_EXT_ADV=n
+# Pairing (§3.1): LE Secure Connections only (legacy pairing compiled out), passkey shown
+# on the watch screen (MITM-protected), bonds kept in NVS, at most 4.
+CONFIG_BT_NIMBLE_SECURITY_ENABLE=y
+CONFIG_BT_NIMBLE_SM_LEGACY=n
+CONFIG_BT_NIMBLE_SM_SC=y
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+CONFIG_BT_NIMBLE_MAX_BONDS=4
+CONFIG_BT_NIMBLE_MAX_CCCDS=8
+# Notification bursts: room for a few 514-byte frames in flight (each spans 3 blocks).
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=32
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_SIZE=256
+CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
+# The controller sleeps between radio events and lets DFS drop the CPU clock; without
+# this it holds the APB clock at max for as long as BT is enabled. Main crystal as the
+# sleep clock: the only source that works with DFS without an external 32 kHz crystal,
+# and none is known to be wired to the ESP32-S3 on the T-Watch Ultra.
+CONFIG_BT_CTRL_MODEM_SLEEP=y
+CONFIG_BT_CTRL_MODEM_SLEEP_MODE_1=y
+CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y
+# TX power: the controller default (+9 dBm). Lower it after milestone 2 measures range.
 
 # FAT on the SD card: long file names
 CONFIG_FATFS_LFN_HEAP=y

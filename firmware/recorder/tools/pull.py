@@ -8,6 +8,10 @@ are skipped.
 
     python firmware/recorder/tools/pull.py --port COM35 --out ~/barvis-recordings
     python firmware/recorder/tools/pull.py --port /dev/ttyACM0 --out rec rec_unset_8.wav
+    python firmware/recorder/tools/pull.py --port COM35 --out ~/barvis-chunks --queue
+
+`--queue` copies the Ogg/Opus chunks waiting for the phone (`/sdcard/q`) instead of the WAV
+test recordings, for debugging without BLE. They stay queued on the watch.
 
 Keep the output folder outside the repository: recordings must never be committed.
 Needs pyserial (it comes with ESP-IDF's Python environment).
@@ -62,8 +66,8 @@ def command(s: serial.Serial, cmd: str, done: re.Pattern[str], timeout: float) -
     raise TimeoutError(f"`{cmd}`: no reply within {timeout} s")
 
 
-def list_card(s: serial.Serial) -> dict[str, int]:
-    lines = command(s, "ls", re.compile(r"^\d+ file\(s\)$|^mount failed|^recording in progress"), 15)
+def list_card(s: serial.Serial, queue: bool = False) -> dict[str, int]:
+    lines = command(s, "ls q" if queue else "ls", re.compile(r"^\d+ file\(s\)$|^mount failed|^recording in progress"), 15)
     if not re.match(r"^\d+ file\(s\)$", lines[-1]):
         raise RuntimeError(f"ls: {lines[-1]}")
     return {m.group(2): int(m.group(1)) for m in map(LS_LINE.match, lines) if m}
@@ -93,20 +97,24 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--port", required=True, help="serial port, e.g. COM35 or /dev/ttyACM0")
     ap.add_argument("--out", required=True, type=Path, help="folder to save into (outside the repo)")
+    ap.add_argument("--queue", action="store_true",
+                    help="copy the queued Opus chunks (q/*.opus) instead of the WAV files")
     ap.add_argument("files", nargs="*", help="file names (default: every .wav on the card)")
     args = ap.parse_args()
 
     out: Path = args.out.expanduser()
     out.mkdir(parents=True, exist_ok=True)
     with open_port(args.port) as s:
-        on_card = list_card(s)
-        names = args.files or sorted(n for n in on_card if n.lower().endswith(".wav"))
+        on_card = list_card(s, args.queue)
+        ext = ".opus" if args.queue else ".wav"
+        names = args.files or sorted(n for n in on_card if n.lower().endswith(ext))
         if not names:
-            print("no .wav files on the card")
+            print(f"no {ext} files on the card")
             return 0
         failed = 0
         for name in names:
             dest = out / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
             if name in on_card and dest.exists() and dest.stat().st_size == on_card[name]:
                 print(f"skip  {name} (already here)")
                 continue

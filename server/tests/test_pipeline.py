@@ -261,3 +261,31 @@ def test_worker_backs_off_on_failed_summaries(pipeline, monkeypatch):
     tick(delay)  # both are due: one pass summarizes both
     assert store.conversations_with_status("failed") == []
     assert len(store.conversations_with_status("summarized")) == 2
+
+
+def test_chunk_arriving_during_processing_is_not_lost(pipeline):
+    """BLE relays upload a stopped session in a burst; the server may already process the
+    session (silence stop, idle) while later chunks still arrive. Those chunks must keep
+    their audio and be transcribed in the next pass, not be deleted unheard."""
+    ingest(pipeline, 0, np.concatenate([tone(200, 5), silence(25)]))
+    pipeline.end_session("s1")
+    transcribe = pipeline.transcriber.transcribe
+    arrived = []
+
+    def transcribe_and_upload_late_chunk(audio, prompt=""):
+        if not arrived:  # the relay's next upload lands mid-processing
+            arrived.append(ingest(pipeline, 1, np.concatenate([tone(600, 5), silence(25)])))
+        return transcribe(audio, prompt)
+
+    pipeline.transcriber.transcribe = transcribe_and_upload_late_chunk
+    pipeline.process_pending()
+    store = pipeline.store
+    late = store.chunks("s1")[1]
+    assert late["audio_path"] and Path(late["audio_path"]).exists()
+    assert store.get_session("s1")["status"] == "ended"  # picked up by the next pass
+
+    pipeline.process_pending()
+    assert store.get_session("s1")["status"] == "done"
+    assert [s.text for s in store.session_segments("s1")] == ["words at 200 hz",
+                                                              "words at 600 hz"]
+    assert all(c["audio_path"] is None for c in store.chunks("s1"))
