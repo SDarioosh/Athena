@@ -168,7 +168,8 @@ static int64_t s_status_sent_ms;
 static uint8_t s_frame[BLE_PROTO_FRAME_MAX];
 static char s_info[96];
 static struct {
-    uint32_t connections, rejected, commands, frames, acked, retries, link_lost, host_resets;
+    uint32_t connections, rejected, commands, frames, acked, retries, link_lost, host_resets,
+        read_retries;
     uint64_t bytes;
 } s_stats;
 
@@ -626,7 +627,22 @@ static int st_read(void *ctx, uint32_t chunk_id, uint32_t offset, uint8_t *buf, 
     if (rc != 0) {
         return rc;
     }
-    const esp_err_t err = chunk_store_read(chunk_id, offset, buf, len, got);
+    /* Retry before failing the READ: right after an ACK (two deletes) the card sometimes
+     * answers a read late or garbled (sdspi 0x107/0x108); the same blocks read fine a
+     * moment later. A failed read closes the file, so a retry reopens it cleanly. */
+    static const int retry_ms[] = {20, 100, 300};
+    esp_err_t err = chunk_store_read(chunk_id, offset, buf, len, got);
+    for (size_t i = 0; err != ESP_OK && err != ESP_ERR_NOT_FOUND &&
+                       i < sizeof(retry_ms) / sizeof(retry_ms[0]);
+         i++) {
+        vTaskDelay(pdMS_TO_TICKS(retry_ms[i]));
+        s_stats.read_retries++;
+        err = chunk_store_read(chunk_id, offset, buf, len, got);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "read chunk %" PRIu32 " @%" PRIu32 ": ok on retry %u", chunk_id, offset,
+                     (unsigned)(i + 1));
+        }
+    }
     if (err == ESP_ERR_NOT_FOUND) {
         return BLE_PROTO_E_NOT_FOUND;
     }
@@ -1343,7 +1359,8 @@ void ble_sync_print(void)
     }
     printf("counters: %" PRIu32 " connections, %" PRIu32 " refused, %" PRIu32 " commands, %" PRIu32
            " frames, %" PRIu64 " bytes read, %" PRIu32 " acked, %" PRIu32 " send retries, %" PRIu32
-           " links lost, %" PRIu32 " host resets\n",
+           " links lost, %" PRIu32 " host resets, %" PRIu32 " SD read retries\n",
            s_stats.connections, s_stats.rejected, s_stats.commands, s_stats.frames, s_stats.bytes,
-           s_stats.acked, s_stats.retries, s_stats.link_lost, s_stats.host_resets);
+           s_stats.acked, s_stats.retries, s_stats.link_lost, s_stats.host_resets,
+           s_stats.read_retries);
 }
