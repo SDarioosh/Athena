@@ -1,7 +1,9 @@
 # Plan: Seeed Studio XIAO ESP32-S3 Sense as a convo-ai recorder
 
-Status: **plan only, nothing implemented.** Implementation waits for the owner to
-answer the open decisions at the end.
+Status: **plan only, nothing implemented.** The XIAO comes **after the T-Watch Ultra**,
+on the same shared firmware ([t-watch-ultra-plan.md](t-watch-ultra-plan.md), owner
+decision 2026-10-19). Decisions 3, 4 and 7 below are answered; the rest wait until XIAO
+work starts.
 
 ## Decisions so far
 
@@ -306,15 +308,18 @@ At an average of 20–35 mA: 400 mAh → ~12–20 h; 1000 mAh → ~30–50 h; 15
    true multi-day isn't reachable on the ESP32-S3?
 2. **Fallback**: if milestone 2 shows < 24 h on your battery, should we go to the
    wake-on-sound mic mod, or switch to the XIAO nRF52840 Sense?
-3. **Framework**: ESP-IDF (recommended for power control) or Arduino-on-IDF?
-4. **Server late-chunk policy** (§5.1): finalise on explicit `/end` + 24 h safety timeout
-   + re-open on late chunks. OK?
+3. ~~**Framework**~~: **decided 2026-10-19: ESP-IDF**, one shared firmware with the
+   T-Watch Ultra (`firmware/recorder/` plus a board layer). This replaces the
+   `firmware/xiao-esp32s3/` layout in §6.
+4. ~~**Server late-chunk policy** (§5.1)~~: **decided 2026-10-19: yes**. Finalise on
+   explicit `/end` + 24 h safety timeout + re-open on late chunks.
 5. **Extra parts**: mute button + battery divider (recommended minimum)? LED and vibration
    motor, or none?
 6. **microSD**: keep it as overflow, or run card-less and rely on PSRAM + the phone?
-7. **Omi live-audio service**: skip it (recommended), or include it as an opt-in?
+7. ~~**Omi live-audio service**~~: **decided 2026-10-19: skip it.**
 
-**Hold:** no firmware, app, or server code until these are answered.
+**Hold:** no XIAO-specific code until the open ones are answered. Shared firmware and
+server work proceed under the T-Watch Ultra plan.
 
 ## Not verified yet
 

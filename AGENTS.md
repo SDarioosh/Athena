@@ -38,7 +38,9 @@ through our MCP server. **Nothing in the data path touches the cloud.**
   recording feasibility test app; see `zepp-app/README.md`.
 - `docs/`: research and decisions (`omi-ingestion.md`,
   `frontend-decision.md`, `xiao-esp32s3-sense-plan.md`: the plan for our own
-  XIAO ESP32-S3 Sense pendant; plan only, no code until its open decisions are answered).
+  XIAO ESP32-S3 Sense pendant, which comes later; `t-watch-ultra-plan.md`: the same
+  recorder on the LilyGO T-Watch Ultra, built first, with one shared ESP-IDF firmware.
+  Both are plans; nothing is implemented yet).
 - `hermes/`: Hermes profile snippet used by the orchestrator.
 - `orchestrator/`: optional build loop. Leave it alone.
 
@@ -114,8 +116,9 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 
 | Tool | Annotation |
 |---|---|
-| `search_transcripts`, `search_conversations`, `get_conversation`, `get_transcript`, `list_action_items`, `list_facts`, `get_daily_digest`, `list_people` | read-only (`ro`: `readOnlyHint: true`) |
-| `update_action_item`, `name_speaker` | write (`rw`: `readOnlyHint: false`, `destructiveHint: false`) |
+| `search_transcripts`, `search_conversations`, `get_conversation`, `get_transcript`, `list_action_items`, `list_facts`, `get_daily_digest`, `list_people`, `list_unnamed_speakers` | read-only (`ro`: `readOnlyHint: true`) |
+| `update_action_item`, `name_speaker`, `reassign_line` | write (`rw`: `readOnlyHint: false`, `destructiveHint: false`) |
+| `rename_speaker_everywhere` | write, destructive (`rw_merge`: `readOnlyHint: false`, `destructiveHint: true`; merging two names can't be undone) |
 
 - Barvis runs read-only tools without approval because of `readOnlyHint: true`. A tool
   that changes anything must use `rw`. Never mark a write tool read-only.
