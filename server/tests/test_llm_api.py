@@ -122,6 +122,26 @@ def test_enroll_speaker(client):
     assert json.loads(too_short.text)["detail"]
 
 
+def test_enroll_speaker_json_for_the_watch(client):
+    import base64
+
+    audio = base64.b64encode(wav(tone(300, 12))).decode()
+    r = client.post("/v1/speakers/enroll.json",
+                    json={"name": "Sam", "is_owner": True, "codec": "wav", "audio_b64": audio})
+    assert r.status_code == 200, r.text
+    assert r.json()["is_owner"] is True and r.json()["speech_seconds"] > 10
+    owners = [s["name"] for s in client.get("/v1/speakers").json()["speakers"] if s["is_owner"]]
+    assert owners == ["Sam"]  # replaces the previous owner
+    bad = client.post("/v1/speakers/enroll.json",
+                      json={"name": "Sam", "codec": "wav", "audio_b64": "not base64!"})
+    assert bad.status_code == 400
+    assert client.post("/v1/speakers/enroll.json", json={"name": " ", "codec": "wav",
+                                                         "audio_b64": audio}).status_code == 400
+    unauth = client.post("/v1/speakers/enroll.json", headers={"Authorization": "Bearer nope"},
+                         json={"name": "X", "audio_b64": audio})
+    assert unauth.status_code == 401
+
+
 def test_summary_filters_placeholder_people_and_absent_owner():
     from conftest import fake_llm_transport
 

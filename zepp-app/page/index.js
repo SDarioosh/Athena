@@ -7,153 +7,22 @@
  */
 import * as hmUI from '@zos/ui'
 import { px } from '@zos/utils'
-import { create, id, codec } from '@zos/media'
-import {
-  setPageBrightTime, resetPageBrightTime, pauseDropWristScreenOff, resetDropWristScreenOff,
-  pausePalmScreenOff, resetPalmScreenOff, setWakeUpRelaunch,
-} from '@zos/display'
-import { statSync, openSync, readSync, closeSync, rmSync, O_RDONLY } from '@zos/fs'
+import { codec } from '@zos/media'
+import { rmSync } from '@zos/fs'
 import { LocalStorage } from '@zos/storage'
-import { queryPermission, requestPermission } from '@zos/app'
-import { Vibrator } from '@zos/sensor'
+import { push } from '@zos/router'
 import { BasePage } from '@zeppos/zml/base-page'
 import { createTester, summarize, BEAT_MS, CHUNK_MS } from '../shared/session'
 import { buildEnvelope } from '../shared/envelope'
 import { UPLOAD_OPTIONS } from '../shared/messaging'
+import {
+  getRecorder, releaseRecorder, currentRecorder, withMic, errText, step, recorderStatus,
+  fileSize, readFile, applyDisplay, resetDisplay, vibrate,
+} from '../utils/device'
 
 const DEVICE = 'trex3pro'
 const W = 480
 const storage = new LocalStorage()
-
-let recorder = null
-function getRecorder(onFail) {
-  if (recorder) return recorder
-  const r = create(id.RECORDER)
-  if (!r) throw new Error('create(id.RECORDER) returned nothing')
-  try {
-    r.addEventListener(r.event.START, (ok) => {
-      if (ok === false) onFail('recorder START event reported failure')
-    })
-  } catch (e) {
-    console.log('recorder event listener not available', e)
-  }
-  recorder = r
-  return r
-}
-
-const MIC = 'device:os.mic'
-const GRANTED = 2
-
-function micStatus() {
-  return queryPermission({ permissions: [MIC] })[0]
-}
-
-// Calls onGranted once the app may use the microphone, or onDenied with a reason.
-// Listing the permission in app.json is not always enough: the watch can still answer
-// "PERMISSION DENIED device:os.mic" until the user allows it in a system prompt.
-function withMic(onGranted, onDenied) {
-  let done = false
-  const finish = (ok, why) => {
-    if (done) return
-    done = true
-    if (ok) onGranted()
-    else onDenied(why)
-  }
-  let status
-  try {
-    status = micStatus()
-  } catch (e) {
-    // No permission API on this firmware: try the recorder and let it report.
-    finish(true)
-    return
-  }
-  if (status === GRANTED) return finish(true)
-  const result = requestPermission({
-    permissions: [MIC],
-    callback: () => {
-      let now = null
-      try {
-        now = micStatus()
-      } catch (e) {}
-      finish(now === GRANTED, 'microphone not allowed (answer Allow on the watch prompt)')
-    },
-  })
-  if (result === GRANTED) finish(true)
-  else if (result === 1) {
-    finish(false, 'microphone cannot be requested: allow it for Convo Rec Test in the watch or Zepp app settings, or reinstall')
-  }
-  // result 0: the watch shows a prompt and the callback decides.
-}
-
-function errText(e) {
-  return e && e.message ? e.message : String(e)
-}
-
-// Runs one recorder call and names it in the error, so the screen says which step failed.
-function step(name, fn) {
-  try {
-    return fn()
-  } catch (e) {
-    throw new Error(`${name}: ${errText(e)}`)
-  }
-}
-
-const STATUS_NAMES = ['IDLE', 'PREPARING', 'STARTING', 'RECORDING']
-
-function recorderStatus() {
-  if (!recorder || typeof recorder.getStatus !== 'function') return null
-  const status = recorder.getStatus()
-  const states = recorder.state
-  if (!states || states.RECORDING === undefined) return null
-  const name = STATUS_NAMES.find((k) => states[k] === status)
-  return { status, name: name || `unknown ${status}`, recording: status === states.RECORDING }
-}
-
-function fileSize(file) {
-  try {
-    const st = statSync({ path: file })
-    if (st && st.size !== undefined) return st.size
-  } catch (e) {}
-  return undefined
-}
-
-function readFile(file) {
-  const size = fileSize(file)
-  if (!size) return null
-  const fd = openSync({ path: file, flag: O_RDONLY })
-  const buf = new ArrayBuffer(size)
-  readSync({ fd, buffer: buf })
-  closeSync(fd)
-  return buf
-}
-
-function applyDisplay(mode) {
-  try {
-    setWakeUpRelaunch({ relaunch: true })
-    if (mode === 'screen-on') {
-      setPageBrightTime({ brightTime: 2147483000 })
-      pauseDropWristScreenOff({ duration: 0 })
-      pausePalmScreenOff({ duration: 0 })
-    }
-  } catch (e) {
-    console.log('display policy failed', e)
-  }
-}
-
-function resetDisplay() {
-  try {
-    resetPageBrightTime()
-    resetDropWristScreenOff()
-    resetPalmScreenOff()
-    setWakeUpRelaunch({ relaunch: false })
-  } catch (e) {}
-}
-
-function vibrate() {
-  try {
-    new Vibrator().start()
-  } catch (e) {}
-}
 
 function fmt(sec) {
   const m = Math.floor(sec / 60)
@@ -184,7 +53,7 @@ Page(
           stop: () => {
             if (this.state.checkTimer) clearTimeout(this.state.checkTimer)
             this.state.checkTimer = null
-            if (recorder) recorder.stop()
+            if (currentRecorder()) currentRecorder().stop()
           },
         },
         fileSize,
@@ -219,7 +88,7 @@ Page(
       if (this.state.checkTimer) clearTimeout(this.state.checkTimer)
       this.state.renderTimer = null
       this.state.checkTimer = null
-      recorder = null
+      releaseRecorder()
       this.tester.pageDestroyed()
     },
 
@@ -295,7 +164,8 @@ Page(
       this.button(this.state.uploading ? '...' : 'Upload', 40, 342, 195, 64, 0x6c3483,
         () => this.uploadAll())
       this.button('Ping', 245, 342, 195, 64, 0x5d6d7e, () => this.ping())
-      this.button('Clear', 160, 414, 160, 50, 0x424949, () => this.clearAll())
+      this.button('Clear', 60, 414, 170, 50, 0x424949, () => this.clearAll())
+      this.button('Voice', 250, 414, 170, 50, 0xb9770e, () => push({ url: 'page/enroll' }))
     },
 
     updateInfo() {

@@ -1,7 +1,8 @@
 /*
  * Side Service (runs inside the Zepp app on the phone).
  * - 'ping': GET <server>/health, to check the phone can reach the server (Tailscale).
- * - binary envelope from the watch: POST the chunk to <server>/v1/ingest/chunk.json.
+ * - binary envelope from the watch: POST the chunk to <server>/v1/ingest/chunk.json, or a
+ *   voice-profile recording (header kind "enroll") to <server>/v1/speakers/enroll.json.
  * - 'end': tell the server the session is finished.
  * Server URL and token come from the app's Settings page in the Zepp app.
  */
@@ -10,7 +11,8 @@ import { ping, uploadEnvelope, endSession } from '../shared/uploader'
 
 function config() {
   const get = (k) => (settings.settingsStorage.getItem(k) || '').trim()
-  return { url: get('serverUrl').replace(/\/+$/, ''), token: get('token') }
+  return { url: get('serverUrl').replace(/\/+$/, ''), token: get('token'),
+           ownerName: get('ownerName') }
 }
 
 AppSideService(

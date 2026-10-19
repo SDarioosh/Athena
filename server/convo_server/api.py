@@ -88,6 +88,18 @@ class ChunkJson(BaseModel):
     audio_b64: str = Field(max_length=MAX_CHUNK_BYTES * 4 // 3 + 4)
 
 
+# A guided voice-profile recording: about 60-90 s of Opus (~1.3 KB/s on the T-Rex 3 Pro);
+# 3 minutes of any codec the watch might send is plenty.
+MAX_ENROLL_BYTES = 4 * 1024 * 1024
+
+
+class EnrollJson(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    is_owner: bool = False
+    codec: str = "opus"
+    audio_b64: str = Field(max_length=MAX_ENROLL_BYTES * 4 // 3 + 4)
+
+
 class ActionItemPatch(BaseModel):
     status: str
 
@@ -306,13 +318,14 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         return d
 
     # -------------------------------------------------------------- speakers
-    @v1.post("/speakers/enroll")
-    async def enroll(audio: Annotated[bytes, File()], name: Annotated[str, Form()],
-                     is_owner: Annotated[bool, Form()] = False,
-                     codec: Annotated[str, Form()] = "wav") -> dict[str, Any]:
+    async def enroll_audio(audio: bytes, name: str, is_owner: bool,
+                           codec: str) -> dict[str, Any]:
         diarizer = pipeline.diarizer
         if diarizer is None:
             raise HTTPException(503, "diarization is not enabled")
+        name = name.strip()
+        if not name:
+            raise HTTPException(400, "name must not be empty")
         try:
             pcm = audio_mod.decode(audio, codec)
         except audio_mod.AudioDecodeError as e:
@@ -333,6 +346,24 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         return {"ok": True, "name": name, "is_owner": is_owner,
                 "speech_seconds": round(audio_mod.duration_seconds(pcm), 1),
                 "relabeled_lines": sum(r.lines for r in relabeled)}
+
+    @v1.post("/speakers/enroll")
+    async def enroll(audio: Annotated[bytes, File()], name: Annotated[str, Form()],
+                     is_owner: Annotated[bool, Form()] = False,
+                     codec: Annotated[str, Form()] = "wav") -> dict[str, Any]:
+        return await enroll_audio(audio, name, is_owner, codec)
+
+    @v1.post("/speakers/enroll.json")
+    async def enroll_json(body: EnrollJson) -> dict[str, Any]:
+        """Same as /speakers/enroll with base64 audio in JSON, for the Zepp OS Side
+        Service (its fetch can only send string bodies)."""
+        try:
+            audio = base64.b64decode(body.audio_b64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise HTTPException(400, "audio_b64 is not valid base64") from e
+        if not audio:
+            raise HTTPException(400, "empty audio")
+        return await enroll_audio(audio, body.name, body.is_owner, body.codec)
 
     @v1.get("/speakers")
     def speakers() -> dict[str, Any]:

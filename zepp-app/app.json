@@ -5,12 +5,12 @@
     "appName": "Convo Rec Test",
     "appType": "app",
     "version": {
-      "code": 5,
-      "name": "0.1.4"
+      "code": 6,
+      "name": "0.2.0"
     },
     "icon": "icon.png",
     "vender": "convo-ai",
-    "description": "Recording feasibility test: 30 s Opus chunks, screen on vs off"
+    "description": "Recording feasibility test (30 s Opus chunks, screen on vs off) and voice profile"
   },
   "permissions": ["data:os.device.info", "device:os.local_storage", "device:os.mic"],
   "runtime": {
@@ -24,7 +24,7 @@
     "trex3pro": {
       "module": {
         "page": {
-          "pages": ["page/index"]
+          "pages": ["page/index", "page/enroll"]
         },
         "app-side": {
           "path": "app-side/index"

@@ -16,6 +16,7 @@ AppSettingsPage({
       Text({ bold: true, paragraph: true }, 'convo-ai server'),
       field('serverUrl', 'Server URL', 'http://100.x.y.z:8000 (Tailscale IP)'),
       field('token', 'Ingest token', 'CONVO_INGEST_TOKEN from server/.env'),
+      field('ownerName', 'Your name (voice profile)', 'Me (same as CONVO_OWNER_NAME)'),
       Text(
         { paragraph: true, style: { fontSize: '12px', color: '#666' } },
         `URL: ${get('serverUrl') || '(not set)'} · token: ${get('token') ? 'set' : '(not set)'}`,
