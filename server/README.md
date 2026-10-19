@@ -223,13 +223,20 @@ small local model does better on narrow questions):
    gets no summary, action items or facts, and stays out of digests.
 2. **Notes** (title, summary, key points, people, topics) with a template per kind, e.g.
    decisions and owners for meetings, instructions and the next date for appointments.
-3. **Action items**, with `due_date` (YYYY-MM-DD) worked out from the conversation date
-   in `CONVO_TIMEZONE` ("by Friday" said on Wednesday 2026-10-14 → 2026-10-16).
+3. **Action items** (promises, requests, appointments), each written as a task, with
+   `due_date` (YYYY-MM-DD). When the deadline names a day ("by Friday", "October
+   thirty-first", "tomorrow") the date is worked out in code (`convo_server/dates.py`)
+   from the conversation date in `CONVO_TIMEZONE` ("by Friday" said on Wednesday
+   2026-10-14 → 2026-10-16); the model's date is used only for vaguer deadlines.
 4. **Facts**, then a **linking** call against related known facts (same subject or
    matching words): a repeat becomes another source of the known fact; a changed value
    replaces the older one (by conversation time, so re-summarizing an old conversation
-   can't overwrite newer knowledge). `list_facts` shows only current facts, each with
-   "said again" and "replaces:" lines that link every source transcript.
+   can't overwrite newer knowledge). A link is ignored unless the two facts share at
+   least two words besides their subject. `list_facts` shows only current facts, each
+   with "said again" and "replaces:" lines that link every source transcript.
+
+A re-summary (e.g. after a speaker is renamed) keeps what was known about the old items:
+the status of action items, the other sources of a fact and which facts it replaced.
 
 ## Recognition eval
 
