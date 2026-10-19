@@ -15,6 +15,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "i2c_bus.h"
 #include "isotime.h"
@@ -29,6 +30,9 @@ static const char *TAG = "board";
 static board_button_cb_t s_button_cb;
 static void *s_button_ctx;
 static TaskHandle_t s_button_task;
+/* PWR was pressed while BOOT was held (the BOOT + PWR combination): the BOOT press belongs to
+ * the combination, so its release must not also count as a BOOT press. Button task only. */
+static bool s_boot_in_combo;
 static bool s_have_pmu, s_have_expander, s_have_rtc, s_have_haptic;
 
 #define BOOT_LONG_PRESS_MS 1000
@@ -284,6 +288,9 @@ static void handle_pmu_irq(void)
         return;
     }
     if (st & AXP_IRQ_PKEY_SHORT) {
+        if (gpio_get_level(PIN_BOOT_BUTTON) == 0) {
+            s_boot_in_combo = true;
+        }
         emit(BOARD_BUTTON_PWR, BOARD_PRESS_SHORT);
     }
     if (st & AXP_IRQ_PKEY_LONG) {
@@ -324,16 +331,17 @@ static void button_task(void *arg)
         const bool down = gpio_get_level(PIN_BOOT_BUTTON) == 0;
         if (down) {
             held_ms += BUTTON_POLL_MS;
-            if (!long_fired && held_ms >= BOOT_LONG_PRESS_MS) {
+            if (!long_fired && !s_boot_in_combo && held_ms >= BOOT_LONG_PRESS_MS) {
                 long_fired = true;
                 emit(BOARD_BUTTON_BOOT, BOARD_PRESS_LONG);
             }
         } else if (was_down) {
-            if (!long_fired && held_ms >= BOOT_DEBOUNCE_MS) {
+            if (!long_fired && !s_boot_in_combo && held_ms >= BOOT_DEBOUNCE_MS) {
                 emit(BOARD_BUTTON_BOOT, BOARD_PRESS_SHORT);
             }
             held_ms = 0;
             long_fired = false;
+            s_boot_in_combo = false;
         }
         was_down = down;
     }
@@ -398,6 +406,20 @@ board_mic_pins_t board_mic_pins(void)
     return (board_mic_pins_t){.clk_gpio = PIN_MIC_CLK, .data_gpio = PIN_MIC_DATA};
 }
 
+int board_mic_eq(const board_mic_eq_band_t **bands)
+{
+    /* Measured 2026-10-19 (20 s of speech at ~30 cm, third-octave spectrum): the mic's port
+     * in the case leaves a ~10 dB hole at 1-2.5 kHz and a ~10 dB peak at 3-4 kHz, which
+     * sounds muffled. These two bands bring it close to a normal speech spectrum; the owner
+     * picked this version in a listening test. Milestone 3 refines it by transcription. */
+    static const board_mic_eq_band_t eq[] = {
+        {.hz = 1600.0f, .gain_db = 9.0f, .q = 1.0f},
+        {.hz = 3600.0f, .gain_db = -6.0f, .q = 2.0f},
+    };
+    *bands = eq;
+    return (int)(sizeof(eq) / sizeof(eq[0]));
+}
+
 bool board_storage_card_present(void)
 {
     bool high = true;
@@ -407,30 +429,47 @@ bool board_storage_card_present(void)
     return !high; /* card-detect switch pulls low when a card is in */
 }
 
+/* The recorder and console commands can use the card at the same time: count the users and
+ * power the card off only when the last one unmounts. */
+static SemaphoreHandle_t s_storage_lock;
+static StaticSemaphore_t s_storage_lock_buf;
+static int s_storage_users;
+
 esp_err_t board_storage_mount(const char **mount_point)
 {
-    if (sdcard_is_mounted()) {
+    xSemaphoreTake(s_storage_lock, portMAX_DELAY);
+    esp_err_t err = ESP_OK;
+    if (!sdcard_is_mounted()) {
+        if (!board_storage_card_present()) {
+            ESP_LOGW(TAG, "no card detected (SD_DET high); trying anyway in case the pin map is wrong");
+        }
+        err = board_rail_set(BOARD_RAIL_SD, true);
+        if (err == ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            err = sdcard_mount();
+            if (err != ESP_OK) {
+                board_rail_set(BOARD_RAIL_SD, false);
+            }
+        }
+    }
+    if (err == ESP_OK) {
+        s_storage_users++;
         *mount_point = SDCARD_MOUNT_POINT;
-        return ESP_OK;
     }
-    if (!board_storage_card_present()) {
-        ESP_LOGW(TAG, "no card detected (SD_DET high); trying anyway in case the pin map is wrong");
-    }
-    ESP_RETURN_ON_ERROR(board_rail_set(BOARD_RAIL_SD, true), TAG, "rail");
-    vTaskDelay(pdMS_TO_TICKS(20));
-    const esp_err_t err = sdcard_mount();
-    if (err != ESP_OK) {
-        board_rail_set(BOARD_RAIL_SD, false);
-        return err;
-    }
-    *mount_point = SDCARD_MOUNT_POINT;
-    return ESP_OK;
+    xSemaphoreGive(s_storage_lock);
+    return err;
 }
 
 esp_err_t board_storage_unmount(void)
 {
-    sdcard_unmount();
-    return board_rail_set(BOARD_RAIL_SD, false);
+    xSemaphoreTake(s_storage_lock, portMAX_DELAY);
+    esp_err_t err = ESP_OK;
+    if (s_storage_users > 0 && --s_storage_users == 0) {
+        sdcard_unmount();
+        err = board_rail_set(BOARD_RAIL_SD, false);
+    }
+    xSemaphoreGive(s_storage_lock);
+    return err;
 }
 
 bool board_storage_is_mounted(void)
@@ -481,6 +520,7 @@ esp_err_t board_display_off(void)
 
 esp_err_t board_init(void)
 {
+    s_storage_lock = xSemaphoreCreateMutexStatic(&s_storage_lock_buf);
     ESP_LOGI(TAG, "T-Watch Ultra bring-up");
     ESP_RETURN_ON_ERROR(i2c_bus_init(PIN_I2C_SDA, PIN_I2C_SCL), TAG, "i2c");
 

@@ -1,6 +1,8 @@
 idf_component_register(
     SRCS
         "app_main.c"
+        "audio_dsp.c"
+        "audio_stats.c"
         "console_cmds.c"
         "font5x7.c"
         "isotime.c"

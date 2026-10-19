@@ -13,6 +13,8 @@ add_compile_options(-Wall -Wextra -Werror)
 set(FW ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 add_library(recorder_pure STATIC
+    ${FW}/main/audio_dsp.c
+    ${FW}/main/audio_stats.c
     ${FW}/main/wav.c
     ${FW}/main/isotime.c
     ${FW}/main/font5x7.c
@@ -20,9 +22,12 @@ add_library(recorder_pure STATIC
     ${FW}/boards/twatch_ultra/board/pcf85063a_codec.c
 )
 target_include_directories(recorder_pure PUBLIC ${FW}/main ${FW}/boards/twatch_ultra/board)
+if(UNIX)
+    target_link_libraries(recorder_pure PUBLIC m) # libm: audio_stats.c, audio_dsp.c
+endif()
 
 enable_testing()
-foreach(t test_wav test_isotime test_textfb test_pcf85063a_codec)
+foreach(t test_audio_dsp test_audio_stats test_wav test_isotime test_textfb test_pcf85063a_codec)
     add_executable(${t} ${t}.c)
     target_link_libraries(${t} recorder_pure)
     add_test(NAME ${t} COMMAND ${t})
