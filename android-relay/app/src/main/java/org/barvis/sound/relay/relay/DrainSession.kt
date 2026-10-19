@@ -164,7 +164,8 @@ class DrainSession(
             anchor + e.startMs
         } else e.startMs
 
-        val up = uploader.upload(ChunkUpload(device, e.sessionHex, e.sequence, timestampMs, audio))
+        val up = uploader.upload(ChunkUpload(device, e.sessionHex, e.sequence, timestampMs, audio,
+            kind = if (e.isNote) ChunkUpload.KIND_NOTE else null))
         val duplicate = when (up) {
             is ServerResult.Ok -> up.duplicate
             else -> return serverError(e, up, "upload")

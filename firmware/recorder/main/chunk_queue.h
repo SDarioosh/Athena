@@ -25,6 +25,7 @@ extern "C" {
 
 #define CQ_FLAG_LAST 0x01       /* same bits as CHUNK_FLAG_* in chunk_store.h */
 #define CQ_FLAG_TIME_UNSET 0x02
+#define CQ_FLAG_NOTE 0x04       /* the chunk belongs to a voice note */
 
 #define CQ_RECORD_SIZE 64
 #define CQ_RECORD_VERSION 1
@@ -63,7 +64,7 @@ typedef struct {
     uint8_t session_id[8];
     uint32_t sequence;
     uint64_t start_ms;
-    uint8_t flags;        /* CQ_FLAG_TIME_UNSET or 0 */
+    uint8_t flags;        /* CQ_FLAG_TIME_UNSET and/or CQ_FLAG_NOTE, or 0 */
     uint32_t boot_id;
     uint64_t mono_ms;
 } cq_new_t;

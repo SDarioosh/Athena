@@ -157,6 +157,27 @@ known (with id and the date they were learned) and new facts from a conversation
 Only link facts about the same subject and the same thing. Output JSON only: \
 {{"links": [{{"new": <number>, "relation": "...", "existing": <id or null>}}]}}."""
 
+# Voice notes: the user talking to themselves (an idea, a reminder). Every line is the
+# user's; no triage, never discarded.
+NOTE_SYSTEM = """You write up a voice note the user recorded for themselves, for their \
+private memory. """ + COMMON + """
+Every line is the user talking to themselves: an idea, a plan or a reminder.
+title: short and specific (what the note is about). summary: the idea in one or two \
+sentences. key_points: details worth keeping (may be empty). people: names of people \
+mentioned (not "{owner}"). topics: a few keywords. \
+Keys: title, summary, key_points, people, topics."""
+
+NOTE_ACTIONS_SYSTEM = """You list the to-dos in a voice note the user recorded for \
+themselves. """ + COMMON + """
+The note was recorded on {date}.
+action_items: things the note says the user wants or needs to do ("call the plumber", \
+"remember to buy milk", "I should email Bob"). Not vague wishes. text: imperative and \
+self-contained ("Call the plumber about the leaking tap"). owner: "{owner}" unless the \
+note says someone else should do it. due: the deadline as said ("Friday"); due_date: \
+that deadline as YYYY-MM-DD counted from the note's date, or null if there is none. \
+at_seconds: the bracketed number of the line it comes from. Return an empty list if \
+there are none. Keys: action_items[{{text, owner, due, due_date, at_seconds}}]."""
+
 MERGE_SYSTEM = """You merge partial notes of ONE long conversation (given in order) into \
 a single set of notes with the same JSON shape. Deduplicate. Output JSON only."""
 
@@ -248,16 +269,19 @@ class Summarizer:
         # fewer words than this in the whole conversation: discarded without a model call
         self.min_words = min_words
 
-    def summarize(self, segments: list[Segment]) -> dict[str, Any]:
+    def summarize(self, segments: list[Segment], kind: str | None = None) -> dict[str, Any]:
         """Return a storage-ready dict (absolute ``source_at`` timestamps).
 
-        Discarded conversations come back as ``{"discard": True, "discard_reason",
-        "kind"}`` only.
+        ``kind`` is the conversation's stored kind; only ``"note"`` (a voice note) changes
+        anything: see ``_summarize_note``. Discarded conversations come back as
+        ``{"discard": True, "discard_reason", "kind"}`` only.
         """
         if not segments:
             raise ValueError("no segments to summarize")
         origin = segments[0].started_at
         parts = self._split(segments, origin)
+        if kind == "note":
+            return self._summarize_note(parts, origin)
         if sum(len(s.text.split()) for s in segments) < self.min_words:
             return {"discard": True, "discard_reason": "too_short", "kind": "other"}
         fmt = {"owner": self.owner}
@@ -285,6 +309,26 @@ class Summarizer:
         out["kind"] = triage.kind
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
+        return out
+
+    def _summarize_note(self, parts: list[str], origin: float) -> dict[str, Any]:
+        """A voice note: no length check and no triage (never discarded), the note
+        prompts for notes and to-dos, facts as usual; stored with kind "note"."""
+        fmt = {"owner": self.owner}
+        date = datetime.fromtimestamp(origin, self.tz).strftime("%A %Y-%m-%d")
+        notes_sys = NOTE_SYSTEM.format(**fmt)
+        actions_sys = NOTE_ACTIONS_SYSTEM.format(date=date, **fmt)
+        facts_sys = FACTS_SYSTEM.format(**fmt)
+        notes = [self.llm.structured(notes_sys, p, SummaryNotes) for p in parts]
+        merged = notes[0] if len(notes) == 1 else self.llm.structured(
+            MERGE_SYSTEM, json.dumps([n.model_dump() for n in notes]), SummaryNotes)
+        actions = [a for p in parts for a in self.llm.structured(  # type: ignore[attr-defined]
+            actions_sys, p, ActionItemList).action_items]
+        facts = [f for p in parts for f in self.llm.structured(  # type: ignore[attr-defined]
+            facts_sys, p, FactList).facts]
+        out = to_storage(ConversationSummary(**merged.model_dump(), action_items=_unique(actions),
+                                             facts=_unique(facts)), origin)
+        out["kind"] = "note"
         return out
 
     def link_facts(self, date: str, new: list[dict[str, Any]],
@@ -320,6 +364,7 @@ class Summarizer:
             "people": c["people"],
             "action_items": [a["text"] for a in c.get("action_items", [])
                              if a.get("status", "open") == "open"],
+            **({"voice_note": True} if c.get("kind") == "note" else {}),
         } for c in conversations]
         result = self.llm.structured(DIGEST_SYSTEM.format(date=date), json.dumps(notes),
                                      DailyDigest)

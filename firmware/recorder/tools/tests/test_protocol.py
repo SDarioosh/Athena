@@ -50,6 +50,21 @@ def test_entry_fields() -> None:
     assert len(e.encode()) == p.Entry.LEN
 
 
+NOTE_VECTOR = ("81 05 0000 08000000 3f9a0c11d2e4b507 00000000 60540954a1010000 34300000 "
+               "68600000 2639f4cb")
+
+
+def test_note_entry_vector() -> None:
+    e = p.Entry(8, SESSION, 0, 1792411260000, 12340, 24680, 0xCBF43926,
+                p.FLAG_LAST | p.FLAG_NOTE)
+    assert p.FLAG_NOTE == 0x04
+    assert e.encode() == h(NOTE_VECTOR)
+    got = p.decode_response(h(NOTE_VECTOR))
+    assert got == e
+    assert isinstance(got, p.Entry) and got.note and got.last and not got.time_unset
+    assert not p.decode_response(h(RESPONSES[0][1])).note
+
+
 def test_status_vector() -> None:
     raw = h("01 25 51 00 6e0f 0200 c0d40100 60ea0000 4006d66a 04030201")
     s = p.Status.decode(raw)

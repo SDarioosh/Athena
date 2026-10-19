@@ -19,6 +19,7 @@ add_library(recorder_pure STATIC
     ${FW}/main/isotime.c
     ${FW}/main/font5x7.c
     ${FW}/main/textfb.c
+    ${FW}/main/button_gesture.c
     ${FW}/boards/twatch_ultra/board/pcf85063a_codec.c
 )
 # Pure modules of the BLE upload path (docs/twatch-ble-protocol.md), added when present.
@@ -33,7 +34,8 @@ if(UNIX)
 endif()
 
 enable_testing()
-set(TESTS test_audio_dsp test_audio_stats test_wav test_isotime test_textfb test_pcf85063a_codec)
+set(TESTS test_audio_dsp test_audio_stats test_wav test_isotime test_textfb test_pcf85063a_codec
+    test_button_gesture)
 foreach(t test_ogg_opus test_chunk_queue test_ble_proto test_crc32)
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${t}.c)
         list(APPEND TESTS ${t})

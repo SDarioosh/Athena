@@ -17,7 +17,8 @@ static const char *TAG = "chunk_store";
 
 #define QUEUE_SUBDIR "/q"
 
-_Static_assert(CQ_FLAG_LAST == CHUNK_FLAG_LAST && CQ_FLAG_TIME_UNSET == CHUNK_FLAG_TIME_UNSET,
+_Static_assert(CQ_FLAG_LAST == CHUNK_FLAG_LAST && CQ_FLAG_TIME_UNSET == CHUNK_FLAG_TIME_UNSET &&
+                   CQ_FLAG_NOTE == CHUNK_FLAG_NOTE,
                "chunk_queue.h and chunk_store.h flags differ");
 
 static chunk_queue_t s_q;
@@ -352,10 +353,11 @@ void chunk_store_print(void)
         char hex[17];
         cq_session_hex(c->session_id, hex);
         printf("%08" PRIx32 "  %s %-6" PRIu32 " %-14" PRIu64 " %-7" PRIu32 " %-7" PRIu32 " %08" PRIx32
-               " %s%s\n",
+               " %s%s%s\n",
                c->chunk_id, hex, c->sequence, c->start_ms, c->duration_ms, c->bytes, c->crc32,
                (c->flags & CQ_FLAG_LAST) ? "LAST " : "",
-               (c->flags & CQ_FLAG_TIME_UNSET) ? "TIME_UNSET" : "");
+               (c->flags & CQ_FLAG_TIME_UNSET) ? "TIME_UNSET " : "",
+               (c->flags & CQ_FLAG_NOTE) ? "NOTE" : "");
     }
     cq_info_t cur;
     if (cq_current(&s_q, &cur)) {

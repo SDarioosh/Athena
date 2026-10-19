@@ -1,5 +1,6 @@
 /* Status screen: a few text lines on black, drawn band by band through board_display_*.
- * No LVGL: the screen is on for ~5 s per button press and shows six lines. */
+ * No LVGL: the screen is on for a few seconds per button press and shows six lines. A
+ * message screen (one big line, one small) confirms each button action. */
 #pragma once
 
 #include <stdbool.h>
@@ -14,6 +15,7 @@ typedef struct {
     int rec_elapsed_s;
     int rec_total_s;
     bool session;        /* an Opus session is recording */
+    bool note;           /* ... and it is a voice note */
     int session_elapsed_s;
     int queued_chunks;   /* waiting for the phone */
     int queued_min;
@@ -31,5 +33,8 @@ esp_err_t ui_show_status(const ui_status_t *s);
 /* The BLE pairing code (§3.1 of docs/twatch-ble-protocol.md), large, until ui_hide(). */
 esp_err_t ui_show_passkey(uint32_t passkey);
 bool ui_is_pairing(void);
+/* A short confirmation: `big` large and centred, `small` (may be NULL) below it. Calling it
+ * again while the message is shown redraws only the two lines (no flicker). */
+esp_err_t ui_show_message(const char *big, const char *small);
 esp_err_t ui_hide(void);
 bool ui_is_shown(void);

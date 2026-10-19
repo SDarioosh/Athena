@@ -357,7 +357,7 @@ static int cmd_sync(int argc, char **argv)
     return 0;
 }
 
-/* `session [start|stop]`: the Opus recording session (same as BOOT+PWR). */
+/* `session [start|stop]`: the Opus conversation recording session (same as a PWR press). */
 static int cmd_session(int argc, char **argv)
 {
     if (argc >= 2 && strcmp(argv[1], "start") == 0) {
@@ -366,6 +366,22 @@ static int cmd_session(int argc, char **argv)
         app_post(APP_EV_SESSION_STOP, 0);
     } else if (argc >= 2) {
         printf("usage: session [start|stop]\n");
+        return 1;
+    } else {
+        app_print_status();
+    }
+    return 0;
+}
+
+/* `note [start|stop]`: a voice note (same as holding PWR ~1 s; a PWR press stops it). */
+static int cmd_note(int argc, char **argv)
+{
+    if (argc >= 2 && strcmp(argv[1], "start") == 0) {
+        app_post(APP_EV_NOTE_START, 0);
+    } else if (argc >= 2 && strcmp(argv[1], "stop") == 0) {
+        app_post(APP_EV_NOTE_STOP, 0);
+    } else if (argc >= 2) {
+        printf("usage: note [start|stop]\n");
         return 1;
     } else {
         app_print_status();
@@ -457,7 +473,8 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "rails", .help = "Read back every power rail from the PMU", .func = cmd_rails},
     {.command = "exp", .help = "Log the XL9555 expander pins (pin-map check)", .func = cmd_exp},
     {.command = "time", .help = "Show time; `time 2026-10-19T12:34:56Z` sets system + RTC", .func = cmd_time},
-    {.command = "session", .help = "Recording session to Opus chunks: `session [start|stop]` (= BOOT+PWR)", .func = cmd_session},
+    {.command = "session", .help = "Recording session to Opus chunks: `session [start|stop]` (= PWR press)", .func = cmd_session},
+    {.command = "note", .help = "Voice note, max 5 min: `note [start|stop]` (= PWR held ~1 s)", .func = cmd_note},
     {.command = "queue", .help = "Chunks waiting for the phone; `queue drop <id>` deletes one", .func = cmd_queue},
     {.command = "ble", .help = "BLE state; `ble pair` opens the 2 min sync window; `ble forget` deletes bonds", .func = cmd_ble},
     {.command = "rec", .help = "Test: record N seconds (default 60) from the mic to the SD card as WAV", .func = cmd_rec},
@@ -465,8 +482,8 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "stop", .help = "Stop the test WAV recording early (keeps what was recorded)", .func = cmd_stop},
     {.command = "eq", .help = "Show or switch the mic EQ, saved: `eq [on|off]`", .func = cmd_eq},
     {.command = "gain",.help = "Show or set the mic gain in dB, saved: `gain [0..42]`", .func = cmd_gain},
-    {.command = "mute", .help = "Toggle mute (same as a BOOT short press)", .func = cmd_mute},
-    {.command = "screen", .help = "Show the status screen for ~5 s (same as a PWR short press)", .func = cmd_screen},
+    {.command = "mute", .help = "Toggle mute (same as a BOOT double press)", .func = cmd_mute},
+    {.command = "screen", .help = "Show the status screen for ~5 s (same as a BOOT press)", .func = cmd_screen},
     {.command = "sync", .help = "Open the BLE sync window for 2 min (= BOOT long press)", .func = cmd_sync},
     {.command = "ls", .help = "List the files on the SD card; `ls q` the chunk queue", .func = cmd_ls},
     {.command = "get", .help = "Send a card file (or q/<chunk>) over USB as base64 (tools/pull.py saves it)", .func = cmd_get},

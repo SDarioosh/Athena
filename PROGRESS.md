@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (renamed to odysseus-sound in prose; round 14: T-Watch Ultra BLE connects from a Windows PC)_
+_Last updated: 2026-10-19 (round 15: T-Watch Ultra button layout and voice notes)_
 
 ## Status
 
@@ -240,6 +240,42 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
   vendor string, the `barvis_relay` package, and all `convo` identifiers.
 
+## Done in round 15: new T-Watch Ultra buttons and voice notes
+
+Branch `feature/voice-notes`, not on hardware yet. Owner decision 2026-10-19 after the first
+real recording (a solo mic test) was discarded by triage as `not_a_conversation`.
+
+- **Buttons** (`docs/t-watch-ultra-plan.md` §3): BOOT press = status screen (after a 0.3 s
+  double-click window), BOOT double-click = mute (2 buzzes) / unmute (1 long buzz), BOOT
+  hold 1 s = sync window, PWR short = start/stop a conversation session (1 buzz / 2),
+  PWR hold 1 s = voice note (AXP2101 long-press time set to 1 s, reg 0x27 bits[5:4];
+  power-off hold left as shipped). BOOT+PWR is gone. Every action shows a 3 s message.
+  BOOT gestures are a pure state machine (`main/button_gesture.c`) with host tests.
+- **Voice notes**: a note is its own session; every chunk has the new `NOTE` flag (0x04),
+  kept in the `.met` record and sent in `LIST` (protocol §4.3, new test vector). PWR press
+  stops it, it stops by itself at 5 min (10 chunks). A note during a conversation ends that
+  session cleanly; a new conversation session starts after the note. Console `note
+  start|stop`.
+- **Relays** (PC and Android) send `kind=note` for NOTE chunks; ordinary uploads unchanged.
+- **Server**: ingest `kind` (`conversation` default, `note`), stored per session
+  (migration v5). A note session skips speaker matching (every line is the owner), becomes
+  one conversation of kind `note` that the gap rule never joins, is never discarded, and
+  gets a note prompt (title, the idea in 1-2 sentences, implied to-dos as action items,
+  facts). MCP: tool names, arguments, annotations, links and auth unchanged; results say
+  "(voice note)" and `type note`.
+- Checks: `idf.py build` passes; server ruff clean, pytest 99 passed (the one failure,
+  `test_deploy_script.py::test_units_follow_config`, also fails on a clean checkout on
+  Windows; CI is Linux); PC relay 62 passed; Android `assembleDebug test lint` passed (70
+  tests). Firmware host tests not run (no host C compiler on this PC; CI runs them).
+
+**Needs the real watch**: PWR 1 s long press starts a note and a ~6 s hold still powers
+off; short PWR is not also reported long; BOOT single/double/long by feel (fast doubles
+not missed, slow singles not read as doubles); the long unmute buzz is distinguishable;
+a note alone (`queue` shows NOTE on every chunk, LAST on the last; 5-min cap ends it with
+"5 MIN MAX"); a note during a conversation (conversation gets LAST, note separate, new
+conversation resumes; mute mid-note doesn't resume); message screen text size; a drain
+shows flag 0x05 on the note's last chunk and the server makes a `note` conversation.
+
 ## Done in round 14: T-Watch Ultra BLE link works from a Windows PC
 
 On the owner's watch (ESP-IDF 5.5.5, COM35) with the bonded Windows desktop:
@@ -393,6 +429,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 ## Next
 
+- **Owner: voice notes and new buttons** (round 15, branch `feature/voice-notes`): flash,
+  run the "Needs the real watch" list above, then drain with `ble_relay.py --once` and check
+  the note arrives as kind `note` with a title and summary.
 0. **Owner: T-Watch Ultra upload path test** (round 12 PR, Server verification): `--list`
    from the Windows PC works, and so does `--once` into the server (round 14). Still to do:
    the Android app; report the BLE transfer time (PC: ~2 s per 53 KB chunk incl. upload). Encoder:
@@ -421,6 +460,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
+- Voice notes: is ending the conversation session and resuming it after a note right, or
+  should a note be refused while a conversation records? Should notes get their own place
+  in the daily digest?
 - T-Watch upload path: is Opus complexity 1 at 16 kbps good enough for whisper on your
   recordings (milestone 3 decides; 12/16/24 kbps comparison)? (Pairing: answered, a
   6-digit passkey on the watch screen.)

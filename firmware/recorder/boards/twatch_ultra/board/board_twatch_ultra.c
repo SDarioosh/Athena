@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "axp2101.h"
+#include "button_gesture.h"
 #include "display.h"
 #include "driver/gpio.h"
 #include "drv2605.h"
@@ -30,14 +31,10 @@ static const char *TAG = "board";
 static board_button_cb_t s_button_cb;
 static void *s_button_ctx;
 static TaskHandle_t s_button_task;
-/* PWR was pressed while BOOT was held (the BOOT + PWR combination): the BOOT press belongs to
- * the combination, so its release must not also count as a BOOT press. Button task only. */
-static bool s_boot_in_combo;
 static bool s_have_pmu, s_have_expander, s_have_rtc, s_have_haptic;
 
-#define BOOT_LONG_PRESS_MS 1000
-#define BOOT_DEBOUNCE_MS 30
 #define BUTTON_POLL_MS 10
+#define PWR_LONG_PRESS_MS 1000 /* PKEY_LONG IRQ time (AXP2101 reg 0x27 bits[5:4]) */
 
 /* AXP2101 fuel-gauge battery model for the T-Watch Ultra's 1100 mAh cell.
  * Copied from LilyGoLib src/LilyGoWatchUltra.cpp (BATTER_PARAMS), MIT License,
@@ -134,6 +131,14 @@ static esp_err_t pmu_init(void)
     /* VBAT and the battery thermistor (the charger uses TS; LilyGoLib enables it too). */
     axp2101_adc_enable(0x03);
     gauge_params_once();
+
+    /* PWR held ~1 s = PKEY_LONG (starts a voice note). The hardware power-off hold time
+     * (bits[3:2], >= 4 s) is left as it is. */
+    esp_err_t kerr = axp2101_set_pkey_long_ms(PWR_LONG_PRESS_MS);
+    int long_ms = -1, off_ms = -1, on_ms = -1;
+    axp2101_get_pkey_times(&long_ms, &off_ms, &on_ms);
+    ESP_LOGI(TAG, "PWR key: long press %d ms (%s), power-off hold %d ms, power-on %d ms", long_ms,
+             esp_err_to_name(kerr), off_ms, on_ms);
 
     axp2101_irq_enable(AXP_IRQ_PKEY_SHORT | AXP_IRQ_PKEY_LONG | AXP_IRQ_VBUS_INSERT |
                        AXP_IRQ_VBUS_REMOVE | AXP_IRQ_CHG_START | AXP_IRQ_CHG_DONE);
@@ -275,7 +280,7 @@ static void IRAM_ATTR pmu_isr(void *arg)
 static void emit(board_button_t b, board_press_t p)
 {
     ESP_LOGI(TAG, "button %s %s", b == BOARD_BUTTON_PWR ? "PWR" : "BOOT",
-             p == BOARD_PRESS_SHORT ? "short" : "long");
+             p == BOARD_PRESS_SHORT ? "short" : p == BOARD_PRESS_LONG ? "long" : "double");
     if (s_button_cb) {
         s_button_cb(b, p, s_button_ctx);
     }
@@ -288,9 +293,6 @@ static void handle_pmu_irq(void)
         return;
     }
     if (st & AXP_IRQ_PKEY_SHORT) {
-        if (gpio_get_level(PIN_BOOT_BUTTON) == 0) {
-            s_boot_in_combo = true;
-        }
         emit(BOARD_BUTTON_PWR, BOARD_PRESS_SHORT);
     }
     if (st & AXP_IRQ_PKEY_LONG) {
@@ -318,8 +320,9 @@ static void handle_pmu_irq(void)
 static void button_task(void *arg)
 {
     (void)arg;
-    int held_ms = 0;
-    bool was_down = false, long_fired = false;
+    button_gesture_t boot;
+    button_gesture_init(&boot);
+    TickType_t last = xTaskGetTickCount();
     for (;;) {
         if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(BUTTON_POLL_MS)) > 0) {
             handle_pmu_irq();
@@ -328,22 +331,26 @@ static void button_task(void *arg)
         if (gpio_get_level(PIN_PMU_IRQ) == 0) {
             handle_pmu_irq();
         }
+        /* BOOT: single / double / long press from the gesture machine, fed the real time
+         * since the last poll (an IRQ wakes the task early, a busy I2C bus makes it late). */
+        const TickType_t now = xTaskGetTickCount();
+        const uint32_t elapsed_ms = (uint32_t)((now - last) * portTICK_PERIOD_MS);
+        last = now;
         const bool down = gpio_get_level(PIN_BOOT_BUTTON) == 0;
-        if (down) {
-            held_ms += BUTTON_POLL_MS;
-            if (!long_fired && !s_boot_in_combo && held_ms >= BOOT_LONG_PRESS_MS) {
-                long_fired = true;
-                emit(BOARD_BUTTON_BOOT, BOARD_PRESS_LONG);
-            }
-        } else if (was_down) {
-            if (!long_fired && !s_boot_in_combo && held_ms >= BOOT_DEBOUNCE_MS) {
-                emit(BOARD_BUTTON_BOOT, BOARD_PRESS_SHORT);
-            }
-            held_ms = 0;
-            long_fired = false;
-            s_boot_in_combo = false;
+        switch (button_gesture_update(&boot, down, elapsed_ms)) {
+        case BUTTON_GESTURE_SINGLE:
+            emit(BOARD_BUTTON_BOOT, BOARD_PRESS_SHORT);
+            break;
+        case BUTTON_GESTURE_DOUBLE:
+            emit(BOARD_BUTTON_BOOT, BOARD_PRESS_DOUBLE);
+            break;
+        case BUTTON_GESTURE_LONG:
+            emit(BOARD_BUTTON_BOOT, BOARD_PRESS_LONG);
+            break;
+        case BUTTON_GESTURE_NONE:
+        default:
+            break;
         }
-        was_down = down;
     }
 }
 
@@ -393,6 +400,21 @@ esp_err_t board_haptic_pulse(int count)
         if (i + 1 < count) {
             vTaskDelay(pdMS_TO_TICKS(150));
         }
+    }
+    drv2605_standby();
+    xl9555_write(EXP_PIN_HAPTIC_EN, false);
+    return err;
+}
+
+esp_err_t board_haptic_long(void)
+{
+    ESP_RETURN_ON_FALSE(s_have_haptic, ESP_ERR_NOT_SUPPORTED, TAG, "no haptics");
+    ESP_RETURN_ON_ERROR(xl9555_write(EXP_PIN_HAPTIC_EN, true), TAG, "en");
+    vTaskDelay(pdMS_TO_TICKS(5));
+    esp_err_t err = drv2605_init(I2C_ADDR_DRV2605);
+    /* Library effect 47 "Buzz 1 - 100 %", played back to back: one continuous long buzz. */
+    for (int i = 0; i < 2 && err == ESP_OK; i++) {
+        err = drv2605_play(47, 1000);
     }
     drv2605_standby();
     xl9555_write(EXP_PIN_HAPTIC_EN, false);

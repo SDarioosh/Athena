@@ -36,6 +36,8 @@ typedef struct {
     uint16_t pre_skip;
     uint8_t session_id[8];
     char session_hex[17];
+    session_rec_kind_t kind;
+    uint64_t max_packets;  /* 0 = no limit (conversation) */
     bool time_unset;
     int64_t start_ms;      /* session start, epoch ms (valid unless time_unset) */
     int64_t mono0_ms;      /* esp_timer ms at the session start */
@@ -54,6 +56,7 @@ typedef struct {
 static session_rec_state_t s_state;
 static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool s_stop;
+static session_rec_kind_t s_kind; /* of the session being started */
 static session_rec_done_cb_t s_done;
 static session_rec_tick_cb_t s_tick;
 static void *s_ctx;
@@ -113,7 +116,8 @@ static esp_err_t open_chunk(session_t *s)
     chunk_store_new_t c = {
         .sequence = s->sequence,
         .start_ms = s->time_unset ? offset_ms : (uint64_t)s->start_ms + offset_ms,
-        .flags = s->time_unset ? CHUNK_FLAG_TIME_UNSET : 0,
+        .flags = (uint8_t)((s->time_unset ? CHUNK_FLAG_TIME_UNSET : 0) |
+                           (s->kind == SESSION_KIND_NOTE ? CHUNK_FLAG_NOTE : 0)),
         .mono_ms = (uint64_t)s->mono0_ms + offset_ms,
     };
     memcpy(c.session_id, s->session_id, sizeof(c.session_id));
@@ -268,14 +272,18 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
     s->time_unset = !clock_epoch_ms(&epoch);
     s->start_ms = s->time_unset ? 0 : epoch;
     STATE_UPDATE(s_state.time_unset = s->time_unset);
-    ESP_LOGI(TAG, "session %s started%s", s->session_hex,
-             s->time_unset ? " without a valid clock (TIME_UNSET)" : "");
+    ESP_LOGI(TAG, "%s %s started%s", s->kind == SESSION_KIND_NOTE ? "note" : "session",
+             s->session_hex, s->time_unset ? " without a valid clock (TIME_UNSET)" : "");
 
     esp_err_t err = ESP_OK;
     if (card_full()) {
         *why = SESSION_END_CARD_FULL;
     }
     while (*why == SESSION_END_REQUEST) {
+        if (s->max_packets && s->packets >= s->max_packets) {
+            *why = SESSION_END_MAX; /* the open chunk is closed with LAST below */
+            break;
+        }
         err = read_frame(s);
         if (err == ESP_ERR_INVALID_STATE) {
             err = ESP_OK; /* stop requested */
@@ -347,6 +355,10 @@ static void session_task(void *arg)
     bool media = false;
     if (err == ESP_OK) {
         s->ogg = ogg;
+        s->kind = s_kind;
+        s->max_packets = s_kind == SESSION_KIND_NOTE
+                             ? (uint64_t)SESSION_REC_NOTE_MAX_S * (1000 / FRAME_MS)
+                             : 0;
         esp_fill_random(s->session_id, sizeof(s->session_id));
         cq_session_hex(s->session_id, s->session_hex);
         STATE_UPDATE(memcpy(s_state.session_hex, s->session_hex, sizeof(s_state.session_hex)));
@@ -384,11 +396,11 @@ static void session_task(void *arg)
         s_state.last_end = why;
         st = s_state;
     });
-    static const char *const WHY[] = {"stopped", "card full", "error"};
+    static const char *const WHY[] = {"stopped", "card full", "error", "at its length limit"};
     ESP_LOGI(TAG,
-             "session %s %s after %" PRIu32 " s, %" PRIu32 " chunk(s) (%s); encode avg %" PRIu32
+             "%s %s %s after %" PRIu32 " s, %" PRIu32 " chunk(s) (%s); encode avg %" PRIu32
              " us, max %" PRIu32 " us per 20 ms frame; stack never used %" PRIu32 " bytes",
-             st.session_hex, WHY[why], st.elapsed_s, st.chunks_written, esp_err_to_name(err),
+             st.kind == SESSION_KIND_NOTE ? "note" : "session", st.session_hex, WHY[why], st.elapsed_s, st.chunks_written, esp_err_to_name(err),
              st.enc_avg_us, st.enc_max_us, st.stack_free_min);
     if (s) {
         opus_enc_destroy(s->enc);
@@ -402,7 +414,8 @@ static void session_task(void *arg)
     vTaskDelete(NULL);
 }
 
-esp_err_t session_rec_start(session_rec_done_cb_t done, session_rec_tick_cb_t tick, void *ctx)
+esp_err_t session_rec_start(session_rec_kind_t kind, session_rec_done_cb_t done,
+                            session_rec_tick_cb_t tick, void *ctx)
 {
     bool busy = false;
     STATE_UPDATE({
@@ -410,12 +423,14 @@ esp_err_t session_rec_start(session_rec_done_cb_t done, session_rec_tick_cb_t ti
         if (!busy) {
             memset(&s_state, 0, sizeof(s_state));
             s_state.running = true;
+            s_state.kind = kind;
         }
     });
     ESP_RETURN_ON_FALSE(!busy, ESP_ERR_INVALID_STATE, TAG, "a session is running");
     s_done = done;
     s_tick = tick;
     s_ctx = ctx;
+    s_kind = kind;
     s_stop = false;
     if (xTaskCreate(session_task, "session", TASK_STACK_BYTES, NULL, TASK_PRIORITY, NULL) != pdPASS) {
         STATE_UPDATE(s_state.running = false);

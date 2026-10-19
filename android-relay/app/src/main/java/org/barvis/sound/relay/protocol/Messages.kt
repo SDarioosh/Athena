@@ -99,6 +99,8 @@ data class ChunkEntry(
 
     val isLast: Boolean get() = flags and FLAG_LAST != 0
     val timeUnset: Boolean get() = flags and FLAG_TIME_UNSET != 0
+    /** The chunk belongs to a voice note (a short session of its own). */
+    val isNote: Boolean get() = flags and FLAG_NOTE != 0
 
     /** 16 lowercase hex digits (§2.2). */
     val sessionHex: String get() = sessionId.toHex()
@@ -124,12 +126,14 @@ data class ChunkEntry(
 
     override fun toString(): String =
         "chunk $chunkId (session $sessionHex seq $sequence, $bytes B, ${durationMs} ms" +
-            (if (isLast) ", last" else "") + (if (timeUnset) ", time unset" else "") + ")"
+            (if (isLast) ", last" else "") + (if (timeUnset) ", time unset" else "") +
+            (if (isNote) ", note" else "") + ")"
 
     companion object {
         const val SIZE = 40
         const val FLAG_LAST = 0x01
         const val FLAG_TIME_UNSET = 0x02
+        const val FLAG_NOTE = 0x04
 
         fun decode(b: ByteArray): ChunkEntry {
             // Extra trailing bytes are allowed: fields may be appended in proto 1 (§9).
