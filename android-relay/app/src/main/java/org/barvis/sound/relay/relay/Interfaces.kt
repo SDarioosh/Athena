@@ -42,14 +42,22 @@ sealed class ServerResult {
     data class Rejected(val code: Int, val detail: String) : ServerResult()
 }
 
-/** One chunk upload (§6 step 6.2). */
+/**
+ * One chunk upload (§6 step 6.2). [kind] is the session kind form field: `note` for a voice
+ * note, `null` to omit the field (the server then defaults to `conversation`).
+ */
 class ChunkUpload(
     val device: String,
     val sessionId: String,
     val sequence: Long,
     val timestampMs: Long,
     val audio: ByteArray,
-)
+    val kind: String? = null,
+) {
+    companion object {
+        const val KIND_NOTE = "note"
+    }
+}
 
 /** The owner's server. The Android app uses [org.barvis.sound.relay.net.HttpUploader]. */
 interface Uploader {

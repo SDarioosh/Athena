@@ -44,7 +44,22 @@ class ProtocolVectorsTest {
         assertEquals("3f9a0c11d2e4b507", d.sessionHex)
         assertTrue(d.isLast)
         assertFalse(d.timeUnset)
+        assertFalse(d.isNote)
         assertEquals(0xcbf43926L, d.crc32)
+    }
+
+    /** NOTE ENTRY vector: chunk 8, LAST+NOTE, seq 0 (a voice note's only chunk). */
+    @Test fun noteEntry() {
+        val hex = "81 05 0000 08000000 3f9a0c11d2e4b507 00000000 60540954a1010000 34300000 68600000 2639f4cb"
+        val e = ChunkEntry(ChunkEntry.FLAG_LAST or ChunkEntry.FLAG_NOTE, 8, session, 0, 1792411260000L,
+            12340, 24680, 0xcbf43926L)
+        assertArrayEquals(h(hex), e.encode())
+        val d = (Response.decode(h(hex)) as Response.Entry).entry
+        assertEquals(e, d)
+        assertTrue(d.isNote)
+        assertTrue(d.isLast)
+        assertFalse(d.timeUnset)
+        assertEquals("chunk 8 (session 3f9a0c11d2e4b507 seq 0, 24680 B, 12340 ms, last, note)", d.toString())
     }
 
     @Test fun data() {
