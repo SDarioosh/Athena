@@ -53,7 +53,8 @@ esp_err_t sdcard_mount(void)
 
     const esp_vfs_fat_sdmmc_mount_config_t mount = {
         .format_if_mount_failed = false,
-        .max_files = 4,
+        /* recording chunk + BLE read + a .met rewrite + console `get`, with headroom */
+        .max_files = 6,
         .allocation_unit_size = 16 * 1024,
     };
     esp_err_t err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot, &mount, &s_card);

@@ -47,6 +47,8 @@ esp_err_t ble_sync_init(const ble_sync_hooks_t *hooks);
  * console `ble pair` / `sync`). Safe from any task. */
 void ble_sync_open_window(void);
 bool ble_sync_window_is_open(void);
+/* A relay is connected. Safe from any task. */
+bool ble_sync_is_connected(void);
 
 /* Something changed (chunk added/acked, recording or mute toggled, card in/out):
  * re-evaluate advertising and notify status if a relay is subscribed (at most 1/s).

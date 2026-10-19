@@ -13,6 +13,11 @@ typedef struct {
     bool recording_file; /* the test recorder is writing a WAV */
     int rec_elapsed_s;
     int rec_total_s;
+    bool session;        /* an Opus session is recording */
+    int session_elapsed_s;
+    int queued_chunks;   /* waiting for the phone */
+    int queued_min;
+    bool ble_connected;
     board_battery_t battery;
     int64_t now;      /* UTC epoch seconds */
     bool time_valid;

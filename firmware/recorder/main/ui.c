@@ -63,12 +63,16 @@ esp_err_t ui_show_status(const ui_status_t *s)
     int y = 40;
 
     if (s->recording_file) {
-        snprintf(line, sizeof(line), "REC %d/%dS", s->rec_elapsed_s, s->rec_total_s);
+        snprintf(line, sizeof(line), "WAV %d/%dS", s->rec_elapsed_s, s->rec_total_s);
         push_line(y, line, TEXT_SCALE, amber);
+    } else if (s->session) {
+        snprintf(line, sizeof(line), "REC %d:%02d", s->session_elapsed_s / 60,
+                 s->session_elapsed_s % 60);
+        push_line(y, line, TEXT_SCALE, green);
     } else if (s->muted) {
         push_line(y, "MUTED", TEXT_SCALE, red);
     } else {
-        push_line(y, "RECORDING", TEXT_SCALE, green);
+        push_line(y, "READY", TEXT_SCALE, white);
     }
     y += 70;
 
@@ -112,9 +116,16 @@ esp_err_t ui_show_status(const ui_status_t *s)
     push_line(y, line, TEXT_SCALE, s->sd_present || s->sd_mounted ? white : amber);
     y += 80;
 
-    push_line(y, "BOOT: MUTE", SMALL_SCALE, grey);
+    if (s->ble_connected) {
+        snprintf(line, sizeof(line), "PHONE: SYNCING %d", s->queued_chunks);
+    } else if (s->queued_chunks) {
+        snprintf(line, sizeof(line), "QUEUE %d (%d MIN)", s->queued_chunks, s->queued_min);
+    } else {
+        snprintf(line, sizeof(line), "QUEUE EMPTY");
+    }
+    push_line(y, line, SMALL_SCALE, s->queued_chunks ? amber : grey);
     y += 36;
-    push_line(y, "BOOT+PWR: REC 60S", SMALL_SCALE, grey);
+    push_line(y, "BOOT+PWR: REC  BOOT: MUTE", SMALL_SCALE, grey);
     /* The init sequence leaves the panel at brightness 0; raise it once the frame is in. */
     return board_display_set_brightness(BRIGHTNESS_PERCENT);
 }

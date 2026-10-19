@@ -242,6 +242,14 @@ bool ble_sync_window_is_open(void)
     return open;
 }
 
+bool ble_sync_is_connected(void)
+{
+    taskENTER_CRITICAL(&s_lock);
+    const bool connected = s_conn.handle != BLE_HS_CONN_HANDLE_NONE;
+    taskEXIT_CRITICAL(&s_lock);
+    return connected;
+}
+
 /* ---- status characteristic ---- */
 
 static void refresh_battery(bool force)

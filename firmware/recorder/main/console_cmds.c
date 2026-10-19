@@ -11,7 +11,9 @@
 #include "app.h"
 #include "audio_dsp.h"
 #include "audio_stats.h"
+#include "ble_sync.h"
 #include "board.h"
+#include "chunk_store.h"
 #include "esp_check.h"
 #include "esp_console.h"
 #include "esp_log.h"
@@ -175,11 +177,18 @@ static const char *console_mount(void)
     return mount;
 }
 
-/* Only plain file names in the card's root: no paths, so `get` can't wander. */
+/* Only plain file names in the card's root or in the chunk queue folder `q/`: no other
+ * paths, so `get` can't wander. */
 static bool valid_name(const char *name)
 {
     if (!name[0] || strlen(name) > 64) {
         return false;
+    }
+    if (strncmp(name, "q/", 2) == 0) {
+        name += 2;
+        if (!name[0]) {
+            return false;
+        }
     }
     for (const char *c = name; *c; c++) {
         if (*c == '/' || *c == '\\' || *c == ':' || (c == name && *c == '.')) {
@@ -189,24 +198,31 @@ static bool valid_name(const char *name)
     return true;
 }
 
+/* `ls` lists the card's root; `ls q` the chunk queue (names printed as q/<file>, ready
+ * for `get`). */
 static int cmd_ls(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
+    const bool queue = argc >= 2 && strcmp(argv[1], "q") == 0;
+    if (argc >= 2 && !queue) {
+        printf("usage: ls [q]\n");
+        return 1;
+    }
     const char *mount = console_mount();
     if (!mount) {
         return 1;
     }
-    DIR *dir = opendir(mount);
+    static char dirpath[64];
+    snprintf(dirpath, sizeof(dirpath), "%s%s", mount, queue ? "/q" : "");
+    DIR *dir = opendir(dirpath);
     int n = 0;
     if (dir) {
         struct dirent *e;
-        static char path[300]; /* mount + a 255-byte FAT long name */
+        static char path[330]; /* dirpath + a 255-byte FAT long name */
         while ((e = readdir(dir)) != NULL) {
             struct stat st;
-            snprintf(path, sizeof(path), "%s/%s", mount, e->d_name);
+            snprintf(path, sizeof(path), "%s/%s", dirpath, e->d_name);
             if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
-                printf("%10ld  %s\n", (long)st.st_size, e->d_name);
+                printf("%10ld  %s%s\n", (long)st.st_size, queue ? "q/" : "", e->d_name);
                 n++;
             }
         }
@@ -341,6 +357,64 @@ static int cmd_sync(int argc, char **argv)
     return 0;
 }
 
+/* `session [start|stop]`: the Opus recording session (same as BOOT+PWR). */
+static int cmd_session(int argc, char **argv)
+{
+    if (argc >= 2 && strcmp(argv[1], "start") == 0) {
+        app_post(APP_EV_SESSION_START, 0);
+    } else if (argc >= 2 && strcmp(argv[1], "stop") == 0) {
+        app_post(APP_EV_SESSION_STOP, 0);
+    } else if (argc >= 2) {
+        printf("usage: session [start|stop]\n");
+        return 1;
+    } else {
+        app_print_status();
+    }
+    return 0;
+}
+
+/* `queue [drop <id>]`: chunks waiting for the phone; drop deletes one without uploading. */
+static int cmd_queue(int argc, char **argv)
+{
+    if (argc >= 3 && strcmp(argv[1], "drop") == 0) {
+        char *end;
+        const unsigned long id = strtoul(argv[2], &end, 0);
+        if (*end || id == 0 || id > UINT32_MAX) {
+            printf("usage: queue drop <chunk id>\n");
+            return 1;
+        }
+        const esp_err_t err = chunk_store_drop((uint32_t)id);
+        printf("drop %lu: %s\n", id, esp_err_to_name(err));
+        return err == ESP_OK ? 0 : 1;
+    }
+    if (argc >= 2) {
+        printf("usage: queue [drop <id>]\n");
+        return 1;
+    }
+    chunk_store_print();
+    return 0;
+}
+
+/* `ble [pair|forget]`: BLE state; open the sync window; delete every bond. */
+static int cmd_ble(int argc, char **argv)
+{
+    if (argc >= 2 && strcmp(argv[1], "pair") == 0) {
+        app_post(APP_EV_SYNC_NOW, 0);
+        return 0;
+    }
+    if (argc >= 2 && strcmp(argv[1], "forget") == 0) {
+        const esp_err_t err = ble_sync_forget_bonds();
+        printf("bonds deleted: %s\n", esp_err_to_name(err));
+        return err == ESP_OK ? 0 : 1;
+    }
+    if (argc >= 2) {
+        printf("usage: ble [pair|forget]\n");
+        return 1;
+    }
+    ble_sync_print();
+    return 0;
+}
+
 static int cmd_sd(int argc, char **argv)
 {
     (void)argc;
@@ -383,16 +457,19 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "rails", .help = "Read back every power rail from the PMU", .func = cmd_rails},
     {.command = "exp", .help = "Log the XL9555 expander pins (pin-map check)", .func = cmd_exp},
     {.command = "time", .help = "Show time; `time 2026-10-19T12:34:56Z` sets system + RTC", .func = cmd_time},
-    {.command = "rec", .help = "Record N seconds (default 60) from the mic to the SD card as WAV", .func = cmd_rec},
+    {.command = "session", .help = "Recording session to Opus chunks: `session [start|stop]` (= BOOT+PWR)", .func = cmd_session},
+    {.command = "queue", .help = "Chunks waiting for the phone; `queue drop <id>` deletes one", .func = cmd_queue},
+    {.command = "ble", .help = "BLE state; `ble pair` opens the 2 min sync window; `ble forget` deletes bonds", .func = cmd_ble},
+    {.command = "rec", .help = "Test: record N seconds (default 60) from the mic to the SD card as WAV", .func = cmd_rec},
     {.command = "level", .help = "Print mic level for N s (default 5): `level [s]`", .func = cmd_level},
-    {.command = "stop", .help = "Stop the running recording early (keeps what was recorded)", .func = cmd_stop},
+    {.command = "stop", .help = "Stop the test WAV recording early (keeps what was recorded)", .func = cmd_stop},
     {.command = "eq", .help = "Show or switch the mic EQ, saved: `eq [on|off]`", .func = cmd_eq},
     {.command = "gain",.help = "Show or set the mic gain in dB, saved: `gain [0..42]`", .func = cmd_gain},
     {.command = "mute", .help = "Toggle mute (same as a BOOT short press)", .func = cmd_mute},
     {.command = "screen", .help = "Show the status screen for ~5 s (same as a PWR short press)", .func = cmd_screen},
-    {.command = "sync", .help = "Log 'sync now' (BLE comes in a later milestone)", .func = cmd_sync},
-    {.command = "ls", .help = "List the files on the SD card", .func = cmd_ls},
-    {.command = "get", .help = "Send a card file over USB as base64 (tools/pull.py saves it)", .func = cmd_get},
+    {.command = "sync", .help = "Open the BLE sync window for 2 min (= BOOT long press)", .func = cmd_sync},
+    {.command = "ls", .help = "List the files on the SD card; `ls q` the chunk queue", .func = cmd_ls},
+    {.command = "get", .help = "Send a card file (or q/<chunk>) over USB as base64 (tools/pull.py saves it)", .func = cmd_get},
     {.command = "sd", .help = "Power, mount and report the SD card, then power it off", .func = cmd_sd},
     {.command = "reboot", .help = "Restart", .func = cmd_reboot},
 };

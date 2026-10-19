@@ -1,22 +1,29 @@
-/* barvis-sound recorder, milestone 1: bring-up test firmware (docs/t-watch-ultra-plan.md §8).
+/* barvis-sound recorder (docs/t-watch-ultra-plan.md §8): recording sessions to Opus chunks
+ * on the SD card, drained by a phone or PC relay over BLE (docs/twatch-ble-protocol.md).
  *
- * Boot: board bring-up with every unused rail off, RTC -> system clock, mic ready, USB console.
- * PWR short press: status screen for ~5 s. BOOT short press: toggle mute (1 buzz = recording,
- * 2 = muted). BOOT long press: "sync now" placeholder. BOOT held + PWR short press, or the
- * console command `rec`: record 60 s from the mic to a WAV on the SD card; the same
- * combination, `stop`, or muting stops it early.
- * No Wi-Fi, no BLE: neither is initialised, and neither is linked (CMakeLists.txt). */
+ * Boot: board bring-up with every unused rail off, RTC -> system clock, mic ready, chunk
+ * queue rebuilt from the card, BLE (advertising only when there is something to sync), USB
+ * console.
+ * PWR short press: status screen for ~5 s. BOOT short press: toggle mute (1 buzz = unmuted,
+ * 2 = muted); muting ends a running session. BOOT long press: open the 2-minute BLE sync
+ * window (advertise now, accept a new phone). BOOT held + PWR short press, or `session
+ * start`: start a recording session; the same combination, `session stop` or mute ends it.
+ * `rec` on the console still records the milestone-1 test WAV.
+ * No Wi-Fi: it is never initialised and not linked; only the BT controller uses the radio. */
 #include <inttypes.h>
 #include <stdio.h>
 #include <sys/time.h>
 
 #include "app.h"
+#include "ble_sync.h"
 #include "board.h"
+#include "chunk_store.h"
 #include "console_cmds.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_pm.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -25,6 +32,7 @@
 #include "mic.h"
 #include "nvs_flash.h"
 #include "recorder.h"
+#include "session_rec.h"
 #include "ui.h"
 
 static const char *TAG = "app";
@@ -32,6 +40,7 @@ static const char *TAG = "app";
 #define SCREEN_ON_MS 5000
 #define TEST_RECORDING_SECONDS 60
 #define BATTERY_LOG_PERIOD_MS 60000
+#define FW_VERSION "0.2.0"
 
 typedef struct {
     app_event_type_t type;
@@ -40,8 +49,9 @@ typedef struct {
 
 static QueueHandle_t s_events;
 static esp_timer_handle_t s_screen_timer;
-static bool s_muted;
-static bool s_time_valid;
+static volatile bool s_muted;
+static volatile bool s_time_valid;
+static esp_err_t s_session_result; /* set by the session's done callback */
 
 void app_post(app_event_type_t type, int arg)
 {
@@ -84,6 +94,48 @@ static void on_rec_tick(int elapsed_s, void *ctx)
     app_post(APP_EV_REC_TICK, elapsed_s);
 }
 
+static void on_session_done(esp_err_t result, session_rec_end_t why, void *ctx)
+{
+    (void)ctx;
+    s_session_result = result;
+    app_post(APP_EV_SESSION_DONE, (int)why);
+}
+
+static void on_session_tick(uint32_t elapsed_s, void *ctx)
+{
+    (void)ctx;
+    app_post(APP_EV_SESSION_TICK, (int)elapsed_s);
+}
+
+static void on_queue_changed(void *ctx)
+{
+    (void)ctx;
+    ble_sync_kick();
+    app_post(APP_EV_QUEUE_CHANGED, 0);
+}
+
+/* ---- BLE hooks (docs/twatch-ble-protocol.md §4.2, §5.5) ---- */
+static void ble_get_state(ble_sync_app_state_t *out)
+{
+    out->recording = session_rec_running();
+    out->muted = s_muted;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    out->time_valid = s_time_valid || isotime_is_plausible(tv.tv_sec);
+}
+
+static void ble_on_time(int64_t epoch_ms)
+{
+    const struct timeval tv = {.tv_sec = (time_t)(epoch_ms / 1000),
+                               .tv_usec = (suseconds_t)(epoch_ms % 1000) * 1000};
+    settimeofday(&tv, NULL);
+    const esp_err_t err = board_rtc_set(epoch_ms / 1000);
+    s_time_valid = true;
+    char buf[24];
+    isotime_format(epoch_ms / 1000, buf, sizeof(buf));
+    ESP_LOGI(TAG, "time from the relay: %s (RTC write %s)", buf, esp_err_to_name(err));
+}
+
 static void gather_status(ui_status_t *s)
 {
     recorder_state_t rs;
@@ -99,7 +151,16 @@ static void gather_status(ui_status_t *s)
         .time_valid = s_time_valid || isotime_is_plausible(tv.tv_sec),
         .sd_present = board_storage_card_present(),
         .sd_mounted = board_storage_is_mounted(),
+        .ble_connected = ble_sync_is_connected(),
     };
+    session_rec_state_t ss;
+    session_rec_get_state(&ss);
+    s->session = ss.running;
+    s->session_elapsed_s = (int)ss.elapsed_s;
+    chunk_store_stats_t q;
+    chunk_store_stats(&q);
+    s->queued_chunks = (int)q.chunks;
+    s->queued_min = (int)((q.audio_ms + 59999) / 60000);
     if (board_battery_read(&s->battery) != ESP_OK) {
         s->battery = (board_battery_t){.present = false, .percent = -1};
     }
@@ -117,8 +178,8 @@ void app_print_status(void)
     gather_status(&s);
     char buf[24];
     isotime_format(s.now, buf, sizeof(buf));
-    printf("state: %s%s\n", s.muted ? "muted" : "recording",
-           s.recording_file ? " (writing test WAV)" : "");
+    printf("state: %s%s%s\n", s.session ? "recording session" : "idle",
+           s.muted ? ", muted" : "", s.recording_file ? " (writing test WAV)" : "");
     printf("battery: %d%%, %d mV, %s%s\n", s.battery.percent, s.battery.millivolts,
            s.battery.charging ? "charging" : "not charging", s.battery.vbus ? ", USB in" : "");
     printf("time: %s (%s)\n", buf, s.time_valid ? "set" : "NOT SET");
@@ -130,6 +191,22 @@ void app_print_status(void)
     } else if (rs.path[0]) {
         printf("last recording: %s (%s)\n", rs.path, esp_err_to_name(rs.last_err));
     }
+    session_rec_state_t ss;
+    session_rec_get_state(&ss);
+    if (ss.session_hex[0]) {
+        printf("session %s: %s, chunk %" PRIu32 ", %" PRIu32 " s, %" PRIu32 " chunks closed%s; "
+               "encoder %" PRIu32 " us avg / %" PRIu32 " us max per 20 ms frame; last: %s\n",
+               ss.session_hex, ss.running ? "running" : "ended", ss.sequence, ss.elapsed_s,
+               ss.chunks_written, ss.time_unset ? ", TIME UNSET" : "", ss.enc_avg_us,
+               ss.enc_max_us, esp_err_to_name(ss.last_err));
+    }
+    chunk_store_stats_t q;
+    chunk_store_stats(&q);
+    printf("queue: %" PRIu32 " chunks, %" PRIu32 " KB, %" PRIu32 " s of audio%s%s\n", q.chunks,
+           q.bytes / 1024, q.audio_ms / 1000, q.has_last ? ", a finished session" : "",
+           chunk_store_ready() ? "" : " (card not read)");
+    printf("ble: %s%s\n", ble_sync_is_connected() ? "relay connected" : "not connected",
+           ble_sync_window_is_open() ? ", sync window open" : "");
     printf("screen: %s\n", ui_is_shown() ? "on" : "off");
 }
 
@@ -158,6 +235,10 @@ static void refresh_screen_if_shown(void)
 
 static void start_test_recording(int seconds)
 {
+    if (session_rec_running()) {
+        ESP_LOGW(TAG, "a recording session is running; stop it first (BOOT+PWR or `session stop`)");
+        return;
+    }
     if (s_muted) {
         ESP_LOGW(TAG, "muted: not recording (press BOOT to unmute)");
         board_haptic_pulse(2);
@@ -179,13 +260,49 @@ static void stop_test_recording(const char *why)
     }
 }
 
+static void start_session(void)
+{
+    if (s_muted) {
+        ESP_LOGW(TAG, "muted: not recording (press BOOT to unmute)");
+        board_haptic_pulse(2);
+        return;
+    }
+    recorder_state_t rs;
+    recorder_get_state(&rs);
+    if (rs.running) {
+        ESP_LOGW(TAG, "the test WAV recorder is running; `stop` it first");
+        return;
+    }
+    const esp_err_t err = session_rec_start(on_session_done, on_session_tick, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "session start: %s", esp_err_to_name(err));
+        board_haptic_pulse(3);
+        return;
+    }
+    ESP_LOGI(TAG, "recording session started (1 buzz)");
+    board_haptic_pulse(1);
+    ble_sync_kick();
+    refresh_screen_if_shown();
+}
+
+static void stop_session(const char *why)
+{
+    if (session_rec_stop()) {
+        ESP_LOGI(TAG, "%s: ending the recording session", why);
+    } else {
+        ESP_LOGI(TAG, "%s: no session is recording", why);
+    }
+}
+
 static void toggle_mute(void)
 {
     s_muted = !s_muted;
     if (s_muted) {
         /* Muting must never leave the mic recording. */
         recorder_stop();
+        session_rec_stop();
     }
+    ble_sync_kick();
     ESP_LOGI(TAG, "%s", s_muted ? "MUTED (2 buzzes)" : "RECORDING (1 buzz)");
     refresh_screen_if_shown();
     board_haptic_pulse(s_muted ? 2 : 1);
@@ -196,14 +313,16 @@ static void handle(const app_event_t *ev)
     switch (ev->type) {
     case APP_EV_PWR_SHORT:
         if (board_button_is_down(BOARD_BUTTON_BOOT)) {
-            /* Same combination starts and stops the test recording. */
+            /* The same combination starts and ends a session (or stops a test WAV). */
             recorder_state_t rs;
             recorder_get_state(&rs);
             if (rs.running) {
                 stop_test_recording("BOOT + PWR");
+            } else if (session_rec_running()) {
+                stop_session("BOOT + PWR");
             } else {
-                ESP_LOGI(TAG, "BOOT + PWR: test recording");
-                start_test_recording(TEST_RECORDING_SECONDS);
+                ESP_LOGI(TAG, "BOOT + PWR: recording session");
+                start_session();
             }
         } else {
             show_screen();
@@ -218,8 +337,39 @@ static void handle(const app_event_t *ev)
         break;
     case APP_EV_BOOT_LONG:
     case APP_EV_SYNC_NOW:
-        ESP_LOGI(TAG, "sync now: placeholder, BLE transfer comes in a later milestone");
+        ESP_LOGI(TAG, "sync now: BLE sync window open for 2 min (advertising, new phones may pair)");
+        ble_sync_open_window();
+        board_haptic_pulse(1);
         break;
+    case APP_EV_SESSION_START:
+        start_session();
+        break;
+    case APP_EV_SESSION_STOP:
+        stop_session("console");
+        break;
+    case APP_EV_SESSION_TICK:
+    case APP_EV_QUEUE_CHANGED:
+        refresh_screen_if_shown();
+        break;
+    case APP_EV_SESSION_DONE: {
+        session_rec_state_t ss;
+        session_rec_get_state(&ss);
+        const session_rec_end_t why = (session_rec_end_t)ev->arg;
+        ESP_LOGI(TAG, "session %s ended (%s, %s): %" PRIu32 " s in %" PRIu32 " chunks; encoder "
+                 "%" PRIu32 " us avg / %" PRIu32 " us max per 20 ms frame; stack %" PRIu32 " B unused",
+                 ss.session_hex, why == SESSION_END_REQUEST ? "stopped" :
+                 why == SESSION_END_CARD_FULL ? "card full" : "error",
+                 esp_err_to_name(s_session_result), ss.elapsed_s, ss.chunks_written,
+                 ss.enc_avg_us, ss.enc_max_us, ss.stack_free_min);
+        if (why != SESSION_END_REQUEST) {
+            board_haptic_pulse(3);
+        } else if (!s_muted) { /* stopped by mute: the 2 mute buzzes already said so */
+            board_haptic_pulse(1);
+        }
+        ble_sync_kick();
+        refresh_screen_if_shown();
+        break;
+    }
     case APP_EV_SCREEN_SHOW:
         show_screen();
         break;
@@ -280,7 +430,7 @@ static void log_battery(void)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "barvis-sound recorder, milestone 1 bring-up");
+    ESP_LOGI(TAG, "barvis-sound recorder %s", FW_VERSION);
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -311,12 +461,24 @@ void app_main(void)
     board_buttons_set_callback(on_button, NULL);
     log_battery();
 
+    /* The queue survives reboots: rebuild it from the card (recovers a chunk cut by a power
+     * loss). Without a card the queue starts empty; a session start retries. */
+    const uint32_t boot_id = esp_random();
+    err = chunk_store_init(boot_id);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "chunk queue not read (%s); is the SD card in?", esp_err_to_name(err));
+    }
+    chunk_store_set_listener(on_queue_changed, NULL);
+    static const ble_sync_hooks_t hooks = {
+        .fw_version = FW_VERSION, .get_state = ble_get_state, .on_time = ble_on_time};
+    ESP_ERROR_CHECK(ble_sync_init(&hooks));
+
     /* One buzz: haptics work and the recorder starts unmuted. */
     board_haptic_pulse(1);
 
     ESP_ERROR_CHECK(console_start());
-    ESP_LOGI(TAG, "ready: PWR = status screen, BOOT = mute, BOOT+PWR = start/stop 60 s test recording, "
-                  "type `help` on the USB console");
+    ESP_LOGI(TAG, "ready: PWR = status screen, BOOT = mute, BOOT long = BLE sync window, "
+                  "BOOT+PWR = start/stop a recording session; type `help` on the USB console");
 
     TickType_t last_batt = xTaskGetTickCount();
     for (;;) {
