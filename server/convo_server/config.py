@@ -48,6 +48,16 @@ class Settings(BaseSettings):
     whisper_prompt: str = ""
     # Temperature step for whisper's fallback when a decode looks wrong (0 = no fallback).
     whisper_temperature_inc: float = 0.2
+    # How speech is cut into clips for whisper (convo_server/clips.py). VAD regions are
+    # padded by whisper_pad_seconds and packed into clips of up to whisper_window_seconds;
+    # silence between regions inside a clip is shortened to whisper_window_gap_seconds.
+    # whisper_window_seconds=0 sends every region alone.
+    whisper_window_seconds: float = 0.0
+    whisper_pad_seconds: float = 0.25
+    whisper_window_gap_seconds: float = 1.0
+    # Last N words of the previous clip's text, added to the prompt after the vocabulary
+    # (0 = off).
+    whisper_context_words: int = 0
 
     # llama-server (OpenAI-compatible)
     llm_base_url: str = "http://127.0.0.1:8080/v1"
