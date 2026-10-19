@@ -197,6 +197,9 @@ size_t chunk_store_list(uint32_t after_id, chunk_info_t *out, size_t max, uint32
         *remaining = 0;
     }
     lock();
+    if (s_ready && max == 0 && remaining) {
+        cq_list(&s_q, after_id, tmp, 0, remaining); /* LIST max=0: just the count */
+    }
     while (s_ready && n < max) {
         uint32_t rest = 0;
         const size_t want = max - n < 8 ? max - n : 8;
