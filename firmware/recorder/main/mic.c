@@ -1,26 +1,48 @@
 #include "mic.h"
 
+#include "audio_dsp.h"
 #include "driver/i2s_pdm.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "nvs.h"
 
 static const char *TAG = "mic";
 static i2s_chan_handle_t s_rx;
 static bool s_running;
+static audio_dsp_t s_dsp;
+static int s_gain_db = MIC_DEFAULT_GAIN_DB;
 
 /* Which PDM slot the T3902 answers on depends on how its L/R select pin is wired. LilyGoLib
- * reads the left slot on this watch, and `level` on the console shows real audio with it
- * (2026-10-19; switching to the right slot at runtime gave the same data in mono mode). */
+ * reads the left slot on this watch. Checked on the watch (2026-10-19): the right slot, both
+ * slots in stereo, the inverted clock edge and a 2.048 MHz PDM clock all gave the same level
+ * as this setting, so the slot, edge and clock are fine. */
 #define MIC_PDM_SLOT I2S_PDM_SLOT_LEFT
 
 #define MIC_SETTLE_SAMPLES (MIC_SAMPLE_RATE / 4) /* 250 ms, discarded by mic_start() */
+
+#define NVS_NAMESPACE "mic"
+#define NVS_KEY_GAIN "gain_db"
+
+static void load_gain(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
+        int8_t v;
+        if (nvs_get_i8(nvs, NVS_KEY_GAIN, &v) == ESP_OK && v >= AUDIO_DSP_GAIN_MIN_DB &&
+            v <= AUDIO_DSP_GAIN_MAX_DB) {
+            s_gain_db = v;
+        }
+        nvs_close(nvs);
+    }
+}
 
 esp_err_t mic_init(board_mic_pins_t pins)
 {
     if (s_rx) {
         return ESP_OK;
     }
+    load_gain();
     /* PDM RX exists on I2S0 only (ESP32-S3). 1024 frames per DMA buffer = 64 ms; six of
      * them give the writer ~380 ms of slack during an SD card write stall. */
     i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
@@ -40,9 +62,39 @@ esp_err_t mic_init(board_mic_pins_t pins)
     };
     cfg.slot_cfg.slot_mask = MIC_PDM_SLOT;
     ESP_RETURN_ON_ERROR(i2s_channel_init_pdm_rx_mode(s_rx, &cfg), TAG, "pdm rx");
-    ESP_LOGI(TAG, "PDM RX ready: CLK GPIO%d, DATA GPIO%d, %d Hz mono 16-bit", pins.clk_gpio,
-             pins.data_gpio, MIC_SAMPLE_RATE);
+    ESP_LOGI(TAG, "PDM RX ready: CLK GPIO%d, DATA GPIO%d, %d Hz mono 16-bit; high-pass %d Hz, "
+                  "gain %d dB", pins.clk_gpio, pins.data_gpio, MIC_SAMPLE_RATE, MIC_HIGHPASS_HZ,
+             s_gain_db);
     return ESP_OK;
+}
+
+int mic_gain_db(void)
+{
+    return s_gain_db;
+}
+
+esp_err_t mic_set_gain_db(int gain_db)
+{
+    ESP_RETURN_ON_FALSE(gain_db >= AUDIO_DSP_GAIN_MIN_DB && gain_db <= AUDIO_DSP_GAIN_MAX_DB,
+                        ESP_ERR_INVALID_ARG, TAG, "gain %d..%d dB", AUDIO_DSP_GAIN_MIN_DB,
+                        AUDIO_DSP_GAIN_MAX_DB);
+    ESP_RETURN_ON_FALSE(!s_running, ESP_ERR_INVALID_STATE, TAG, "mic in use");
+    nvs_handle_t nvs;
+    ESP_RETURN_ON_ERROR(nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs), TAG, "nvs open");
+    esp_err_t err = nvs_set_i8(nvs, NVS_KEY_GAIN, (int8_t)gain_db);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    ESP_RETURN_ON_ERROR(err, TAG, "nvs write");
+    s_gain_db = gain_db;
+    ESP_LOGI(TAG, "gain %d dB (saved)", gain_db);
+    return ESP_OK;
+}
+
+uint64_t mic_clipped_samples(void)
+{
+    return s_dsp.clipped;
 }
 
 esp_err_t mic_start(void)
@@ -59,19 +111,19 @@ esp_err_t mic_start(void)
         ESP_LOGE(TAG, "enable: %s", esp_err_to_name(err));
         return err;
     }
-    /* Drop the start-up transient. Measured on the T-Watch Ultra (2026-10-19): the first
-     * ~16 ms are near full scale (a click at the start of every file), then the DC offset
-     * settles from ~+2600 to ~+540 over ~250 ms. The S3 has no PDM RX high-pass filter, so
-     * the remaining offset stays in the data. */
+    /* Drop the start-up transient, raw (it would only make the filter ring). Measured on the
+     * T-Watch Ultra (2026-10-19): the first ~16 ms are near full scale (a click at the start
+     * of every file), then the DC offset settles from ~+2600 to ~+600 over ~250 ms. */
     static int16_t settle[1024];
     for (size_t dropped = 0; dropped < MIC_SETTLE_SAMPLES;) {
-        size_t got = 0;
-        mic_read(settle, sizeof(settle) / sizeof(settle[0]), &got, 500);
-        if (got == 0) {
+        size_t bytes = 0;
+        i2s_channel_read(s_rx, settle, sizeof(settle), &bytes, 500);
+        if (bytes == 0) {
             break; /* let the caller's reads report the problem */
         }
-        dropped += got;
+        dropped += bytes / sizeof(int16_t);
     }
+    audio_dsp_init(&s_dsp, MIC_SAMPLE_RATE, MIC_HIGHPASS_HZ, s_gain_db);
     return ESP_OK;
 }
 
@@ -83,6 +135,7 @@ esp_err_t mic_read(int16_t *buf, size_t max_samples, size_t *got, int timeout_ms
     const esp_err_t err =
         i2s_channel_read(s_rx, buf, max_samples * sizeof(int16_t), &bytes, timeout_ms);
     *got = bytes / sizeof(int16_t);
+    audio_dsp_process(&s_dsp, buf, *got);
     return err;
 }
 

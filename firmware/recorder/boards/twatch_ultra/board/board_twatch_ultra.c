@@ -15,6 +15,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "i2c_bus.h"
 #include "isotime.h"
@@ -414,30 +415,47 @@ bool board_storage_card_present(void)
     return !high; /* card-detect switch pulls low when a card is in */
 }
 
+/* The recorder and console commands can use the card at the same time: count the users and
+ * power the card off only when the last one unmounts. */
+static SemaphoreHandle_t s_storage_lock;
+static StaticSemaphore_t s_storage_lock_buf;
+static int s_storage_users;
+
 esp_err_t board_storage_mount(const char **mount_point)
 {
-    if (sdcard_is_mounted()) {
+    xSemaphoreTake(s_storage_lock, portMAX_DELAY);
+    esp_err_t err = ESP_OK;
+    if (!sdcard_is_mounted()) {
+        if (!board_storage_card_present()) {
+            ESP_LOGW(TAG, "no card detected (SD_DET high); trying anyway in case the pin map is wrong");
+        }
+        err = board_rail_set(BOARD_RAIL_SD, true);
+        if (err == ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            err = sdcard_mount();
+            if (err != ESP_OK) {
+                board_rail_set(BOARD_RAIL_SD, false);
+            }
+        }
+    }
+    if (err == ESP_OK) {
+        s_storage_users++;
         *mount_point = SDCARD_MOUNT_POINT;
-        return ESP_OK;
     }
-    if (!board_storage_card_present()) {
-        ESP_LOGW(TAG, "no card detected (SD_DET high); trying anyway in case the pin map is wrong");
-    }
-    ESP_RETURN_ON_ERROR(board_rail_set(BOARD_RAIL_SD, true), TAG, "rail");
-    vTaskDelay(pdMS_TO_TICKS(20));
-    const esp_err_t err = sdcard_mount();
-    if (err != ESP_OK) {
-        board_rail_set(BOARD_RAIL_SD, false);
-        return err;
-    }
-    *mount_point = SDCARD_MOUNT_POINT;
-    return ESP_OK;
+    xSemaphoreGive(s_storage_lock);
+    return err;
 }
 
 esp_err_t board_storage_unmount(void)
 {
-    sdcard_unmount();
-    return board_rail_set(BOARD_RAIL_SD, false);
+    xSemaphoreTake(s_storage_lock, portMAX_DELAY);
+    esp_err_t err = ESP_OK;
+    if (s_storage_users > 0 && --s_storage_users == 0) {
+        sdcard_unmount();
+        err = board_rail_set(BOARD_RAIL_SD, false);
+    }
+    xSemaphoreGive(s_storage_lock);
+    return err;
 }
 
 bool board_storage_is_mounted(void)
@@ -488,6 +506,7 @@ esp_err_t board_display_off(void)
 
 esp_err_t board_init(void)
 {
+    s_storage_lock = xSemaphoreCreateMutexStatic(&s_storage_lock_buf);
     ESP_LOGI(TAG, "T-Watch Ultra bring-up");
     ESP_RETURN_ON_ERROR(i2c_bus_init(PIN_I2C_SDA, PIN_I2C_SCL), TAG, "i2c");
 

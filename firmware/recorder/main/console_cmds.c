@@ -1,16 +1,21 @@
 #include "console_cmds.h"
 
+#include <dirent.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 
 #include "app.h"
+#include "audio_dsp.h"
 #include "audio_stats.h"
 #include "board.h"
 #include "esp_check.h"
 #include "esp_console.h"
 #include "esp_log.h"
+#include "esp_rom_crc.h"
 #include "esp_system.h"
 #include "isotime.h"
 #include "mic.h"
@@ -139,7 +144,7 @@ static int cmd_level(int argc, char **argv)
     mic_stop();
     char line[128];
     audio_stats_describe(&total, line, sizeof(line));
-    printf("level: %s\n", line);
+    printf("level at %d dB gain: %s\n", mic_gain_db(), line);
     return 0;
 }
 
@@ -148,6 +153,144 @@ static int cmd_stop(int argc, char **argv)
     (void)argc;
     (void)argv;
     app_post(APP_EV_REC_STOP, 0);
+    return 0;
+}
+
+/* Mount the card for a console command, unless a recording is using it. */
+static const char *console_mount(void)
+{
+    recorder_state_t rs;
+    recorder_get_state(&rs);
+    if (rs.running) {
+        printf("recording in progress; not touching the card\n");
+        return NULL;
+    }
+    const char *mount = NULL;
+    const esp_err_t err = board_storage_mount(&mount);
+    if (err != ESP_OK) {
+        printf("mount failed: %s\n", esp_err_to_name(err));
+        return NULL;
+    }
+    return mount;
+}
+
+/* Only plain file names in the card's root: no paths, so `get` can't wander. */
+static bool valid_name(const char *name)
+{
+    if (!name[0] || strlen(name) > 64) {
+        return false;
+    }
+    for (const char *c = name; *c; c++) {
+        if (*c == '/' || *c == '\\' || *c == ':' || (c == name && *c == '.')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static int cmd_ls(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    const char *mount = console_mount();
+    if (!mount) {
+        return 1;
+    }
+    DIR *dir = opendir(mount);
+    int n = 0;
+    if (dir) {
+        struct dirent *e;
+        static char path[300]; /* mount + a 255-byte FAT long name */
+        while ((e = readdir(dir)) != NULL) {
+            struct stat st;
+            snprintf(path, sizeof(path), "%s/%s", mount, e->d_name);
+            if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
+                printf("%10ld  %s\n", (long)st.st_size, e->d_name);
+                n++;
+            }
+        }
+        closedir(dir);
+    }
+    printf("%d file(s)\n", n);
+    board_storage_unmount();
+    return 0;
+}
+
+static void base64_line(const uint8_t *in, size_t n, char *out)
+{
+    static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    char *o = out;
+    for (size_t i = 0; i < n; i += 3) {
+        const uint32_t v = ((uint32_t)in[i] << 16) | (i + 1 < n ? (uint32_t)in[i + 1] << 8 : 0) |
+                           (i + 2 < n ? in[i + 2] : 0);
+        *o++ = tbl[(v >> 18) & 63];
+        *o++ = tbl[(v >> 12) & 63];
+        *o++ = i + 1 < n ? tbl[(v >> 6) & 63] : '=';
+        *o++ = i + 2 < n ? tbl[v & 63] : '=';
+    }
+    *o = '\0';
+}
+
+/* `get <file>`: send a file from the card over the USB console as base64 lines between
+ * "@@BEGIN <name> <size>" and "@@END <crc32>". firmware/recorder/tools/pull.py saves it. */
+static int cmd_get(int argc, char **argv)
+{
+    if (argc < 2 || !valid_name(argv[1])) {
+        printf("usage: get <file name from `ls`>\n");
+        return 1;
+    }
+    const char *mount = console_mount();
+    if (!mount) {
+        return 1;
+    }
+    static char path[300];
+    snprintf(path, sizeof(path), "%s/%s", mount, argv[1]);
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        printf("no such file: %s\n", argv[1]);
+        board_storage_unmount();
+        return 1;
+    }
+    struct stat st;
+    stat(path, &st);
+    printf("@@BEGIN %s %ld\n", argv[1], (long)st.st_size);
+    /* 57 bytes per line -> 76 base64 characters. Read 80 lines' worth per card access. */
+    static uint8_t buf[57 * 80];
+    char line[80];
+    uint32_t crc = 0;
+    size_t got;
+    while ((got = fread(buf, 1, sizeof(buf), f)) > 0) {
+        crc = esp_rom_crc32_le(crc, buf, got);
+        for (size_t off = 0; off < got; off += 57) {
+            base64_line(buf + off, got - off < 57 ? got - off : 57, line);
+            printf("%s\n", line);
+        }
+    }
+    const bool ok = !ferror(f);
+    fclose(f);
+    board_storage_unmount();
+    printf("@@END %08" PRIx32 "%s\n", crc, ok ? "" : " READ_ERROR");
+    return ok ? 0 : 1;
+}
+
+/* `gain [dB]`: show or set the mic gain (saved in NVS, used from the next recording). */
+static int cmd_gain(int argc, char **argv)
+{
+    if (argc >= 2) {
+        char *end;
+        const long db = strtol(argv[1], &end, 10);
+        if (*end || db < AUDIO_DSP_GAIN_MIN_DB || db > AUDIO_DSP_GAIN_MAX_DB) {
+            printf("usage: gain [%d..%d dB]\n", AUDIO_DSP_GAIN_MIN_DB, AUDIO_DSP_GAIN_MAX_DB);
+            return 1;
+        }
+        const esp_err_t err = mic_set_gain_db((int)db);
+        if (err != ESP_OK) {
+            printf("not set (%s); is a recording running?\n", esp_err_to_name(err));
+            return 1;
+        }
+    }
+    printf("mic gain %d dB (default %d), high-pass %d Hz\n", mic_gain_db(), MIC_DEFAULT_GAIN_DB,
+           MIC_HIGHPASS_HZ);
     return 0;
 }
 
@@ -220,9 +363,12 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "rec", .help = "Record N seconds (default 60) from the mic to the SD card as WAV", .func = cmd_rec},
     {.command = "level", .help = "Print mic level for N s (default 5): `level [s]`", .func = cmd_level},
     {.command = "stop", .help = "Stop the running recording early (keeps what was recorded)", .func = cmd_stop},
+    {.command = "gain", .help = "Show or set the mic gain in dB, saved: `gain [0..42]`", .func = cmd_gain},
     {.command = "mute", .help = "Toggle mute (same as a BOOT short press)", .func = cmd_mute},
     {.command = "screen", .help = "Show the status screen for ~5 s (same as a PWR short press)", .func = cmd_screen},
     {.command = "sync", .help = "Log 'sync now' (BLE comes in a later milestone)", .func = cmd_sync},
+    {.command = "ls", .help = "List the files on the SD card", .func = cmd_ls},
+    {.command = "get", .help = "Send a card file over USB as base64 (tools/pull.py saves it)", .func = cmd_get},
     {.command = "sd", .help = "Power, mount and report the SD card, then power it off", .func = cmd_sd},
     {.command = "reboot", .help = "Restart", .func = cmd_reboot},
 };

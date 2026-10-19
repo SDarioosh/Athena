@@ -100,7 +100,7 @@ static esp_err_t record(const char *path, int seconds, uint8_t *wbuf)
         mic_stop();
         char level[128];
         audio_stats_describe(&stats, level, sizeof(level));
-        ESP_LOGI(TAG, "level: %s", level);
+        ESP_LOGI(TAG, "level at %d dB gain: %s", mic_gain_db(), level);
     }
     /* Stopped early: write what is buffered, so the file ends where the stop came. */
     if (err == ESP_OK && pending) {
