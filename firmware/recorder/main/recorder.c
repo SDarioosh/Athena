@@ -58,13 +58,16 @@ static esp_err_t record(const char *path, int seconds, uint8_t *wbuf)
     while (err == ESP_OK && written + pending < total_bytes) {
         size_t got = 0;
         const esp_err_t r = mic_read((int16_t *)(wbuf + pending), READ_SAMPLES, &got, 500);
-        if (r != ESP_OK || got == 0) {
+        /* A timed-out read can still return part of a buffer: keep it. Give up only after
+         * 20 reads in a row return nothing (~10 s without audio). */
+        if (got == 0) {
             if (++dropped_reads > 20) {
                 ESP_LOGE(TAG, "mic read failing: %s", esp_err_to_name(r));
                 err = r == ESP_OK ? ESP_ERR_TIMEOUT : r;
             }
             continue;
         }
+        dropped_reads = 0;
         pending += got * sizeof(int16_t);
         if (written + pending > total_bytes) {
             pending = total_bytes - written;

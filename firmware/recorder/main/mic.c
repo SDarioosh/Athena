@@ -57,8 +57,9 @@ esp_err_t mic_read(int16_t *buf, size_t max_samples, size_t *got, int timeout_ms
 {
     ESP_RETURN_ON_FALSE(s_running, ESP_ERR_INVALID_STATE, TAG, "not running");
     size_t bytes = 0;
-    const esp_err_t err = i2s_channel_read(s_rx, buf, max_samples * sizeof(int16_t), &bytes,
-                                           pdMS_TO_TICKS(timeout_ms));
+    /* i2s_channel_read() takes milliseconds, not ticks. */
+    const esp_err_t err =
+        i2s_channel_read(s_rx, buf, max_samples * sizeof(int16_t), &bytes, timeout_ms);
     *got = bytes / sizeof(int16_t);
     return err;
 }
