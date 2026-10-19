@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# barvis-sound: update the server checkout and run it in the background.
+# odysseus-sound: update the server checkout and run it in the background.
 #
 #   server/scripts/deploy.sh deploy [REF]   # update to REF (default: <remote>/main), install, restart, check
 #   server/scripts/deploy.sh start | stop | restart
@@ -7,7 +7,8 @@
 #   server/scripts/deploy.sh logs [serve|mcp|whisper]
 #   server/scripts/deploy.sh units          # print the systemd units it would install
 #
-# Runs as your normal user (no sudo) from any directory. Services:
+# Runs as your normal user (no sudo) from any directory. Services (names keep the old
+# barvis-sound prefix on purpose: deployed units and settings depend on them):
 #   barvis-sound          convo-server serve          (API + worker, CONVO_HOST:CONVO_PORT)
 #   barvis-sound-mcp      convo-server mcp --http     (only if CONVO_MCP_TOKEN is set)
 #   barvis-sound-whisper  BARVIS_SOUND_WHISPER_CMD    (only if set)
@@ -27,7 +28,7 @@ REPO_DIR=$(cd "$SERVER_DIR/.." && pwd)
 cd "$SERVER_DIR"
 
 die() { echo "error: $*" >&2; exit 1; }
-log() { echo "==> [barvis-sound] $*"; }
+log() { echo "==> [odysseus-sound] $*"; }
 
 env_value() {  # $1 from the environment (even if empty), else from .env, else $2
   local v=""
@@ -131,9 +132,9 @@ wait_healthy() {  # $1 service, $2 seconds
 
 render_unit() {  # systemd unit for service $1
   cat <<EOF
-# Written by barvis-sound server/scripts/deploy.sh; rerun it instead of editing.
+# Written by odysseus-sound server/scripts/deploy.sh; rerun it instead of editing.
 [Unit]
-Description=barvis-sound $1
+Description=odysseus-sound $1
 StartLimitIntervalSec=0
 
 [Service]
@@ -327,7 +328,7 @@ update_checkout() {  # $1 ref or empty; sets PREV and NEW
   local r ref
   git -C "$REPO_DIR" diff --quiet HEAD -- \
     || die "tracked files in $REPO_DIR have local changes (git status); commit or stash them first"
-  r=$(remote); [ -n "$r" ] || die "no git remote points at the barvis-sound repo; set BARVIS_SOUND_REMOTE"
+  r=$(remote); [ -n "$r" ] || die "no git remote points at the odysseus-sound repo (SDarioosh/barvis-sound); set BARVIS_SOUND_REMOTE"
   ref=${1:-$r/$BRANCH}
   PREV=$(git -C "$REPO_DIR" rev-parse HEAD)
   log "fetching $r"
@@ -348,7 +349,7 @@ cmd_deploy() {
   update_checkout "${1:-}"
   first_env
   load_config  # .env may be new
-  [ -n "$MCP_TOKEN" ] || log "warning: CONVO_MCP_TOKEN is not set in server/.env, so MCP over HTTP (what Barvis uses) is not started"
+  [ -n "$MCP_TOKEN" ] || log "warning: CONVO_MCP_TOKEN is not set in server/.env, so MCP over HTTP (what Odysseus uses) is not started"
   local short; short=$(git -C "$REPO_DIR" rev-parse --short HEAD)
   if [ "$PREV" = "$NEW" ]; then log "already at $short"; else log "updated $(git -C "$REPO_DIR" rev-parse --short "$PREV") -> $short"; fi
   install_deps
@@ -365,13 +366,13 @@ cmd_deploy() {
     check_services || true
     die "deploy of $short failed and was rolled back (checkout is detached at the old commit; the next deploy returns to $BRANCH)"
   fi
-  die "barvis-sound is not healthy; see the logs above"
+  die "odysseus-sound is not healthy; see the logs above"
 }
 
 cmd_status() {
   load_config
   local s state
-  echo "barvis-sound: $(git -C "$REPO_DIR" rev-parse --short HEAD) $(git -C "$REPO_DIR" log -1 --format=%s) ($RUNNER)"
+  echo "odysseus-sound: $(git -C "$REPO_DIR" rev-parse --short HEAD) $(git -C "$REPO_DIR" log -1 --format=%s) ($RUNNER)"
   for s in "${SERVICES[@]}"; do
     if ! enabled "$s"; then state="not configured"
     elif ! is_running "$s"; then state="stopped"

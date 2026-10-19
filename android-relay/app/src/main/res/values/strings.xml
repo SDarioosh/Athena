@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Barvis Relay</string>
+    <string name="app_name">Odysseus Sound Relay</string>
     <string name="settings_title">Relay settings</string>
     <string name="channel_name">Relay status</string>
     <string name="channel_description">Shows what the watch relay is doing</string>
