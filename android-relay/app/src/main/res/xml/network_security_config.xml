@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The owner's server is reached over the LAN or Tailscale. Tailscale and RFC 1918 addresses
+  can't be listed here (domain-config takes names, not CIDR ranges), so cleartext is allowed
+  app-wide and the settings screen warns when an http:// URL isn't a private, Tailscale,
+  *.ts.net or *.local address. The app only ever connects to the one URL in its settings.
+  User-installed CAs are not trusted.
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
