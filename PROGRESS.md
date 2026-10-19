@@ -250,6 +250,14 @@ LAST chunk.
   watch never saw and closes it within a second. `--once`/`--list` now connect again (up
   to 3 tries) when the link drops before `info` was read, and `--list` prints the failure
   reason instead of only `0 chunk(s) queued`.
+- **SD reads fail right after an ACK**: in a real drain the card sometimes answers a read
+  within ~2 s of an ACK (two file deletes) late or garbled (sdspi `0x107`/`0x108`), and
+  the READ stopped with `E_IO`. Dry runs (no ACKs) and USB reads never hit it. The watch
+  now retries a failed read after 20/100/300 ms; all 3 errors in the last drain came
+  through on the first retry. Counter: `SD read retries` in `ble`.
+- **Drain into the server works**: all 14 test chunks (4 sessions) uploaded, acked and
+  deleted on the watch; the server finished all 4 sessions (`done`, no errors) and
+  deleted their raw audio. A second `--once` finds `queue=0`.
 - `ble` counters show `host resets`. Protocol doc §7.1/§7.2 updated.
 - Host tests (cmake) not run on the owner's PC (no host C compiler there); CI runs them.
   `ble_sync.c` isn't part of them.
@@ -373,8 +381,8 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 ## Next
 
 0. **Owner: T-Watch Ultra upload path test** (round 12 PR, Server verification): `--list`
-   from the Windows PC works (round 14). Still to do: drain with `ble_relay.py --once`
-   into the server, then with the Android app; report the BLE transfer time. Encoder:
+   from the Windows PC works, and so does `--once` into the server (round 14). Still to do:
+   the Android app; report the BLE transfer time (PC: ~2 s per 53 KB chunk incl. upload). Encoder:
    ~10.3 ms avg per 20 ms frame at 80 MHz (about half a core).
 1. **Owner: T-Watch Ultra milestone 1 test** (`firmware/recorder/README.md`, PR Server
    verification). Then milestone 2: power baseline (plan §7.3, §8): current for board
