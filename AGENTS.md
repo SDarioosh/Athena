@@ -38,7 +38,9 @@ through our MCP server. **Nothing in the data path touches the cloud.**
   recording feasibility test app; see `zepp-app/README.md`.
 - `docs/`: research and decisions (`omi-ingestion.md`,
   `frontend-decision.md`, `xiao-esp32s3-sense-plan.md`: the plan for our own
-  XIAO ESP32-S3 Sense pendant; plan only, no code until its open decisions are answered).
+  XIAO ESP32-S3 Sense pendant; `t-watch-ultra-plan.md`: the same recorder on the
+  LilyGO T-Watch Ultra with shared firmware; both plan only, no code until their open
+  decisions are answered).
 - `hermes/`: Hermes profile snippet used by the orchestrator.
 - `orchestrator/`: optional build loop. Leave it alone.
 

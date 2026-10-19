@@ -28,6 +28,7 @@ _Last updated: 2026-10-18 (round 7: Barvis keeps MCP annotations over HTTP)_
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
 | 9c | Calendar/task integration for action items | later (wanted) | — |
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **main focus** with the T-Rex; plan written, waiting on owner decisions | `docs/xiao-esp32s3-sense-plan.md` |
+| 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | plan written, waiting on owner decisions (§10) | `docs/t-watch-ultra-plan.md` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -239,6 +240,10 @@ Still open:
 - The XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, ESP-IDF vs Arduino, server late-chunk policy, extra
 parts, microSD, Omi live-audio service). No pendant code until those are answered.
+- The T-Watch Ultra decisions in `docs/t-watch-ultra-plan.md` §10 (Ultra first and
+  the XIAO later, one shared firmware, framework, button mapping, raise-to-wake,
+  overflow storage, T-Watch S3 as a second board, daily charge). No watch firmware until
+  those are answered.
 
 ## Notes
 
