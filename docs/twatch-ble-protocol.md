@@ -227,10 +227,14 @@ Windows negotiate on their own). With a smaller MTU every command answers
 - Resume after a disconnect with `offset` = bytes already received.
 - The relay checks: every `DATA` offset is the next expected byte, the total equals
   `ENTRY.bytes` and `READ_END.total_bytes`, and the CRC-32 of the whole file equals
-  `ENTRY.crc32`. On a mismatch it discards the bytes and reads the chunk again (at most 3
-  times, then it skips the chunk for this connection and reports it).
-- A `READ_END` with `status` ≠ 0 means the read stopped early (SD error); the relay
-  retries later.
+  `ENTRY.crc32`. On a mismatch it discards the bytes and reads the chunk again: 4 reads in
+  total (the first plus 3 re-reads), then it skips the chunk for this connection and
+  reports it.
+- A `READ_END` with `status` ≠ 0, or `ERROR io_error`, means the card failed: the relay
+  stops the drain, sends `BYE` and retries later with the backoff (§6 step 5). `ERROR
+  not_found` on `READ` (the chunk went away) skips that chunk and the drain goes on.
+- A relay keeps a partly read chunk in memory and resumes it with `offset` on the next
+  connection, if the chunk's entry (session, sequence, size, CRC) is unchanged.
 
 ### 5.3 `ACK`
 
@@ -266,7 +270,8 @@ Windows negotiate on their own). With a smaller MTU every command answers
 ## 6. Relay algorithm (phone app and `ble_relay.py`)
 
 1. **Scan** for the service UUID (scan filter). Connect.
-2. Request **MTU 517**, 2M PHY if available, and high connection priority for the
+2. Request **MTU 517** (Android; on a PC the OS negotiates it and the watch's `ERROR
+   mtu_too_small` tells if it's too low), 2M PHY if available, and high connection priority for the
    transfer (Android `CONNECTION_PRIORITY_HIGH`).
 3. **Encrypt / bond**: subscribe to `data` and `status` (both need encryption, so a new
    phone pairs here; §3.1).
@@ -301,7 +306,9 @@ Windows negotiate on their own). With a smaller MTU every command answers
         stays on the watch. The relay shows the error, skips the chunk for this
         connection and goes on with the next one. The owner decides (the watch's console
         `queue drop <id>` deletes it). `422` uploads are kept by the server in
-        `data/rejected/` for inspection.
+        `data/rejected/` for inspection. A `4xx` from `/end` is handled the same way.
+      - HTTP redirects are not followed (they would carry the token elsewhere); a `3xx`
+        counts as retry-later.
    6. Continue with `LIST` after the last id until it returns no entries and
       `remaining = 0`.
 7. `BYE`, disconnect, drop back to scanning.
@@ -338,7 +345,9 @@ seconds of the phone being in range.
 - **MTU**: the watch supports up to 517; at 517 a `DATA` frame carries 505 bytes, so a
   60 KB chunk is ~120 notifications.
 - The watch disconnects a relay that sent no command for **30 s**, so a stuck relay can't
-  keep the radio busy.
+  keep the radio busy. Relays use an HTTP timeout below that (25 s). If an upload still
+  takes longer, the link drops before the `ACK`; that is safe: the next connection
+  uploads the chunk again, the server answers `duplicate`, and the relay acks it.
 - A connection costs a few mA for a few seconds; idle advertising at ~1 s costs tens of
   µA. There is no idle long-interval connection in v1 (XIAO §3.1 option): the drain-then-
   disconnect pattern is simpler and lets the watch control when the radio is on.
