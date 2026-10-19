@@ -311,14 +311,7 @@ class Summarizer:
                                      facts=_unique(facts))
         out = to_storage(result, origin)
         out["kind"] = triage.kind
-        # work the date out in code where the phrase names a day; the model's guess only
-        # for the rest (small models get weekday arithmetic wrong)
-        today = datetime.fromtimestamp(origin, self.tz).date()
-        for item in out["action_items"]:
-            day = resolve_due(item["due"], today) or (
-                None if item["due"] else resolve_due(item["text"], today))
-            if day is not None:
-                item["due_date"] = day.isoformat()
+        self._resolve_due_dates(out, origin)
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
         return out
@@ -341,7 +334,18 @@ class Summarizer:
         out = to_storage(ConversationSummary(**merged.model_dump(), action_items=_unique(actions),
                                              facts=_unique(facts)), origin)
         out["kind"] = "note"
+        self._resolve_due_dates(out, origin)
         return out
+
+    def _resolve_due_dates(self, out: dict[str, Any], origin: float) -> None:
+        """Work the date out in code where the phrase names a day; the model's guess only
+        for the rest (small models get weekday arithmetic wrong)."""
+        today = datetime.fromtimestamp(origin, self.tz).date()
+        for item in out["action_items"]:
+            day = resolve_due(item["due"], today) or (
+                None if item["due"] else resolve_due(item["text"], today))
+            if day is not None:
+                item["due_date"] = day.isoformat()
 
     def link_facts(self, date: str, new: list[dict[str, Any]],
                    known: list[dict[str, Any]]) -> list[FactLink]:

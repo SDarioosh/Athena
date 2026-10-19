@@ -205,3 +205,16 @@ def test_mcp_marks_voice_notes(pipeline):
     assert items.count("(voice note)") == 1
     lines = call(mcp, "search_transcripts", query="words")
     assert lines.count("(voice note)") == 1
+
+
+def test_note_due_dates_are_worked_out_in_code():
+    """A note's "by Friday" is resolved from the note's date like a conversation's."""
+    summary = {"title": "t", "summary": "s", "key_points": [], "people": [], "topics": [],
+               "facts": [], "action_items": [{"text": "Call the plumber", "due": "Friday",
+                                              "due_date": "2025-10-17", "at_seconds": 0}]}
+    llm = LLMClient("http://x/v1", "m", transport=fake_llm_transport(summary=summary))
+    # 1760000000 = Thursday 2025-10-09 08:53 UTC
+    out = Summarizer(llm, "Me").summarize([Segment(1_760_000_000, 1_760_000_003,
+                                                   "Call the plumber by Friday", "Me", True)],
+                                          kind="note")
+    assert [a["due_date"] for a in out["action_items"]] == ["2025-10-10"]
