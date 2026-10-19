@@ -57,6 +57,16 @@ esp_err_t axp2101_adc_enable(uint8_t channel_mask);
 
 esp_err_t axp2101_read_battery(axp_battery_t *out);
 
+/* Power-key timing, register 0x27 (datasheet "IRQLEVEL/OFFLEVEL/ONLEVEL", XPowersLib
+ * setIrqLevelTime/setPowerKeyPressOffTime/setPowerKeyPressOnTime):
+ *   bits[5:4] IRQLEVEL: hold time for the PKEY_LONG IRQ, 00 = 1 s, 01 = 1.5 s, 10 = 2 s, 11 = 2.5 s
+ *   bits[3:2] OFFLEVEL: hold time for the hardware power-off, 4 / 6 / 8 / 10 s
+ *   bits[1:0] ONLEVEL:  hold time to power on, 128 ms / 512 ms / 1 s / 2 s
+ * Set the PKEY_LONG time (1000, 1500, 2000 or 2500 ms); only bits[5:4] change. */
+esp_err_t axp2101_set_pkey_long_ms(int ms);
+/* Read the three times back, in ms. */
+esp_err_t axp2101_get_pkey_times(int *long_irq_ms, int *off_ms, int *on_ms);
+
 esp_err_t axp2101_irq_enable(uint32_t mask);
 /* Read all three IRQ status registers and clear the bits that were set. */
 esp_err_t axp2101_irq_read_clear(uint32_t *status);

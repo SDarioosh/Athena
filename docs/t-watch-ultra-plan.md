@@ -149,7 +149,7 @@ Layout chosen by the owner on 2026-10-19:
 | BOOT double-click | **Toggle mute** (mic and encoder off). 2 buzzes = muted, 1 long buzz = unmuted |
 | BOOT hold ~1 s | Open the 2-minute BLE sync/pairing window (a stand-in until a touch UI exists) |
 | PWR short press | Start / stop a conversation recording session. 1 buzz = started, 2 buzzes = stopped |
-| PWR hold ~1 s | Start a **voice note**. A PWR press stops it; it stops by itself after 5 min. The AXP2101 long-press time is set to 1 s (register 0x27) |
+| PWR hold ~1 s | Start a **voice note**. A PWR press stops it; it stops by itself after 5 min. The AXP2101 long-press time is set to 1 s (register 0x27 bits[5:4]) |
 | PWR hold ~6 s | Hardware power-off (AXP2101 power-off time, left as shipped) |
 | Raise to wake | **Not for now** (§10): the screen stays off until a button press. The BHI260AP gesture could add it later, after power is measured |
 
@@ -161,7 +161,7 @@ Layout chosen by the owner on 2026-10-19:
 **Voice notes.** A voice note is a short recording the owner starts on purpose, for
 example a reminder or an idea. It is its own session: a new session ID, 30 s chunks as
 usual, each chunk flagged `NOTE` (protocol §4.3). It stops on a PWR press or after 5 min
-(15 chunks). If a conversation session is recording, the watch ends it cleanly first,
+(10 chunks). If a conversation session is recording, the watch ends it cleanly first,
 records the note, and then starts a new conversation session (unless muted meanwhile). The
 mic has one owner, so notes and conversations never mix. The server's gap rule joins the
 two conversation halves; notes are never joined. Mute ends whatever is recording and

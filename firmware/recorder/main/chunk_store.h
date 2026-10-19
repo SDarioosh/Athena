@@ -19,6 +19,7 @@ extern "C" {
 
 #define CHUNK_FLAG_LAST 0x01       /* last chunk of its session */
 #define CHUNK_FLAG_TIME_UNSET 0x02 /* start_ms is ms since the session start, not epoch ms */
+#define CHUNK_FLAG_NOTE 0x04       /* the chunk belongs to a voice note (its own short session) */
 
 /* One closed, listable chunk. The first fields are exactly the ENTRY fields of the
  * protocol (§4.3); boot_id and mono_ms are for TIME fix-ups only. */
@@ -88,7 +89,7 @@ typedef struct {
     uint8_t session_id[8];
     uint32_t sequence;
     uint64_t start_ms; /* epoch ms, or session-relative ms with CHUNK_FLAG_TIME_UNSET */
-    uint8_t flags;     /* CHUNK_FLAG_TIME_UNSET or 0 */
+    uint8_t flags;     /* CHUNK_FLAG_TIME_UNSET and/or CHUNK_FLAG_NOTE, or 0 */
     uint64_t mono_ms;  /* esp_timer ms at the chunk start (for the TIME fix-up) */
 } chunk_store_new_t;
 

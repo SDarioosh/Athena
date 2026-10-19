@@ -274,6 +274,22 @@ static void test_vectors(void)
     CHECK_BYTES(out, n, "81 01 0000 07000000 3f9a0c11d2e4b507 02000000 60540954a1010000 "
                         "34300000 68600000 2639f4cb");
 
+    /* Voice note (contract vector): chunk 8, LAST + NOTE, seq 0. */
+    CHECK_EQ(BLE_ENTRY_NOTE, 0x04);
+    const ble_proto_entry_t note = {
+        .chunk_id = 8,
+        .flags = BLE_ENTRY_LAST | BLE_ENTRY_NOTE,
+        .session_id = {0x3f, 0x9a, 0x0c, 0x11, 0xd2, 0xe4, 0xb5, 0x07},
+        .sequence = 0,
+        .start_ms = 1792411260000ULL,
+        .duration_ms = 12340,
+        .bytes = 24680,
+        .crc32 = 0xcbf43926u,
+    };
+    n = ble_proto_encode_entry(&note, out);
+    CHECK_BYTES(out, n, "81 05 0000 08000000 3f9a0c11d2e4b507 00000000 60540954a1010000 "
+                        "34300000 68600000 2639f4cb");
+
     n = ble_proto_encode_data_header(7, 505, out);
     out[n++] = 0xaa;
     out[n++] = 0xbb;

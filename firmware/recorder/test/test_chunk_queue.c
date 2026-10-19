@@ -445,6 +445,73 @@ static void test_fix_time(void)
     cq_deinit(&q);
 }
 
+/* The NOTE flag (voice notes) is kept by cq_begin, gets LAST added by cq_end and by recovery,
+ * survives cq_fix_time and a reload from the card; ordinary chunks never get it. */
+static void test_note_flag(void)
+{
+    clear_dir();
+    chunk_queue_t q;
+    CHECK_EQ(cq_init(&q, g_dir, NULL), CQ_OK);
+    /* An ordinary conversation chunk. */
+    const uint32_t conv = begin(&q, SESSION_B, 0, 1792411200000ull, 0, 7, 0);
+    packets(&q, 10);
+    CHECK_EQ(ogg_opus_finish(&g_w, 0), OGG_OPUS_OK);
+    CHECK_EQ(cq_end(&q, 200, true), CQ_OK);
+    /* A note recorded without a clock; a LAST passed to cq_begin is not taken over. */
+    const uint32_t n0 = begin(&q, SESSION_A, 0, 0, CQ_FLAG_NOTE | CQ_FLAG_TIME_UNSET | CQ_FLAG_LAST,
+                              7, 1000);
+    cq_info_t c;
+    CHECK(cq_current(&q, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_NOTE | CQ_FLAG_TIME_UNSET);
+    packets(&q, 10);
+    CHECK_EQ(ogg_opus_finish(&g_w, 0), OGG_OPUS_OK);
+    CHECK_EQ(cq_end(&q, 30000, false), CQ_OK);
+    const uint32_t n1 = begin(&q, SESSION_A, 1, 30000, CQ_FLAG_NOTE | CQ_FLAG_TIME_UNSET, 7, 31000);
+    packets(&q, 10);
+    CHECK_EQ(ogg_opus_finish(&g_w, 0), OGG_OPUS_OK);
+    CHECK_EQ(cq_end(&q, 12340, true), CQ_OK);
+    CHECK(cq_get(&q, conv, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_LAST);
+    CHECK(cq_get(&q, n0, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_NOTE | CQ_FLAG_TIME_UNSET);
+    CHECK(cq_get(&q, n1, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_NOTE | CQ_FLAG_TIME_UNSET | CQ_FLAG_LAST);
+
+    /* Reload from the card (cq_deinit + cq_init). */
+    cq_boot_report_t rep;
+    reboot(&q, &rep);
+    CHECK_EQ(rep.loaded, 3);
+    CHECK(cq_get(&q, conv, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_LAST);
+    CHECK(cq_get(&q, n0, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_NOTE | CQ_FLAG_TIME_UNSET);
+    CHECK(cq_get(&q, n1, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_NOTE | CQ_FLAG_TIME_UNSET | CQ_FLAG_LAST);
+
+    /* The clock is set: TIME_UNSET goes, NOTE stays, on the card too. */
+    CHECK_EQ(cq_fix_time(&q, 7, 1792411260000LL, 70000), 2);
+    CHECK(cq_get(&q, n0, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_NOTE);
+    CHECK(cq_get(&q, n1, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_NOTE | CQ_FLAG_LAST);
+
+    /* A note chunk cut by a power loss is recovered with LAST and keeps NOTE. */
+    const uint8_t session_c[8] = {9, 9, 9, 9, 9, 9, 9, 9};
+    const uint32_t cut = begin(&q, session_c, 0, 1792411300000ull, CQ_FLAG_NOTE, 7, 80000);
+    packets(&q, 60); /* one audio page on the card */
+    reboot(&q, &rep);
+    CHECK_EQ(rep.recovered, 1);
+    CHECK(cq_get(&q, n0, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_NOTE);
+    CHECK(cq_get(&q, n1, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_NOTE | CQ_FLAG_LAST);
+    CHECK(cq_get(&q, cut, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_NOTE | CQ_FLAG_LAST);
+    CHECK(cq_get(&q, conv, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_LAST);
+    cq_deinit(&q);
+}
+
 static void test_torn_records(void)
 {
     clear_dir();
@@ -502,6 +569,7 @@ int main(void)
     test_recover_without_audio();
     test_abandon_and_set_last();
     test_fix_time();
+    test_note_flag();
     test_torn_records();
     return checks_done("test_chunk_queue");
 }

@@ -76,6 +76,7 @@ extern "C" {
 /* Entry flag bits (§4.3), the same values as CHUNK_FLAG_* in chunk_store.h. */
 #define BLE_ENTRY_LAST 0x01
 #define BLE_ENTRY_TIME_UNSET 0x02
+#define BLE_ENTRY_NOTE 0x04 /* the chunk belongs to a voice note */
 
 typedef struct {
     uint8_t flags;           /* BLE_STATUS_* */

@@ -581,10 +581,14 @@ static int ensure_media(void)
     return 0;
 }
 
+_Static_assert(BLE_ENTRY_LAST == CHUNK_FLAG_LAST && BLE_ENTRY_TIME_UNSET == CHUNK_FLAG_TIME_UNSET &&
+                   BLE_ENTRY_NOTE == CHUNK_FLAG_NOTE,
+               "ble_proto.h entry flags and chunk_store.h flags differ");
+
 static void to_entry(const chunk_info_t *c, ble_proto_entry_t *e)
 {
     e->chunk_id = c->chunk_id;
-    e->flags = c->flags & (BLE_ENTRY_LAST | BLE_ENTRY_TIME_UNSET);
+    e->flags = c->flags & (BLE_ENTRY_LAST | BLE_ENTRY_TIME_UNSET | BLE_ENTRY_NOTE);
     memcpy(e->session_id, c->session_id, sizeof(e->session_id));
     e->sequence = c->sequence;
     e->start_ms = c->start_ms;
