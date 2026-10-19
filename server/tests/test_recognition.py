@@ -262,3 +262,54 @@ def test_rename_everywhere_and_reassign_line(pipeline):
     assert seg.speaker == "Me" and seg.is_owner
     assert "already" in call(mcp, "reassign_line", line_id=line, name="Me")
     assert "No line #999" in call(mcp, "reassign_line", line_id=999, name="Me")
+
+
+def test_relabel_never_overwrites_a_name_a_person_set(pipeline):
+    from test_mcp import T0, call, process_two_speakers
+
+    from convo_server.mcp_server import build_mcp
+
+    store = pipeline.store
+    mcp = build_mcp(store, pipeline.settings)
+    for i in range(3):  # three recordings with the same unnamed voice
+        process_two_speakers(pipeline, session=f"s{i}", start=T0 + i * 3600)
+    convs = sorted(store.list_conversations(), key=lambda c: c["started_at"])
+    first = store.conversation_segments(convs[0]["id"])[1]
+    call(mcp, "reassign_line", line_id=first.id, name="Dan")  # the user: that line was Dan
+    owner_line = store.conversation_segments(convs[2]["id"])[0]
+    call(mcp, "reassign_line", line_id=owner_line.id, name="Eve")
+    out = call(mcp, "name_speaker", conversation_id=convs[1]["id"], speaker_label="Speaker 1",
+               name="Carol")
+    assert "matched 1 unnamed" in out  # s2's Speaker 1; s0 has no unnamed line left
+    speakers = [[s.speaker for s in store.conversation_segments(c["id"])] for c in convs]
+    assert speakers == [["Me", "Dan"], ["Me", "Carol"], ["Eve", "Carol"]]
+
+
+def test_rename_everywhere_refuses_an_unnamed_label_as_new_name(pipeline):
+    from test_mcp import call, process_two_speakers
+
+    from convo_server.mcp_server import build_mcp
+
+    mcp = build_mcp(pipeline.store, pipeline.settings)
+    process_two_speakers(pipeline)
+    out = call(mcp, "rename_speaker_everywhere", old_name="Me", new_name="Speaker 1")
+    assert "not a name" in out
+    assert {s.speaker for s in pipeline.store.session_segments("s1")} == {"Me", "Speaker 1"}
+    assert [s["name"] for s in pipeline.store.speakers()] == ["Me"]
+
+
+def test_pyannote_fallback_labels_dont_collide():
+    from conftest import ToneEmbedder
+
+    from convo_server.diarize import PieceRef
+    from convo_server.diarize_pyannote import PyannoteDiarizer
+
+    runs = [tone(300, 4), tone(900, 4)]
+
+    def segmenter(audio):  # pyannote hears nobody in the second run
+        return [(0.0, 4.0, "A")] if audio is runs[0] else []
+
+    d = PyannoteDiarizer(ToneEmbedder(), [], segmenter=segmenter)
+    labels, unnamed = d.diarize_runs(runs, [PieceRef(0, 0, 4), PieceRef(1, 0, 4)])
+    assert [x.name for x in labels] == ["Speaker 1", "Speaker 2"]
+    assert list(unnamed) == ["Speaker 1", "Speaker 2"]

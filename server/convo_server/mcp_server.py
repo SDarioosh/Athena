@@ -307,6 +307,9 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if _UNNAMED.match(old_name):
             return (f"{old_name!r} is a per-conversation label; use name_speaker with the "
                     "conversation id instead.")
+        if _UNNAMED.match(new_name):  # would merge a person into an unnamed label
+            return (f"{new_name!r} is not a name; give the person's real name "
+                    "(reassign_line moves single lines).")
         n, convs = store.rename_everywhere(old_name, new_name)
         if not n:
             return f"No lines by {old_name!r}. Known speakers: {_known(store)}."
