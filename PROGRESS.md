@@ -6,7 +6,7 @@ T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → l
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (round 10: T-Watch Ultra milestone 1, bring-up firmware)_
+_Last updated: 2026-10-19 (round 11: T-Watch Ultra milestone 1, bring-up firmware)_
 
 ## Status
 
@@ -25,6 +25,7 @@ _Last updated: 2026-10-19 (round 10: T-Watch Ultra milestone 1, bring-up firmwar
 | 7e | Cloud sandbox stack: whole system on CPU (Qwen3-4B, whisper base.en), fictional data | ✅ working: 50 tests pass, seed 8/8 summarized, eval raw 1/3 and Barvis 1/3 on questions 1, 4, 16; 2/3 and 3/3 in two runs with SDarioosh/Barvis#5 | Barvis `docs/barvis/sandbox.md` |
 | 8 | Omi ingestion path (Android BLE relay) | optional, depends on how the XIAO goes | — |
 | 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | merged (PR #4), **waiting for owner's watch test**; test server is running | `zepp-app/` |
+| 9d | Watch voice profile (guided 60–90 s owner enrollment) | PR open, **needs the real watch** | `zepp-app/page/enroll.js`, `POST /v1/speakers/enroll.json` |
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
 | 9c | Calendar/task integration for action items | later (wanted) | — |
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
@@ -225,7 +226,7 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Needs the owner: paste the new `INSTRUCTIONS` into the Custom preset and rerun
   `barvis_setup.py` so `/sound` picks it up.
 
-## Done in round 10: T-Watch Ultra milestone 1, bring-up test firmware
+## Done in round 11: T-Watch Ultra milestone 1, bring-up test firmware
 
 - `firmware/recorder/`: ESP-IDF 5.x project with the board layer from the plan (§6):
   `main/board.h` is the interface, `boards/twatch_ultra/board/` implements it. Shared code
@@ -261,6 +262,29 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (left/right), display init (LilyGoLib runs its sequence twice), SD_DET polarity,
   ERM vs LRA haptics.
 
+## Done in round 10: voice profile on the watch
+
+- The watch app (0.2.0) has a **Voice** button: a guided recording of 8 short prompts
+  (about 75 s; Done after 45 s, auto-stop at 2 min) through the same microphone as daily
+  recordings. The phone posts it to the new `POST /v1/speakers/enroll.json` (base64
+  audio in JSON, because the Side Service's fetch only sends strings) with
+  `is_owner=true`, named with the new "Your name" setting (default `Me`).
+- Logic in `zepp-app/shared/enroll.js` with `tests/enroll.test.mjs`; the device helpers
+  moved unchanged from `page/index.js` to `utils/device.js` so both pages share them.
+  Server test: `test_enroll_speaker_json_for_the_watch`.
+- `zeus build` doesn't run in this sandbox (it fetches Zepp's device list over plain
+  HTTP, which the proxy blocks); all pages bundle with esbuild (`@zos/*` external).
+- **Needs the real watch** (not verifiable here):
+  1. The page opens from **Voice**, prompts are readable on both screen sizes, buttons
+     fit (44 mm and 48 mm).
+  2. One ~75 s Recorder file works (the test app only used 30 s files) and the screen
+     stays on for the whole recording.
+  3. Upload of a ~100 KB file over BLE completes (time it), and the watch shows
+     "Saved as … (N s of speech)".
+  4. `curl -H "Authorization: Bearer $CONVO_INGEST_TOKEN" http://127.0.0.1:8000/v1/speakers`
+     lists the owner with `"is_owner": true`.
+  5. A normal recording afterwards labels the owner's lines with the owner's name.
+
 ## Next
 
 1. **Owner: T-Watch Ultra milestone 1 test** (`firmware/recorder/README.md`, PR Server
@@ -276,7 +300,8 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
    tools and a score ≥ 9/20; steps in that PR).
 5. Build the real T-Rex recording app from the watch-test results.
 6. systemd units for `whisper-server`, `convo-server serve`, and MCP over HTTP.
-7. Owner voice enrollment, plus speaker-threshold check on real audio.
+7. Owner voice enrollment from the watch (round 10), plus speaker-threshold check on
+   real audio.
 8. T-Watch Ultra recorder: milestones 3+ (`docs/t-watch-ultra-plan.md` §8) once the
    power baseline says go.
 9. XIAO pendant, after the T-Watch Ultra: a second `boards/` directory on the same firmware.

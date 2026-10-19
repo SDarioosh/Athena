@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     whisper_server_url: str | None = None  # e.g. http://127.0.0.1:8178
     whisper_cli: str | None = None  # e.g. /opt/whisper.cpp/build/bin/whisper-cli
     whisper_model: str | None = None  # e.g. /opt/whisper.cpp/models/ggml-large-v3-turbo.bin
+    # Words whisper should spell right (names, places, jargon), as a short sentence or a
+    # comma list. Names of known speakers are added automatically.
+    whisper_prompt: str = ""
+    # Temperature step for whisper's fallback when a decode looks wrong (0 = no fallback).
+    whisper_temperature_inc: float = 0.2
 
     # llama-server (OpenAI-compatible)
     llm_base_url: str = "http://127.0.0.1:8080/v1"
@@ -60,9 +65,25 @@ class Settings(BaseSettings):
 
     # Diarization
     diarization: bool = True
+    # "ecapa": cluster one voiceprint per transcript piece (no extra install).
+    # "pyannote": pyannote.audio community-1 pipeline, local (extra `pyannote`).
+    diarizer: str = "ecapa"
+    # Hugging Face id or a local directory. Cloud (pyannoteAI) pipelines are refused.
+    pyannote_model: str = "pyannote-community/speaker-diarization-community-1"
+    pyannote_device: str = "auto"  # auto (cuda if available), cuda or cpu
     speaker_match_threshold: float = 0.50  # cosine similarity to enrolled voice
     speaker_cluster_threshold: float = 0.45  # cosine similarity to merge clusters
+    # After a speaker is named, unnamed speakers in other conversations whose voice is at
+    # least this close are renamed too (stricter than the match threshold).
+    speaker_relabel_threshold: float = 0.60
+    # Owner hint: the wearer is usually the loudest voice. A cluster that is at least
+    # owner_hint_db louder than all others and within owner_hint_margin below the match
+    # threshold of the owner's voice is labelled as the owner. 0 margin = off.
+    owner_hint_margin: float = 0.10
+    owner_hint_db: float = 3.0
     owner_name: str = "Me"
+    # Where downloaded model weights are cached (speaker models). Default: <data_dir>/models.
+    models_dir: Path | None = None
 
     # --- knowledge layer ---
     # Base URL used in transcript links handed to the frontend, e.g. the server's
@@ -88,6 +109,10 @@ class Settings(BaseSettings):
     @property
     def db_path(self) -> Path:
         return self.data_dir / "convo.db"
+
+    @property
+    def model_cache(self) -> Path:
+        return self.models_dir or self.data_dir / "models"
 
     @property
     def audio_dir(self) -> Path:

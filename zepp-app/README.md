@@ -82,6 +82,28 @@ Report back:
 | C wake/2 min | | | | | | | | | | |
 | D ping / upload | ping: | uploaded: | | | | | | | | |
 
+## Voice profile (since 0.2.0)
+
+**Voice** on the main screen opens a guided recording that teaches the server your
+voice *as this watch's microphone hears it*, which matches daily recordings better than
+a profile recorded on a laptop.
+
+1. In the Zepp app's settings for the mini app, set **Your name** to the name the server
+   should use for you (default `Me`, same as `CONVO_OWNER_NAME`).
+2. On the watch: **Voice → Start**, then read each sentence aloud in your normal voice,
+   somewhere quiet. **Next** shows the next sentence. **Done** works after 45 s; aim for
+   about 75 s (the timer shows it). It stops on its own after 2 min.
+3. **Upload** sends the recording to the phone, which posts it to
+   `POST /v1/speakers/enroll.json` with `is_owner=true`. Keep the phone nearby; the screen
+   stays on until it is done. The watch shows how many seconds of speech the server kept.
+
+The server cuts the speech into several voice samples and replaces your earlier
+enrollment samples (with barvis-sound's multi-sample voices; otherwise it replaces your
+voiceprint). Redo it any time, for example after a firmware update changes the mic.
+Diarization must be on (`CONVO_DIARIZATION=true`), or the server answers 503.
+
+Real-device checks still open: see "Voice profile" in PROGRESS.md and the PR.
+
 ## Known unknowns (not verifiable without the watch)
 
 - **Recorder output format (answered):** the T-Rex 3 Pro writes raw Opus packets with
@@ -109,6 +131,10 @@ The watch only buzzes when recording really started. **Clear** dismisses the err
 ## Layout
 
 - `page/index.js`: watch UI, recorder, display policy, upload over BLE.
+- `page/enroll.js`: guided voice-profile recording and upload.
+- `utils/device.js`: microphone permission, recorder, display policy, files (shared by
+  both pages).
+- `shared/enroll.js`: voice-profile state machine and prompts (pure, unit-tested).
 - `shared/session.js`: recording-test state machine (pure, unit-tested).
 - `shared/envelope.js`: binary chunk envelope and base64 (pure, unit-tested).
 - `shared/uploader.js`: phone-side HTTP calls (tested against a running server).

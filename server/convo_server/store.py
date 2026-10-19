@@ -6,6 +6,7 @@ All timestamps are UTC epoch seconds (REAL). The API layer formats them as ISO-8
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -123,6 +124,26 @@ CREATE TABLE IF NOT EXISTS embeddings (
     PRIMARY KEY (kind, ref_id)
 );
 
+-- Several voice samples per speaker (enrollment windows, named speakers); matching uses
+-- the closest few instead of one blended voiceprint. speakers.embedding is their mean.
+CREATE TABLE IF NOT EXISTS voice_samples (
+    id INTEGER PRIMARY KEY,
+    speaker_id INTEGER NOT NULL REFERENCES speakers(id) ON DELETE CASCADE,
+    embedding BLOB NOT NULL,
+    source TEXT NOT NULL,                     -- enrolled|named|legacy
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS voice_samples_speaker ON voice_samples(speaker_id);
+
+-- Every conversation that mentioned a fact again ("same" link), so a fact keeps links
+-- to all the transcripts it came from.
+CREATE TABLE IF NOT EXISTS fact_sources (
+    fact_id INTEGER NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    source_at REAL,
+    PRIMARY KEY (fact_id, conversation_id)
+);
+
 -- Voice embeddings of unnamed speakers ("Speaker 1") per session, so naming a speaker
 -- later can also teach the diarizer that voice.
 CREATE TABLE IF NOT EXISTS speaker_candidates (
@@ -152,6 +173,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
     tokenize = 'porter unicode61'
 );
 """
+
+
+_PLACEHOLDER_SPEAKER = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
 
 
 class DuplicateChunk(Exception):
@@ -188,6 +212,26 @@ class Store:
             # databases created before the line-level index existed
             self._conn.execute("INSERT INTO segments_fts(segments_fts) VALUES ('rebuild')")
             self._conn.execute("PRAGMA user_version = 2")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 3:
+            # one blended voiceprint per speaker before: keep it as their first sample
+            self._conn.execute(
+                "INSERT INTO voice_samples (speaker_id, embedding, source, created_at)"
+                " SELECT id, embedding, 'legacy', created_at FROM speakers WHERE id NOT IN"
+                " (SELECT speaker_id FROM voice_samples)")
+            self._conn.execute("PRAGMA user_version = 3")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 4:
+            # focused summaries: conversation kind, discarded junk, due dates, fact history
+            self._add_column("conversations", "kind", "TEXT")
+            self._add_column("conversations", "discard_reason", "TEXT")
+            self._add_column("action_items", "due_date", "TEXT")  # YYYY-MM-DD
+            self._add_column("facts", "status", "TEXT NOT NULL DEFAULT 'current'")
+            self._add_column("facts", "superseded_by", "INTEGER")
+            self._conn.execute("PRAGMA user_version = 4")
+
+    def _add_column(self, table: str, column: str, decl: str) -> None:
+        cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def close(self) -> None:
         self._conn.close()
@@ -376,29 +420,30 @@ class Store:
                 " WHERE id = ?", (conv_id, conv_id, conv_id))
         return conv_id
 
-    def save_summary(self, conv_id: str, summary: dict[str, Any]) -> None:
-        """Store structured LLM output and refresh the FTS index for the conversation."""
+    def save_summary(self, conv_id: str, summary: dict[str, Any]) -> list[int]:
+        """Store structured LLM output and refresh the FTS index for the conversation.
+
+        Returns the ids of the new facts (for ``link_facts``).
+        """
         conv = self.get_conversation(conv_id)
         if conv is None:
             raise KeyError(conv_id)
+        fact_ids: list[int] = []
         with self.tx() as c:
             c.execute(
                 "UPDATE conversations SET status = 'summarized', error = NULL, title = ?,"
-                " summary = ?, key_points = ?, topics = ?, people = ?, updated_at = ?"
-                " WHERE id = ?",
+                " summary = ?, key_points = ?, topics = ?, people = ?, kind = ?,"
+                " discard_reason = NULL, updated_at = ? WHERE id = ?",
                 (summary["title"], summary["summary"], json.dumps(summary["key_points"]),
-                 json.dumps(summary["topics"]), json.dumps(summary["people"]), time.time(),
-                 conv_id))
-            for table in ("action_items", "facts", "conversation_people"):
-                c.execute(f"DELETE FROM {table} WHERE conversation_id = ?", (conv_id,))
-            c.execute("DELETE FROM search_fts WHERE conversation_id = ?", (conv_id,))
-            c.execute("DELETE FROM embeddings WHERE conversation_id = ?", (conv_id,))
+                 json.dumps(summary["topics"]), json.dumps(summary["people"]),
+                 summary.get("kind"), time.time(), conv_id))
+            self._clear_knowledge(c, conv_id)
             for item in summary["action_items"]:
                 cur = c.execute(
-                    "INSERT INTO action_items (conversation_id, text, owner, due, source_at)"
-                    " VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO action_items (conversation_id, text, owner, due, due_date,"
+                    " source_at) VALUES (?, ?, ?, ?, ?, ?)",
                     (conv_id, item["text"], item.get("owner"), item.get("due"),
-                     item.get("source_at")))
+                     item.get("due_date"), item.get("source_at")))
                 c.execute("INSERT INTO search_fts VALUES ('action_item', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id, item["text"]))
             for fact in summary["facts"]:
@@ -406,6 +451,7 @@ class Store:
                     "INSERT INTO facts (conversation_id, subject, fact, source_at)"
                     " VALUES (?, ?, ?, ?)",
                     (conv_id, fact.get("subject"), fact["fact"], fact.get("source_at")))
+                fact_ids.append(int(cur.lastrowid or 0))
                 c.execute("INSERT INTO search_fts VALUES ('fact', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id,
                            f"{fact.get('subject') or ''}: {fact['fact']}"))
@@ -415,12 +461,114 @@ class Store:
                               " ".join(summary["topics"]), " ".join(summary["people"])])
             c.execute("INSERT INTO search_fts VALUES ('conversation', ?, ?, ?)",
                       (conv_id, conv_id, body))
-            transcript = "\n".join(
-                f"{r['speaker']}: {r['text']}" for r in c.execute(
-                    "SELECT speaker, text FROM segments WHERE conversation_id = ?"
-                    " ORDER BY started_at", (conv_id,)))
-            c.execute("INSERT INTO search_fts VALUES ('transcript', ?, ?, ?)",
-                      (conv_id, conv_id, transcript))
+            self._index_transcript(c, conv_id)
+        return fact_ids
+
+    def save_discarded(self, conv_id: str, reason: str, kind: str | None) -> None:
+        """Mark a conversation as junk (TV, noise): no summary, out of digests.
+
+        The transcript stays and is still searchable; ``POST
+        /v1/conversations/{id}/summarize`` (or a speaker rename) tries again.
+        """
+        with self.tx() as c:
+            c.execute(
+                "UPDATE conversations SET status = 'discarded', error = NULL, title = NULL,"
+                " summary = NULL, key_points = '[]', topics = '[]', people = '[]', kind = ?,"
+                " discard_reason = ?, updated_at = ? WHERE id = ?",
+                (kind, reason, time.time(), conv_id))
+            self._clear_knowledge(c, conv_id)
+            self._index_transcript(c, conv_id)
+
+    def _clear_knowledge(self, c: sqlite3.Connection, conv_id: str) -> None:
+        # facts of other conversations that this one's facts had replaced become current
+        c.execute("UPDATE facts SET status = 'current', superseded_by = NULL"
+                  " WHERE superseded_by IN (SELECT id FROM facts WHERE conversation_id = ?)",
+                  (conv_id,))
+        c.execute("DELETE FROM fact_sources WHERE conversation_id = ?", (conv_id,))
+        for table in ("action_items", "facts", "conversation_people"):
+            c.execute(f"DELETE FROM {table} WHERE conversation_id = ?", (conv_id,))
+        c.execute("DELETE FROM search_fts WHERE conversation_id = ?", (conv_id,))
+        c.execute("DELETE FROM embeddings WHERE conversation_id = ?", (conv_id,))
+
+    def _index_transcript(self, c: sqlite3.Connection, conv_id: str) -> None:
+        transcript = "\n".join(
+            f"{r['speaker']}: {r['text']}" for r in c.execute(
+                "SELECT speaker, text FROM segments WHERE conversation_id = ?"
+                " ORDER BY started_at", (conv_id,)))
+        c.execute("INSERT INTO search_fts VALUES ('transcript', ?, ?, ?)",
+                  (conv_id, conv_id, transcript))
+
+    # ------------------------------------------------------------- fact links
+    def facts_by_id(self, ids: Iterable[int]) -> list[dict[str, Any]]:
+        ids = list(ids)
+        if not ids:
+            return []
+        return self._q(
+            "SELECT f.*, c.started_at AS conversation_at FROM facts f JOIN conversations c"
+            f" ON c.id = f.conversation_id WHERE f.id IN ({','.join('?' * len(ids))})"
+            " ORDER BY f.id", ids)
+
+    def related_facts(self, conv_id: str, facts: list[dict[str, Any]],
+                      limit: int = 15) -> list[dict[str, Any]]:
+        """Current facts of other conversations that may repeat or conflict with ``facts``:
+        same subject, or matching words."""
+        ids: dict[int, None] = {}
+        subjects = {(f.get("subject") or "").strip().lower() for f in facts} - {""}
+        for subj in subjects:
+            for r in self._q("SELECT id FROM facts WHERE status = 'current' AND"
+                             " conversation_id != ? AND lower(subject) = ?"
+                             " ORDER BY id DESC LIMIT ?", (conv_id, subj, limit)):
+                ids[r["id"]] = None
+        for f in facts:
+            for hit in self.fts_search(f"{f.get('subject') or ''} {f['fact']}", limit=5):
+                if hit["kind"] == "fact" and hit["conversation_id"] != conv_id:
+                    ids[int(hit["ref_id"])] = None
+        rows = [r for r in self.facts_by_id(ids) if r["status"] == "current"]
+        return rows[:limit]
+
+    def link_fact(self, new_id: int, relation: str, existing_id: int) -> None:
+        """Record that fact ``new_id`` repeats ("same") or updates ("updates") a known one.
+
+        "same": the new row is dropped and its conversation becomes another source of
+        the known fact. "updates": the older of the two (by conversation time) is marked
+        superseded by the newer, so re-summarizing an old conversation can't overwrite
+        newer knowledge.
+        """
+        with self.tx() as c:
+            rows = {r["id"]: r for r in c.execute(
+                "SELECT f.id, f.conversation_id, f.source_at, c.started_at FROM facts f"
+                " JOIN conversations c ON c.id = f.conversation_id WHERE f.id IN (?, ?)",
+                (new_id, existing_id))}
+            if len(rows) != 2:
+                return
+            new, old = rows[new_id], rows[existing_id]
+            if relation == "same":
+                c.execute("INSERT OR IGNORE INTO fact_sources VALUES (?, ?, ?)",
+                          (existing_id, new["conversation_id"], new["source_at"]))
+                c.execute("DELETE FROM search_fts WHERE kind = 'fact' AND ref_id = ?",
+                          (str(new_id),))
+                c.execute("DELETE FROM facts WHERE id = ?", (new_id,))
+            elif relation == "updates":
+                newer, older = (new, old) if new["started_at"] >= old["started_at"] else (old, new)
+                c.execute("UPDATE facts SET status = 'superseded', superseded_by = ?"
+                          " WHERE id = ?", (newer["id"], older["id"]))
+                # whatever the older one had replaced now points at the newer one
+                c.execute("UPDATE facts SET superseded_by = ? WHERE superseded_by = ?",
+                          (newer["id"], older["id"]))
+
+    def fact_history(self, fact_id: int) -> list[dict[str, Any]]:
+        """Facts this one replaced (newest first), each with its conversation."""
+        return self._q(
+            "SELECT f.*, c.title AS conversation_title, c.started_at AS conversation_at"
+            " FROM facts f JOIN conversations c ON c.id = f.conversation_id"
+            " WHERE f.superseded_by = ? ORDER BY c.started_at DESC", (fact_id,))
+
+    def fact_sources(self, fact_id: int) -> list[dict[str, Any]]:
+        """Other conversations that said the same fact again, oldest first."""
+        return self._q(
+            "SELECT s.*, c.title AS conversation_title, c.started_at AS conversation_at"
+            " FROM fact_sources s JOIN conversations c ON c.id = s.conversation_id"
+            " WHERE s.fact_id = ? ORDER BY c.started_at", (fact_id,))
 
     def search_segments(self, *, query: str | None = None, speaker: str | None = None,
                         since: float | None = None, until: float | None = None,
@@ -469,20 +617,30 @@ class Store:
 
     def list_facts(self, *, subject: str | None = None, query: str | None = None,
                    limit: int = 50) -> list[dict[str, Any]]:
-        sql = ("SELECT f.*, c.title AS conversation_title, c.started_at AS conversation_at"
-               " FROM facts f JOIN conversations c ON c.id = f.conversation_id WHERE 1=1")
+        """Current facts matching ``subject``/``query``, newest first.
+
+        A match on an older, replaced fact returns the fact that replaced it.
+        """
+        sql = "SELECT id, status, superseded_by FROM facts WHERE 1=1"
         params: list[Any] = []
         if subject:
-            sql += " AND f.subject LIKE ? COLLATE NOCASE"
+            sql += " AND subject LIKE ? COLLATE NOCASE"
             params.append(f"%{subject}%")
         if query:
             ids = [r["ref_id"] for r in self.fts_search(query, limit=200) if r["kind"] == "fact"]
             if not ids:
                 return []
-            sql += f" AND f.id IN ({','.join('?' * len(ids))})"
+            sql += f" AND id IN ({','.join('?' * len(ids))})"
             params += [int(i) for i in ids]
-        sql += " ORDER BY c.started_at DESC, f.id LIMIT ?"
-        return self._q(sql, [*params, limit])
+        current = {r["superseded_by"] if r["status"] == "superseded" and r["superseded_by"]
+                   else r["id"] for r in self._q(sql, params)}
+        if not current:
+            return []
+        return self._q(
+            "SELECT f.*, c.title AS conversation_title, c.started_at AS conversation_at"
+            " FROM facts f JOIN conversations c ON c.id = f.conversation_id"
+            f" WHERE f.status = 'current' AND f.id IN ({','.join('?' * len(current))})"
+            " ORDER BY c.started_at DESC, f.id LIMIT ?", [*current, limit])
 
     def put_speaker_candidates(self, session_id: str, centroids: dict[str, np.ndarray]) -> None:
         with self.tx() as c:
@@ -501,17 +659,88 @@ class Store:
             sessions = [r["session_id"] for r in c.execute(
                 "SELECT DISTINCT session_id FROM segments WHERE conversation_id = ?"
                 " AND speaker = ?", (conv_id, label))]
-            n = c.execute("UPDATE segments SET speaker = ? WHERE conversation_id = ?"
-                          " AND speaker = ?", (name, conv_id, label)).rowcount
+            n = c.execute("UPDATE segments SET speaker = ?, is_owner = ? WHERE"
+                          " conversation_id = ? AND speaker = ?",
+                          (name, _is_owner(c, name), conv_id, label)).rowcount
             vecs = [np.frombuffer(r["embedding"], dtype=np.float32) for r in c.execute(
                 f"SELECT embedding FROM speaker_candidates WHERE label = ? AND session_id IN"
                 f" ({','.join('?' * len(sessions))})", (label, *sessions))] if sessions else []
             if n:
-                c.execute("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
-                          (conv_id, name))
-                c.execute("UPDATE conversations SET status = 'pending', updated_at = ?"
-                          " WHERE id = ?", (time.time(), conv_id))
+                _touch_conversations(c, [conv_id], name)
+            _prune_candidates(c, sessions)
         return n, (np.mean(vecs, axis=0) if vecs else None)
+
+    def unnamed_candidates(self) -> list[dict[str, Any]]:
+        """Unnamed speakers ("Speaker N") with a stored voice, per session, still in use."""
+        rows = self._q(
+            "SELECT k.session_id, k.label, k.embedding, COUNT(s.id) AS lines,"
+            " GROUP_CONCAT(DISTINCT s.conversation_id) AS conversations,"
+            " MIN(s.started_at) AS first_at"
+            " FROM speaker_candidates k JOIN segments s ON s.session_id = k.session_id"
+            " AND s.speaker = k.label AND s.conversation_id IS NOT NULL"
+            " GROUP BY k.session_id, k.label ORDER BY first_at DESC")
+        for r in rows:
+            r["embedding"] = np.frombuffer(r["embedding"], dtype=np.float32)
+            r["conversations"] = (r["conversations"] or "").split(",")
+        return rows
+
+    def rename_session_label(self, session_id: str, label: str, name: str) -> tuple[int, list[str]]:
+        """Rename an unnamed label within one recording session (all its conversations)."""
+        with self.tx() as c:
+            convs = [r["conversation_id"] for r in c.execute(
+                "SELECT DISTINCT conversation_id FROM segments WHERE session_id = ?"
+                " AND speaker = ? AND conversation_id IS NOT NULL", (session_id, label))]
+            n = c.execute("UPDATE segments SET speaker = ?, is_owner = ? WHERE session_id = ?"
+                          " AND speaker = ?", (name, _is_owner(c, name), session_id,
+                                               label)).rowcount
+            _touch_conversations(c, convs, name)
+            _prune_candidates(c, [session_id])
+        return n, convs
+
+    def rename_everywhere(self, old: str, new: str) -> tuple[int, list[str]]:
+        """Rename a speaker in every conversation and merge their voice into ``new``.
+
+        Returns (lines changed, conversation ids). Unnamed "Speaker N" labels are
+        per recording, so callers should only pass real names.
+        """
+        with self.tx() as c:
+            convs = [r["conversation_id"] for r in c.execute(
+                "SELECT DISTINCT conversation_id FROM segments WHERE speaker = ?"
+                " COLLATE NOCASE AND conversation_id IS NOT NULL", (old,))]
+            n = c.execute("UPDATE segments SET speaker = ?, is_owner = ? WHERE speaker = ?"
+                          " COLLATE NOCASE", (new, _is_owner(c, new, old), old)).rowcount
+            c.execute("UPDATE OR REPLACE conversation_people SET name = ? WHERE name = ?",
+                      (new, old))
+            src = c.execute("SELECT id, is_owner FROM speakers WHERE name = ? COLLATE NOCASE",
+                            (old,)).fetchone()
+            dst = c.execute("SELECT id FROM speakers WHERE name = ?", (new,)).fetchone()
+            if src is not None and (dst is None or dst["id"] == src["id"]):
+                c.execute("UPDATE speakers SET name = ? WHERE id = ?", (new, src["id"]))
+            elif src is not None:  # both known: the old voice samples join the new name
+                c.execute("UPDATE voice_samples SET speaker_id = ? WHERE speaker_id = ?",
+                          (dst["id"], src["id"]))
+                if src["is_owner"]:
+                    c.execute("UPDATE speakers SET is_owner = 1 WHERE id = ?", (dst["id"],))
+                c.execute("DELETE FROM speakers WHERE id = ?", (src["id"],))
+                _refresh_voiceprint(c, dst["id"])
+            _touch_conversations(c, convs, None)
+        return n, convs
+
+    def get_segment(self, segment_id: int) -> Segment | None:
+        row = self._one("SELECT * FROM segments WHERE id = ?", (segment_id,))
+        return _segment(row) if row else None
+
+    def reassign_segment(self, segment_id: int, name: str) -> Segment | None:
+        """Give one transcript line to ``name``; returns the line as it was before."""
+        with self.tx() as c:
+            row = c.execute("SELECT * FROM segments WHERE id = ?", (segment_id,)).fetchone()
+            if row is None:
+                return None
+            c.execute("UPDATE segments SET speaker = ?, is_owner = ? WHERE id = ?",
+                      (name, _is_owner(c, name), segment_id))
+            if row["conversation_id"]:
+                _touch_conversations(c, [row["conversation_id"]], name)
+            return _segment(dict(row))
 
     def delete_empty_conversations(self) -> int:
         with self.tx() as c:
@@ -621,17 +850,31 @@ class Store:
         return json.loads(row["content"]) if row else None
 
     # ---------------------------------------------------------------- speakers
-    def add_voice_sample(self, name: str, embedding: np.ndarray) -> None:
-        """Teach the diarizer a voice: average into an existing speaker or create one."""
-        row = self._one("SELECT embedding, is_owner FROM speakers WHERE name = ?", (name,))
-        vec = np.asarray(embedding, dtype=np.float32)
-        if row:
-            old = np.frombuffer(row["embedding"], dtype=np.float32)
-            vec = old / (np.linalg.norm(old) or 1) + vec / (np.linalg.norm(vec) or 1)
-        self.put_speaker(name, vec / (np.linalg.norm(vec) or 1),
-                         bool(row["is_owner"]) if row else False)
+    def add_voice_sample(self, name: str, embedding: np.ndarray, source: str = "named") -> None:
+        """Teach the diarizer a voice: add a sample to a speaker (created if new)."""
+        with self.tx() as c:
+            row = c.execute("SELECT id FROM speakers WHERE name = ?", (name,)).fetchone()
+            if row is None:
+                vec = _unit(embedding)
+                sid = c.execute(
+                    "INSERT INTO speakers (name, is_owner, embedding, created_at)"
+                    " VALUES (?, 0, ?, ?)", (name, vec.tobytes(), time.time())).lastrowid
+            else:
+                sid = row["id"]
+            c.execute("INSERT INTO voice_samples (speaker_id, embedding, source, created_at)"
+                      " VALUES (?, ?, ?, ?)", (sid, _unit(embedding).tobytes(), source,
+                                               time.time()))
+            # keep every enrollment sample; drop the oldest learned ones beyond the cap
+            c.execute(
+                "DELETE FROM voice_samples WHERE id IN (SELECT id FROM voice_samples"
+                " WHERE speaker_id = ? AND source != 'enrolled' ORDER BY created_at DESC,"
+                " id DESC LIMIT -1 OFFSET ?)", (sid, MAX_LEARNED_SAMPLES))
+            _refresh_voiceprint(c, sid)
 
-    def put_speaker(self, name: str, embedding: np.ndarray, is_owner: bool) -> None:
+    def put_speaker(self, name: str, embedding: np.ndarray, is_owner: bool,
+                    samples: list[np.ndarray] | None = None, source: str = "enrolled") -> None:
+        """Create or update a speaker; ``samples`` replace their earlier ``source`` samples."""
+        samples = samples if samples is not None else [embedding]
         with self.tx() as c:
             if is_owner:
                 c.execute("UPDATE speakers SET is_owner = 0")
@@ -639,15 +882,77 @@ class Store:
                 "INSERT INTO speakers (name, is_owner, embedding, created_at) VALUES (?, ?, ?, ?)"
                 " ON CONFLICT(name) DO UPDATE SET is_owner = excluded.is_owner,"
                 " embedding = excluded.embedding",
-                (name, int(is_owner), np.asarray(embedding, dtype=np.float32).tobytes(),
-                 time.time()))
+                (name, int(is_owner), _unit(embedding).tobytes(), time.time()))
+            sid = c.execute("SELECT id FROM speakers WHERE name = ?", (name,)).fetchone()["id"]
+            c.execute("DELETE FROM voice_samples WHERE speaker_id = ? AND source = ?",
+                      (sid, source))
+            now = time.time()
+            c.executemany(
+                "INSERT INTO voice_samples (speaker_id, embedding, source, created_at)"
+                " VALUES (?, ?, ?, ?)", [(sid, _unit(v).tobytes(), source, now) for v in samples])
+            _refresh_voiceprint(c, sid)
 
     def speakers(self) -> list[dict[str, Any]]:
-        rows = self._q("SELECT name, is_owner, embedding FROM speakers ORDER BY is_owner DESC")
+        """Enrolled/named voices: name, is_owner, embedding (mean), samples (n, dim)."""
+        rows = self._q("SELECT id, name, is_owner, embedding FROM speakers"
+                       " ORDER BY is_owner DESC, name")
+        samples: dict[int, list[np.ndarray]] = {}
+        for r in self._q("SELECT speaker_id, embedding FROM voice_samples ORDER BY id"):
+            samples.setdefault(r["speaker_id"], []).append(
+                np.frombuffer(r["embedding"], dtype=np.float32))
         for r in rows:
             r["embedding"] = np.frombuffer(r["embedding"], dtype=np.float32)
             r["is_owner"] = bool(r["is_owner"])
+            got = samples.get(r.pop("id"), [])
+            r["samples"] = (np.stack(got) if got
+                            else np.zeros((0, r["embedding"].size), np.float32))
         return rows
+
+    def owner_name(self) -> str | None:
+        row = self._one("SELECT name FROM speakers WHERE is_owner = 1")
+        return row["name"] if row else None
+
+MAX_LEARNED_SAMPLES = 40  # per speaker, besides enrollment samples
+
+
+def _unit(v: np.ndarray) -> np.ndarray:
+    v = np.asarray(v, dtype=np.float32).ravel()
+    n = float(np.linalg.norm(v))
+    return v / n if n > 0 else v
+
+
+def _refresh_voiceprint(c: sqlite3.Connection, speaker_id: int) -> None:
+    vecs = [np.frombuffer(r["embedding"], dtype=np.float32) for r in c.execute(
+        "SELECT embedding FROM voice_samples WHERE speaker_id = ?", (speaker_id,))]
+    if vecs:
+        c.execute("UPDATE speakers SET embedding = ? WHERE id = ?",
+                  (_unit(np.mean(vecs, axis=0)).tobytes(), speaker_id))
+
+
+def _is_owner(c: sqlite3.Connection, name: str, previous: str | None = None) -> int:
+    """1 if ``name`` (or ``previous``, when renaming) is the enrolled owner."""
+    row = c.execute("SELECT 1 FROM speakers WHERE is_owner = 1 AND (name = ? OR name = ?)",
+                    (name, previous or name)).fetchone()
+    return int(row is not None)
+
+
+def _touch_conversations(c: sqlite3.Connection, conv_ids: Iterable[str],
+                         person: str | None) -> None:
+    """Mark conversations for re-summary (speaker names changed); note who took part."""
+    now = time.time()
+    for conv_id in conv_ids:
+        if person and not _PLACEHOLDER_SPEAKER.match(person):
+            c.execute("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
+                      (conv_id, person))
+        c.execute("UPDATE conversations SET status = 'pending', updated_at = ? WHERE id = ?",
+                  (now, conv_id))
+
+
+def _prune_candidates(c: sqlite3.Connection, sessions: Iterable[str]) -> None:
+    """Forget unnamed-speaker voices whose label no longer appears in its session."""
+    for sid in sessions:
+        c.execute("DELETE FROM speaker_candidates WHERE session_id = ? AND label NOT IN"
+                  " (SELECT DISTINCT speaker FROM segments WHERE session_id = ?)", (sid, sid))
 
 
 def _delete_conversation(c: sqlite3.Connection, conv_id: str) -> None:

@@ -55,7 +55,8 @@ QUESTIONS: list[tuple[str, list[str], list[str]]] = [
 
 CONVO_TOOLS = {"search_transcripts", "search_conversations", "get_conversation",
                "get_transcript", "list_action_items", "update_action_item", "list_facts",
-               "get_daily_digest", "list_people", "name_speaker"}
+               "get_daily_digest", "list_people", "name_speaker", "list_unnamed_speakers",
+               "reassign_line", "rename_speaker_everywhere"}
 
 
 def conv_ids(db: Path) -> dict[str, str]:
@@ -279,7 +280,9 @@ def main() -> int:
                 answer, tools = f"ERROR: {type(e).__name__}: {e}", []
             passed += record(i, q, answer, tools, time.time() - t)
     else:
-        env = {k: v for k, v in os.environ.items() if k.startswith("CONVO_")}
+        # PYTHONPATH too, so a run from another checkout serves that checkout's code
+        env = {k: v for k, v in os.environ.items()
+               if k.startswith("CONVO_") or k == "PYTHONPATH"}
         env["PATH"] = os.environ.get("PATH", "/usr/bin:/bin")
 
         async def go():

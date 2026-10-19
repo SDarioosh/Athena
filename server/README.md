@@ -12,8 +12,9 @@ device/phone ──POST /v1/ingest/chunk──▶ decode (ffmpeg) ─▶ Silero 
 
 session ended (Stop, server stop, idle) ─▶ reassemble by sequence ─▶ whisper.cpp on speech
   ─▶ diarize (enrolled voices) ─▶ segments ─▶ delete raw audio ─▶ split on >3 min gaps
-  ─▶ llama-server JSON summary (title, summary, key points, action items, people,
-     topics, facts) ─▶ FTS5 (+ optional embeddings) ─▶ daily digest
+  ─▶ llama-server, small focused calls: triage (discard TV/noise, pick the kind) ─▶
+     notes with a per-kind template ─▶ action items (+ due dates) ─▶ facts ─▶ link
+     facts to known ones ─▶ FTS5 (+ optional embeddings) ─▶ daily digest
 ```
 
 ## Setup
@@ -35,6 +36,40 @@ Requirements outside Python:
 
 The ECAPA speaker model is downloaded once from Hugging Face into `data/models/`
 (model weights only; no audio or text leaves the machine).
+
+### Better speaker separation: pyannote (optional)
+
+`CONVO_DIARIZER=pyannote` uses pyannote.audio with the
+`speaker-diarization-community-1` pipeline (code MIT, weights CC-BY-4.0) instead of
+clustering one voiceprint per whisper segment. Enrolled voices still use ECAPA, so
+existing profiles keep working.
+
+```bash
+uv pip install -p .venv/bin/python -e ".[vad,diarization,pyannote]"
+# .env: CONVO_DIARIZER=pyannote  (CONVO_PYANNOTE_DEVICE=auto uses the GPU if there is one)
+```
+
+The weights come once from the ungated `pyannote-community` copy on Hugging Face into
+`data/models/pyannote/`; after that it runs offline (`HF_HUB_OFFLINE=1` works, or set
+`CONVO_PYANNOTE_MODEL` to a local directory). pyannote.audio 4 sends usage telemetry by
+default; the server turns it off before loading pyannote. pyannoteAI cloud pipelines
+(`precision-2`, `*-cloud`) are refused.
+
+### Speakers
+
+- Each person has several voice samples (enrollment is cut into ~9 s samples; every
+  `name_speaker` adds one, up to 40 learned samples). A voice is matched against the
+  closest few samples, not one blended voiceprint.
+- After someone is named or enrolled, unnamed speakers ("Speaker N") in other
+  conversations whose stored voice clearly matches are renamed too
+  (`CONVO_SPEAKER_RELABEL_THRESHOLD`, default 0.60, and at least 0.05 above any other
+  known voice); those conversations are re-summarized.
+- Owner hint: the wearer is usually the loudest voice. A speaker at least
+  `CONVO_OWNER_HINT_DB` (3 dB) louder than everyone else whose voice is a borderline
+  match for the owner (within `CONVO_OWNER_HINT_MARGIN`, 0.10, below the match
+  threshold) is labelled as the owner. `CONVO_OWNER_HINT_MARGIN=0` turns it off.
+- whisper gets a prompt: `CONVO_WHISPER_PROMPT` (names, places, jargon) plus the names
+  of known speakers, so they are spelled right.
 
 ## Run
 
@@ -89,7 +124,10 @@ source of truth, so the frontend can be swapped. Tools:
 | `get_conversation(id)`, `get_transcript(id, start_seconds, end_seconds)` | details |
 | `list_action_items(status, person, since, until)`, `update_action_item(id, status)` | to-dos |
 | `list_facts(subject, query)`, `get_daily_digest(date)`, `list_people()` | memory |
-| `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, and learns the voice so future recordings say Alice |
+| `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
+| `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists) |
+| `reassign_line(line_id, name)` | one line given to the wrong person (`#id` from `get_transcript`) |
+| `list_unnamed_speakers(limit)` | voices nobody has named yet, with quotes and a guess, for "who is this?" |
 
 Dates are `YYYY-MM-DD` in `CONVO_TIMEZONE`. Set `CONVO_PUBLIC_URL` to the address your
 phone uses (e.g. the server's Tailscale IP) so links work there.
@@ -120,6 +158,39 @@ CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 convo-server mcp --http   # docker
 ```
 
 Use only a local model in whichever frontend reads this. Results contain your transcripts.
+
+## Summaries
+
+Each conversation gets several small `json_schema` calls instead of one big one (a
+small local model does better on narrow questions):
+
+1. **Triage**: discard a TV, radio or podcast playing, noise, gibberish or no real
+   conversation (kept when in doubt; under 3 words is discarded without a call), and pick
+   the kind: meeting, call, appointment, casual, other. A discarded conversation keeps
+   its transcript (still searchable; `POST /v1/conversations/{id}/summarize` retries) but
+   gets no summary, action items or facts, and stays out of digests.
+2. **Notes** (title, summary, key points, people, topics) with a template per kind, e.g.
+   decisions and owners for meetings, instructions and the next date for appointments.
+3. **Action items**, with `due_date` (YYYY-MM-DD) worked out from the conversation date
+   in `CONVO_TIMEZONE` ("by Friday" said on Wednesday 2026-10-14 → 2026-10-16).
+4. **Facts**, then a **linking** call against related known facts (same subject or
+   matching words): a repeat becomes another source of the known fact; a changed value
+   replaces the older one (by conversation time, so re-summarizing an old conversation
+   can't overwrite newer knowledge). `list_facts` shows only current facts, each with
+   "said again" and "replaces:" lines that link every source transcript.
+
+## Recognition eval
+
+`eval/recognition.py` measures word error rate and speaker error of the real pipeline on
+public AMI meeting audio (CC-BY-4.0, downloaded into `eval/data/`, never committed):
+
+```bash
+uv pip install -p .venv/bin/python -e ".[vad,diarization,eval]"
+.venv/bin/python eval/recognition.py fetch
+CONVO_WHISPER_SERVER_URL=http://127.0.0.1:8178 .venv/bin/python eval/recognition.py run \
+    --label server-ecapa --enroll 2
+.venv/bin/python eval/recognition.py compare server-ecapa server-pyannote
+```
 
 ## Checks
 
