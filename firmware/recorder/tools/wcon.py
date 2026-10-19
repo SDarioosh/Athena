@@ -48,18 +48,19 @@ def has_prompt(buf: bytes) -> bool:
 
 
 def open_port(port: str, wait: float = 15.0):
-    """Open the port, retrying while it re-enumerates. DTR/RTS stay low: toggling them on
-    the ESP32-S3 USB Serial/JTAG resets the chip."""
+    """Open the port, retrying while it re-enumerates, without resetting the chip.
+
+    The ESP32-S3 USB Serial/JTAG resets the chip when RTS is high while DTR is low. The OS
+    raises both on open, and pyserial would lower DTR first (a reset), so open with both
+    left as the OS sets them, then lower RTS before DTR."""
     import serial
 
     deadline = time.monotonic() + wait
     while True:
         try:
-            s = serial.Serial(None, 115200, timeout=0.2)
-            s.port = port
-            s.dtr = False
+            s = serial.Serial(port, 115200, timeout=0.2)
             s.rts = False
-            s.open()
+            s.dtr = False
             return s
         except (serial.SerialException, OSError):
             if time.monotonic() > deadline:
