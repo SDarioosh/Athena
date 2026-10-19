@@ -26,7 +26,7 @@ import numpy as np
 from . import audio as audio_mod
 from .config import Settings
 from .conversations import split_on_gaps
-from .diarize import Diarizer, load_voices
+from .diarize import Diarizer, PieceRef, load_voices
 from .llm import Summarizer
 from .search import Embedder, index_conversation
 from .store import Segment, Store
@@ -39,9 +39,9 @@ _SAFE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 CONTIGUOUS_TOLERANCE = 1.5  # seconds between chunk end and next chunk start
 REGION_PAD = 0.25  # seconds of context around each speech region
 REGION_MERGE_GAP = 2.0
-# Speaker embeddings on 1-2 s whisper segments are too noisy (one fast talker split into
-# 7 "speakers" in testing); embedding a >= 3 s window around each segment fixes that.
-DIARIZATION_WINDOW = 3.0
+# whisper reads at most ~224 prompt tokens; names beyond this many are left out.
+MAX_PROMPT_NAMES = 30
+_PLACEHOLDER_NAME = re.compile(r"^(speaker\s*\d+|unknown|me)$", re.IGNORECASE)
 
 
 def validate_id(value: str, what: str) -> str:
@@ -203,23 +203,25 @@ class Pipeline:
             return [], ranges
         if self.transcriber is None:
             raise RuntimeError("no transcriber configured (set CONVO_WHISPER_SERVER_URL)")
-        pieces: list[tuple[float, float, str, np.ndarray]] = []
+        prompt = self.whisper_prompt()
+        runs: list[np.ndarray] = []
+        pieces: list[tuple[float, float, str, PieceRef]] = []
         for run_start, run_audio, run_speech in self._runs(chunks):
+            runs.append(run_audio)
             regions = merge_spans(run_speech, REGION_MERGE_GAP)
             for r in regions:
                 a = max(0.0, r.start - REGION_PAD)
                 b = min(run_audio.size / audio_mod.SAMPLE_RATE, r.end + REGION_PAD)
                 clip = run_audio[int(a * audio_mod.SAMPLE_RATE): int(b * audio_mod.SAMPLE_RATE)]
-                for p in self.transcriber.transcribe(clip):
+                for p in self.transcriber.transcribe(clip, prompt):
                     s, e = a + p.start, a + max(p.end, p.start)
                     pieces.append((run_start + s, run_start + e, p.text,
-                                   _window(run_audio, s, e, DIARIZATION_WINDOW)))
+                                   PieceRef(len(runs) - 1, s, e)))
         pieces.sort(key=lambda p: p[0])
         labels = None
         if self.diarizer is not None and pieces:
             self.diarizer.voices = load_voices(self.store)  # pick up newly named speakers
-            labels, unnamed = self.diarizer.diarize([p[3] for p in pieces],
-                                                    [(p[0] + p[1]) / 2 for p in pieces])
+            labels, unnamed = self.diarizer.diarize_runs(runs, [p[3] for p in pieces])
             self.store.put_speaker_candidates(session_id, unnamed)
         segments = []
         for i, (s, e, text, _) in enumerate(pieces):
@@ -227,6 +229,18 @@ class Pipeline:
             segments.append(Segment(started_at=s, ended_at=e, text=text, speaker=name,
                                     is_owner=owner))
         return segments, ranges
+
+    def whisper_prompt(self) -> str:
+        """CONVO_WHISPER_PROMPT plus the names of known speakers, for whisper's spelling."""
+        names: list[str] = []
+        for n in [s["name"] for s in self.store.speakers()] + [
+                s["name"] for s in self.store.speaker_stats()]:
+            if not _PLACEHOLDER_NAME.match(n) and n.lower() not in {x.lower() for x in names}:
+                names.append(n)
+        parts = [self.settings.whisper_prompt.strip()]
+        if names[:MAX_PROMPT_NAMES]:
+            parts.append(", ".join(names[:MAX_PROMPT_NAMES]) + ".")
+        return " ".join(p for p in parts if p)
 
     def _runs(self, chunks: list[dict[str, Any]]):
         """Yield (epoch_start, audio, speech_spans) for runs of contiguous chunks."""
@@ -349,18 +363,6 @@ class Pipeline:
         digest = self.summarizer.digest(date, convs)
         self.store.put_digest(date, digest)
         return digest
-
-
-def _window(audio: np.ndarray, start: float, end: float, min_seconds: float) -> np.ndarray:
-    """Slice [start, end] seconds, widened symmetrically to ``min_seconds`` where possible."""
-    sr = audio_mod.SAMPLE_RATE
-    total = audio.size / sr
-    half = max((end - start) / 2, min_seconds / 2)
-    mid = (start + end) / 2
-    a, b = max(0.0, mid - half), min(total, mid + half)
-    if b - a < min_seconds:  # near an edge: extend towards the other side
-        a, b = max(0.0, b - min_seconds), min(total, a + min_seconds)
-    return audio[int(a * sr): int(b * sr)]
 
 
 class Worker(threading.Thread):

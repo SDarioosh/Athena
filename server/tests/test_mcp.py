@@ -68,7 +68,8 @@ def test_lists_tools(mcp):
     assert asyncio.run(go()) >= {
         "search_transcripts", "search_conversations", "get_conversation", "get_transcript",
         "list_action_items", "update_action_item", "list_facts", "get_daily_digest",
-        "list_people", "name_speaker"}
+        "list_people", "name_speaker", "rename_speaker_everywhere", "reassign_line",
+        "list_unnamed_speakers"}
 
 
 AGENTS_MD = Path(__file__).resolve().parents[2] / "AGENTS.md"
@@ -82,8 +83,9 @@ def contract_table() -> dict[str, str]:
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if len(cells) != 2 or not cells[0].startswith("`"):
             continue
-        kind = "ro" if cells[1].startswith("read-only") else (
-            "rw" if cells[1].startswith("write") else None)
+        kind = ("ro" if cells[1].startswith("read-only") else
+                "rwd" if cells[1].startswith("write, destructive") else
+                "rw" if cells[1].startswith("write") else None)
         assert kind, f"unknown annotation in AGENTS.md: {cells[1]!r}"
         for name in re.findall(r"`([a-z_]+)`", cells[0]):
             table[name] = kind
@@ -103,7 +105,7 @@ def test_tool_annotations_match_contract(mcp):
             return (await client.list_tools()).tools
 
     contract = contract_table()
-    assert len(contract) == 10  # the table parsed: 8 read-only + 2 write tools
+    assert len(contract) == 13  # the table parsed: 9 read-only + 4 write tools
     tools = {t.name: t.annotations for t in asyncio.run(go())}
     assert set(tools) == set(contract), (
         f"not in the AGENTS.md table: {sorted(set(tools) - set(contract))}; "
@@ -115,7 +117,8 @@ def test_tool_annotations_match_contract(mcp):
             assert a.read_only_hint is True, f"{name} must be readOnlyHint: true"
         else:
             assert a.read_only_hint is False, f"{name} must be readOnlyHint: false"
-            assert a.destructive_hint is False, f"{name} must be destructiveHint: false"
+            assert a.destructive_hint is (kind == "rwd"), (
+                f"{name} must be destructiveHint: {kind == 'rwd'}")
 
 
 def test_what_did_x_say_on_date(pipeline, mcp):

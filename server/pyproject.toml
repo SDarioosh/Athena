@@ -23,6 +23,10 @@ dependencies = [
 vad = ["silero-vad>=5.1"]
 # Speaker embeddings for diarization + voice enrollment (ECAPA-TDNN)
 diarization = ["speechbrain>=1.0", "torchaudio>=2.1"]
+# pyannote.audio diarization backend (CONVO_DIARIZER=pyannote); use with `diarization`
+pyannote = ["pyannote.audio>=4.0"]
+# recognition eval (eval/recognition.py): word error rate and diarization error
+eval = ["jiwer>=3.0", "pyannote.metrics>=3.2"]
 dev = ["pytest>=8", "ruff>=0.4"]
 
 [project.scripts]

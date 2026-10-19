@@ -17,24 +17,45 @@ from .transcribe import Transcriber, WhisperCliTranscriber, WhisperServerTranscr
 from .vad import make_vad
 
 
+def build_transcriber(settings: Settings) -> Transcriber | None:
+    if settings.whisper_server_url:
+        return WhisperServerTranscriber(settings.whisper_server_url, settings.language,
+                                        temperature_inc=settings.whisper_temperature_inc)
+    if settings.whisper_cli and settings.whisper_model:
+        return WhisperCliTranscriber(settings.whisper_cli, settings.whisper_model,
+                                     settings.language,
+                                     temperature_inc=settings.whisper_temperature_inc)
+    return None
+
+
+def build_diarizer(settings: Settings, store: Store) -> Diarizer | None:
+    if not settings.diarization:
+        return None
+    args = dict(match_threshold=settings.speaker_match_threshold,
+                cluster_threshold=settings.speaker_cluster_threshold,
+                owner_hint_margin=settings.owner_hint_margin,
+                owner_hint_db=settings.owner_hint_db)
+    embedder = EcapaEmbedder(settings.model_cache)
+    if settings.diarizer == "pyannote":
+        from .diarize_pyannote import PyannoteDiarizer, PyannoteSegmenter
+
+        segmenter = PyannoteSegmenter(settings.pyannote_model, settings.model_cache / "pyannote",
+                                      settings.pyannote_device)
+        return PyannoteDiarizer(embedder, load_voices(store), segmenter, **args)
+    if settings.diarizer != "ecapa":
+        raise SystemExit("CONVO_DIARIZER must be ecapa or pyannote")
+    return Diarizer(embedder, load_voices(store), **args)
+
+
 def build_pipeline(settings: Settings) -> Pipeline:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     store = Store(settings.db_path)
-    transcriber: Transcriber | None = None
-    if settings.whisper_server_url:
-        transcriber = WhisperServerTranscriber(settings.whisper_server_url, settings.language)
-    elif settings.whisper_cli and settings.whisper_model:
-        transcriber = WhisperCliTranscriber(settings.whisper_cli, settings.whisper_model,
-                                            settings.language)
-    diarizer = None
-    if settings.diarization:
-        diarizer = Diarizer(EcapaEmbedder(settings.data_dir / "models"), load_voices(store),
-                            settings.speaker_match_threshold, settings.speaker_cluster_threshold)
     llm = LLMClient(settings.llm_base_url, settings.llm_model, settings.llm_api_key,
                     settings.llm_timeout_seconds)
     embedder = (OpenAIEmbedder(settings.embed_base_url, settings.embed_model)
                 if settings.embed_base_url else None)
-    return Pipeline(settings, store, make_vad(settings.vad_backend), transcriber, diarizer,
+    return Pipeline(settings, store, make_vad(settings.vad_backend),
+                    build_transcriber(settings), build_diarizer(settings, store),
                     Summarizer(llm, settings.owner_name), embedder)
 
 

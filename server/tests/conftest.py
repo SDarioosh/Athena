@@ -38,11 +38,13 @@ class FakeTranscriber:
     def __init__(self) -> None:
         self.calls = 0
         self.fail = False
+        self.prompts: list[str] = []
 
-    def transcribe(self, audio: np.ndarray) -> list[TranscriptPiece]:
+    def transcribe(self, audio: np.ndarray, prompt: str = "") -> list[TranscriptPiece]:
         if self.fail:
             raise RuntimeError("whisper down")
         self.calls += 1
+        self.prompts.append(prompt)
         freq = dominant_freq(audio)
         return [TranscriptPiece(0.0, audio.size / SAMPLE_RATE, f"words at {freq} hz")]
 

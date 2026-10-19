@@ -9,6 +9,7 @@ claim so the frontend's model can cite sources.
 from __future__ import annotations
 
 import hmac
+import re
 from datetime import datetime, timedelta
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
@@ -16,8 +17,10 @@ from zoneinfo import ZoneInfo
 from pydantic import Field
 
 from .config import Settings
+from .diarize import load_voices
 from .links import local_time, transcript_link
 from .search import Embedder, search
+from .speakers import relabel_matches, suggestion
 from .store import Store
 
 INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
@@ -29,7 +32,11 @@ with it. Dates are in the user's timezone; pass dates as YYYY-MM-DD.
 Naming speakers: when the user says who an unnamed speaker was ("Speaker 2 was Jenn", \
 "Speaker 1 and Speaker 3 were both Sam"), that is a request to save the name, not a claim \
 to check. Find the conversation (search_conversations by date), call name_speaker once for \
-each label, then say which labels were renamed."""
+each label, then say which labels were renamed (it also renames that voice in other \
+conversations when it is sure). Fixing speakers: a name that is wrong or misspelled \
+everywhere -> rename_speaker_everywhere; one line given to the wrong person -> \
+reassign_line with the line's # number from get_transcript or search_transcripts. \
+list_unnamed_speakers shows voices nobody has named yet, with quotes and a guess."""
 
 Text = Annotated[str, Field(description="Free-text words to look for; empty = no text filter")]
 Person = Annotated[str, Field(description="Person's name as it appears in transcripts")]
@@ -60,10 +67,13 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.1.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.2.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
+    # merging two names can't be undone (the lines of both look the same afterwards)
+    rw_merge = ToolAnnotations(read_only_hint=False, destructive_hint=True,
+                               idempotent_hint=True, open_world_hint=False)
 
     def when(ts: float | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
         return local_time(settings, ts, fmt) or "?"
@@ -96,7 +106,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         for r in rows:
             link = transcript_link(settings, r["conversation_id"],
                                    r["started_at"] - r["conversation_at"])
-            lines.append(f"- {when(r['started_at'])} {r['speaker']}: \"{r['text']}\" "
+            lines.append(f"- #{r['id']} {when(r['started_at'])} {r['speaker']}: \"{r['text']}\" "
                          f"(conversation \"{r['conversation_title'] or 'untitled'}\", "
                          f"id {r['conversation_id']}) {link}")
         return "\n".join(lines)
@@ -152,7 +162,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     def get_transcript(conversation_id: ConvId, start_seconds: float = 0,
                        end_seconds: float = -1, max_lines: int = 200) -> str:
         """Transcript lines of a conversation. start/end are seconds from its start
-        (end -1 = to the end)."""
+        (end -1 = to the end). Each line starts with its #number (for reassign_line)."""
         c = store.get_conversation(conversation_id)
         if c is None:
             return f"No conversation {conversation_id!r}."
@@ -163,7 +173,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         more = len(segs) > max_lines
         link = transcript_link(settings, c["id"])
         out = [f"\"{c['title'] or 'untitled'}\" {when(origin)} {link}"]
-        out += [f"[{int(s.started_at - origin)}s {when(s.started_at, '%H:%M:%S')}] "
+        out += [f"#{s.id} [{int(s.started_at - origin)}s {when(s.started_at, '%H:%M:%S')}] "
                 f"{s.speaker}: {s.text}" for s in segs[:max_lines]]
         if more:
             out.append(f"… {len(segs) - max_lines} more lines; call again with a later "
@@ -266,11 +276,93 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             if voice is not None:
                 store.add_voice_sample(name, voice)
                 msg += f" {name}'s voice will be recognised in new recordings."
+                msg += _relabel_note(store, name, settings)
             else:
                 msg += " (No voice sample stored for that label, so it can't be remembered.)"
         return msg
 
+    @mcp.tool(annotations=rw_merge)
+    def rename_speaker_everywhere(
+            old_name: Annotated[str, Field(description="Speaker name as it appears now")],
+            new_name: Annotated[str, Field(description="The correct name")]) -> str:
+        """Rename a speaker in ALL conversations, e.g. to fix a misspelled or wrong name
+        ("it's Jenn, not Jen"). If new_name already exists the two become one person.
+        For an unnamed 'Speaker N' use name_speaker (those labels are per conversation)."""
+        old_name, new_name = old_name.strip(), new_name.strip()
+        if not old_name or not new_name:
+            return "old_name and new_name must not be empty"
+        if _UNNAMED.match(old_name):
+            return (f"{old_name!r} is a per-conversation label; use name_speaker with the "
+                    "conversation id instead.")
+        n, convs = store.rename_everywhere(old_name, new_name)
+        if not n:
+            return f"No lines by {old_name!r}. Known speakers: {_known(store)}."
+        return (f"Renamed {old_name} to {new_name} in {n} lines across {len(convs)} "
+                "conversations; their summaries will be redone.")
+
+    @mcp.tool(annotations=rw)
+    def reassign_line(line_id: Annotated[int, Field(
+                          description="The line's #number from get_transcript or "
+                                      "search_transcripts")],
+                      name: Annotated[str, Field(description="Who really said it")]) -> str:
+        """Fix one transcript line that was given to the wrong speaker."""
+        name = name.strip()
+        if not name:
+            return "name must not be empty"
+        before = store.reassign_segment(line_id, name)
+        if before is None:
+            return f"No line #{line_id}."
+        if before.speaker == name:
+            return f"Line #{line_id} is already {name}'s."
+        return (f"Line #{line_id} (\"{before.text}\") moved from {before.speaker} to {name}; "
+                "the conversation's summary will be redone.")
+
+    @mcp.tool(annotations=ro)
+    def list_unnamed_speakers(limit: int = 10) -> str:
+        """Voices nobody has named yet ('Speaker N'), newest first: a few of their lines,
+        the conversation, and who they sound like if anyone known is close. Use to ask the
+        user "who is this?"; save the answer with name_speaker."""
+        cands = store.unnamed_candidates()[: max(1, min(limit, 50))]
+        if not cands:
+            return "No unnamed speakers found."
+        voices = load_voices(store)
+        out = [header(len(cands), "unnamed speakers")]
+        for k in cands:
+            conv = store.get_conversation(k["conversations"][0])
+            if conv is None:
+                continue
+            lines = [s for s in store.conversation_segments(conv["id"])
+                     if s.session_id == k["session_id"] and s.speaker == k["label"]]
+            quotes = sorted(lines, key=lambda s: -len(s.text))[:3]
+            guess = suggestion(voices, k["embedding"],
+                               settings.speaker_match_threshold - 0.1) if voices else None
+            out.append(
+                f"- {k['label']} in \"{conv['title'] or 'untitled'}\" "
+                f"{when(conv['started_at'])} (conversation id {conv['id']}), {k['lines']} "
+                "lines" + (f"; sounds like {guess[0]} ({guess[1]:.2f})" if guess else ""))
+            out += [f"  #{q.id} \"{q.text}\" "
+                    + transcript_link(settings, conv["id"], q.started_at - conv["started_at"])
+                    for q in sorted(quotes, key=lambda s: s.started_at)]
+        return "\n".join(out)
+
     return mcp
+
+
+_UNNAMED = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
+
+
+def _known(store: Store) -> str:
+    return ", ".join(r["name"] for r in store.speaker_stats()[:20]) or "none"
+
+
+def _relabel_note(store: Store, name: str, settings: Settings) -> str:
+    done = relabel_matches(store, name, settings.speaker_relabel_threshold)
+    if not done:
+        return ""
+    lines = sum(r.lines for r in done)
+    convs = {c for r in done for c in r.conversations}
+    return (f" Their voice also matched {len(done)} unnamed speaker(s) elsewhere, renamed "
+            f"to {name} in {lines} lines across {len(convs)} other conversation(s).")
 
 
 def _src(item: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:
