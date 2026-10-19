@@ -405,6 +405,14 @@ class Worker(threading.Thread):
         self.interval = interval
         self._stop_evt = threading.Event()
 
+    def start(self) -> None:
+        # A restart (e.g. a deploy) during processing leaves sessions in 'processing',
+        # which nothing picks up again. Only one worker runs per database.
+        n = self.pipeline.store.requeue_interrupted()
+        if n:
+            log.info("requeued %d session(s) interrupted by a restart", n)
+        super().start()
+
     def stop(self) -> None:
         self._stop_evt.set()
 

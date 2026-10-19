@@ -341,6 +341,12 @@ class Store:
                        (received_before,))
         return [r["id"] for r in rows]
 
+    def requeue_interrupted(self) -> int:
+        """Send sessions left in 'processing' (server stopped mid-run) back to 'ended'."""
+        with self.tx() as c:
+            return c.execute(
+                "UPDATE sessions SET status = 'ended' WHERE status = 'processing'").rowcount
+
     def sessions_with_status(self, status: str) -> list[str]:
         return [r["id"] for r in self._q(
             "SELECT id FROM sessions WHERE status = ? ORDER BY started_at", (status,))]
