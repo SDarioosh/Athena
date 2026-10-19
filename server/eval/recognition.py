@@ -262,16 +262,22 @@ def _name_by_overlap(store: Store, sid: str, t0: float, turns, spk: str, name: s
     from convo_server.speakers import relabel_matches
 
     segs = store.session_segments(sid)
-    cover: dict[tuple[str, str], float] = {}
+    cover: dict[tuple[str, str], dict[str, float]] = {}
     for sg in segs:
+        if not (sg.conversation_id and sg.speaker.startswith("Speaker ")):
+            continue
         a, b = sg.started_at - t0 + offset, sg.ended_at - t0 + offset
-        o = sum(max(0.0, min(b, y) - max(a, x)) for x, y, s in turns if s == spk)
-        if sg.conversation_id and sg.speaker.startswith("Speaker "):
-            key = (sg.conversation_id, sg.speaker)
-            cover[key] = cover.get(key, 0.0) + o
-    if not cover:
+        who = cover.setdefault((sg.conversation_id, sg.speaker), {})
+        for x, y, s in turns:
+            o = max(0.0, min(b, y) - max(a, x))
+            if o:
+                who[s] = who.get(s, 0.0) + o
+    # like a user who listens to a few lines: a label where this person is the main voice
+    mine = {k: w[spk] for k, w in cover.items()
+            if w.get(spk) and max(w, key=lambda s: w[s]) == spk}
+    if not mine:
         return 0
-    conv, label = max(cover, key=lambda k: cover[k])
+    conv, label = max(mine, key=lambda k: mine[k])
     _, voice = store.rename_speaker(conv, label, name)
     if voice is None:
         return 0
