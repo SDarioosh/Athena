@@ -68,8 +68,15 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   `CONVO_OWNER_HINT_DB` (3 dB) louder than everyone else whose voice is a borderline
   match for the owner (within `CONVO_OWNER_HINT_MARGIN`, 0.10, below the match
   threshold) is labelled as the owner. `CONVO_OWNER_HINT_MARGIN=0` turns it off.
-- whisper gets a prompt: `CONVO_WHISPER_PROMPT` (names, places, jargon) plus the names
-  of known speakers, so they are spelled right.
+- A speaker with a single line joins the closest speaker with several lines when the
+  voice is at least `CONVO_SPEAKER_ABSORB_THRESHOLD` (0.30) similar, instead of becoming
+  one more "Speaker N" (one noisy piece often ends up alone). 0 turns it off.
+- whisper gets a prompt: the names of known speakers (`CONVO_WHISPER_PROMPT_NAMES`,
+  default on), so they are spelled right, plus `CONVO_WHISPER_PROMPT` (empty by default).
+  Measured on AMI (`eval/recognition.py`): the names made WER and DER slightly better;
+  a 12-word vocabulary list in `CONVO_WHISPER_PROMPT` broke whisper's timestamps (lines
+  stretched over 30 s: false alarm 8% → 58%, wrong names 2% → 6%). Leave it empty
+  unless the eval shows it helps with your vocabulary.
 
 ## Deploy: one command, runs in the background
 

@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     # Words whisper should spell right (names, places, jargon), as a short sentence or a
     # comma list. Names of known speakers are added automatically.
     whisper_prompt: str = ""
+    # Add the names of known speakers to that prompt.
+    whisper_prompt_names: bool = True
     # Temperature step for whisper's fallback when a decode looks wrong (0 = no fallback).
     whisper_temperature_inc: float = 0.2
 
@@ -73,6 +75,9 @@ class Settings(BaseSettings):
     pyannote_device: str = "auto"  # auto (cuda if available), cuda or cpu
     speaker_match_threshold: float = 0.50  # cosine similarity to enrolled voice
     speaker_cluster_threshold: float = 0.45  # cosine similarity to merge clusters
+    # A speaker with a single line joins the closest speaker with several lines when its
+    # voice is at least this similar (0 = off).
+    speaker_absorb_threshold: float = 0.30
     # After a speaker is named, unnamed speakers in other conversations whose voice is at
     # least this close are renamed too (stricter than the match threshold).
     speaker_relabel_threshold: float = 0.60

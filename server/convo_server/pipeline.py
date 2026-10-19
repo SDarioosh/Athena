@@ -251,9 +251,11 @@ class Pipeline:
 
     def whisper_prompt(self) -> str:
         """CONVO_WHISPER_PROMPT plus the names of known speakers, for whisper's spelling."""
+        known = ([s["name"] for s in self.store.speakers()]
+                 + [s["name"] for s in self.store.speaker_stats()]
+                 if self.settings.whisper_prompt_names else [])
         names: list[str] = []
-        for n in [s["name"] for s in self.store.speakers()] + [
-                s["name"] for s in self.store.speaker_stats()]:
+        for n in known:
             if not _PLACEHOLDER_NAME.match(n) and n.lower() not in {x.lower() for x in names}:
                 names.append(n)
         parts = [self.settings.whisper_prompt.strip()]
