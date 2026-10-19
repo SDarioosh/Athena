@@ -289,3 +289,13 @@ def test_chunk_arriving_during_processing_is_not_lost(pipeline):
     assert [s.text for s in store.session_segments("s1")] == ["words at 200 hz",
                                                               "words at 600 hz"]
     assert all(c["audio_path"] is None for c in store.chunks("s1"))
+
+
+def test_worker_start_requeues_interrupted_sessions(pipeline, monkeypatch):
+    record(pipeline, "s1", T0)
+    pipeline.store.set_session_status("s1", "processing")  # server died mid-run
+    worker = Worker(pipeline)
+    monkeypatch.setattr(worker, "run", lambda: None)  # no timing loop
+    worker.start()
+    worker.join()
+    assert pipeline.store.get_session("s1")["status"] == "ended"

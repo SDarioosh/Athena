@@ -71,7 +71,44 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
 - whisper gets a prompt: `CONVO_WHISPER_PROMPT` (names, places, jargon) plus the names
   of known speakers, so they are spelled right.
 
-## Run
+## Deploy: one command, runs in the background
+
+```bash
+server/scripts/deploy.sh deploy     # update to origin/main, install, restart, check
+server/scripts/deploy.sh status     # what runs and whether it answers
+server/scripts/deploy.sh logs mcp   # serve | mcp | whisper; add -f to follow
+server/scripts/deploy.sh stop       # start | restart | stop
+```
+
+It works from any directory and needs no sudo. `deploy`:
+
+1. Refuses tracked local changes, fetches the remote and fast-forwards `main` (or checks
+   out the ref you pass).
+2. Creates `server/.env` with new tokens if there is none, then creates or updates
+   `.venv` (`uv` if installed) with the `vad,diarization` extras (`+pyannote` when
+   `CONVO_DIARIZER=pyannote`).
+3. Runs these as systemd **user** services that start at boot (it turns on
+   `loginctl enable-linger`) and restart on a crash:
+
+   | service | runs | when |
+   |---|---|---|
+   | `barvis-sound` | `convo-server serve` | always |
+   | `barvis-sound-mcp` | `convo-server mcp --http` | `CONVO_MCP_TOKEN` is set |
+   | `barvis-sound-whisper` | `BARVIS_SOUND_WHISPER_CMD` | that is set |
+
+   `serve` and MCP restart on every deploy; whisper only when its command changed. A
+   session interrupted by the restart is processed again.
+4. Waits until each answers (`/health`, `/mcp`, the whisper URL). If the new commit
+   doesn't come up, it checks out the previous one and restarts that.
+
+Everything is read from `server/.env` (settings: bottom of `.env.example`). Without
+systemd it starts background processes instead (pid files and logs in
+`data/run/`, `data/logs/`). It stops with an error if a port is already taken, e.g. by a
+`serve` you started by hand: stop that first. On the server, Barvis'
+`scripts/barvis_deploy.sh deploy` runs this script before it rebuilds Barvis
+([Barvis docs/barvis/deploy.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/barvis/deploy.md)).
+
+## Run by hand
 
 ```bash
 .venv/bin/convo-server serve               # API + background worker
