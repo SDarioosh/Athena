@@ -6,7 +6,7 @@ T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → l
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (round 11: T-Watch Ultra milestone 1, bring-up firmware)_
+_Last updated: 2026-10-19 (round 12: T-Watch Ultra BLE upload path and Android relay)_
 
 ## Status
 
@@ -29,7 +29,8 @@ _Last updated: 2026-10-19 (round 11: T-Watch Ultra milestone 1, bring-up firmwar
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
 | 9c | Calendar/task integration for action items | later (wanted) | — |
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
-| 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **running on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, buttons, haptics and recording work (mic timeout fix; stop early with BOOT+PWR again, `stop` or mute). Mic: raw level was nearly inaudible and muffled; now high-pass + T-Watch EQ (+9 dB 1.6 kHz, -6 dB 3.6 kHz) + 30 dB gain + limiter, speech ~-24 dBFS, owner says it sounds best; `gain`/`eq` on the console. Recordings copy off over USB (`tools/pull.py`). SD_DET confirmed (P12 LOW with card, HIGH without; expander question �2.1 answered); RTC set, files get dated names. Still to check: one recording of fictional speech through `smoke_upload.py` on the server (owner); next: milestone 2 (power baseline), milestone 3 tunes gain/EQ by transcription | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` |
+| 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **running on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, buttons, haptics and recording work (mic timeout fix; stop early with BOOT+PWR again, `stop` or mute). Mic: raw level was nearly inaudible and muffled; now high-pass + T-Watch EQ (+9 dB 1.6 kHz, -6 dB 3.6 kHz) + 30 dB gain + limiter, speech ~-24 dBFS, owner says it sounds best; `gain`/`eq` on the console. Recordings copy off over USB (`tools/pull.py`). SD_DET confirmed (P12 LOW with card, HIGH without; expander question §2.1 answered); RTC set, files get dated names. Still to check: one recording of fictional speech through `smoke_upload.py` on the server (owner). **Round 12: BLE upload path built, not yet on hardware**: BOOT+PWR records an Opus session (libopus, 16 kbps) as 30 s Ogg/Opus chunks into a queue on the SD card that survives reboots; NimBLE GATT service drains it (protocol `docs/twatch-ble-protocol.md`); `tools/ble_relay.py` is the PC relay; Wi-Fi still not linked. Needs the owner: flash, record, drain with the PC relay and the phone (PR Server verification). Then milestone 2 (power baseline), milestone 3 (gain/EQ/bitrate by transcription) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` §11, `docs/twatch-ble-protocol.md` |
+| 11c | Android relay app (T-Watch → BLE → phone → server) | **built, unit-tested (67 tests), not yet on a phone**: foreground service, scan/bond/drain per the protocol, uploads with the bearer token over LAN/Tailscale, acks only after the server's ok, backoff; settings (URL, token in Keystore) and status screen; no Google services, no analytics. CI builds the APK | `android-relay/` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -226,6 +227,45 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Needs the owner: paste the new `INSTRUCTIONS` into the Custom preset and rerun
   `barvis_setup.py` so `/sound` picks it up.
 
+## Done in round 12: T-Watch Ultra BLE upload path, Android relay
+
+Nothing here has run on hardware yet; everything is built and tested off-device.
+
+- **Protocol** (`docs/twatch-ble-protocol.md`, written first, the contract for all parts):
+  our own GATT service (`f8060000-61c0-4fda-8b7b-26b08e916438`), `info`/`status`/`ctrl`/
+  `data` characteristics, LIST/READ/ACK/TIME/BYE with byte layouts and test vectors, 30 s
+  Ogg/Opus chunks with session id, sequence and RTC start time, delivery rule (watch
+  deletes only after ACK; relay acks only after the server's `ok`; LAST chunk → `/end`
+  first), pairing only in a 2-minute sync window, advertising only when something is
+  waiting, drain-then-disconnect with 15–30 ms bursts, MTU 517.
+- **Firmware** (`firmware/recorder/`): Opus session recorder (libopus via `78/esp-opus`,
+  complexity 1), pure-C Ogg/Opus writer and page scanner, chunk queue on `/sdcard/q` with
+  power-cut recovery and TIME fix-up, NimBLE GATT server (`ble_proto` pure + `ble_sync`
+  glue). Console: `session`, `queue`, `ble`, `ls q`, `get q/…`; `tools/pull.py --queue`
+  copies chunks over USB. Status screen shows session and queue. The WAV test recorder
+  stays as `rec`. Image 0.96 MB, no Wi-Fi library linked. Host tests: 10 suites (CRC,
+  Ogg writer, queue, BLE protocol incl. every test vector, plus the earlier ones).
+- **PC relay** (`firmware/recorder/tools/ble_relay.py` + `barvis_relay/`): bleak client
+  implementing the relay algorithm; stdlib uploader; 58 tests against a fake watch and a
+  fake HTTP server; also run end to end against the real server with generated
+  (non-speech) Ogg/Opus chunks.
+- **Android relay** (`android-relay/`): see row 11c.
+- **Server**: no protocol change needed (`codec=ogg`, any device name). Fixed a race: a
+  chunk arriving while its session was being processed lost its audio untranscribed;
+  now the session goes back for another pass (test added).
+- **CI**: also runs the PC relay tests and builds/tests/lints the Android app.
+
+**Not verified on hardware** (also in the PR):
+- Opus encode time at 80 MHz (estimate 40–60 % of one core; logged per session), and
+  whether DFS still drops to 40 MHz.
+- BLE throughput (MTU 517, 2M PHY, DLE), connection-parameter acceptance by Android and
+  BlueZ, pairing in and outside the sync window, bonds across reboots.
+- Android: background/Doze behaviour, OEM battery killers, scan with the screen off,
+  start-on-boot under Android 14/15 rules.
+- Power: advertising, bursts, the SD card mounted for a whole session and fsynced every
+  second (milestone 2).
+- Power-cut recovery and `truncate`/`fsync` on a real FAT card; runtime heap after BLE.
+
 ## Done in round 11: T-Watch Ultra milestone 1, bring-up test firmware
 
 - `firmware/recorder/`: ESP-IDF 5.x project with the board layer from the plan (§6):
@@ -287,6 +327,9 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 
 ## Next
 
+0. **Owner: T-Watch Ultra upload path test** (round 12 PR, Server verification): flash,
+   record with BOOT+PWR, drain with `ble_relay.py` from a PC, then with the Android app;
+   report the `encoder … us` log line and the BLE transfer time.
 1. **Owner: T-Watch Ultra milestone 1 test** (`firmware/recorder/README.md`, PR Server
    verification). Then milestone 2: power baseline (plan §7.3, §8): current for board
    idle, mic on, SD write, screen on; whether I2S PDM RX allows light sleep; whether the
@@ -310,6 +353,9 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
+- T-Watch upload path: is Opus complexity 1 at 16 kbps good enough for whisper on your
+  recordings (milestone 3 decides; 12/16/24 kbps comparison)? Is the 2-minute pairing
+  window with Just Works OK, or do you want a passkey shown on the watch screen?
 - T-Watch Ultra: everything under "Needs the real watch" above. Also: does the battery
   take a 4.2 V charge target (set conservatively; LilyGoLib asks the chip for 4.288 V)?
 - Barvis fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.

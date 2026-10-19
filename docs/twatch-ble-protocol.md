@@ -37,9 +37,13 @@ mic → Opus encoder → 30 s Ogg/Opus chunk on the SD card (queue)
 
 - One chunk = one standalone **Ogg/Opus file** (RFC 7845), one logical stream, uploaded
   unchanged with `codec=ogg`. ffmpeg on the server decodes it; no server change.
-- Encoder: libopus-compatible, **16 kHz mono, 20 ms frames, ~16 kbps VBR**, application
-  VOIP, low complexity (firmware default chosen for the CPU at 80 MHz; see the firmware
+- Encoder: libopus (`78/esp-opus`, fixed point), **16 kHz mono, 20 ms frames, ~16 kbps
+  VBR**, application VOIP, complexity 1 (chosen for the CPU at 80 MHz; see the firmware
   README). DTX off in v1.
+- Each chunk is encoded as its own stream (the encoder is reset per chunk), so it decodes
+  on its own. A full chunk holds **1501 packets**: the 1501st carries the encoder's
+  lookahead and its last granule trims it, so the chunk decodes to exactly 30.000 s and the
+  next chunk starts where it ends. `pre_skip` is 312 (104 samples at 16 kHz).
 - `OpusHead`: version 1, 1 channel, `pre_skip` = the encoder's lookahead in 48 kHz samples,
   input sample rate 16000, output gain 0, mapping family 0.
 - `OpusTags`: vendor `barvis-sound recorder`, and three comments for debugging a card
@@ -49,8 +53,9 @@ mic → Opus encoder → 30 s Ogg/Opus chunk on the SD card (queue)
   most ~1 s. Granule positions count 48 kHz samples including `pre_skip`. The last page
   has the end-of-stream flag. A chunk recovered after a power cut may end without it
   (§2.4); ffmpeg decodes that.
-- Length: **30 s** (1500 packets), except the last chunk of a session, which is shorter.
-  About 60 KB per full chunk at 16 kbps.
+- Length: **30 s**, except the last chunk of a session, which is shorter. About 60 KB per
+  full chunk at 16 kbps. `duration_ms` is what the chunk decodes to; for a chunk recovered
+  after a power cut it is (last granule − `pre_skip`) / 48, not a multiple of 20 ms.
 
 ### 2.2 Sessions
 
@@ -98,7 +103,12 @@ mic → Opus encoder → 30 s Ogg/Opus chunk on the SD card (queue)
 - A chunk that was being written when the power went (state "open") is recovered at boot:
   the file is cut back to its last complete Ogg page (CRC checked). If any audio is left it
   becomes a closed chunk with `LAST` set; otherwise it is deleted and the session's
-  previous queued chunk gets `LAST`.
+  previous queued chunk gets `LAST`. If that previous chunk was already acked, no chunk
+  can carry `LAST`: the relay never calls `/end` for that session and the server closes it
+  after its idle timeout (`CONVO_SESSION_IDLE_SECONDS`).
+- A chunk whose `.met` record is unreadable but whose `.opus` holds audio stays on the card
+  unlisted (it is never uploaded or deleted by the watch); copy it off over USB
+  (`tools/pull.py --queue`). Files without audio are cleaned up.
 - Only closed chunks are listed over BLE. The chunk being recorded is not visible yet.
 - When the card has less than 8 MB free, recording stops (the session ends normally, 3
   buzzes). Nothing queued is ever dropped by the watch on its own.
@@ -261,7 +271,8 @@ Windows negotiate on their own). With a smaller MTU every command answers
 - Sets the watch clock and RTC to `epoch_ms` (UTC). The watch refuses times before
   2024-01-01 or after 2100 with `ERROR bad_time`.
 - Converts queued `TIME_UNSET` chunks of the current boot (§2.3); `TIME_OK.fixed` says how
-  many.
+  many listed chunks changed. The chunk being recorded is converted too but not counted,
+  and a running session continues in epoch time from its next chunk.
 - The relay sends it once per connection, before `LIST`.
 
 ### 5.6 Error codes
