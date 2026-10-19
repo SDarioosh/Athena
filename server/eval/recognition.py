@@ -202,6 +202,36 @@ def boost_speaker(audio: np.ndarray, turns, speaker: str, db: float) -> np.ndarr
     return out / peak * 0.9 if peak > 0.9 else out
 
 
+class CachedTranscriber:
+    """--cache: reuse whisper results for the same audio, prompt and settings, so runs
+    that only change the diarizer skip transcription (eval/data/cache/, gitignored)."""
+
+    def __init__(self, inner, settings: Settings) -> None:
+        self.inner = inner
+        self.key = json.dumps([type(inner).__name__, settings.whisper_server_url,
+                               settings.whisper_model, settings.language,
+                               getattr(inner, "temperature_inc", None)])
+        self.dir = DATA.parent / "cache"
+        self.dir.mkdir(parents=True, exist_ok=True)
+
+    def transcribe(self, audio: np.ndarray, prompt: str = ""):
+        import hashlib
+
+        from convo_server.transcribe import TranscriptPiece
+
+        h = hashlib.sha1(self.key.encode() + prompt.encode()
+                         + np.ascontiguousarray(audio, np.float32).tobytes()).hexdigest()
+        path = self.dir / f"{h}.json"
+        if path.exists():
+            return [TranscriptPiece(*p) for p in json.loads(path.read_text())]
+        try:
+            pieces = self.inner.transcribe(audio, prompt)
+        except TypeError:  # pre-#24 transcriber: no prompt argument
+            pieces = self.inner.transcribe(audio)
+        path.write_text(json.dumps([[p.start, p.end, p.text] for p in pieces]))
+        return pieces
+
+
 def _process(pipeline: Pipeline, sid: str, audio: np.ndarray, t0: float) -> None:
     step = int(CHUNK * SAMPLE_RATE)
     for i in range(0, audio.size, step):
@@ -281,8 +311,11 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
                     continue
                 enroll_voice(store, diarizer.embedder, NAMES[i], pcm, is_owner=(i == 0))
                 named[NAMES[i]] = spk
-        pipeline = Pipeline(settings, store, make_vad(settings.vad_backend),
-                            build_transcriber(settings), diarizer)
+        transcriber = build_transcriber(settings)
+        if args.cache and transcriber is not None:
+            transcriber = CachedTranscriber(transcriber, settings)
+        pipeline = Pipeline(settings, store, make_vad(settings.vad_backend), transcriber,
+                            diarizer)
         sid = f"eval-{meeting}"
         t = time.time()
         _process(pipeline, sid, window, T0)
@@ -413,6 +446,8 @@ def main() -> None:
     r.add_argument("--relabel", action="store_true",
                    help="don't enroll; process the window, then name the --enroll speakers "
                         "in the window before it and measure the relabelled window")
+    r.add_argument("--cache", action="store_true",
+                   help="reuse whisper results of earlier runs (same audio and prompt)")
     r.add_argument("--owner-boost-db", type=float, default=0.0,
                    help="make the most active speaker this much louder (a wearer)")
     r.add_argument("--set", nargs="*", default=[], metavar="FIELD=VALUE",

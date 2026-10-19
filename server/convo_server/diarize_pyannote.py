@@ -97,9 +97,9 @@ class PyannoteDiarizer(Diarizer):
                  segmenter: Callable[[np.ndarray], list[Turn]],
                  match_threshold: float = 0.50, cluster_threshold: float = 0.45,
                  min_seconds: float = 1.0, owner_hint_margin: float = 0.10,
-                 owner_hint_db: float = 3.0) -> None:
+                 owner_hint_db: float = 3.0, absorb_threshold: float = 0.0) -> None:
         super().__init__(embedder, voices, match_threshold, cluster_threshold, min_seconds,
-                         owner_hint_margin, owner_hint_db)
+                         owner_hint_margin, owner_hint_db, absorb_threshold)
         self.segmenter = segmenter
 
     def diarize_runs(self, runs: list[np.ndarray], pieces: list[PieceRef]

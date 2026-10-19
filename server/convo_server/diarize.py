@@ -156,11 +156,37 @@ def cluster(embeddings: np.ndarray, threshold: float) -> list[int]:
     return labels
 
 
+def absorb_singletons(embs: np.ndarray, cids: list[int], threshold: float) -> list[int]:
+    """Move one-piece clusters into the closest cluster of several pieces when they are at
+    least ``threshold`` similar to its centroid (0 = off).
+
+    A single noisy embedding (a short or overlapped piece) often ends up alone and becomes
+    an extra "Speaker N" with one line. Cluster ids are renumbered by first appearance.
+    """
+    if threshold <= 0 or len(cids) < 3:
+        return cids
+    members: dict[int, list[int]] = {}
+    for j, c in enumerate(cids):
+        members.setdefault(c, []).append(j)
+    big = [c for c, m in members.items() if len(m) > 1]
+    if not big:
+        return cids
+    cents = np.stack([_normalize(embs[members[c]].mean(axis=0)) for c in big])
+    out = list(cids)
+    for m in members.values():
+        if len(m) == 1:
+            sims = cents @ _normalize(embs[m[0]])
+            if float(sims.max()) >= threshold:
+                out[m[0]] = big[int(np.argmax(sims))]
+    order: dict[int, int] = {}
+    return [order.setdefault(c, len(order)) for c in out]
+
+
 class Diarizer:
     def __init__(self, embedder: SpeakerEmbedder, voices: list[EnrolledVoice],
                  match_threshold: float = 0.50, cluster_threshold: float = 0.45,
                  min_seconds: float = 1.0, owner_hint_margin: float = 0.10,
-                 owner_hint_db: float = 3.0) -> None:
+                 owner_hint_db: float = 3.0, absorb_threshold: float = 0.0) -> None:
         self.embedder = embedder
         self.voices = voices
         self.match_threshold = match_threshold
@@ -171,6 +197,7 @@ class Diarizer:
         # A margin of 0 turns the hint off.
         self.owner_hint_margin = owner_hint_margin
         self.owner_hint_db = owner_hint_db
+        self.absorb_threshold = absorb_threshold
 
     def diarize_runs(self, runs: list[np.ndarray], pieces: list[PieceRef]
                      ) -> tuple[list[SpeakerLabel], dict[str, np.ndarray]]:
@@ -212,7 +239,8 @@ class Diarizer:
                 (label,), unnamed = self.name_clusters([emb])
             return [label] * len(clips), unnamed
         embs = np.stack([self.embedder.embed(clips[i]) for i in idx])
-        cids = cluster(embs, self.cluster_threshold)
+        cids = absorb_singletons(embs, cluster(embs, self.cluster_threshold),
+                                 self.absorb_threshold)
         n = max(cids) + 1
         centroids = [_normalize(embs[[j for j, c in enumerate(cids) if c == cid]].mean(axis=0))
                      for cid in range(n)]

@@ -313,3 +313,17 @@ def test_pyannote_fallback_labels_dont_collide():
     labels, unnamed = d.diarize_runs(runs, [PieceRef(0, 0, 4), PieceRef(1, 0, 4)])
     assert [x.name for x in labels] == ["Speaker 1", "Speaker 2"]
     assert list(unnamed) == ["Speaker 1", "Speaker 2"]
+
+
+def test_one_line_speakers_join_the_closest_speaker():
+    from convo_server.diarize import absorb_singletons
+
+    a, b = unit(1, 0, 0), unit(0, 1, 0)
+    near_a = unit(1, 0.9, 0)  # one noisy piece, closer to a (0.74) than to b (0.67)
+    far = unit(0, 0, 1)  # someone else entirely
+    embs = np.stack([a, a, b, b, near_a, far])
+    cids = [0, 0, 1, 1, 2, 3]
+    assert absorb_singletons(embs, cids, 0.0) == cids  # off
+    assert absorb_singletons(embs, cids, 0.3) == [0, 0, 1, 1, 0, 2]
+    assert absorb_singletons(embs, cids, 0.8) == cids  # not similar enough
+    assert absorb_singletons(embs[:2], [0, 1], 0.3) == [0, 1]  # nothing big to join
