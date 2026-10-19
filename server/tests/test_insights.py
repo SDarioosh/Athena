@@ -51,7 +51,8 @@ def test_bad_due_dates_are_dropped(pipeline):
                    {"text": "b", "due": "soon", "due_date": "2026-02-30", "at_seconds": 1}]}
     use_llm(pipeline, summary=summary)
     conv = pipeline.store.get_conversation(record(pipeline))
-    assert [a["due_date"] for a in conv["action_items"]] == [None, None]
+    # the model's "Friday" is no date; the code works it out from the phrase instead
+    assert [a["due_date"] for a in conv["action_items"]] == ["2025-10-10", None]
 
 
 def test_tv_is_discarded_but_transcript_kept(pipeline):
@@ -262,3 +263,23 @@ def test_failed_focused_call_keeps_the_conversation_and_is_retried(pipeline):
     assert "FactLinks" in calls
     assert store.get_conversation(other)["status"] == "summarized"
     assert len(store.list_facts()) == 2
+
+
+def test_implausible_fact_links_are_ignored(pipeline):
+    """A small model linked "send the spreadsheet" to "avoid hard food" (both about Me):
+    the new fact was dropped as a repeat. Links need shared content words."""
+    store = pipeline.store
+    me = {"title": "t", "summary": "s", "key_points": [], "people": [], "topics": [],
+          "action_items": [], "facts": [{"subject": "Me", "at_seconds": 1,
+                                         "fact": "I will send Alice the revised spreadsheet."}]}
+    use_llm(pipeline, summary=me)
+    first = record(pipeline)
+    old_id = store.get_conversation(first)["facts"][0]["id"]
+    me["facts"][0]["fact"] = "Me should avoid hard food on the left side."
+    use_llm(pipeline, summary=me, links=[{"new": 0, "relation": "same", "existing": old_id}])
+    record(pipeline, session="s2", start=T0 + 86400)
+    assert len(store.list_facts()) == 2
+    me["facts"][0]["fact"] = "Me will create a photo album for Mom."
+    use_llm(pipeline, summary=me, links=[{"new": 0, "relation": "updates", "existing": old_id}])
+    record(pipeline, session="s3", start=T0 + 2 * 86400)
+    assert len(store.list_facts()) == 3

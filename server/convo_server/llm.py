@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from .dates import resolve_due
 from .store import Segment
 
 log = logging.getLogger(__name__)
@@ -283,6 +284,14 @@ class Summarizer:
                                      facts=_unique(facts))
         out = to_storage(result, origin)
         out["kind"] = triage.kind
+        # work the date out in code where the phrase names a day; the model's guess only
+        # for the rest (small models get weekday arithmetic wrong)
+        today = datetime.fromtimestamp(origin, self.tz).date()
+        for item in out["action_items"]:
+            day = resolve_due(item["due"], today) or (
+                None if item["due"] else resolve_due(item["text"], today))
+            if day is not None:
+                item["due_date"] = day.isoformat()
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
         return out
@@ -298,9 +307,21 @@ class Summarizer:
             "new": [{"number": i, "subject": f["subject"], "fact": f["fact"]}
                     for i, f in enumerate(new)]})
         result = self.llm.structured(LINK_SYSTEM.format(date=date), user, FactLinks)
-        ids = {k["id"] for k in known}
-        return [lk for lk in result.links  # type: ignore[attr-defined]
-                if 0 <= lk.new < len(new) and (lk.relation == "new" or lk.existing in ids)]
+        by_id = {k["id"]: k for k in known}
+        out = []
+        for lk in result.links:  # type: ignore[attr-defined]
+            if not 0 <= lk.new < len(new):
+                continue
+            if lk.relation != "new":
+                old = by_id.get(lk.existing)  # type: ignore[arg-type]
+                # a "same" link drops the new fact, an "updates" link hides the old one:
+                # only when the two are visibly about the same thing
+                if old is None or not plausible_link(new[lk.new], old):
+                    log.info("fact link rejected: %r %s %r", new[lk.new]["fact"],
+                             lk.relation, old["fact"] if old else lk.existing)
+                    continue
+            out.append(lk)
+        return out
 
     def _split(self, segments: list[Segment], origin: float) -> list[str]:
         parts: list[list[Segment]] = [[]]
@@ -327,6 +348,38 @@ class Summarizer:
         out["date"] = date
         out["conversation_ids"] = [c["id"] for c in conversations]
         return out
+
+
+_STOP_WORDS = """a an the and or but of to in on at by for with from about as is are was
+were be been being will would shall should can could may might must do does did has have had
+not no now this that these those it its it's he she they we you i me my your his her their
+our him them us who what when where which there here than then so very just also up out
+over into after before until said says say"""
+_STOP = frozenset(re.split(r"\s+", _STOP_WORDS))
+
+
+def _content_words(text: str) -> set[str]:
+    out = set()
+    for w in re.findall(r"[a-z0-9]+(?:'[a-z]+)?", (text or "").lower()):
+        w = w.removesuffix("'s")
+        if w in _STOP:
+            continue
+        for suffix in ("ing", "ed", "es", "s"):
+            if len(w) > len(suffix) + 2 and w.endswith(suffix):
+                w = w[: -len(suffix)]
+                break
+        out.add(w.rstrip("e") or w)
+    return out
+
+
+def plausible_link(new: dict[str, Any], old: dict[str, Any]) -> bool:
+    """Two facts can be "the same" or one "update" the other only if they share at
+    least two content words besides the subject they have in common (a small model
+    otherwise links e.g. "I'll send the spreadsheet" to "avoid hard food", both "Me")."""
+    shared_subject = (_content_words(new.get("subject") or "")
+                      & _content_words(old.get("subject") or ""))
+    common = (_content_words(new["fact"]) & _content_words(old["fact"])) - shared_subject
+    return len(common) >= 2
 
 
 def _unique(items: list[Any]) -> list[Any]:
