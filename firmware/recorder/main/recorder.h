@@ -20,4 +20,7 @@ typedef void (*recorder_done_cb_t)(esp_err_t result, void *ctx);
 typedef void (*recorder_tick_cb_t)(int elapsed_s, void *ctx);
 
 esp_err_t recorder_start(int seconds, recorder_done_cb_t done, recorder_tick_cb_t tick, void *ctx);
+/* Ask a running recording to stop. The file keeps what was recorded so far and `done` is
+ * called with ESP_OK as usual. Returns false if nothing was recording. */
+bool recorder_stop(void);
 void recorder_get_state(recorder_state_t *out);

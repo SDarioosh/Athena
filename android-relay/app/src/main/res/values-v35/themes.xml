@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Plain framework views and action bar: keep the pre-Android-15 window layout. -->
+    <style name="Theme.Relay" parent="android:Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">#1E5B7A</item>
+        <item name="android:colorPrimaryDark">#163F55</item>
+        <item name="android:colorAccent">#1E7A6B</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>

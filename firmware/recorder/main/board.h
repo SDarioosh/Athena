@@ -58,6 +58,13 @@ typedef struct {
     int data_gpio;
 } board_mic_pins_t;
 
+/* One peaking-EQ band that corrects the board's mic acoustics (port, case cavity). */
+typedef struct {
+    float hz;
+    float gain_db;
+    float q;
+} board_mic_eq_band_t;
+
 typedef struct {
     int width;
     int height;
@@ -96,6 +103,8 @@ esp_err_t board_haptic_pulse(int count);
 
 /* ---- microphone ---- */
 board_mic_pins_t board_mic_pins(void);
+/* EQ bands for this board's mic, measured on the device; *bands may be NULL (count 0). */
+int board_mic_eq(const board_mic_eq_band_t **bands);
 
 /* ---- storage (card powered only while mounted) ---- */
 bool board_storage_card_present(void);

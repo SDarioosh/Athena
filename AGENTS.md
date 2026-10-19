@@ -33,18 +33,23 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 - `server/`: Python 3.11+ package `convo_server`: ingestion API, VAD,
   transcription, diarization, conversation splitting, summaries, SQLite
   storage, search, digest, MCP server (`convo_server/mcp_server.py`), frontend eval
-  (`server/eval/bakeoff.py`). See `server/README.md`.
+  (`server/eval/bakeoff.py`). `server/scripts/deploy.sh` updates the server and runs it
+  as background services; Barvis' `barvis_deploy.sh` calls it. See `server/README.md`.
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
   recording feasibility test app; see `zepp-app/README.md`.
 - `firmware/recorder/`: ESP-IDF 5.x firmware for our own recorders, one shared `main/`
   and a board layer (`main/board.h`, `boards/twatch_ultra/board/`). Milestone 1
-  (bring-up test firmware for the T-Watch Ultra) is built; see
+  (bring-up test firmware for the T-Watch Ultra) is built, plus Opus recording sessions,
+  the SD chunk queue and the BLE service; `tools/ble_relay.py` is the PC relay. See
   `firmware/recorder/README.md`.
+- `android-relay/`: Android relay app (Kotlin): drains the T-Watch over BLE and uploads to
+  the server. Protocol: `docs/twatch-ble-protocol.md`. See `android-relay/README.md`.
 - `docs/`: research and decisions (`omi-ingestion.md`,
   `frontend-decision.md`, `xiao-esp32s3-sense-plan.md`: the plan for our own
   XIAO ESP32-S3 Sense pendant, which comes later; `t-watch-ultra-plan.md`: the same
   recorder on the LilyGO T-Watch Ultra, built first, with one shared ESP-IDF firmware.
-  Milestone 1 of the T-Watch Ultra is implemented in `firmware/recorder/`; the rest is plan).
+  Milestone 1 of the T-Watch Ultra is implemented in `firmware/recorder/`, and so is the BLE
+  upload path; `twatch-ble-protocol.md`: the watch ↔ relay protocol).
 - `hermes/`: Hermes profile snippet used by the orchestrator.
 - `orchestrator/`: optional build loop. Leave it alone.
 
@@ -146,7 +151,7 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 | Capture, ingestion, VAD, transcription, diarization, splitting, summaries, storage | `server/` here |
 | MCP tools, their results and links | `server/convo_server/mcp_server.py` here (contract rules above) |
 | Watch app | `zepp-app/` here |
-| Pendant firmware, phone BLE relay | this repo (plans in `docs/`) |
+| Watch/pendant firmware, BLE protocol, phone and PC relays | this repo (`firmware/`, `android-relay/`, `docs/twatch-ble-protocol.md`) |
 | Eval questions and scoring | `server/eval/bakeoff.py` here |
 | How Barvis gates, routes or shows our tools; presets; Barvis UI views | the Barvis repo |
 | Odysseus bugs | the Barvis repo (offered upstream) |
@@ -185,11 +190,15 @@ through our MCP server. **Nothing in the data path touches the cloud.**
 - Recorder firmware build (ESP-IDF ≥ 5.4): `cd firmware/recorder && idf.py
   -DBOARD=twatch_ultra -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_ultra"
   build`
+- PC BLE relay (no Bluetooth needed): `python -m pytest -q firmware/recorder/tools`
+- Android relay: `cd android-relay && ./gradlew assembleDebug test lint` (JDK 17+,
+  Android SDK platform 35)
 - Optional end-to-end: `server/scripts/smoke_upload.py` against a running
   server with whisper-server and llama-server up.
 
 Skip a check only if its project doesn't exist yet. CI (`.github/workflows/ci.yml`)
-runs the server checks on Python 3.11 and the firmware host tests and `idf.py build`.
+runs the server checks on Python 3.11, the firmware host tests and `idf.py build`, the PC
+relay tests and the Android build and tests.
 
 ## Conventions
 
