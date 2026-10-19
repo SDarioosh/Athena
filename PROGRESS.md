@@ -6,7 +6,7 @@ T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → l
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Barvis. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (round 13: one-command deploy, services in the background)_
+_Last updated: 2026-10-19 (round 14: speaker recognition and focused summaries measured and fixed)_
 
 ## Status
 
@@ -32,6 +32,7 @@ _Last updated: 2026-10-19 (round 13: one-command deploy, services in the backgro
 | 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **running on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, buttons, haptics and recording work (mic timeout fix; stop early with BOOT+PWR again, `stop` or mute). Mic: raw level was nearly inaudible and muffled; now high-pass + T-Watch EQ (+9 dB 1.6 kHz, -6 dB 3.6 kHz) + 30 dB gain + limiter, speech ~-24 dBFS, owner says it sounds best; `gain`/`eq` on the console. Recordings copy off over USB (`tools/pull.py`). SD_DET confirmed (P12 LOW with card, HIGH without; expander question §2.1 answered); RTC set, files get dated names. Still to check: one recording of fictional speech through `smoke_upload.py` on the server (owner). **Round 12: BLE upload path built, not yet on hardware**: BOOT+PWR records an Opus session (libopus, 16 kbps) as 30 s Ogg/Opus chunks into a queue on the SD card that survives reboots; NimBLE GATT service drains it (protocol `docs/twatch-ble-protocol.md`); `tools/ble_relay.py` is the PC relay; Wi-Fi still not linked. Needs the owner: flash, record, drain with the PC relay and the phone (PR Server verification). Then milestone 2 (power baseline), milestone 3 (gain/EQ/bitrate by transcription) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` §11, `docs/twatch-ble-protocol.md` |
 | 11c | Android relay app (T-Watch → BLE → phone → server) | **built, unit-tested (67 tests), not yet on a phone**: foreground service, scan/bond/drain per the protocol, uploads with the bearer token over LAN/Tailscale, acks only after the server's ok, backoff; settings (URL, token in Keystore) and status screen; no Google services, no analytics. CI builds the APK | `android-relay/` |
 | 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; Barvis' `barvis_deploy.sh deploy` runs it first | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, Barvis `docs/barvis/deploy.md` |
+| 13 | Speaker recognition (PR #24) and focused summaries (PR #25): measured in the sandbox, bugs fixed, two improvements | PRs open, **owner: Server verification** | SDarioosh/barvis-sound#31 (recognition), SDarioosh/barvis-sound#38 (insights) |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -228,6 +229,58 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Needs the owner: paste the new `INSTRUCTIONS` into the Custom preset and rerun
   `barvis_setup.py` so `/sound` picks it up.
 
+## Done in round 14: PRs #24 and #25 measured, fixed and improved
+
+Both were merged before they were measured. Sandbox numbers (CPU, whisper base.en,
+Qwen3-4B) only compare with other sandbox runs.
+
+**Recognition (#24), SDarioosh/barvis-sound#31.** `eval/recognition.py` on 3 AMI meetings
+(5 min each, 2 speakers enrolled):
+
+| | WER | DER | named right | named wrong |
+|---|---|---|---|---|
+| before #24 | 29.8% | 37.2% | 66.7% | 1.3% |
+| main | 28.9% | 33.6% | 85.6% | 2.1% |
+| #31 (one-line speakers absorbed) | 28.9% | 30.5% | 89.1% | 2.5% |
+
+- Kept: several voice samples per person (+14 pt named right on its own), names of known
+  speakers in the whisper prompt (slightly better WER and DER), relabelling of past
+  recordings (62–80% of past unnamed speech named, 1–2% wrong).
+- Off by default: the vocabulary prompt `CONVO_WHISPER_PROMPT` (broke whisper's
+  timestamps: false alarm 8% → 58%) and pyannote (best DER, 95.9% named right, but 4.4%
+  named wrong and ~8× slower on CPU).
+- The owner loudness hint never fired, even with the owner 6 dB louder and a 12 s
+  profile; it needs a real wearable.
+- Fixed: the pyannote fallback reused "Speaker 1" for a second voice;
+  `rename_speaker_everywhere` could rename a person (even the owner) to "Speaker N".
+- Checked: a pre-#24 database migrates to user_version 4 with nothing lost; relabelling
+  never changes a name a person set; pyannote made no connection except to Hugging Face
+  for the model files; MCP annotations match the contract (no Barvis change).
+
+**Insights (#25), SDarioosh/barvis-sound#38.** Seeded demo data, by hand and with `eval/bakeoff.py`:
+
+| | before #25 | main | this round |
+|---|---|---|---|
+| TV snippet discarded | no | yes | yes |
+| commitments found (of 9) | 9 | 3 | 8 |
+| "by Friday" due date right | — | no | yes |
+| outdated facts replaced (budget, Berlin date) | no | yes | yes |
+| facts lost through wrong links | 0 | 3 | 0 |
+| bakeoff raw (20 questions) | 12/20 | 11/20 | 11/20 |
+| bakeoff via Barvis (questions 2, 14, 19) | 3/3 | 0/3 | 2/3 |
+
+The bakeoff hardly moves: raw passes the same questions on main and this round, and the
+Barvis sample is 3 questions with a 4B model. The data quality shows in the hand checks
+and in the answers (Q2 now leads with the 10% cut, not the old 15%).
+
+- Fixed: action-item prompt (#25's examples were demo-data quotes; the model copied
+  sentences), due dates resolved in code (`convo_server/dates.py`), implausible fact links
+  ignored, and three ways a re-summary lost user state (closed action items reopened, fact
+  sources lost, replaced facts back as current). Re-summaries are frequent now, because
+  relabelling triggers them.
+- Checked: a failing call in any of the four new LLM calls keeps the conversation
+  (`failed`, then retried).
+
 ## Done in round 13: one-command deploy
 
 - `server/scripts/deploy.sh deploy` fetches and fast-forwards `main`, installs into
@@ -346,6 +399,10 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 ## Next
 
+0. **Owner: Server verification** of SDarioosh/barvis-sound#31 (recognition eval with
+   large-v3-turbo, optional pyannote on the GPU) and SDarioosh/barvis-sound#38 (re-summarize a copy of
+   the real DB, bakeoff on the test instance with qwen3.5-35b), then a real-device check:
+   name a speaker once, see the name in the next recording.
 0. **Owner: T-Watch Ultra upload path test** (round 12 PR, Server verification): flash,
    record with BOOT+PWR, drain with `ble_relay.py` from a PC, then with the Android app;
    report the `encoder … us` log line and the BLE transfer time.
@@ -373,6 +430,12 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
+- Recognition: if pyannote on the server GPU names people right without more wrong names
+  than ECAPA (step 3 of #31's Server verification), should it become the default there?
+- Insights: should doctor's instructions like "avoid hard food until the follow-up" be
+  action items? The model lists them; they're not things to do by a date.
+- Owner loudness hint: it never fired in the eval. Keep it until a real-device recording
+  shows whether it helps, or remove it?
 - T-Watch upload path: is Opus complexity 1 at 16 kbps good enough for whisper on your
   recordings (milestone 3 decides; 12/16/24 kbps comparison)? (Pairing: answered, a
   6-digit passkey on the watch screen.)
