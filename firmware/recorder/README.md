@@ -22,17 +22,26 @@ records everything between start and stop.
   (`boards/twatch_ultra/board/pins.h` has both readings and the schematic's answer).
 - Reads the PCF85063A RTC into the system clock at boot; `time <ISO-8601>` on the USB
   console sets both.
-- **PWR short press**: status screen for ~5 s (recording/muted, battery %, voltage, time,
-  SD), then the display rail goes off again.
-- **BOOT short press**: toggle mute. 1 buzz = recording, 2 buzzes = muted.
-- **BOOT held + PWR short press**, or `session start`: starts a **recording session**
-  (1 buzz). The mic is encoded to Opus and written as 30 s Ogg/Opus chunks to
-  `/sdcard/q/` (the upload queue). The same combination again, `session stop`, or mute
-  ends it (1 buzz; 3 buzzes if it ended on its own: card full or an error). Releasing BOOT
-  after the combination doesn't count as a BOOT press.
-- **BOOT long press (1 s)**, or `sync` / `ble pair`: opens the **BLE sync window** for 2
-  minutes (1 buzz): the watch advertises and a new phone or PC may pair. Outside the window
-  only already-paired relays get in.
+- **Buttons** (owner's layout of 2026-10-19, plan §3):
+
+  | Action | Does |
+  |---|---|
+  | BOOT press | Status screen for a few seconds (recording/muted, battery %, voltage, time, SD), then the display rail goes off again. Waits ~0.3 s first to rule out a double-click |
+  | BOOT double-click (or `mute`) | Toggle mute. 2 buzzes = muted, 1 long buzz = unmuted. Mute ends whatever is recording |
+  | BOOT hold ~1 s (or `sync` / `ble pair`) | Opens the **BLE sync window** for 2 minutes: the watch advertises and a new phone or PC may pair. Outside the window only already-paired relays get in |
+  | PWR short press (or `session start` / `session stop`) | Starts or stops a **recording session** (1 buzz start, 2 buzzes stop; 3 buzzes if it ended on its own: card full or an error). The mic is encoded to Opus and written as 30 s Ogg/Opus chunks to `/sdcard/q/` (the upload queue). During a voice note, it stops the note |
+  | PWR hold ~1 s (or `note start` / `note stop`) | Starts a **voice note**. The AXP2101 long-press time is set to 1 s (register 0x27); the power-off hold (~6 s) is left as shipped |
+  | PWR hold ~6 s | Hardware power-off (AXP2101) |
+
+- **Voice notes**: a note is its own short session. Every chunk carries the `NOTE` flag
+  (protocol §4.3), which is kept in the chunk's `.met` record, so it survives reboots and
+  reaches the relay. A note stops on a PWR press, `note stop`, mute, or by itself after 5
+  min (15 chunks). If a conversation session is recording, it ends cleanly first (its last
+  chunk gets `LAST`), the note records, and then a new conversation session starts by
+  itself (not if muted meanwhile).
+- **Screen messages**: every button action lights the screen for a few seconds with what
+  happened: "Recording", "Stopped", "Note 0:12", "Note saved", "Muted", "Unmuted",
+  "Sync open".
 - **Uploads**: the watch advertises only when something is waiting (a finished session, or
   10 min of audio from a running one, or anything queued after an hour without a sync).
   The relay connects, sets the watch's clock, pulls each chunk, uploads it to the server,
@@ -63,7 +72,7 @@ records everything between start and stop.
   python firmware/recorder/tools/pull.py --port COM35 --out ~/barvis-recordings
   ```
 - USB console (`help`): `status`, `batt`, `rails`, `exp`, `time`, `session [start|stop]`,
-  `queue [drop <id>]`, `ble [pair|forget]`, `sync`, `rec [s]`, `stop`, `level [s]`,
+  `note [start|stop]`, `queue [drop <id>]`, `ble [pair|forget]`, `sync`, `rec [s]`, `stop`, `level [s]`,
   `gain [dB]`, `eq [on|off]`, `ls [q]`, `get <file>`, `mute`, `screen`, `sd`, `reboot`.
 
 ## Upload path (BLE)
@@ -106,7 +115,7 @@ and a Bluetooth adapter. The token comes from `CONVO_INGEST_TOKEN` or `--token-f
 python3 -m venv ~/.venvs/barvis-relay
 ~/.venvs/barvis-relay/bin/pip install -r firmware/recorder/tools/requirements.txt
 
-# first time: open the sync window on the watch (BOOT long press); when the PC pairs, the
+# first time: open the sync window on the watch (BOOT hold ~1 s); when the PC pairs, the
 # watch shows a 6-digit code.
 # bleak can't type it, so pair through the OS and type the code:
 #   Linux:   bluetoothctl -> agent on -> default-agent -> scan on -> pair <address>
@@ -236,3 +245,8 @@ The BLE upload path has not run on hardware at all yet: Opus encode time and CPU
 80 MHz, BLE throughput, pairing with Android and BlueZ, power-cut recovery on a real card,
 `fsync` once a second (SD power and wear), the advertising and connection current, and
 the runtime heap after BLE starts. The PR's Server verification section has the steps.
+
+The button layout of 2026-10-19 and voice notes are not tested on the watch yet: the
+double-click timing (~0.3 s), the PWR 1 s long press via PMU register 0x27, that a hold of
+~6 s still powers the watch off, and a voice note end to end (NOTE flag on every chunk,
+5-min cap, the conversation ending and resuming around it, `kind=note` on the server).

@@ -59,9 +59,18 @@ mic → Opus encoder → 30 s Ogg/Opus chunk on the SD card (queue)
 
 ### 2.2 Sessions
 
-- A **session** is one recording: it starts with BOOT held + PWR short press (or the
-  console `session start`), and ends with the same combination again, with mute (BOOT
-  short press), with the console `session stop`, when the card is full, or with a reboot.
+- A **session** is one recording: it starts with a PWR short press (or the console
+  `session start`), and ends with another PWR short press, with mute (BOOT double-click),
+  with the console `session stop`, when the card is full, or with a reboot.
+- A **voice note** is a session of its own, started with a PWR hold of ~1 s (or the
+  console `note start`). It has a new `session_id`, sequences from 0 and 30 s chunks as
+  usual, and **every chunk of it carries the `NOTE` flag** (§4.3). It ends with a PWR
+  press, mute, `note stop`, or by itself after 5 min (15 chunks); its last chunk has
+  `LAST`. If a conversation session is recording when a note starts, the watch ends that
+  session first (its last chunk gets `LAST`), records the note, and then starts a new
+  conversation session (unless muted meanwhile). The two never record at once, so a
+  conversation session never holds a `NOTE` chunk. The server's gap rule joins the two
+  conversation halves; notes are never joined.
 - `session_id`: 8 random bytes from the hardware RNG. Its text form, used everywhere
   (index, upload, logs), is the 16 lowercase hex digits of those bytes in order, e.g.
   `3f9a0c11d2e4b507`. It matches the server's id rule (`[A-Za-z0-9._:-]{1,128}`).
@@ -140,8 +149,8 @@ ours, random, base `f806xxxx-61c0-4fda-8b7b-26b08e916438`:
   man-in-the-middle during pairing. The code stays on screen for 30 s, the SMP timeout.
 - `status`, `ctrl` and `data` need an **authenticated** (passkey) key, not just
   encryption: a link encrypted with an unauthenticated key is disconnected.
-- **New bonds are accepted only in the sync window**: for 2 minutes after a BOOT long
-  press (or `ble pair` on the console). Outside the window, a peer that wasn't bonded
+- **New bonds are accepted only in the sync window**: for 2 minutes after a BOOT hold of
+  ~1 s (or `ble pair` on the console). Outside the window, a peer that wasn't bonded
   before this connection is disconnected and its new bond is deleted as soon as
   encryption comes up. So someone nearby can't pull or delete recordings.
 - Outside the window the watch doesn't store new bonds at all, and re-pairing a known
@@ -193,7 +202,7 @@ changes, at most once per second.
 | Offset | Type | Field |
 |---|---|---|
 | 0 | u8 | opcode `0x81` |
-| 1 | u8 | flags: bit0 `LAST` (last chunk of its session), bit1 `TIME_UNSET` (§2.3) |
+| 1 | u8 | flags: bit0 `LAST` (last chunk of its session), bit1 `TIME_UNSET` (§2.3), bit2 `NOTE` (chunk belongs to a voice note; every chunk of a note session has it, §2.2). Other bits are 0; relays ignore bits they don't know |
 | 2 | u16 | reserved, 0 |
 | 4 | u32 | `chunk_id` |
 | 8 | u8[8] | `session_id` |
@@ -323,6 +332,7 @@ Windows negotiate on their own). With a smaller MTU every command answers
       | `sequence` | decimal |
       | `timestamp` | `start_ms` (or `anchor + start_ms`, §2.3) as ISO-8601 UTC with milliseconds, e.g. `2026-10-19T12:34:56.789Z` |
       | `codec` | `ogg` |
+      | `kind` | `note` if the entry has `NOTE`; otherwise the field is left out (the server defaults to `conversation`), so ordinary uploads are unchanged |
 
    3. On `200` with `"ok": true`: if the entry has `LAST`, `POST
       <server>/v1/sessions/<session_id>/end` (same token) and wait for `200`. Then send
@@ -355,7 +365,7 @@ batching: the radio is on for seconds per hour.
 
 The watch advertises **only when there is something to do**:
 
-- the sync window is open (2 min after a BOOT long press or `ble pair` / `sync`), or
+- the sync window is open (2 min after a BOOT hold of ~1 s or `ble pair` / `sync`), or
 - a finished session was queued since the last `BYE` (a chunk with `LAST`), or
 - at least **10 min of audio** was queued since the last `BYE` (a long recording still
   running), or
@@ -406,6 +416,7 @@ Hex, as sent on the air. All three implementations test against these.
 | `TIME 2026-10-19T12:00:00Z` (1792411200000 ms) | `04 000000 006a0854a1010000` |
 | `BYE` | `05` |
 | `ENTRY` chunk 7, `LAST`, session `3f9a0c11d2e4b507`, seq 2, start 1792411260000 ms, 12340 ms, 24680 bytes, crc `0xcbf43926` | `81 01 0000 07000000 3f9a0c11d2e4b507 02000000 60540954a1010000 34300000 68600000 2639f4cb` |
+| `ENTRY` chunk 8, `LAST`+`NOTE`, session `3f9a0c11d2e4b507`, seq 0, start 1792411260000 ms, 12340 ms, 24680 bytes, crc `0xcbf43926` | `81 05 0000 08000000 3f9a0c11d2e4b507 00000000 60540954a1010000 34300000 68600000 2639f4cb` |
 | `DATA` chunk 7 offset 505, payload `aabb` | `82 07000000 f9010000 aabb` |
 | `READ_END` ok, chunk 7, 24680 bytes, crc `0xcbf43926` | `83 00 0000 07000000 68600000 2639f4cb` |
 | `ACKED` deleted, chunk 7 | `84 00 0000 07000000` |
@@ -422,6 +433,9 @@ The `info` example is `proto=1;device=twatch-ultra;fw=0.2.0;board=twatch_ultra`.
   (new mandatory command, changed layout) bumps it, and the relays refuse other versions.
 - Adding a response field at the end of a struct, a new flag bit, a new `info` key or a
   new command is compatible and keeps `proto=1`.
+- The `NOTE` flag bit (§4.3, 2026-10-19) is such an additive change: it stays within
+  `proto=1`. Relays must ignore flag bits they don't know. An old relay that ignores
+  `NOTE` uploads a voice note as an ordinary conversation, without `kind=note`.
 
 ## Not verified on hardware
 
