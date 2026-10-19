@@ -23,18 +23,35 @@ Wi-Fi (not initialised and not linked), no Opus, no speech gate yet.
 - **BOOT long press (1 s)**: logs "sync now" (placeholder for BLE).
 - **BOOT held + PWR short press**, or `rec` on the console: records 60 s from the PDM mic
   (16 kHz, mono, 16-bit) to `/sdcard/rec_<UTC time>.wav`, then powers the card off. The
-  log line `recorder: level: ...` gives the file's RMS, peak, DC offset and clipped samples.
+  log line `recorder: level at ...` gives the file's RMS, peak, DC offset, clipped samples
+  and how often the limiter acted.
   **Stop early** with BOOT held + PWR short press again, `stop` on the console, or mute
   (BOOT short press): the file keeps what was recorded so far. Releasing BOOT after the
   combination doesn't count as a BOOT press.
-- **`level [s]`** on the console: reads the mic for N seconds (default 5) without the SD
-  card and prints the level once a second. A quiet room reads about -55 dBFS; all zeros or
-  no audio means a mic problem. Talk during it: the level should rise well above that.
+- **Mic conditioning** (`main/audio_dsp.c`, applied inside `mic_read()`): 100 Hz high-pass,
+  the board's EQ, gain (default +30 dB), and a limiter at -1 dBFS. The ESP32-S3's PDM
+  converter adds no gain and no high-pass, so the raw mic level (speech at ~30 cm around
+  -55 dBFS, normal for a MEMS mic) was nearly inaudible, under a +600 DC offset and rumble.
+  The T-Watch's mic port leaves a hole at 1-2.5 kHz and a peak at 3-4 kHz (muffled speech);
+  `board_mic_eq()` corrects it with +9 dB at 1.6 kHz and -6 dB at 3.6 kHz. With all of it,
+  20 s of speech at ~30 cm records at about -24 dBFS, nothing clipped. `gain [dB]` and
+  `eq on|off` on the console change it (saved in NVS). The right value is milestone 3's
+  call, by transcription accuracy.
 - The mic drops its first 250 ms after each start: the PDM filter starts with a
-  near-full-scale click and a settling DC offset. The S3 has no PDM high-pass filter, so a
-  DC offset of about +600 stays in the data.
+  near-full-scale click and a settling DC offset.
+- **`level [s]`** on the console: reads the mic for N seconds (default 5) without the SD
+  card and prints the conditioned level once a second. A quiet room reads about -38 dBFS
+  at +30 dB; talk during it and the level should rise well above that.
+- **Copy recordings off over USB** (no card reader): `ls` lists the card, `get <file>` sends
+  one file as base64 with a CRC-32, and `tools/pull.py` does both and saves the files
+  (~16 KB/s, so a 60 s recording takes about 2 minutes). Keep the output folder outside
+  the repository. A card reader is faster for many files.
+  ```bash
+  python firmware/recorder/tools/pull.py --port COM35 --out ~/barvis-recordings
+  ```
 - USB console (`help`): `status`, `batt`, `rails`, `exp`, `time`, `rec [s]`, `stop`,
-  `level [s]`, `mute`, `screen`, `sync`, `sd`, `reboot`.
+  `level [s]`, `gain [dB]`, `eq [on|off]`, `ls`, `get <file>`, `mute`, `screen`, `sync`,
+  `sd`, `reboot`.
 
 ## Build
 
@@ -89,10 +106,11 @@ firmware/recorder/
 ├── main/
 │   ├── board.h               # the board interface
 │   ├── app_main.c            # events: buttons, console, recorder, screen timer
-│   ├── mic.[ch]              # I2S PDM RX (shared; pins from the board)
+│   ├── mic.[ch]              # I2S PDM RX + conditioning (shared; pins, EQ from the board)
 │   ├── recorder.[ch]         # milestone-1 WAV test recorder
 │   ├── ui.[ch]               # status screen (text bands, no LVGL)
 │   ├── console_cmds.[ch]     # esp_console commands over USB Serial/JTAG
+│   ├── audio_dsp.[ch]        # high-pass, EQ, gain, limiter (pure, host-tested)
 │   ├── wav isotime font5x7 textfb audio_stats .[ch]  # pure, host-tested
 ├── boards/twatch_ultra/board/
 │   ├── pins.h                # pin map, expander map (both candidate readings)
@@ -101,7 +119,8 @@ firmware/recorder/
 │   ├── display.[ch]          # CO5300 via espressif/esp_lcd_co5300 (QSPI)
 │   ├── sdcard.[ch]           # SD over SPI (bus shared with LoRa/NFC, their CS Hi-Z)
 │   └── idf_component.yml
-└── test/                     # host tests (plain CMake + ctest)
+├── test/                     # host tests (plain CMake + ctest)
+└── tools/pull.py             # copy recordings off the card over USB
 ```
 
 ## Third-party code
@@ -117,9 +136,8 @@ firmware/recorder/
 ## Not verified on hardware yet
 
 See `PROGRESS.md`. On the owner's watch (2026-10-19) the rails, battery, RTC, SD card,
-status screen, buttons, haptics and recording work. In a quiet room `level` shows a
-plausible noise floor (about -55 dBFS, never stuck at zero) with the default left PDM slot,
-but speech hasn't been checked. Switching to the right slot at runtime gave the same data,
-so which slot the mic really uses is still unproven. Still open: talking during `level` or
-listening to a recording, SD_DET with the card out, and a recording through the server
-pipeline.
+status screen, buttons, haptics and recording work, and recorded speech is audible and no
+longer muffled after the conditioning above (owner listening test). The right PDM slot,
+stereo capture, the inverted clock edge and a 2.048 MHz PDM clock all read the same as the
+defaults. Still open: SD_DET with the card out, a recording through the server pipeline,
+and tuning gain and EQ by transcription accuracy (milestone 3).

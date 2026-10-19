@@ -144,7 +144,8 @@ static int cmd_level(int argc, char **argv)
     mic_stop();
     char line[128];
     audio_stats_describe(&total, line, sizeof(line));
-    printf("level at %d dB gain: %s\n", mic_gain_db(), line);
+    printf("level at %d dB gain, EQ %s: %s; limiter on %llu samples\n", mic_gain_db(),
+           mic_eq_enabled() ? "on" : "off", line, (unsigned long long)mic_limited_samples());
     return 0;
 }
 
@@ -289,8 +290,30 @@ static int cmd_gain(int argc, char **argv)
             return 1;
         }
     }
-    printf("mic gain %d dB (default %d), high-pass %d Hz\n", mic_gain_db(), MIC_DEFAULT_GAIN_DB,
-           MIC_HIGHPASS_HZ);
+    printf("mic gain %d dB (default %d), high-pass %d Hz, EQ %s (%d bands), limiter -1 dBFS\n",
+           mic_gain_db(), MIC_DEFAULT_GAIN_DB, MIC_HIGHPASS_HZ, mic_eq_enabled() ? "on" : "off",
+           mic_eq_band_count());
+    return 0;
+}
+
+/* `eq [on|off]`: show or switch the board's mic EQ (saved in NVS, used from the next
+ * recording). Lets the owner compare recordings with and without it. */
+static int cmd_eq(int argc, char **argv)
+{
+    if (argc >= 2) {
+        const bool on = strcmp(argv[1], "on") == 0;
+        if (!on && strcmp(argv[1], "off") != 0) {
+            printf("usage: eq [on|off]\n");
+            return 1;
+        }
+        const esp_err_t err = mic_set_eq_enabled(on);
+        if (err != ESP_OK) {
+            printf("not set (%s); is a recording running?\n", esp_err_to_name(err));
+            return 1;
+        }
+    }
+    printf("mic EQ %s (%d bands from the board)\n", mic_eq_enabled() ? "on" : "off",
+           mic_eq_band_count());
     return 0;
 }
 
@@ -363,7 +386,8 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "rec", .help = "Record N seconds (default 60) from the mic to the SD card as WAV", .func = cmd_rec},
     {.command = "level", .help = "Print mic level for N s (default 5): `level [s]`", .func = cmd_level},
     {.command = "stop", .help = "Stop the running recording early (keeps what was recorded)", .func = cmd_stop},
-    {.command = "gain", .help = "Show or set the mic gain in dB, saved: `gain [0..42]`", .func = cmd_gain},
+    {.command = "eq", .help = "Show or switch the mic EQ, saved: `eq [on|off]`", .func = cmd_eq},
+    {.command = "gain",.help = "Show or set the mic gain in dB, saved: `gain [0..42]`", .func = cmd_gain},
     {.command = "mute", .help = "Toggle mute (same as a BOOT short press)", .func = cmd_mute},
     {.command = "screen", .help = "Show the status screen for ~5 s (same as a PWR short press)", .func = cmd_screen},
     {.command = "sync", .help = "Log 'sync now' (BLE comes in a later milestone)", .func = cmd_sync},

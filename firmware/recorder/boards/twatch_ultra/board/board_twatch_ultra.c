@@ -406,6 +406,20 @@ board_mic_pins_t board_mic_pins(void)
     return (board_mic_pins_t){.clk_gpio = PIN_MIC_CLK, .data_gpio = PIN_MIC_DATA};
 }
 
+int board_mic_eq(const board_mic_eq_band_t **bands)
+{
+    /* Measured 2026-10-19 (20 s of speech at ~30 cm, third-octave spectrum): the mic's port
+     * in the case leaves a ~10 dB hole at 1-2.5 kHz and a ~10 dB peak at 3-4 kHz, which
+     * sounds muffled. These two bands bring it close to a normal speech spectrum; the owner
+     * picked this version in a listening test. Milestone 3 refines it by transcription. */
+    static const board_mic_eq_band_t eq[] = {
+        {.hz = 1600.0f, .gain_db = 9.0f, .q = 1.0f},
+        {.hz = 3600.0f, .gain_db = -6.0f, .q = 2.0f},
+    };
+    *bands = eq;
+    return (int)(sizeof(eq) / sizeof(eq[0]));
+}
+
 bool board_storage_card_present(void)
 {
     bool high = true;

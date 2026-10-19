@@ -15,15 +15,21 @@
 #define MIC_CHANNELS 1
 
 #define MIC_HIGHPASS_HZ 100
-/* Starting point: speech at ~30 cm lands around -31 dBFS. Milestone 3 picks the final value
- * by transcription accuracy; `gain <dB>` on the console changes it (saved in NVS). */
-#define MIC_DEFAULT_GAIN_DB 24
+/* With the board's EQ, speech at ~30 cm lands around -22 dBFS and the limiter catches the
+ * loudest syllables; the owner picked this level in a listening test (2026-10-19). Milestone 3
+ * picks the final value by transcription accuracy; `gain <dB>` on the console changes it. */
+#define MIC_DEFAULT_GAIN_DB 30
 
 esp_err_t mic_init(board_mic_pins_t pins);
 int mic_gain_db(void);
 /* Saves the gain in NVS; takes effect at the next mic_start(). Not while the mic runs. */
 esp_err_t mic_set_gain_db(int gain_db);
-/* Samples clipped by the gain since the last mic_start(). */
+/* The board's EQ (board_mic_eq), on by default. Saved in NVS; next mic_start(). */
+bool mic_eq_enabled(void);
+int mic_eq_band_count(void);
+esp_err_t mic_set_eq_enabled(bool on);
+/* Samples the limiter turned down / that still clipped, since the last mic_start(). */
+uint64_t mic_limited_samples(void);
 uint64_t mic_clipped_samples(void);
 /* Fails with ESP_ERR_INVALID_STATE if someone else is already using the mic. Blocks ~250 ms
  * while the start-up transient is read and dropped. */

@@ -12,6 +12,9 @@ static i2s_chan_handle_t s_rx;
 static bool s_running;
 static audio_dsp_t s_dsp;
 static int s_gain_db = MIC_DEFAULT_GAIN_DB;
+static bool s_eq_on = true;
+static audio_dsp_band_t s_eq[AUDIO_DSP_MAX_EQ_BANDS];
+static int s_eq_count;
 
 /* Which PDM slot the T3902 answers on depends on how its L/R select pin is wired. LilyGoLib
  * reads the left slot on this watch. Checked on the watch (2026-10-19): the right slot, both
@@ -23,8 +26,9 @@ static int s_gain_db = MIC_DEFAULT_GAIN_DB;
 
 #define NVS_NAMESPACE "mic"
 #define NVS_KEY_GAIN "gain_db"
+#define NVS_KEY_EQ "eq_on"
 
-static void load_gain(void)
+static void load_settings(void)
 {
     nvs_handle_t nvs;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
@@ -33,8 +37,32 @@ static void load_gain(void)
             v <= AUDIO_DSP_GAIN_MAX_DB) {
             s_gain_db = v;
         }
+        int8_t eq;
+        if (nvs_get_i8(nvs, NVS_KEY_EQ, &eq) == ESP_OK) {
+            s_eq_on = eq != 0;
+        }
         nvs_close(nvs);
     }
+    const board_mic_eq_band_t *bands = NULL;
+    const int n = board_mic_eq(&bands);
+    for (s_eq_count = 0; bands && s_eq_count < n && s_eq_count < AUDIO_DSP_MAX_EQ_BANDS; s_eq_count++) {
+        s_eq[s_eq_count] = (audio_dsp_band_t){.hz = bands[s_eq_count].hz,
+                                              .gain_db = bands[s_eq_count].gain_db,
+                                              .q = bands[s_eq_count].q};
+    }
+}
+
+static esp_err_t save_i8(const char *key, int8_t value)
+{
+    nvs_handle_t nvs;
+    ESP_RETURN_ON_ERROR(nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs), TAG, "nvs open");
+    esp_err_t err = nvs_set_i8(nvs, key, value);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    ESP_RETURN_ON_ERROR(err, TAG, "nvs write %s", key);
+    return ESP_OK;
 }
 
 esp_err_t mic_init(board_mic_pins_t pins)
@@ -42,7 +70,7 @@ esp_err_t mic_init(board_mic_pins_t pins)
     if (s_rx) {
         return ESP_OK;
     }
-    load_gain();
+    load_settings();
     /* PDM RX exists on I2S0 only (ESP32-S3). 1024 frames per DMA buffer = 64 ms; six of
      * them give the writer ~380 ms of slack during an SD card write stall. */
     i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
@@ -63,8 +91,8 @@ esp_err_t mic_init(board_mic_pins_t pins)
     cfg.slot_cfg.slot_mask = MIC_PDM_SLOT;
     ESP_RETURN_ON_ERROR(i2s_channel_init_pdm_rx_mode(s_rx, &cfg), TAG, "pdm rx");
     ESP_LOGI(TAG, "PDM RX ready: CLK GPIO%d, DATA GPIO%d, %d Hz mono 16-bit; high-pass %d Hz, "
-                  "gain %d dB", pins.clk_gpio, pins.data_gpio, MIC_SAMPLE_RATE, MIC_HIGHPASS_HZ,
-             s_gain_db);
+                  "EQ %s (%d bands), gain %d dB", pins.clk_gpio, pins.data_gpio, MIC_SAMPLE_RATE,
+             MIC_HIGHPASS_HZ, s_eq_on ? "on" : "off", s_eq_count, s_gain_db);
     return ESP_OK;
 }
 
@@ -79,17 +107,34 @@ esp_err_t mic_set_gain_db(int gain_db)
                         ESP_ERR_INVALID_ARG, TAG, "gain %d..%d dB", AUDIO_DSP_GAIN_MIN_DB,
                         AUDIO_DSP_GAIN_MAX_DB);
     ESP_RETURN_ON_FALSE(!s_running, ESP_ERR_INVALID_STATE, TAG, "mic in use");
-    nvs_handle_t nvs;
-    ESP_RETURN_ON_ERROR(nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs), TAG, "nvs open");
-    esp_err_t err = nvs_set_i8(nvs, NVS_KEY_GAIN, (int8_t)gain_db);
-    if (err == ESP_OK) {
-        err = nvs_commit(nvs);
-    }
-    nvs_close(nvs);
-    ESP_RETURN_ON_ERROR(err, TAG, "nvs write");
+    ESP_RETURN_ON_ERROR(save_i8(NVS_KEY_GAIN, (int8_t)gain_db), TAG, "save");
     s_gain_db = gain_db;
     ESP_LOGI(TAG, "gain %d dB (saved)", gain_db);
     return ESP_OK;
+}
+
+bool mic_eq_enabled(void)
+{
+    return s_eq_on;
+}
+
+int mic_eq_band_count(void)
+{
+    return s_eq_count;
+}
+
+esp_err_t mic_set_eq_enabled(bool on)
+{
+    ESP_RETURN_ON_FALSE(!s_running, ESP_ERR_INVALID_STATE, TAG, "mic in use");
+    ESP_RETURN_ON_ERROR(save_i8(NVS_KEY_EQ, on ? 1 : 0), TAG, "save");
+    s_eq_on = on;
+    ESP_LOGI(TAG, "EQ %s (saved)", on ? "on" : "off");
+    return ESP_OK;
+}
+
+uint64_t mic_limited_samples(void)
+{
+    return s_dsp.limited;
 }
 
 uint64_t mic_clipped_samples(void)
@@ -123,7 +168,8 @@ esp_err_t mic_start(void)
         }
         dropped += bytes / sizeof(int16_t);
     }
-    audio_dsp_init(&s_dsp, MIC_SAMPLE_RATE, MIC_HIGHPASS_HZ, s_gain_db);
+    audio_dsp_init(&s_dsp, MIC_SAMPLE_RATE, MIC_HIGHPASS_HZ, s_eq, s_eq_on ? s_eq_count : 0,
+                   s_gain_db);
     return ESP_OK;
 }
 
