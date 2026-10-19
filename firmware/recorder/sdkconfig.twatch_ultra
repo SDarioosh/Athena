@@ -1,0 +1,21 @@
+# LilyGO T-Watch Ultra: ESP32-S3, 16 MB QSPI flash, 8 MB quad-SPI PSRAM.
+# The watch uses GPIO33-37 for the SD/LoRa SPI bus and the display reset, which is only
+# possible with quad (not octal) PSRAM; confirm with `esptool.py flash_id` on first flash.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+
+# 80 MHz is enough for the mic, SD and the status screen (plan §1); DFS goes 80 <-> 40.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_80=y
+
+# A crash reboots rather than hanging on a watch with no reachable reset button.
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
