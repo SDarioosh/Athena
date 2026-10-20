@@ -377,13 +377,13 @@ class PdaSync(
     }
 
     /**
-     * §3.3 PUT: BEGIN, DATA frames of MTU − 8 bytes (write with response is the flow control),
+     * §3.3 PUT: BEGIN, DATA frames of min(MTU − 3, 512) bytes (write with response is the flow control),
      * END. On `bad_crc` the blob is sent again, [MAX_PUT_TRIES] times in all.
      */
     private suspend fun put(kind: Int, blobId: Long, bytes: ByteArray) {
         if (bytes.size > PdaGatt.MAX_BLOB) throw DeviceProblem("blob $blobId is ${bytes.size} B, more than ${PdaGatt.MAX_BLOB}")
         val crc = crc32(bytes)
-        val chunk = link.mtu - PdaGatt.PUT_OVERHEAD
+        val chunk = PdaGatt.putPayload(link.mtu)
         for (attempt in 1..MAX_PUT_TRIES) {
             send(PdaCommand.PutBegin(kind, blobId, bytes.size.toLong(), crc))
             when (val r = awaitFinal("PUT_BEGIN")) {

@@ -132,7 +132,7 @@ class FakePda(
             }
             is PdaCommand.PutData -> {
                 val buf = putBuf
-                check(command.size <= mtu - 3) { "PUT_DATA of ${command.size} B doesn't fit MTU $mtu" }
+                check(command.size <= minOf(mtu - 3, 512)) { "PUT_DATA of ${command.size} B doesn't fit MTU $mtu or 512" }
                 if (buf == null || c.offset != buf.size().toLong()) {
                     pending.addLast(PdaResponse.Error(PdaCmd.PUT_DATA, PdaErrorCode.BAD_STATE).encode())
                     return

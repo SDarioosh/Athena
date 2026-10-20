@@ -79,6 +79,18 @@ class GlanceVectorsTest {
         assertEquals(-1, PdaStatus.decode(h("01 00 ff 00 0000 0000 00000000 00000000")).batteryPercent)
     }
 
+    @Test fun putPayloadKeepsWritesWithin512Bytes() {
+        assertEquals(507, PdaGatt.putPayload(517)) // 5 + 507 = 512, not MTU − 8 = 509 + 5
+        assertEquals(504, PdaGatt.putPayload(512))
+        assertEquals(412, PdaGatt.putPayload(420))
+        try {
+            PdaResponse.decode(ByteArray(513).also { it[0] = PdaOp.OB_ENTRY.toByte() })
+            throw AssertionError("a 513-byte notification was accepted")
+        } catch (e: ProtocolException) {
+            // expected
+        }
+    }
+
     @Test fun outboxWaitingFlagInTheScanResponse() {
         assertTrue(PdaGatt.outboxWaiting(h("01")))
         assertTrue(PdaGatt.outboxWaiting(h("ff")))

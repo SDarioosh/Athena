@@ -234,7 +234,9 @@ these points where the text above left a choice. The firmware and the phone foll
   the relay's state file.
 - **Blob ids:** a feed's `blob_id` is its `version`. A detail's `blob_id` is the `fetch`
   action's `action_id`.
-- **`PUT_DATA`** carries MTU − 8 bytes (420 is assumed if the OS doesn't report the MTU).
+- **`PUT_DATA`** carries min(MTU − 3, 512) − 5 bytes, so the whole write (5-byte header plus
+  payload) is at most 512 bytes, the BLE attribute limit (Android refuses longer writes).
+  420 is assumed if the OS doesn't report the MTU. A `data` notification is at most 512 bytes.
   On `ERROR bad_crc` at `PUT_END` the relay sends the blob again, 3 times in all.
 - **Stay connected:** the relay waits for `status` notifications and also reads `status`
   every 30 s. It refreshes the feed every 5 min, and sends `BYE` once bit4 (user active)

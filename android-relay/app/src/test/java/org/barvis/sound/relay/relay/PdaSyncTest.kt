@@ -288,8 +288,19 @@ class PdaSyncTest {
         run()
         val data = pda.commands.filterIsInstance<PdaCommand.PutData>()
         assertTrue(data.size > 1)
-        assertTrue(data.all { it.payload.size <= 420 - 8 })
+        assertTrue(data.all { it.payload.size <= 420 - 3 - 5 })
         assertTrue(pda.feed!!.size <= FeedBuilder.MAX_FEED_BYTES)
+    }
+
+    @Test fun putWritesNeverExceed512BytesAtMtu517() {
+        pda.mtu = 517
+        server.conversationList.clear()
+        repeat(20) { i -> server.conversationList += FakeConvoApi.conv("c$i", "Talk $i", "2026-10-19T1${i % 10}:00:00Z", "x".repeat(900)) }
+        run()
+        val data = pda.commands.filterIsInstance<PdaCommand.PutData>()
+        assertTrue(data.size > 1)
+        assertTrue(data.all { it.encode().size <= 512 })
+        assertEquals(507, data.first().payload.size)
     }
 
     @Test fun smallMtuAndWrongProtocolAreDeviceErrors() {

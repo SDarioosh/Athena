@@ -21,8 +21,14 @@ object PdaGatt {
     /** One `OB_ENTRY` (16 + 400 bytes of JSON) must fit in one notification (§3.3). */
     const val MIN_MTU = 420
 
-    /** ATT header (3) + `PUT_DATA` header (5). */
-    const val PUT_OVERHEAD = 8
+    /** A BLE attribute value is at most 512 bytes; Android refuses longer writes. */
+    const val MAX_ATTR = 512
+
+    /** `PUT_DATA` header: opcode + offset. */
+    const val PUT_HEADER = 5
+
+    /** `PUT_DATA` payload for an ATT [mtu]: the whole write (header + payload) ≤ min(MTU − 3, 512). */
+    fun putPayload(mtu: Int): Int = minOf(mtu - 3, MAX_ATTR) - PUT_HEADER
 
     const val OB_LIST_MAX = 16
 
@@ -237,6 +243,8 @@ sealed class PdaResponse {
     companion object {
         fun decode(b: ByteArray): PdaResponse {
             if (b.isEmpty()) throw ProtocolException("empty notification")
+            // A notification carries one attribute value, at most 512 bytes.
+            if (b.size > PdaGatt.MAX_ATTR) throw ProtocolException("notification of ${b.size} B, more than ${PdaGatt.MAX_ATTR}")
             fun need(n: Int, what: String) { if (b.size < n) throw ProtocolException("short $what (${b.size} B)") }
             return when (Le.u8(b, 0)) {
                 PdaOp.TIME_OK -> TimeOk
