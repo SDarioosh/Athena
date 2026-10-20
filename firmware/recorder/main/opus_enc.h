@@ -27,8 +27,9 @@ extern "C" {
  * delayed-decision quantiser for another ~30 %.
  * Bitrate 24 kbps, not 16: in the server's recognition eval (AMI far-field speech at the
  * watch's ~-24 dBFS, complexity 1) 16 kbps lost ~7 WER points to uncompressed audio
- * (small.en) and ~9 (large-v3-turbo); 24 kbps came within ~1.3. Bitrate costs no encoder
- * CPU, only SD space and BLE time (a 30 s chunk ~90 KB instead of ~60 KB). */
+ * (small.en) and ~9 (large-v3-turbo); 24 kbps came within ~1.3. Bitrate costs little
+ * encoder CPU (unlike complexity; check session_rec's time per frame on the watch) but
+ * 50 % more SD space and BLE time (a 30 s chunk ~90 KB instead of ~60 KB). */
 #define OPUS_ENC_DEFAULT_BITRATE 24000
 #define OPUS_ENC_DEFAULT_COMPLEXITY 1
 
