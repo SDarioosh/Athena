@@ -81,7 +81,7 @@ records everything between start and stop.
 ## Upload path (BLE)
 
 ```
-mic -> Opus (libopus, 16 kHz mono, 20 ms, 16 kbps VBR, complexity 1) -> 30 s Ogg/Opus chunks
+mic -> Opus (libopus, 16 kHz mono, 20 ms, 24 kbps VBR, complexity 1) -> 30 s Ogg/Opus chunks
     -> /sdcard/q (survives reboots) -> BLE (NimBLE GATT) -> relay -> POST /v1/ingest/chunk
 ```
 

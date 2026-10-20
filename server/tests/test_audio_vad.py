@@ -8,7 +8,8 @@ import pytest
 from conftest import silence, tone, wav
 
 from convo_server import audio
-from convo_server.vad import EnergyVAD, Span, merge_spans
+from convo_server.config import Settings
+from convo_server.vad import EnergyVAD, GainedVAD, Span, make_vad, merge_spans
 
 
 def test_pcm16_roundtrip():
@@ -56,3 +57,87 @@ def test_energy_vad_finds_bursts():
 def test_merge_spans():
     merged = merge_spans([Span(3, 4), Span(0, 1), Span(1.2, 2)], 0.5)
     assert merged == [Span(0, 2), Span(3, 4)]
+
+
+def test_bounded_gain_silence_and_empty_unchanged():
+    z = silence(1)
+    out, g = audio.bounded_gain(z)
+    assert g == 1.0 and out is z
+    e = np.zeros(0, dtype=np.float32)
+    assert audio.bounded_gain(e)[1] == 1.0
+
+
+def test_bounded_gain_never_attenuates_loud_audio():
+    loud = tone(300, 1, amp=0.95)
+    out, g = audio.bounded_gain(loud)
+    assert g == 1.0 and out is loud
+
+
+def test_bounded_gain_reaches_target_and_caps():
+    quiet = tone(300, 1, amp=0.4)
+    out, g = audio.bounded_gain(quiet, target=0.8, max_gain=4.0)
+    assert g == pytest.approx(2.0, rel=1e-3)
+    assert np.max(np.abs(out)) == pytest.approx(0.8, rel=1e-3)
+    faint = tone(300, 1, amp=0.01)
+    out, g = audio.bounded_gain(faint, target=0.8, max_gain=4.0)
+    assert g == 4.0
+    assert np.max(np.abs(out)) == pytest.approx(0.04, rel=1e-3)
+    assert out.dtype == np.float32
+    assert np.max(np.abs(faint)) == pytest.approx(0.01, rel=1e-3)  # input untouched
+
+
+def test_bounded_gain_off_and_no_clipping():
+    quiet = tone(300, 1, amp=0.1)
+    assert audio.bounded_gain(quiet, max_gain=1.0) == (quiet, 1.0)
+    for amp in (0.05, 0.3, 0.7):
+        out, _ = audio.bounded_gain(tone(300, 1, amp=amp), target=1.0, max_gain=100.0)
+        assert np.max(np.abs(out)) <= 1.0 + 1e-6
+    with pytest.raises(ValueError):
+        audio.bounded_gain(quiet, target=1.5)
+
+
+def test_bounded_gain_deadband():
+    above = tone(300, 1, amp=0.5)
+    out, g = audio.bounded_gain(above, deadband=0.4)
+    assert g == 1.0 and out is above
+    below = tone(300, 1, amp=0.2)
+    out, g = audio.bounded_gain(below, deadband=0.4)
+    assert g == pytest.approx(4.0) and np.max(np.abs(out)) == pytest.approx(0.8, rel=1e-3)
+
+
+class RecordingVAD:
+    def __init__(self) -> None:
+        self.seen: list[np.ndarray] = []
+
+    def detect(self, audio: np.ndarray) -> list[Span]:
+        self.seen.append(audio)
+        return [Span(0.0, 1.0)]
+
+
+def test_gained_vad_scores_a_gained_copy():
+    inner = RecordingVAD()
+    vad = GainedVAD(inner, max_gain=4.0, target=0.8)
+    quiet = tone(300, 1, amp=0.05)
+    before = quiet.copy()
+    assert vad.detect(quiet) == [Span(0.0, 1.0)]
+    assert np.max(np.abs(inner.seen[0])) == pytest.approx(0.2, rel=1e-3)
+    assert inner.seen[0] is not quiet
+    np.testing.assert_array_equal(quiet, before)  # caller's array untouched
+
+
+def test_gained_vad_admits_quiet_speech_energy_vad():
+    quiet = np.concatenate([silence(1), tone(300, 2, amp=0.015), silence(1)])
+    assert EnergyVAD().detect(quiet) == []
+    assert GainedVAD(EnergyVAD(), max_gain=4.0).detect(quiet)
+
+
+def test_make_vad_settings_default_is_off(tmp_path):
+    s = Settings(ingest_token="x" * 16, data_dir=tmp_path, _env_file=None)
+    assert s.vad_agc_max_gain == 1.0 and s.asr_agc_max_gain == 1.0
+    assert s.vad_threshold == 0.5 and s.vad_speech_pad_ms == 30
+    assert isinstance(make_vad("energy", s), EnergyVAD)
+    assert isinstance(make_vad("energy"), EnergyVAD)
+    on = Settings(ingest_token="x" * 16, data_dir=tmp_path, vad_agc_max_gain=8.0,
+                  vad_agc_target=0.7)
+    vad = make_vad("energy", on)
+    assert isinstance(vad, GainedVAD) and vad.max_gain == 8.0 and vad.target == 0.7

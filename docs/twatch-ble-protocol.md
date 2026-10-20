@@ -37,8 +37,8 @@ mic → Opus encoder → 30 s Ogg/Opus chunk on the SD card (queue)
 
 - One chunk = one standalone **Ogg/Opus file** (RFC 7845), one logical stream, uploaded
   unchanged with `codec=ogg`. ffmpeg on the server decodes it; no server change.
-- Encoder: libopus (`78/esp-opus`, fixed point), **16 kHz mono, 20 ms frames, ~16 kbps
-  VBR**, application VOIP, complexity 1 (chosen for the CPU at 80 MHz; see the firmware
+- Encoder: libopus (`78/esp-opus`, fixed point), **16 kHz mono, 20 ms frames, ~24 kbps
+  VBR** (16 kbps until 2026-10-20; the server decodes either), application VOIP, complexity 1 (chosen for the CPU at 80 MHz; see the firmware
   README). DTX off in v1.
 - Each chunk is encoded as its own stream (the encoder is reset per chunk), so it decodes
   on its own. A full chunk holds **1501 packets**: the 1501st carries the encoder's
@@ -53,8 +53,8 @@ mic → Opus encoder → 30 s Ogg/Opus chunk on the SD card (queue)
   most ~1 s. Granule positions count 48 kHz samples including `pre_skip`. The last page
   has the end-of-stream flag. A chunk recovered after a power cut may end without it
   (§2.4); ffmpeg decodes that.
-- Length: **30 s**, except the last chunk of a session, which is shorter. About 60 KB per
-  full chunk at 16 kbps. `duration_ms` is what the chunk decodes to; for a chunk recovered
+- Length: **30 s**, except the last chunk of a session, which is shorter. About 90 KB per
+  full chunk at 24 kbps (60 KB at 16 kbps). `duration_ms` is what the chunk decodes to; for a chunk recovered
   after a power cut it is (last granule − `pre_skip`) / 48, not a multiple of 20 ms.
 
 ### 2.2 Sessions

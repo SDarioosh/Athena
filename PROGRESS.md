@@ -665,6 +665,14 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 8. T-Watch Ultra recorder: milestones 3+ (`docs/t-watch-ultra-plan.md` §8) once the
    power baseline says go.
 9. XIAO pendant, after the T-Watch Ultra: a second `boards/` directory on the same firmware.
+10. Room pickup (`docs/omi-audio-quality.md` §7, sandbox results 2026-10-20): the firmware
+    Opus default is now 24 kbps (16 kbps cost 4–5 WER points at 2–3 m). Parakeet + hole
+    re-decoding beat whisper base.en, but **whisper large-v3-turbo beats Parakeet on the
+    people around the wearer** (3 m, others: 52 vs 64 % WER), so turbo stays the default;
+    Parakeet is better on the owner and on speaker labels. Next: turbo's speaker confusion on
+    the table recording (32.6 %). **Owner: Server verification**, then watch battery and
+    drain time at 24 kbps.
+    VAD gain stays off (it helps only on very quiet input).
 
 ## Open questions for you
 

@@ -39,6 +39,9 @@ _SAFE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 CONTIGUOUS_TOLERANCE = 1.5  # seconds between chunk end and next chunk start
 REGION_PAD = 0.25  # seconds of context around each speech region
 REGION_MERGE_GAP = 2.0
+# ASR gain (CONVO_ASR_AGC_MAX_GAIN) only touches clips whose peak is at or below this
+# fraction of full scale: Omi measured more errors when already-loud audio was gained.
+ASR_AGC_DEADBAND = 0.4
 # whisper reads at most ~224 prompt tokens; names beyond this many are left out.
 MAX_PROMPT_NAMES = 30
 _PLACEHOLDER_NAME = re.compile(r"^(speaker\s*\d+|unknown|me)$", re.IGNORECASE)
@@ -231,6 +234,9 @@ class Pipeline:
                 a = max(0.0, r.start - REGION_PAD)
                 b = min(run_audio.size / audio_mod.SAMPLE_RATE, r.end + REGION_PAD)
                 clip = run_audio[int(a * audio_mod.SAMPLE_RATE): int(b * audio_mod.SAMPLE_RATE)]
+                # The diarizer keeps the ungained run audio; only whisper hears the gain.
+                clip, _ = audio_mod.bounded_gain(clip, max_gain=self.settings.asr_agc_max_gain,
+                                                 deadband=ASR_AGC_DEADBAND)
                 for p in self.transcriber.transcribe(clip, prompt):
                     s, e = a + p.start, a + max(p.end, p.start)
                     pieces.append((run_start + s, run_start + e, p.text,
