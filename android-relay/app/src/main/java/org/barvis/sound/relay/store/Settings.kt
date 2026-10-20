@@ -3,6 +3,7 @@ package org.barvis.sound.relay.store
 import android.content.Context
 import android.content.SharedPreferences
 import org.barvis.sound.relay.relay.AnchorStore
+import org.barvis.sound.relay.relay.PdaMemory
 
 /** App settings in private SharedPreferences (never backed up: see the manifest). */
 class Settings(context: Context) {
@@ -43,6 +44,48 @@ class Settings(context: Context) {
         get() = prefs.getLong(KEY_LAST_SYNC, 0)
         set(v) = prefs.edit().putLong(KEY_LAST_SYNC, v).apply()
 
+    // ---------------------------------------------------------- T5 PDA (docs/t5-pda-plan.md §6)
+
+    var pdaEnabled: Boolean
+        get() = prefs.getBoolean(KEY_PDA_ENABLED, false)
+        set(v) = prefs.edit().putBoolean(KEY_PDA_ENABLED, v).apply()
+
+    /** Odysseus base URL, e.g. http://server.tailnet.ts.net:7000. Empty = no calendar. */
+    var odysseusUrl: String
+        get() = prefs.getString(KEY_ODY_URL, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_ODY_URL, v).apply()
+
+    val hasOdysseusToken: Boolean get() = prefs.contains(KEY_ODY_TOKEN)
+
+    /** The decrypted Odysseus `ody_…` token (calendar scopes only), or "". Never log this. */
+    fun odysseusToken(): String = prefs.getString(KEY_ODY_TOKEN, null)?.let { TokenCipher.decrypt(it) } ?: ""
+
+    fun setOdysseusToken(token: String) {
+        prefs.edit().putString(KEY_ODY_TOKEN, TokenCipher.encrypt(token)).apply()
+    }
+
+    /** The CalDAV calendar's id in Odysseus (`calendar_href`); empty = the hub's default. */
+    var odysseusCalendarId: String
+        get() = prefs.getString(KEY_ODY_CAL, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_ODY_CAL, v).apply()
+
+    /** Event title templates for the T5's "+" picker (§5), one per line. */
+    var eventTemplates: List<String>
+        get() = (prefs.getString(KEY_TEMPLATES, null) ?: DEFAULT_TEMPLATES).lines().map { it.trim() }.filter { it.isNotEmpty() }
+        set(v) = prefs.edit().putString(KEY_TEMPLATES, v.joinToString("\n")).apply()
+
+    /** Minutes between PDA syncs while it isn't in use (§3.4 step 6). */
+    var pdaSyncMinutes: Int
+        get() = prefs.getInt(KEY_PDA_INTERVAL, 15)
+        set(v) = prefs.edit().putInt(KEY_PDA_INTERVAL, v.coerceIn(MIN_PDA_MINUTES, MAX_PDA_MINUTES)).apply()
+
+    var lastPdaSyncMs: Long
+        get() = prefs.getLong(KEY_PDA_LAST, 0)
+        set(v) = prefs.edit().putLong(KEY_PDA_LAST, v).apply()
+
+    /** Feed hashes, the last calendar and the cal_add dedupe table (no tokens). */
+    val pdaMemory: PdaMemory = PdaPrefs(context.applicationContext)
+
     /** TIME_UNSET anchors (§2.3), kept so a session keeps one anchor across reconnects. */
     val anchors: AnchorStore = object : AnchorStore {
         private val ap = context.applicationContext.getSharedPreferences("anchors", Context.MODE_PRIVATE)
@@ -67,5 +110,15 @@ class Settings(context: Context) {
         private const val KEY_REJECTED = "token_rejected"
         private const val KEY_TOTAL = "total_uploaded"
         private const val KEY_LAST_SYNC = "last_sync_ms"
+        private const val KEY_PDA_ENABLED = "pda_enabled"
+        private const val KEY_ODY_URL = "odysseus_url"
+        private const val KEY_ODY_TOKEN = "odysseus_token_enc"
+        private const val KEY_ODY_CAL = "odysseus_calendar_id"
+        private const val KEY_TEMPLATES = "pda_templates"
+        private const val KEY_PDA_INTERVAL = "pda_sync_minutes"
+        private const val KEY_PDA_LAST = "pda_last_sync_ms"
+        const val DEFAULT_TEMPLATES = "Call\nMeeting\nReminder\nFollow-up"
+        const val MIN_PDA_MINUTES = 5
+        const val MAX_PDA_MINUTES = 240
     }
 }

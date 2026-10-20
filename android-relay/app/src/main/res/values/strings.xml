@@ -33,5 +33,28 @@
     <string name="test_connection">Test connection</string>
     <string name="testing">Testing…</string>
     <string name="saved">Saved.</string>
+    <string name="pda_heading">PDA (T5 E-Paper)</string>
+    <string name="pda_off">Off. Turn it on in Settings to sync a T5 E-Paper PDA.</string>
+    <string name="pda_not_seen">Not seen yet. Open the pairing window on the T5\'s Status screen the first time.</string>
+    <string name="pda_last_sync">Last sync: %1$s</string>
+    <string name="pda_enabled">Sync a T5 E-Paper PDA (briefing, conversations, action items, calendar)</string>
+    <string name="odysseus_url">Odysseus URL (calendar)</string>
+    <string name="odysseus_url_hint">For example http://myserver.example-tailnet.ts.net:7000. Leave it empty to sync without a calendar.</string>
+    <string name="odysseus_token">Odysseus calendar token</string>
+    <string name="odysseus_token_hint">No token saved. In Odysseus, create an API token with only the \"Calendar read\" and \"Calendar write\" scopes (ody_…).</string>
+    <string name="odysseus_token_saved">Odysseus token saved (hidden). Type a new one to replace it.</string>
+    <string name="odysseus_token_shape">That doesn\'t look like an Odysseus API token (they start with ody_).</string>
+    <string name="odysseus_calendar">Calendar id (optional)</string>
+    <string name="odysseus_calendar_hint">The id of your CalDAV calendar in Odysseus. Events added on the T5 are written back to CalDAV only when they go into a CalDAV calendar.</string>
+    <string name="pda_templates">Event templates (one per line)</string>
+    <string name="pda_interval">Minutes between syncs (5 to 240)</string>
+    <string name="test_odysseus">Test Odysseus calendar</string>
+    <string name="odysseus_not_set">Enter the Odysseus URL and token first.</string>
+    <plurals name="odysseus_ok">
+        <item quantity="one">OK: %1$d event in the next 7 days.</item>
+        <item quantity="other">OK: %1$d events in the next 7 days.</item>
+    </plurals>
+    <string name="odysseus_unsupported">Not supported: %1$s</string>
+    <string name="odysseus_failed">Odysseus calendar check failed: %1$s</string>
     <string name="privacy_note">Audio goes only from the watch to this server. The token is encrypted on this phone and never shown, logged or backed up.</string>
 </resources>

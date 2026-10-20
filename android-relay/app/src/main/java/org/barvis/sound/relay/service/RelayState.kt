@@ -4,6 +4,7 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import org.barvis.sound.relay.protocol.PdaStatus
 import org.barvis.sound.relay.protocol.WatchInfo
 import org.barvis.sound.relay.protocol.WatchStatus
 import org.barvis.sound.relay.relay.Level
@@ -17,6 +18,7 @@ enum class Phase(val label: String) {
     SCANNING("Scanning for the watch"),
     CONNECTING("Connecting"),
     DRAINING("Uploading"),
+    PDA_SYNC("Syncing the PDA"),
     IDLE("Idle"),
     WAITING("Waiting to retry"),
     ERROR("Needs attention"),
@@ -31,6 +33,10 @@ data class RelaySnapshot(
     val uploadedThisRun: Int = 0,
     val skippedThisRun: Int = 0,
     val lastError: String? = null,
+    /** The T5 PDA (docs/t5-pda-plan.md): one status line, its info and status. */
+    val pdaLine: String = "",
+    val pdaInfo: WatchInfo? = null,
+    val pdaStatus: PdaStatus? = null,
 )
 
 /** Process-wide state the service writes and the UI reads. Holds no token and no audio. */
