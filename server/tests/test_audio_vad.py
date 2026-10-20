@@ -8,7 +8,14 @@ import pytest
 from conftest import silence, tone, wav
 
 from convo_server import audio
-from convo_server.vad import EnergyVAD, Span, merge_spans
+from convo_server.vad import (
+    EnergyVAD,
+    GainNormalizedVAD,
+    Span,
+    level_dbfs,
+    make_vad,
+    merge_spans,
+)
 
 
 def test_pcm16_roundtrip():
@@ -56,3 +63,81 @@ def test_energy_vad_finds_bursts():
 def test_merge_spans():
     merged = merge_spans([Span(3, 4), Span(0, 1), Span(1.2, 2)], 0.5)
     assert merged == [Span(0, 2), Span(3, 4)]
+
+
+class _Recorder:
+    """Fake inner VAD: remembers the audio it was given."""
+
+    def __init__(self) -> None:
+        self.seen: np.ndarray | None = None
+
+    def detect(self, audio: np.ndarray) -> list[Span]:
+        self.seen = audio
+        return [Span(0.0, 1.0)]
+
+
+def test_level_dbfs_measures_loud_part():
+    x = np.concatenate([silence(9), tone(200, 1)])  # 10% tone, RMS 0.3 / sqrt(2)
+    assert abs(level_dbfs(x) - 20 * np.log10(0.3 / np.sqrt(2))) < 1.0
+    assert level_dbfs(silence(1)) <= -100
+
+
+def test_gain_normalized_vad_boosts_quiet_audio_only_for_vad():
+    quiet = tone(200, 2) * 0.01  # ~-53 dBFS
+    inner = _Recorder()
+    vad = GainNormalizedVAD(inner, target_dbfs=-20.0, max_gain_db=30.0)
+    assert vad.detect(quiet) == [Span(0.0, 1.0)]
+    assert inner.seen is not None
+    assert abs(level_dbfs(inner.seen) - (level_dbfs(quiet) + 30.0)) < 0.1  # capped gain
+    assert np.max(np.abs(quiet)) < 0.01  # the caller's (stored) audio is untouched
+
+
+def test_gain_normalized_vad_never_turns_down_loud_audio():
+    loud = tone(200, 1)
+    inner = _Recorder()
+    GainNormalizedVAD(inner, target_dbfs=-20.0).detect(loud)
+    assert inner.seen is loud
+
+
+def test_gain_normalization_lets_energy_vad_find_quiet_speech():
+    quiet = np.concatenate([silence(1), tone(200, 2) * 0.03, silence(1)])
+    assert EnergyVAD().detect(quiet) == []
+    spans = GainNormalizedVAD(EnergyVAD()).detect(quiet)
+    assert len(spans) == 1 and abs(spans[0].start - 1) < 0.05
+
+
+def test_gain_normalization_keeps_digital_silence_silent():
+    assert GainNormalizedVAD(EnergyVAD()).detect(silence(3)) == []
+
+
+def test_make_vad_uses_settings(tmp_path):
+    from convo_server.config import Settings
+
+    s = Settings(ingest_token="x" * 16, data_dir=tmp_path, vad_max_gain_db=0)
+    assert isinstance(make_vad("energy", s), EnergyVAD)
+    with pytest.raises(ValueError):
+        make_vad("nope", s)
+
+
+def test_make_vad_wires_silero_settings(tmp_path, monkeypatch):
+    from convo_server import vad as vad_mod
+    from convo_server.config import Settings
+
+    class FakeSilero:
+        def __init__(self, **kw) -> None:
+            self.kw = kw
+
+        def detect(self, audio: np.ndarray) -> list[Span]:
+            return []
+
+    monkeypatch.setattr(vad_mod, "SileroVAD", FakeSilero)
+    s = Settings(ingest_token="x" * 16, data_dir=tmp_path, vad_threshold=0.35,
+                 vad_min_silence_ms=800, vad_speech_pad_ms=100, vad_target_dbfs=-18,
+                 vad_max_gain_db=24)
+    v = make_vad("silero", s)
+    assert isinstance(v, GainNormalizedVAD)
+    assert (v.target_dbfs, v.max_gain_db) == (-18, 24)
+    assert v.inner.kw == {"threshold": 0.35, "min_silence_ms": 800, "speech_pad_ms": 100}
+    off = make_vad("silero", Settings(ingest_token="x" * 16, data_dir=tmp_path,
+                                      vad_max_gain_db=0))
+    assert isinstance(off, FakeSilero)
