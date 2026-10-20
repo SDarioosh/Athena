@@ -64,8 +64,8 @@ mic → Opus encoder → 30 s Ogg/Opus chunk on the SD card (queue)
   with the console `session stop`, when the card is full, or with a reboot.
 - A **voice note** is a session of its own, started with a PWR hold of ~1 s (or the
   console `note start`). It has a new `session_id`, sequences from 0 and 30 s chunks as
-  usual, and **every chunk of it carries the `NOTE` flag** (§4.3). It ends with a PWR
-  press, mute, `note stop`, or by itself after 5 min (10 chunks); its last chunk has
+  usual, and **every chunk of it carries the `NOTE` flag** (§4.3). It ends with a PWR press or hold,
+  mute, `note stop`, or by itself after 5 min (10 chunks); its last chunk has
   `LAST`. If a conversation session is recording when a note starts, the watch ends that
   session first (its last chunk gets `LAST`), records the note, and then starts a new
   conversation session (unless muted meanwhile). The two never record at once, so a
@@ -172,12 +172,17 @@ ours, random, base `f806xxxx-61c0-4fda-8b7b-26b08e916438`:
 UTF-8, `;`-separated `key=value`, keys in any order, unknown keys ignored. Example:
 
 ```
-proto=1;device=twatch-ultra;fw=0.2.0;board=twatch_ultra
+proto=1;device=twatch-ultra;fw=0.2.0;board=twatch_ultra;reset=poweron
 ```
 
 - `proto`: protocol version. A relay refuses (and shows an error) if it isn't `1`.
 - `device`: the upload's `device` field.
 - `fw`, `board`: for the status screen and logs.
+- `reset` (added 2026-10-20, optional): why the watch last restarted, for the status
+  screen and logs: `poweron` (also the PWR key turning it on), `sw` (console reboot, a
+  flash), `usb`, `panic` (a crash; the console `coredump` shows where), `task_wdt`,
+  `int_wdt`, `wdt`, `brownout`, `pwr_glitch`, `cpu_lockup`, `ext`, `deepsleep`, `jtag`,
+  `efuse`, `sdio` or `unknown`. Relays show it and never act on it.
 
 ### 4.2 `status` (read, notify; 24 bytes)
 
@@ -433,6 +438,8 @@ The `info` example is `proto=1;device=twatch-ultra;fw=0.2.0;board=twatch_ultra`.
   (new mandatory command, changed layout) bumps it, and the relays refuse other versions.
 - Adding a response field at the end of a struct, a new flag bit, a new `info` key or a
   new command is compatible and keeps `proto=1`.
+- The `reset` key in `info` (§4.1, 2026-10-20) is such an additive change; older relays
+  ignore it.
 - The `NOTE` flag bit (§4.3, 2026-10-19) is such an additive change: it stays within
   `proto=1`. Relays must ignore flag bits they don't know. An old relay that ignores
   `NOTE` uploads a voice note as an ordinary conversation, without `kind=note`.

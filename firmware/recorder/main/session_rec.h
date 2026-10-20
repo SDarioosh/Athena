@@ -51,6 +51,7 @@ typedef struct {
     uint32_t enc_avg_us;
     uint32_t enc_max_us;
     uint32_t stack_free_min;  /* bytes of task stack never used */
+    uint32_t write_retries;   /* card write errors this session recovered from */
 } session_rec_state_t;
 
 /* Called from the recorder task when the session has ended and its last chunk is closed. */

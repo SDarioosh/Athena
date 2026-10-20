@@ -333,7 +333,7 @@ static cq_info_t *previous_in_session(const chunk_queue_t *q, const uint8_t sess
  * complete page. With audio left it becomes a closed chunk with LAST; without, both files
  * go and the session's previous queued chunk gets LAST, so the session still ends. (If that
  * chunk was already acked, the server ends the session on its idle timeout.) */
-static int recover_open(chunk_queue_t *q, cq_info_t info, uint32_t *kept_id,
+static int recover_open(chunk_queue_t *q, cq_info_t info, bool last, uint32_t *kept_id,
                         cq_boot_report_t *rep)
 {
     char path[128];
@@ -356,7 +356,9 @@ static int recover_open(chunk_queue_t *q, cq_info_t info, uint32_t *kept_id,
         info.duration_ms = scan.granule > scan.pre_skip
                                ? (uint32_t)((scan.granule - scan.pre_skip) / 48)
                                : 0;
-        info.flags |= CQ_FLAG_LAST;
+        if (last) {
+            info.flags |= CQ_FLAG_LAST;
+        }
         info.state = CQ_STATE_CLOSED;
         err = write_record(q, &info);
         if (err) {
@@ -368,7 +370,7 @@ static int recover_open(chunk_queue_t *q, cq_info_t info, uint32_t *kept_id,
     }
     remove_chunk_files(q, info.chunk_id);
     rep->discarded++;
-    cq_info_t *prev = previous_in_session(q, info.session_id, info.sequence);
+    cq_info_t *prev = last ? previous_in_session(q, info.session_id, info.sequence) : NULL;
     if (prev && !(prev->flags & CQ_FLAG_LAST)) {
         prev->flags |= CQ_FLAG_LAST;
         return write_record(q, prev);
@@ -527,7 +529,7 @@ int cq_init(chunk_queue_t *q, const char *dir, cq_boot_report_t *report)
         cq_info_t info;
         uint32_t kept;
         if (read_record(q, open_ids.v[i], &info)) {
-            err = recover_open(q, info, &kept, rep);
+            err = recover_open(q, info, true, &kept, rep);
         }
     }
     free(mets.v);
@@ -635,7 +637,7 @@ int cq_end(chunk_queue_t *q, uint32_t duration_ms, bool last)
         uint32_t kept;
         cq_boot_report_t rep = {0};
         q->open = false;
-        recover_open(q, q->cur, &kept, &rep);
+        recover_open(q, q->cur, last, &kept, &rep);
         return err;
     }
     q->open = false;
@@ -651,7 +653,7 @@ int cq_end(chunk_queue_t *q, uint32_t duration_ms, bool last)
     return insert(q, &q->cur);
 }
 
-int cq_abandon(chunk_queue_t *q, uint32_t *closed_id)
+int cq_abandon(chunk_queue_t *q, bool last, uint32_t *closed_id)
 {
     *closed_id = 0;
     if (!q->open) {
@@ -661,7 +663,7 @@ int cq_abandon(chunk_queue_t *q, uint32_t *closed_id)
     q->cur_file = NULL;
     q->open = false;
     cq_boot_report_t rep = {0};
-    return recover_open(q, q->cur, closed_id, &rep);
+    return recover_open(q, q->cur, last, closed_id, &rep);
 }
 
 int cq_set_last(chunk_queue_t *q, uint32_t chunk_id)
