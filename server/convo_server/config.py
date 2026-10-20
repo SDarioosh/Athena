@@ -73,6 +73,17 @@ class Settings(BaseSettings):
     # Last N words of the previous clip's text, added to the prompt after the vocabulary
     # (0 = off).
     whisper_context_words: int = 0
+    # Decoding, sent with every request (whisper.cpp names; README "Recognition eval").
+    whisper_beam_size: int = -1  # > 1 = beam search with this many beams, else greedy
+    whisper_best_of: int = 2  # candidates at temperature > 0 (the fallback)
+    whisper_no_speech_thold: float = 0.6
+    whisper_logprob_thold: float = -1.0
+    whisper_entropy_thold: float = 2.4
+    # Suppress non-speech tokens ([LAUGHTER], music notes, "(muffled speaking)"); fewer
+    # dropped words on far-field audio in the recognition eval.
+    whisper_suppress_non_speech: bool = True
+    # Keep the prompt for every 30 s window of a long clip, not just the first one.
+    whisper_carry_initial_prompt: bool = False
 
     # llama-server (OpenAI-compatible)
     llm_base_url: str = "http://127.0.0.1:8080/v1"

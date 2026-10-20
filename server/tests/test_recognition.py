@@ -10,7 +10,10 @@ import numpy as np
 from conftest import tone
 from test_pipeline import ingest
 
+from convo_server.cli import build_transcriber
+from convo_server.config import Settings
 from convo_server.transcribe import (
+    DecodeOptions,
     TranscriptPiece,
     WhisperCliTranscriber,
     WhisperServerTranscriber,
@@ -31,6 +34,7 @@ def test_whisper_server_gets_prompt_and_temperature_fallback():
     body = seen[0]
     assert b'name="prompt"\r\n\r\nJenn, Shahyah.' in body
     assert b'name="temperature_inc"\r\n\r\n0.3' in body
+    assert _fields(body)["suppress_non_speech"] == "true"  # default: measured best
     t.transcribe(tone(300, 1))
     assert b'name="prompt"' not in seen[1]
 
@@ -41,6 +45,53 @@ def test_whisper_cli_command_has_prompt_and_fallback():
     assert cmd[cmd.index("-tpi") + 1] == "0.2"
     assert cmd[-2:] == ["--prompt", "Odysseus, Jenn."]
     assert "--prompt" not in t.command(Path("a.wav"), Path("out"))
+
+
+def _fields(body: bytes) -> dict[str, str]:
+    """Multipart form fields of a request body."""
+    return {k.decode(): v.decode()
+            for k, v in re.findall(rb'name="(\w+)"\r\n\r\n([^\r]*)', body)}
+
+
+def test_whisper_server_gets_decoding_settings(tmp_path):
+    seen: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.content)
+        return httpx.Response(200, json={"segments": []})
+
+    settings = Settings(ingest_token="x" * 16, data_dir=tmp_path, language="auto",
+                        whisper_server_url="http://whisper.test", whisper_beam_size=5,
+                        whisper_best_of=4, whisper_no_speech_thold=0.5,
+                        whisper_logprob_thold=-0.8, whisper_entropy_thold=2.6,
+                        whisper_suppress_non_speech=True, whisper_temperature_inc=0.4,
+                        whisper_carry_initial_prompt=True)
+    t = build_transcriber(settings)
+    assert isinstance(t, WhisperServerTranscriber)
+    t._http._transport = httpx.MockTransport(handler)
+    t.transcribe(tone(300, 1))
+    f = _fields(seen[0])
+    assert f["language"] == "auto"
+    assert f["beam_size"] == "5" and f["best_of"] == "4"
+    assert f["temperature"] == "0.0" and f["temperature_inc"] == "0.4"
+    assert (f["no_speech_thold"], f["logprob_thold"], f["entropy_thold"]) == (
+        "0.5", "-0.8", "2.6")
+    assert f["suppress_non_speech"] == "true" and f["carry_initial_prompt"] == "true"
+
+
+def test_whisper_cli_command_has_decoding_settings(tmp_path):
+    settings = Settings(ingest_token="x" * 16, data_dir=tmp_path, whisper_cli="whisper-cli",
+                        whisper_model="m.bin", whisper_beam_size=5, whisper_best_of=4,
+                        whisper_no_speech_thold=0.5, whisper_suppress_non_speech=True)
+    t = build_transcriber(settings)
+    assert isinstance(t, WhisperCliTranscriber)
+    cmd = t.command(Path("a.wav"), Path("out"))
+    assert cmd[cmd.index("-bs") + 1] == "5" and cmd[cmd.index("-bo") + 1] == "4"
+    assert cmd[cmd.index("-nth") + 1] == "0.5"
+    assert "-sns" in cmd and "--carry-initial-prompt" not in cmd
+    plain = WhisperCliTranscriber("whisper-cli", "m.bin", decode=DecodeOptions(
+        suppress_non_speech=False, carry_initial_prompt=True)).command(Path("a"), Path("o"))
+    assert "-sns" not in plain and "--carry-initial-prompt" in plain
 
 
 def test_non_speech_tags_are_dropped():
