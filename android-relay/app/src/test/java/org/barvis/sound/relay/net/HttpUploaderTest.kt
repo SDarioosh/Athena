@@ -94,6 +94,16 @@ class HttpUploaderTest {
         assertTrue(logs.any { it.contains("/v1/ingest/chunk") && it.contains("3f9a0c11d2e4b507") })
     }
 
+    @Test fun noteUploadAddsKindField() = runBlocking {
+        val note = ChunkUpload("twatch-ultra", "3f9a0c11d2e4b507", 0, 1792413296789L, audio, kind = "note")
+        assertEquals(ServerResult.Ok(duplicate = false), uploader().upload(note))
+        val req = requests.single()
+        val parts = parseMultipart(req.headers.getValue("content-type").single(), req.body)
+        assertEquals(setOf("audio", "device", "session_id", "sequence", "timestamp", "codec", "kind"), parts.keys)
+        assertEquals("note", String(parts.getValue("kind").second, Charsets.UTF_8))
+        assertArrayEquals(audio, parts.getValue("audio").second)
+    }
+
     @Test fun duplicateIsOk() = runBlocking {
         answer = { 200 to """{"ok": true, "stop": false, "duplicate": true}""" }
         assertEquals(ServerResult.Ok(duplicate = true), uploader().upload(chunk()))

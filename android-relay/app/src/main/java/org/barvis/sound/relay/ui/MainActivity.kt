@@ -127,7 +127,11 @@ class MainActivity : Activity() {
         phase.text = if (s.detail.isEmpty()) s.phase.label else "${s.phase.label}\n${s.detail}"
 
         val w = StringBuilder()
-        s.info?.let { w.append("${it.device ?: "?"} · firmware ${it.fw ?: "?"}\n") }
+        s.info?.let {
+            w.append("${it.device ?: "?"} · firmware ${it.fw ?: "?"}")
+            it.reset?.let { r -> w.append(" · last reset $r") }
+            w.append("\n")
+        }
         s.status?.let { st ->
             val battery = if (st.batteryPercent >= 0) "${st.batteryPercent} %" else "unknown"
             val state = when {

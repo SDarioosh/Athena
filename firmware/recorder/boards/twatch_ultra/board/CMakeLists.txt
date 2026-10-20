@@ -10,6 +10,7 @@ idf_component_register(
         "pcf85063a_codec.c"
         "sdcard.c"
         "xl9555.c"
+        "../../../main/button_gesture.c" # pure gesture machine, host-tested in test/
     INCLUDE_DIRS "."
     # board.h (the interface this component implements) and isotime.h live in main/.
     PRIV_INCLUDE_DIRS "../../../main"

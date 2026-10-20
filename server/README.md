@@ -68,8 +68,15 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   `CONVO_OWNER_HINT_DB` (3 dB) louder than everyone else whose voice is a borderline
   match for the owner (within `CONVO_OWNER_HINT_MARGIN`, 0.10, below the match
   threshold) is labelled as the owner. `CONVO_OWNER_HINT_MARGIN=0` turns it off.
-- whisper gets a prompt: `CONVO_WHISPER_PROMPT` (names, places, jargon) plus the names
-  of known speakers, so they are spelled right.
+- A speaker with a single line joins the closest speaker with several lines when the
+  voice is at least `CONVO_SPEAKER_ABSORB_THRESHOLD` (0.30) similar, instead of becoming
+  one more "Speaker N" (one noisy piece often ends up alone). 0 turns it off.
+- whisper gets a prompt: the names of known speakers (`CONVO_WHISPER_PROMPT_NAMES`,
+  default on), so they are spelled right, plus `CONVO_WHISPER_PROMPT` (empty by default).
+  Measured on AMI (`eval/recognition.py`): the names made WER and DER slightly better;
+  a 12-word vocabulary list in `CONVO_WHISPER_PROMPT` broke whisper's timestamps (lines
+  stretched over 30 s: false alarm 8% → 58%, wrong names 2% → 6%). Leave it empty
+  unless the eval shows it helps with your vocabulary.
 
 ## Deploy: one command, runs in the background
 
@@ -136,6 +143,14 @@ curl -H "Authorization: Bearer $CONVO_INGEST_TOKEN" -F name=Me -F is_owner=true 
 | `timestamp`   | wall-clock start of the chunk: ISO-8601 or epoch s/ms              |
 | `codec`       | `opus` (default), `ogg`, `wav`, `pcm16`, `mp3`, `m4a`, `aac`, `webm` |
 | `sample_rate` | only for `pcm16` (default 16000)                                   |
+| `kind`        | `conversation` (default) or `note` (voice note); fixed per session  |
+
+A **voice note** (`kind=note`) is the owner talking to themselves: no speaker matching
+(every line is the owner), never split on gaps or joined with nearby conversations, never
+discarded as too short, and summarized with a note prompt (the idea, plus the to-dos it
+implies). It shows up as a conversation with `kind` `note`. A chunk whose `kind` differs
+from its session's is rejected with 400. `POST /v1/ingest/chunk.json` takes the same
+`kind` field.
 
 Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client"|"idle"|null,
 "duplicate": bool, "speech_seconds", "trailing_silence_seconds", "session_seconds"}`.
@@ -202,19 +217,32 @@ Each conversation gets several small `json_schema` calls instead of one big one 
 small local model does better on narrow questions):
 
 1. **Triage**: discard a TV, radio or podcast playing, noise, gibberish or no real
-   conversation (kept when in doubt; under 3 words is discarded without a call), and pick
-   the kind: meeting, call, appointment, casual, other. A discarded conversation keeps
+   conversation (kept when in doubt), and pick the kind: meeting, call, appointment,
+   casual, other. A discarded conversation keeps
    its transcript (still searchable; `POST /v1/conversations/{id}/summarize` retries) but
    gets no summary, action items or facts, and stays out of digests.
+   Plain junk is discarded first, without a model call, by fixed rules
+   (`convo_server/relevance_rules.py`): under 3 words (`too_short`), only filler words
+   such as "okay", "mm", "yeah" (`filler`), or a microphone check such as "testing, one,
+   two" (`mic_check`). These rules only discard: anything with one content word, a name,
+   a number, "yes"/"no", or words in another language goes to the model. No rule keeps a
+   conversation without the model, because the model is what spots a TV playing.
 2. **Notes** (title, summary, key points, people, topics) with a template per kind, e.g.
    decisions and owners for meetings, instructions and the next date for appointments.
-3. **Action items**, with `due_date` (YYYY-MM-DD) worked out from the conversation date
-   in `CONVO_TIMEZONE` ("by Friday" said on Wednesday 2026-10-14 → 2026-10-16).
+3. **Action items** (promises, requests, appointments), each written as a task, with
+   `due_date` (YYYY-MM-DD). When the deadline names a day ("by Friday", "October
+   thirty-first", "tomorrow") the date is worked out in code (`convo_server/dates.py`)
+   from the conversation date in `CONVO_TIMEZONE` ("by Friday" said on Wednesday
+   2026-10-14 → 2026-10-16); the model's date is used only for vaguer deadlines.
 4. **Facts**, then a **linking** call against related known facts (same subject or
    matching words): a repeat becomes another source of the known fact; a changed value
    replaces the older one (by conversation time, so re-summarizing an old conversation
-   can't overwrite newer knowledge). `list_facts` shows only current facts, each with
-   "said again" and "replaces:" lines that link every source transcript.
+   can't overwrite newer knowledge). A link is ignored unless the two facts share at
+   least two words besides their subject. `list_facts` shows only current facts, each
+   with "said again" and "replaces:" lines that link every source transcript.
+
+A re-summary (e.g. after a speaker is renamed) keeps what was known about the old items:
+the status of action items, the other sources of a fact and which facts it replaced.
 
 ## Recognition eval
 

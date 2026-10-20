@@ -19,6 +19,7 @@ extern "C" {
 
 #define CHUNK_FLAG_LAST 0x01       /* last chunk of its session */
 #define CHUNK_FLAG_TIME_UNSET 0x02 /* start_ms is ms since the session start, not epoch ms */
+#define CHUNK_FLAG_NOTE 0x04       /* the chunk belongs to a voice note (its own short session) */
 
 /* One closed, listable chunk. The first fields are exactly the ENTRY fields of the
  * protocol (§4.3); boot_id and mono_ms are for TIME fix-ups only. */
@@ -63,6 +64,10 @@ bool chunk_store_get(uint32_t chunk_id, chunk_info_t *out);
 
 /* Reference-counted card access for reads/acks (mounts and powers the card). */
 esp_err_t chunk_store_media_open(void);
+/* Append to a file at the card's root (e.g. the power log), mounting it if needed; the
+ * header goes first into a new or empty file. Serialized with the queue's card access. */
+esp_err_t chunk_store_append_file(const char *name, const char *header, const void *data,
+                                  size_t len);
 void chunk_store_media_close(void);
 /* Read up to `len` bytes at `offset`. *got = 0 at the end of the file. ESP_ERR_NOT_FOUND
  * if the chunk isn't queued. Needs chunk_store_media_open(). */
@@ -88,7 +93,7 @@ typedef struct {
     uint8_t session_id[8];
     uint32_t sequence;
     uint64_t start_ms; /* epoch ms, or session-relative ms with CHUNK_FLAG_TIME_UNSET */
-    uint8_t flags;     /* CHUNK_FLAG_TIME_UNSET or 0 */
+    uint8_t flags;     /* CHUNK_FLAG_TIME_UNSET and/or CHUNK_FLAG_NOTE, or 0 */
     uint64_t mono_ms;  /* esp_timer ms at the chunk start (for the TIME fix-up) */
 } chunk_store_new_t;
 
@@ -97,12 +102,14 @@ esp_err_t chunk_store_begin(const chunk_store_new_t *c, uint32_t *chunk_id);
 esp_err_t chunk_store_append(const void *data, size_t len);
 /* Flush what was appended to the card (fsync), so a power cut keeps it. */
 esp_err_t chunk_store_sync(void);
+/* Test hook (console `sd failwrite <n>`): the next n appends fail as a card error would. */
+void chunk_store_fail_writes(int n);
 /* Close the open chunk; it becomes listable. last = the session ends with it. */
 esp_err_t chunk_store_end(uint32_t duration_ms, bool last);
 /* The open chunk can't be finished (write error): keep what the card holds up to the last
  * complete Ogg page, as a closed chunk with LAST; without audio, delete it and give LAST to
  * the session's previous chunk. *kept_id = 0 if it was deleted. */
-esp_err_t chunk_store_abandon(uint32_t *kept_id);
+esp_err_t chunk_store_abandon(bool last, uint32_t *kept_id);
 /* Give a closed chunk LAST (the session ended before its next chunk could start). */
 esp_err_t chunk_store_set_last(uint32_t chunk_id);
 /* Free space on the card. Needs chunk_store_media_open(). */

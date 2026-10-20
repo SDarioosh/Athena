@@ -17,6 +17,7 @@ URL, and redirects are not followed (urllib would forward the header to the new 
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import urllib.error
@@ -104,7 +105,9 @@ class Uploader:
             detail = _detail(e)
             raise UploadError(classify(e.code), f"{method} {path}: HTTP {e.code} {detail}",
                               e.code) from None
-        except (urllib.error.URLError, OSError, ValueError) as e:
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+            # HTTPException: a cut-short body (IncompleteRead) or a non-HTTP answer
+            # (BadStatusLine) is not an OSError; it must not escape Relay.run.
             reason = getattr(e, "reason", e)
             raise UploadError(RETRY, f"{method} {path}: {type(e).__name__}: {reason}") from None
         if status != 200:
@@ -122,11 +125,17 @@ class Uploader:
         self._request("GET", "/health", auth=False)
 
     def upload_chunk(self, *, device: str, session_id: str, sequence: int, timestamp: str,
-                     audio: bytes) -> dict[str, Any]:
-        """POST /v1/ingest/chunk. Returns the server's answer, which has `"ok": true`."""
+                     audio: bytes, kind: str | None = None) -> dict[str, Any]:
+        """POST /v1/ingest/chunk. Returns the server's answer, which has `"ok": true`.
+
+        `kind` ("note" for a voice note) is sent only when given, so ordinary uploads stay
+        as they were (the server defaults to "conversation")."""
+        fields = {"device": device, "session_id": session_id, "sequence": str(sequence),
+                  "timestamp": timestamp, "codec": "ogg"}
+        if kind is not None:
+            fields["kind"] = kind
         body, ctype = multipart(
-            {"device": device, "session_id": session_id, "sequence": str(sequence),
-             "timestamp": timestamp, "codec": "ogg"},
+            fields,
             "audio", f"{session_id}-{sequence}.opus", "audio/ogg", audio)
         answer = self._request("POST", "/v1/ingest/chunk", body=body, content_type=ctype)
         if answer.get("ok") is not True:

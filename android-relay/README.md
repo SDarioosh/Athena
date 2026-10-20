@@ -51,6 +51,13 @@ nothing else. The UI uses framework views (no AppCompat/Material); HTTP uses
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Or download a built APK. Every CI run uploads `android-relay-debug-apk` as an artifact,
+and pushing a `relay-v<version>` tag (e.g. `relay-v0.1.0`, matching `versionName`) makes
+`.github/workflows/android-relay-release.yml` attach
+`barvis-sound-relay-v<version>-debug.apk` and its SHA-256 to a GitHub Release. You can also
+run that workflow by hand from the Actions tab with a tag name; a missing tag is created
+on the branch you run it from. These are debug-signed builds for sideloading.
+
 ## First-time setup
 
 1. Open **Odysseus Sound Relay → Settings**. Enter the server URL, for example

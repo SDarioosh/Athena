@@ -29,7 +29,7 @@ from .conversations import split_on_gaps
 from .diarize import Diarizer, PieceRef, load_voices
 from .llm import Summarizer
 from .search import Embedder, index_conversation
-from .store import Segment, Store
+from .store import CONVERSATION, NOTE, SESSION_KINDS, Segment, Store
 from .transcribe import Transcriber
 from .vad import VAD, Span, merge_spans
 
@@ -39,6 +39,9 @@ _SAFE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 CONTIGUOUS_TOLERANCE = 1.5  # seconds between chunk end and next chunk start
 REGION_PAD = 0.25  # seconds of context around each speech region
 REGION_MERGE_GAP = 2.0
+# ASR gain (CONVO_ASR_AGC_MAX_GAIN) only touches clips whose peak is at or below this
+# fraction of full scale: Omi measured more errors when already-loud audio was gained.
+ASR_AGC_DEADBAND = 0.4
 # whisper reads at most ~224 prompt tokens; names beyond this many are left out.
 MAX_PROMPT_NAMES = 30
 _PLACEHOLDER_NAME = re.compile(r"^(speaker\s*\d+|unknown|me)$", re.IGNORECASE)
@@ -84,19 +87,26 @@ class Pipeline:
     # ------------------------------------------------------------------ ingest
     def ingest_chunk(self, *, device: str, session_id: str, sequence: int, started_at: float,
                      codec: str, data: bytes, sample_rate: int = audio_mod.SAMPLE_RATE,
-                     now: float | None = None) -> IngestResult:
+                     now: float | None = None, kind: str = CONVERSATION) -> IngestResult:
         from .store import DuplicateChunk
 
         validate_id(device, "device")
         validate_id(session_id, "session_id")
         if sequence < 0:
             raise ValueError("sequence must be >= 0")
+        kind = (kind or CONVERSATION).strip().lower()
+        if kind not in SESSION_KINDS:
+            raise ValueError(f"kind must be one of {list(SESSION_KINDS)}")
         codec = codec.lower()
         if codec not in audio_mod.KNOWN_CODECS:
             raise ValueError(f"codec must be one of {sorted(audio_mod.KNOWN_CODECS)}")
         if not data:
             raise ValueError("empty audio")
         pcm = audio_mod.decode(data, codec, sample_rate)
+        if codec == "pcm16" and sample_rate != audio_mod.SAMPLE_RATE:
+            # Raw PCM carries no rate, and processing decodes the stored file as 16 kHz:
+            # store it at 16 kHz.
+            data = audio_mod.float_to_pcm16(pcm)
         duration = audio_mod.duration_seconds(pcm)
         spans = self.vad.detect(pcm)
         speech = [(round(s.start, 3), round(s.end, 3)) for s in spans]
@@ -114,7 +124,7 @@ class Pipeline:
             sess = self.store.add_chunk(session_id=session_id, device=device, sequence=sequence,
                                         started_at=started_at, duration=duration, codec=codec,
                                         audio_path=str(path) if path else None, speech=speech,
-                                        now=now)
+                                        now=now, kind=kind)
             duplicate = False
             if part and path:
                 part.replace(path)
@@ -178,8 +188,9 @@ class Pipeline:
             if sess is None:
                 raise KeyError(session_id)
             self.store.set_session_status(session_id, "processing")
+            note = sess.get("kind") == NOTE
             try:
-                segments, ranges, done = self._transcribe_session(session_id)
+                segments, ranges, done = self._transcribe_session(session_id, note=note)
             except Exception as e:  # keep audio so the session can be retried
                 log.exception("transcription failed for %s", session_id)
                 self.store.set_session_status(session_id, "failed", f"{type(e).__name__}: {e}",
@@ -191,17 +202,21 @@ class Pipeline:
                 # next pass (add_chunk set the session back to 'ended').
                 self._delete_audio(session_id, sess["device"], done)
             self.store.delete_empty_conversations()
-            touched = self._assign_conversations(session_id, sess["device"])
+            if note:
+                touched = self._assign_note(session_id, sess["device"])
+            else:
+                touched = self._assign_conversations(session_id, sess["device"])
             self.store.set_session_status(session_id, "done", only_if="processing")
         for conv_id in touched:
             self.summarize_conversation(conv_id)
 
     def _transcribe_session(
-        self, session_id: str
+        self, session_id: str, *, note: bool = False
     ) -> tuple[list[Segment], list[tuple[float, float]], list[dict[str, Any]]]:
         """Transcribe chunks that still have audio.
 
         Returns segments, the covered time ranges and the chunks that were transcribed.
+        A voice note (``note``) skips the diarizer: every line is the owner's.
         """
         chunks = [c for c in self.store.chunks(session_id) if c["audio_path"]]
         ranges = [(c["started_at"], c["started_at"] + c["duration"]) for c in chunks]
@@ -219,28 +234,38 @@ class Pipeline:
                 a = max(0.0, r.start - REGION_PAD)
                 b = min(run_audio.size / audio_mod.SAMPLE_RATE, r.end + REGION_PAD)
                 clip = run_audio[int(a * audio_mod.SAMPLE_RATE): int(b * audio_mod.SAMPLE_RATE)]
+                # The diarizer keeps the ungained run audio; only whisper hears the gain.
+                clip, _ = audio_mod.bounded_gain(clip, max_gain=self.settings.asr_agc_max_gain,
+                                                 deadband=ASR_AGC_DEADBAND)
                 for p in self.transcriber.transcribe(clip, prompt):
                     s, e = a + p.start, a + max(p.end, p.start)
                     pieces.append((run_start + s, run_start + e, p.text,
                                    PieceRef(len(runs) - 1, s, e)))
         pieces.sort(key=lambda p: p[0])
         labels = None
-        if self.diarizer is not None and pieces:
+        owner_name = (self.store.owner_name() or self.settings.owner_name) if note else ""
+        if not note and self.diarizer is not None and pieces:
             self.diarizer.voices = load_voices(self.store)  # pick up newly named speakers
             labels, unnamed = self.diarizer.diarize_runs(runs, [p[3] for p in pieces])
             self.store.put_speaker_candidates(session_id, unnamed)
         segments = []
         for i, (s, e, text, _) in enumerate(pieces):
-            name, owner = (labels[i].name, labels[i].is_owner) if labels else ("Unknown", False)
+            if note:
+                name, owner = owner_name, True
+            else:
+                name, owner = ((labels[i].name, labels[i].is_owner) if labels
+                               else ("Unknown", False))
             segments.append(Segment(started_at=s, ended_at=e, text=text, speaker=name,
                                     is_owner=owner))
         return segments, ranges, chunks
 
     def whisper_prompt(self) -> str:
         """CONVO_WHISPER_PROMPT plus the names of known speakers, for whisper's spelling."""
+        known = ([s["name"] for s in self.store.speakers()]
+                 + [s["name"] for s in self.store.speaker_stats()]
+                 if self.settings.whisper_prompt_names else [])
         names: list[str] = []
-        for n in [s["name"] for s in self.store.speakers()] + [
-                s["name"] for s in self.store.speaker_stats()]:
+        for n in known:
             if not _PLACEHOLDER_NAME.match(n) and n.lower() not in {x.lower() for x in names}:
                 names.append(n)
         parts = [self.settings.whisper_prompt.strip()]
@@ -306,6 +331,18 @@ class Pipeline:
             touched = [t for t in touched if t not in near] + [conv_id]
         return touched
 
+    def _assign_note(self, session_id: str, device: str) -> list[str]:
+        """A voice note is one conversation of kind NOTE: no gap split, never joined with
+        nearby conversations. A late chunk extends the note's existing conversation."""
+        segments = self.store.session_segments(session_id)
+        if not segments:
+            return []
+        existing = self.store.session_conversations(session_id)
+        conv_id = self.store.save_conversation(
+            existing[0] if existing else None, device,
+            [s.id for s in segments if s.id is not None], absorb=existing[1:], kind=NOTE)
+        return [conv_id]
+
     # --------------------------------------------------------------- summaries
     def summarize_conversation(self, conv_id: str) -> bool:
         if self.summarizer is None:
@@ -313,8 +350,10 @@ class Pipeline:
         segments = self.store.conversation_segments(conv_id)
         if not segments:
             return False
+        conv = self.store.get_conversation(conv_id)
+        kind = conv.get("kind") if conv else None
         try:
-            summary = self.summarizer.summarize(segments)
+            summary = self.summarizer.summarize(segments, kind=kind)
         except Exception as e:
             log.exception("summary failed for %s", conv_id)
             self.store.mark_conversation_failed(conv_id, f"{type(e).__name__}: {e}")
@@ -380,17 +419,20 @@ class Pipeline:
         day = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=tz)
         return day.timestamp(), (day + timedelta(days=1)).timestamp()
 
-    def make_digest(self, date: str) -> dict[str, Any] | None:
-        if self.summarizer is None:
-            raise RuntimeError("no LLM configured")
+    def digest_conversations(self, date: str) -> list[dict[str, Any]]:
+        """The summarized conversations that started on ``date`` (local day), in order."""
         start, end = self.day_bounds(date)
         convs = [self.store.get_conversation(c["id"]) for c in
                  self.store.list_conversations(since=start, until=end, limit=500)]
-        convs = [c for c in convs if c and c["status"] == "summarized"
-                 and start <= c["started_at"] < end]
+        return sorted((c for c in convs if c and c["status"] == "summarized"
+                       and start <= c["started_at"] < end), key=lambda c: c["started_at"])
+
+    def make_digest(self, date: str) -> dict[str, Any] | None:
+        if self.summarizer is None:
+            raise RuntimeError("no LLM configured")
+        convs = self.digest_conversations(date)
         if not convs:
             return None
-        convs.sort(key=lambda c: c["started_at"])
         digest = self.summarizer.digest(date, convs)
         self.store.put_digest(date, digest)
         return digest
@@ -429,11 +471,16 @@ class Worker(threading.Thread):
         except Exception:
             log.exception("worker iteration failed")
 
-    def _maybe_digest(self) -> None:  # pragma: no cover
+    def _maybe_digest(self) -> None:
+        """Write yesterday's digest, and write it again when the conversations of that day
+        changed (a relay uploaded a recording late, conversations were merged)."""
         p = self.pipeline
-        if p.summarizer is None:
+        if p.summarizer is None or p.store.sessions_with_status("ended"):
             return
         tz = ZoneInfo(p.settings.timezone)
         yesterday = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
-        if p.store.get_digest(yesterday) is None and not p.store.sessions_with_status("ended"):
-            p.make_digest(yesterday)
+        digest = p.store.get_digest(yesterday)
+        if digest is not None and set(digest.get("conversation_ids", [])) == {
+                c["id"] for c in p.digest_conversations(yesterday)}:
+            return
+        p.make_digest(yesterday)

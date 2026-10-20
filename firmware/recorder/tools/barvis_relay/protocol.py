@@ -61,6 +61,7 @@ COMMAND_NAMES = {OP_LIST: "LIST", OP_READ: "READ", OP_ACK: "ACK", OP_TIME: "TIME
 # ENTRY flags (§4.3)
 FLAG_LAST = 0x01
 FLAG_TIME_UNSET = 0x02
+FLAG_NOTE = 0x04  # the chunk belongs to a voice note
 
 # status flags (§4.2)
 ST_RECORDING = 0x01
@@ -125,6 +126,10 @@ class Entry:
     @property
     def time_unset(self) -> bool:
         return bool(self.flags & FLAG_TIME_UNSET)
+
+    @property
+    def note(self) -> bool:
+        return bool(self.flags & FLAG_NOTE)
 
     @property
     def session_hex(self) -> str:

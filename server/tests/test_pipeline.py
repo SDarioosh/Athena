@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import httpx
 import numpy as np
+import pytest
 from conftest import ToneEmbedder, fake_llm_transport, silence, tone, wav
 
 from convo_server import store as store_mod
@@ -299,3 +300,55 @@ def test_worker_start_requeues_interrupted_sessions(pipeline, monkeypatch):
     worker.start()
     worker.join()
     assert pipeline.store.get_session("s1")["status"] == "ended"
+
+
+def _record_levels(pipeline):
+    asr_peaks: list[float] = []
+    run_peaks: list[float] = []
+    transcribe = pipeline.transcriber.transcribe
+    diarize_runs = pipeline.diarizer.diarize_runs
+
+    def fake_transcribe(audio, prompt=""):
+        asr_peaks.append(float(np.max(np.abs(audio))))
+        return transcribe(audio, prompt)
+
+    def fake_diarize_runs(runs, refs):
+        run_peaks.extend(float(np.max(np.abs(r))) for r in runs)
+        return diarize_runs(runs, refs)
+
+    pipeline.transcriber.transcribe = fake_transcribe
+    pipeline.diarizer.diarize_runs = fake_diarize_runs
+    return asr_peaks, run_peaks
+
+
+def test_asr_gain_is_off_by_default(pipeline):
+    asr_peaks, run_peaks = _record_levels(pipeline)
+    ingest(pipeline, 0, np.concatenate([tone(200, 4, amp=0.1), silence(26)]))
+    pipeline.end_session("s1")
+    pipeline.process_pending()
+    assert asr_peaks == [pytest.approx(0.1, rel=1e-2)]
+
+
+def test_asr_gain_only_reaches_the_transcriber(pipeline):
+    pipeline.settings.asr_agc_max_gain = 4.0
+    asr_peaks, run_peaks = _record_levels(pipeline)
+    # a quiet speaker, a long pause (separate clips), then a loud one above the deadband
+    ingest(pipeline, 0, np.concatenate([tone(200, 4, amp=0.1), silence(10),
+                                        tone(600, 4, amp=0.5), silence(12)]))
+    pipeline.end_session("s1")
+    assert pipeline.process_pending() == 1
+    assert asr_peaks == [pytest.approx(0.4, rel=1e-2), pytest.approx(0.5, rel=1e-2)]
+    assert run_peaks == [pytest.approx(0.5, rel=1e-2)]  # diarizer: ungained audio
+    texts = [s.text for c in pipeline.store.list_conversations()
+             for s in pipeline.store.conversation_segments(c["id"])]
+    assert texts == ["words at 200 hz", "words at 600 hz"]
+
+
+def test_asr_gain_leaves_quiet_diarizer_audio_alone(pipeline):
+    pipeline.settings.asr_agc_max_gain = 4.0
+    asr_peaks, run_peaks = _record_levels(pipeline)
+    ingest(pipeline, 0, np.concatenate([tone(200, 4, amp=0.1), silence(26)]))
+    pipeline.end_session("s1")
+    pipeline.process_pending()
+    assert asr_peaks == [pytest.approx(0.4, rel=1e-2)]
+    assert run_peaks == [pytest.approx(0.1, rel=1e-2)]

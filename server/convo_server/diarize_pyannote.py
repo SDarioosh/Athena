@@ -23,6 +23,8 @@ import os
 
 # Must be set before pyannote.audio is imported anywhere (it reads it at import time).
 os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
+# huggingface_hub (model download) usage pings off too
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
 from collections.abc import Callable  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -95,9 +97,9 @@ class PyannoteDiarizer(Diarizer):
                  segmenter: Callable[[np.ndarray], list[Turn]],
                  match_threshold: float = 0.50, cluster_threshold: float = 0.45,
                  min_seconds: float = 1.0, owner_hint_margin: float = 0.10,
-                 owner_hint_db: float = 3.0) -> None:
+                 owner_hint_db: float = 3.0, absorb_threshold: float = 0.0) -> None:
         super().__init__(embedder, voices, match_threshold, cluster_threshold, min_seconds,
-                         owner_hint_margin, owner_hint_db)
+                         owner_hint_margin, owner_hint_db, absorb_threshold)
         self.segmenter = segmenter
 
     def diarize_runs(self, runs: list[np.ndarray], pieces: list[PieceRef]
@@ -145,11 +147,16 @@ class PyannoteDiarizer(Diarizer):
                     out[i] = out[j]
         if any(o is None for o in out):  # a run where nobody could be identified
             rest = [i for i, o in enumerate(out) if o is None]
-            labels, _ = self.diarize([window(runs[pieces[i].run], pieces[i].start,
-                                             pieces[i].end) for i in rest],
-                                     [pieces[i].start for i in rest])
+            labels, extra = self.diarize([window(runs[pieces[i].run], pieces[i].start,
+                                                 pieces[i].end) for i in rest],
+                                         [pieces[i].start for i in rest])
+            # its "Speaker N" numbering starts again at 1: continue after ours instead
+            renumber = {name: f"Speaker {len(unnamed) + k}"
+                        for k, name in enumerate(extra, 1)}
+            for name, emb in extra.items():
+                unnamed[renumber[name]] = emb
             for i, lab in zip(rest, labels, strict=True):
-                out[i] = lab
+                out[i] = SpeakerLabel(renumber.get(lab.name, lab.name), lab.is_owner)
         return out, unnamed
 
     def _embed_speech(self, speech: np.ndarray, win_seconds: float = 3.0) -> np.ndarray:

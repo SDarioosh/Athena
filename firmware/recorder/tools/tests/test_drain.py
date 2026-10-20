@@ -79,6 +79,25 @@ def test_full_drain(server) -> None:
     assert server.paths()[0] == "/health"
 
 
+def test_note_session_uploads_with_kind_note(server) -> None:
+    w = FakeWatch()
+    link(w, server)
+    conv = make_session(w, 1, first_id=1)
+    note = make_session(w, 2, first_id=2, start_ms=T0_MS + 60_000, flags=p.FLAG_NOTE)
+    rep = run(relay_for(server), w)
+
+    assert rep.outcome == d.DONE, rep.message
+    assert rep.acked == [1, 2, 3] and not w.chunks
+    ingests = server.ingests()
+    assert "kind" not in ingests[0].fields  # ordinary chunk: field omitted
+    for req, c in zip(ingests[1:], note, strict=True):
+        assert req.fields == {"device": "twatch-ultra", "session_id": c.session_id.hex(),
+                              "sequence": str(c.sequence), "timestamp": p.iso_ms(c.start_ms),
+                              "codec": "ogg", "kind": "note"}
+    assert f"/v1/sessions/{note[0].session_id.hex()}/end" in server.paths()
+    assert f"/v1/sessions/{conv[0].session_id.hex()}/end" in server.paths()
+
+
 def test_list_paging(server) -> None:
     w = FakeWatch()
     make_session(w, 70, size=200)
@@ -410,8 +429,76 @@ def test_upload_answer_without_ok(server, monkeypatch) -> None:
     assert e.value.kind == RETRY
 
 
+def test_upload_chunk_kind_field(server) -> None:
+    up = Uploader(server.url, TOKEN)
+    up.upload_chunk(device="d", session_id="s", sequence=0, timestamp="t", audio=b"x")
+    up.upload_chunk(device="d", session_id="s", sequence=1, timestamp="t", audio=b"x",
+                    kind="note")
+    plain, note = server.ingests()
+    assert "kind" not in plain.fields
+    assert note.fields["kind"] == "note"
+
+
 def test_backoff() -> None:
     b = d.Backoff()
     assert [b.next() for _ in range(7)] == [60, 120, 300, 600, 900, 900, 900]
     b.reset()
     assert b.next() == 60
+
+
+class _BrokenHTTP:
+    """A server that answers /health and then cuts every other answer short."""
+
+    def __init__(self, broken: bytes) -> None:
+        import threading
+
+        self.broken = broken
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(8)
+        self.url = f"http://127.0.0.1:{self.sock.getsockname()[1]}"
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self) -> None:
+        while True:
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            with conn:
+                head = b""
+                while b"\r\n\r\n" not in head:
+                    got = conn.recv(65536)
+                    if not got:
+                        break
+                    head += got
+                if head.startswith(b"GET /health"):
+                    conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n"
+                                 b"Connection: close\r\n\r\n{\"ok\":true}")
+                else:
+                    conn.sendall(self.broken)
+
+    def close(self) -> None:
+        self.sock.close()
+
+
+@pytest.mark.parametrize("broken", [
+    # The connection closes before the announced body is complete: http.client raises
+    # IncompleteRead, an HTTPException that is not an OSError.
+    b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"ok\": tr",
+    # Not HTTP at all: BadStatusLine (HTTPException).
+    b"SSH-2.0-OpenSSH_9.6\r\n",
+])
+def test_broken_http_answer_is_retry_later(broken: bytes) -> None:
+    srv = _BrokenHTTP(broken)
+    try:
+        w = FakeWatch()
+        make_session(w, 2)
+        rep = run(d.Relay(Uploader(srv.url, TOKEN, timeout=3.0), Anchors(None), clock=lambda: NOW,
+                          timeout=2.0, sleep=_no_sleep), w)
+    finally:
+        srv.close()
+    # Relay.run never raises for server trouble: retry later, nothing acked, BYE sent.
+    assert rep.outcome == d.SERVER_RETRY, rep.message
+    assert not rep.acked and len(w.chunks) == 2
+    assert w.opcodes()[-1] == p.OP_BYE

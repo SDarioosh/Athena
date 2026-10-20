@@ -110,3 +110,25 @@ def to_wav_bytes(audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
 
 def duration_seconds(audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> float:
     return audio.size / sample_rate
+
+
+def bounded_gain(audio: np.ndarray, target: float = 0.8, max_gain: float = 4.0,
+                 deadband: float | None = None) -> tuple[np.ndarray, float]:
+    """Scale ``audio`` toward a peak of ``target`` (full scale = 1.0); return it and the gain.
+
+    Omi's bounded peak AGC (docs/omi-audio-quality.md §2.2): one uniform gain for the
+    whole buffer, capped at ``max_gain``, never below 1 (no attenuation), so the gained
+    peak never exceeds ``target`` and the buffer can't clip. Digital silence is returned
+    unchanged. With ``deadband``, a buffer whose peak is above it is returned unchanged
+    (gaining audio that is already loud raised ASR errors in Omi's tests).
+    The input is never modified; with a gain of 1 the same array comes back.
+    """
+    if not 0.0 < target <= 1.0:
+        raise ValueError("target must be in (0, 1]")
+    if audio.size == 0 or max_gain <= 1.0:
+        return audio, 1.0
+    peak = float(np.max(np.abs(audio)))
+    if peak <= 0.0 or peak >= target or (deadband is not None and peak > deadband):
+        return audio, 1.0
+    gain = min(max_gain, target / peak)
+    return (audio * gain).astype(np.float32), gain

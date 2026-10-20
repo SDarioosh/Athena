@@ -13,7 +13,7 @@ static i2c_dev_t s_dev;
 #define REG_IC_TYPE 0x03        /* 0x4A */
 #define REG_RESET_FUEL_GAUGE 0x17
 #define REG_CHARGE_GAUGE_WDT_CTRL 0x18 /* bit2 backup (button) battery charge enable */
-#define REG_IRQ_OFF_ON_LEVEL 0x27
+#define REG_IRQ_OFF_ON_LEVEL 0x27 /* bits[5:4] PKEY_LONG IRQ time, [3:2] power-off, [1:0] power-on */
 #define REG_ADC_CHANNEL_CTRL 0x30
 #define REG_ADC_VBAT_H 0x34
 #define REG_INTEN1 0x40
@@ -179,6 +179,28 @@ esp_err_t axp2101_read_battery(axp_battery_t *out)
     return ESP_OK;
 }
 
+esp_err_t axp2101_set_pkey_long_ms(int ms)
+{
+    ESP_RETURN_ON_FALSE(ms >= 1000 && ms <= 2500 && ms % 500 == 0, ESP_ERR_INVALID_ARG, TAG, "ms");
+    return i2c_reg_update(&s_dev, REG_IRQ_OFF_ON_LEVEL, 0x30, (uint8_t)(((ms - 1000) / 500) << 4));
+}
+
+static void pkey_times(uint8_t v, int *long_irq_ms, int *off_ms, int *on_ms)
+{
+    static const int on[4] = {128, 512, 1000, 2000};
+    *long_irq_ms = 1000 + 500 * ((v >> 4) & 0x03);
+    *off_ms = 4000 + 2000 * ((v >> 2) & 0x03);
+    *on_ms = on[v & 0x03];
+}
+
+esp_err_t axp2101_get_pkey_times(int *long_irq_ms, int *off_ms, int *on_ms)
+{
+    uint8_t v = 0;
+    ESP_RETURN_ON_ERROR(i2c_reg_read8(&s_dev, REG_IRQ_OFF_ON_LEVEL, &v), TAG, "read");
+    pkey_times(v, long_irq_ms, off_ms, on_ms);
+    return ESP_OK;
+}
+
 esp_err_t axp2101_irq_enable(uint32_t mask)
 {
     uint8_t en[3] = {(uint8_t)mask, (uint8_t)(mask >> 8), (uint8_t)(mask >> 16)};
@@ -262,6 +284,8 @@ void axp2101_log_registers(void)
              icc, icc_to_ma(icc & 0x1F), cv, led, adc);
     ESP_LOGI(TAG, "reg 0x18=0x%02X (bit2 RTC backup charge %s)  0x6A backup target %d mV", bkp,
              (bkp & 0x04) ? "on" : "off", 2600 + (bkpv & 0x07) * 100);
-    ESP_LOGI(TAG, "reg 0x27 key timing=0x%02X (bits[1:0] power-off hold: %d s)  INTEN=%02X %02X %02X",
-             key, 4 + 2 * (key & 0x03), en[0], en[1], en[2]);
+    int long_ms, off_ms, on_ms;
+    pkey_times(key, &long_ms, &off_ms, &on_ms);
+    ESP_LOGI(TAG, "reg 0x27 key timing=0x%02X (PKEY_LONG %d ms, power-off hold %d ms, power-on "
+             "%d ms)  INTEN=%02X %02X %02X", key, long_ms, off_ms, on_ms, en[0], en[1], en[2]);
 }
