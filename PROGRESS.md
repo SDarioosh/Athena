@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-20 (round 17: T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board)_
+_Last updated: 2026-10-20 (round 17: T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -569,6 +569,26 @@ Not done or not verified: see `firmware/pda/README.md` ("Not verified yet"): the
 relays against the real T5, light/deep sleep and battery life, flash encryption, pairing
 refusal outside the window, and DST (times after a daylight-saving change within the week
 are an hour off until the next TIME; v2 fix proposed: a `tz_posix` feed field).
+## Done on 2026-10-20: T5 PDA, PC relay side
+
+- `ble_relay.py pda` (`tools/pda_relay.py`, `barvis_relay/pda_*.py`) implements
+  `docs/t5-pda-plan.md` §3–§4: the glance codec (status, MTU ≥ 420, the errors), the relay
+  algorithm (TIME with the UTC offset, health, outbox first, feed `PUT` only when its
+  content hash changed, `fetch` detail blobs with 10-minute transcript pages, staying
+  connected while the user is active), strict checks on every action, and the 0/1/no-ack
+  results.
+- The calendar is behind a `Calendar` protocol. `OdysseusCalendar` uses the hub's token
+  routes (`/api/codex/calendar/events`, confirmed in plan §6 by the Android session), with
+  `--odysseus-url`, `--odysseus-token-file` and `--calendar-href`. Without them it is a
+  "not configured" stub, and calendar actions wait on the T5. It is tested against a fake
+  Odysseus only. The optional feed key `templates` comes from `--templates`.
+- Where the plan left a choice, the answer is now in plan §3.5, §4.1 and §4.3.
+- Tests: `tools/tests/test_pda.py` (fake T5 GATT peer, fake server: lost ack, bad CRC,
+  paging, MTU, stay mode) and `server/tests/test_pda_feed.py` (the real API, seeded
+  fictional data). The watch drain is unchanged.
+- **Not run on hardware:** the T5 firmware doesn't speak the protocol yet. Still to check
+  with real devices: bleak MTU on Windows and BlueZ (≥ 420), pairing with the T5, the
+  scan-response flag, PUT throughput.
 
 ## Done in round 14: T-Watch Ultra BLE link works from a Windows PC
 
@@ -765,6 +785,11 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
     Next: run the PC relay's `pda` subcommand and the phone's `PdaSync` against the real T5,
     then `item_status` through to the sandbox server's `PATCH` (milestone 3's last step) and
     milestone 4 (phone + calendar), then sleep, power and flash encryption (milestone 5).
+10. T5 E-Paper Pro PDA (`docs/t5-pda-plan.md`, planned 2026-10-20): briefing, conversations,
+    action items and the Odysseus calendar over BLE via the phone. First: confirm the hub's
+    calendar REST and scoped tokens (plan §6), then milestone 0 bring-up. The PC relay side
+    (`ble_relay.py pda`) is built; next it runs against the T5 firmware (milestones 2–3),
+    and the Odysseus calendar against the test instance (127.0.0.1:7010) with a scoped token.
 
 ## Open questions for you
 

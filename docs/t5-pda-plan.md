@@ -1,8 +1,9 @@
 # Plan: LilyGO T5 E-Paper Pro as an odysseus-sound PDA
 
 Status: **firmware milestones 0–3 built** in `firmware/pda/` (2026-10-20; what is verified on
-the board is in `firmware/pda/README.md`). Relays: see their branches. Owner decisions are open
-(§11).
+the board is in `firmware/pda/README.md`). The PC relay (§3.5, `ble_relay.py pda`) and the
+phone side (`android-relay` `PdaSync`) are built and tested against fakes, not yet against
+the real T5. Owner decisions are open (§11).
 
 ## Why
 
@@ -232,11 +233,72 @@ within seconds while connected.
    15 min, and also as soon as the T5 advertises with "outbox waiting" in its scan
    response.
 
+### 3.5 Details settled by the PC relay (v1)
+
+The PC relay (`firmware/recorder/tools/barvis_relay/pda_*.py`, `ble_relay.py pda`) fixed
+these points where the text above left a choice. The firmware and the phone follow them.
+
+- **`TIME`** is 14 bytes. `tz_offset_min` is the UTC offset of the relay's time zone
+  (`--tz`, the feed's `tz`) at that moment.
+- **Scan response, "outbox waiting":** Service Data with a 128-bit UUID (AD type `0x21`)
+  for the service UUID, one flags byte, bit0 = outbox not empty. Without it the relay
+  waits for its 15-minute reconnect.
+- **`OB_LIST`** asks for at most 16 entries. The relay continues with `after_id` = the last
+  id listed while `remaining > 0`.
+- **Order in one sync:** the actions' server calls run in outbox order, and each action
+  except `fetch` is acked at once. Then the feed. Then each `fetch` reply is `PUT` and
+  acked with result 0 after its `PUT_OK`. A `fetch` the server refuses for good (404) is
+  acked with result 1 and no `PUT`.
+- **Temporary failure stops the sync:** a 5xx, 408, 429 or network error on an action, or
+  401/403, stops the sync at that action. Nothing after it is acked, no feed is built, the
+  relay sends `BYE` and backs off. That keeps the actions in order.
+- **Calendar:** the PC relay calls the Odysseus token routes of §6. It needs
+  `--odysseus-url`, a token scoped to `calendar:read` and `calendar:write` (from
+  `ODYSSEUS_TOKEN` or `--odysseus-token-file`; never on the command line), and
+  `--calendar-href`, the CalDAV calendar new events go to.
+  - Without the URL and token, no calendar is configured: `cal_add` and `cal_delete` stay
+    queued without an ack and don't block the other actions, and the feed's `calendar` is
+    `[]`.
+  - The event mapping: `uid` becomes `id`, `summary` becomes `title`, `dtstart`/`dtend`
+    become `start`/`end` (as given; all-day ends are exclusive), `location` becomes
+    `where`.
+  - A `cal_add` sends `summary` and `dtstart`, plus `dtend` when it is timed, plus
+    `all_day` and `calendar_href`.
+  - A `cal_delete` of an occurrence id (`<uid>::<occurrence>`) is result 1. The token route
+    deletes the whole series, and one tap must not remove a recurring event.
+  - Test against the Odysseus test instance (`127.0.0.1:7010`), never production.
+- **`cal_delete` of an event that is already gone** (404) is result 0, not 1: after a
+  lost `OB_ACKED` the T5 sends it again, and the user must not see "couldn't sync".
+- **Strict checks** (anything else is acked with result 1):
+  - exactly the fields of §4.2 for each `t`, no others; at most 400 bytes of UTF-8 JSON
+  - `item_status`: `id` a positive integer
+  - `cal_add`: `title` 1–200 characters. With `all_day: true`, `start` is `YYYY-MM-DD` and
+    there is no `end`. Otherwise `start` and `end` are ISO-8601 date-times with an offset
+    or `Z` (a time without an offset is refused), and `end` is after `start`.
+  - `cal_delete`: `id` a string of up to 200 characters
+  - `fetch`: conversation ids match `[A-Za-z0-9_.:-]{1,64}`; a page range
+    (`@<from>-<to>`, seconds, up to 3 decimals) needs `transcript:` and `from < to`
+  - `digest_refresh`: `date` is a real `YYYY-MM-DD` date
+- **`cal_add` dedupe:** the key is `action_id` plus a hash of the action's JSON, so a T5
+  whose ids start again after a wipe isn't taken for a repeat. The last 200 are kept in
+  the relay's state file.
+- **Blob ids:** a feed's `blob_id` is its `version`. A detail's `blob_id` is the `fetch`
+  action's `action_id`.
+- **`PUT_DATA`** carries min(MTU − 3, 512) − 5 bytes, so a frame is never longer than the
+  512-byte limit on an attribute value. Android refuses longer writes, and BlueZ and
+  Windows may too. That is 507 bytes at MTU 517 and 412 at MTU 420. If the OS doesn't
+  report the MTU, 420 is assumed. The T5 accepts frames of up to 512 bytes.
+  On `ERROR bad_crc` at `PUT_END` the relay sends the blob again, 3 times in all.
+- **Stay connected:** the relay waits for `status` notifications and also reads `status`
+  every 30 s. It refreshes the feed every 5 min, and sends `BYE` once bit4 (user active)
+  is clear.
+- **Token:** the PC relay uses the server's `CONVO_INGEST_TOKEN`, which every `/v1` route
+  accepts. It goes only in the `Authorization` header.
+
 ### 3.6 Details settled by the firmware (v1)
 
 `firmware/pda/main/pda_proto.c` and `ble_pda.c`; byte vectors in
-`firmware/pda/test/test_pda_proto.c`. They agree with the PC relay's §3.5 (on its branch)
-where both say something.
+`firmware/pda/test/test_pda_proto.c`. They agree with the PC relay's §3.5 where both say something.
 
 - **Checks on every `ctrl` write**, in order: another command still running →
   `ERROR busy`; MTU < 420 → `ERROR mtu_too_small` (arg = MTU); then the length:
@@ -256,8 +318,8 @@ where both say something.
 - **512-byte attribute cap** (Core Vol 3 Part F 3.2.9): every notification and every write
   is at most min(MTU − 3, 512) bytes, so the largest `PUT_DATA` payload is
   **min(MTU − 3, 512) − 5** (507 at MTU 517, not MTU − 8 = 509; Android drops longer
-  notifications). A write longer than 512 bytes answers `ERROR bad_length`. This replaces
-  the "MTU − 8" of the PC relay's §3.5.
+  notifications). A write longer than 512 bytes answers `ERROR bad_length`. §3.5 says the
+  same.
 - **Service Changed:** NimBLE's GATT client is compiled in (`CONFIG_BT_NIMBLE_GATT_CLIENT`,
   with the central role Kconfig needs) so the T5 confirms the indication Android sends a
   bonded peer on connect; without it the ATT error broke `requestMtu` and discovery on the
@@ -320,6 +382,29 @@ The phone builds it from these sources:
 
 - Keep it under 32 KB. If it is too big, the phone cuts summaries first, then drops the oldest
   conversations.
+- How the PC relay builds it (v1):
+  - `briefing`: today's digest if there is one, else yesterday's. `text` is the headline, a
+    blank line, then the summary. At most 5 `highlights`.
+  - `conversations`: only `status: summarized` (no pending, failed or discarded ones),
+    newest first, `at` in UTC with `Z`.
+  - `actions`: the soonest `due` first, undated ones last. A missing `owner` or `due` is
+    `null`.
+  - `calendar`: sorted by `start`.
+  - `templates` (optional): the owner's event titles for the "+" picker (§5), e.g.
+    `["Call", "Meeting", "Reminder"]`. At most 12 of up to 40 characters. The phone takes
+    them from its settings, the PC relay from `--templates "Call,Meeting,Reminder"`. The key
+    is left out when there are none, and the T5 then uses built-in defaults.
+  - Field caps in characters: title 120, summary 600, 5 points of 160, action text 200.
+  - The size limit is 32,768 bytes of compact UTF-8 JSON. Over it, each summary is cut to
+    240 characters, then the oldest conversations are dropped. If it is still too big
+    (hundreds of open items), the last action items go, then the last calendar entries.
+  - A source that fails fails the whole build, so nothing is pushed and the T5 keeps its
+    feed. Two cases don't count as failures: a digest 404, and no calendar configured.
+  - **Push rule:** the content hash is SHA-256 over the feed without `version` and
+    `generated`. The relay pushes when this hash differs from the last one it pushed to
+    this T5, or when `status.feed_version` isn't the version it pushed (the T5 was wiped,
+    or another relay pushed). `version` = max(now, last pushed + 1, T5's + 1), so it only
+    grows.
 - `version` is the build time in epoch seconds. It goes in `status.feed_version` so the
   phone can see what the T5 holds.
 - Transcript links (`/view/<id>?sig=…`) are left out of the feed. The T5 can't open them,
@@ -350,6 +435,16 @@ Each action is one JSON object of 400 bytes at most, with `"t"` saying the type:
 `{"v": 1, "ref": "transcript:c_…", "title": "…", "segments": [{"o": 12.5, "s": "Anna", "me": false, "x": "…"}]}`.
 Long transcripts are paged (`@from-to`, e.g. 10 minutes per page). The T5 asks for the next
 page when the reader reaches the end.
+
+The PC relay's formats (v1):
+
+- **`transcript:<id>`**: `{"v": 1, "ref", "title", "from", "to", "next", "segments": […]}`.
+  - Without a range it sends the first page, 0–600 s.
+  - A page holds the segments with `from ≤ o < to`.
+  - `next` is the ref of the following page (`transcript:<id>@600-1200`), or `null` at the
+    end.
+- **`conv:<id>`**: `{"v": 1, "ref", "title", "at", "people", "summary", "points",
+  "actions": [{"id", "text", "status", "due"}]}`.
 
 - The firmware reads details as the PC relay's §4.3 defines them: `conv:` details with
   `at`, `people`, `summary`, `points`, `actions`; transcript pages with `from`, `to`,
@@ -460,7 +555,9 @@ server `PATCH` end to end (milestone 3's last step). The full list is in
 
 The PC relay (`firmware/recorder/tools/barvis_relay`) gets a `pda` subcommand in milestone 2.
 That way the protocol can be tested without the phone, and in the sandbox with fictional
-data only.
+data only. **Built 2026-10-20:** `ble_relay.py pda` (`--list`, `--once`, stay-connected by
+default). It is tested against a fake T5, a fake server and the real API with seeded
+fictional data. It hasn't run against the T5 yet.
 
 ## 9. Risks
 

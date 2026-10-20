@@ -73,7 +73,7 @@ jobs:
       - name: "PC BLE relay: lint and tests (no Bluetooth needed)"
         run: |
           pip install pytest ruff
-          ruff check --config server/pyproject.toml firmware/recorder/tools/ble_relay.py firmware/recorder/tools/barvis_relay firmware/recorder/tools/tests
+          ruff check --config server/pyproject.toml firmware/recorder/tools/ble_relay.py firmware/recorder/tools/pda_relay.py firmware/recorder/tools/barvis_relay firmware/recorder/tools/tests
           python -m pytest -q firmware/recorder/tools
 
   android-relay:
