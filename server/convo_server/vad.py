@@ -34,7 +34,7 @@ class VAD(Protocol):
 
 class SileroVAD:
     def __init__(self, threshold: float = 0.5, min_silence_ms: int = 500,
-                 speech_pad_ms: int = 30) -> None:
+                 speech_pad_ms: int = 30, min_speech_ms: int = 250) -> None:
         try:
             import torch
             from silero_vad import get_speech_timestamps, load_silero_vad
@@ -47,7 +47,8 @@ class SileroVAD:
         self._model = load_silero_vad()
         self._threshold = threshold
         self._min_silence_ms = min_silence_ms
-        self._speech_pad_ms = speech_pad_ms  # Silero's own default is 30
+        self._speech_pad_ms = speech_pad_ms
+        self._min_speech_ms = min_speech_ms
 
     def detect(self, audio: np.ndarray) -> list[Span]:
         if audio.size < SAMPLE_RATE // 10:
@@ -59,9 +60,21 @@ class SileroVAD:
             threshold=self._threshold,
             min_silence_duration_ms=self._min_silence_ms,
             speech_pad_ms=self._speech_pad_ms,
+            min_speech_duration_ms=self._min_speech_ms,
             return_seconds=True,
         )
         return [Span(float(s["start"]), float(s["end"])) for s in stamps]
+
+
+def level_dbfs(audio: np.ndarray, percentile: float = 95.0, frame_ms: int = 30) -> float:
+    """Loudness of the loud part of ``audio``: a high percentile of 30 ms frame RMS, dBFS."""
+    frame = int(SAMPLE_RATE * frame_ms / 1000)
+    n = audio.size // frame
+    if n == 0:
+        return -120.0
+    frames = audio[: n * frame].astype(np.float64).reshape(n, frame)
+    rms = float(np.percentile(np.sqrt((frames**2).mean(axis=1)), percentile))
+    return 20.0 * float(np.log10(max(rms, 1e-6)))
 
 
 class EnergyVAD:
@@ -123,9 +136,10 @@ class GainedVAD:
 
 
 def make_vad(backend: str, settings: Settings | None = None) -> VAD:
-    """Build the VAD. With ``settings``, apply its threshold, padding and VAD gain."""
+    """Build the VAD. With ``settings``, apply its Silero options and VAD gain (CONVO_VAD_*)."""
     if backend == "silero":
         vad: VAD = (SileroVAD(threshold=settings.vad_threshold,
+                              min_silence_ms=settings.vad_min_silence_ms,
                               speech_pad_ms=settings.vad_speech_pad_ms)
                     if settings is not None else SileroVAD())
     elif backend == "energy":

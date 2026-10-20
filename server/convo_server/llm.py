@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -13,19 +13,30 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from . import relevance_rules
-from .dates import resolve_due
+from .dates import resolve_due, resolve_time
 from .store import Segment
 
 log = logging.getLogger(__name__)
 
 
+ItemKind = Literal["task", "event", "reminder"]
+
+
 class ActionItem(BaseModel):
     text: str = Field(description="What needs to be done, imperative, self-contained")
+    kind: ItemKind = Field(default="task",
+                           description="event (meeting, appointment, call at a set day), "
+                                       "reminder (remind me at a time) or task")
     owner: str | None = Field(default=None, description="Who should do it, if stated")
     due: str | None = Field(default=None, description="Deadline as stated, e.g. 'Friday'")
     due_date: str | None = Field(default=None,
                                  description="The deadline as YYYY-MM-DD, if a date can be "
                                              "worked out from the conversation date")
+    time: str | None = Field(default=None,
+                             description="Time of day as said, e.g. '12 pm', or null")
+    duration_minutes: int | None = Field(default=None,
+                                         description="How long an event lasts, if said")
+    location: str | None = Field(default=None, description="Where an event is, if said")
     at_seconds: int | None = Field(default=None,
                                    description="Offset in seconds where it was mentioned")
 
@@ -129,6 +140,20 @@ title: short and specific (who/what). people: names of people who took part or w
 discussed (not "Speaker 1"); include "{owner}" only if they spoke. topics: a few keywords. \
 Keys: title, summary, key_points, people, topics."""
 
+# Both action prompts: what kind of item it is and the time details (resolved in code).
+KINDS = """kind: "event" for a meeting, appointment, call or lunch on a set day, e.g. \
+"meeting with Jason on Wednesday at 12 pm" -> text "Meet Jason", kind event, due \
+"Wednesday", time "12 pm"; "reminder" when the user asks to be reminded at a time, e.g. \
+"remind me at 5 to call Mom" -> text "Call Mom", kind reminder, time "5"; otherwise \
+"task", e.g. "get the proposal done on Wednesday" -> text "Get the proposal done", kind \
+task, due "Wednesday". Something repeating ("every Monday") is a task whose text starts \
+"Set up a repeating event: ". time: the time of day as said ("12 pm", "half past two"), \
+or null. duration_minutes: how long an event lasts if said ("for an hour" = 60), else \
+null. location: where an event is if said ("Main Street"), else null."""
+
+ACTION_KEYS = ("Keys: action_items[{{text, kind, owner, due, due_date, time, "
+               "duration_minutes, location, at_seconds}}].")
+
 ACTIONS_SYSTEM = """You list the action items of one conversation. """ + COMMON + """
 The conversation happened on {date}.
 An action item is something someone promised or was asked to do after this \
@@ -140,7 +165,8 @@ slides" or "Water Lena's plants". Never copy the spoken sentence.
 owner: who should do it ("{owner}" for the user), if clear. due: the deadline in the \
 words used ("Monday", "March 3"), or null; due_date: that deadline as YYYY-MM-DD \
 counted from the conversation date, or null. at_seconds: the bracketed number of the line \
-it comes from. Keys: action_items[{{text, owner, due, due_date, at_seconds}}]."""
+it comes from.
+""" + KINDS + "\n" + ACTION_KEYS
 
 FACTS_SYSTEM = """You pick durable facts from one conversation for the user's long-term \
 memory. """ + COMMON + """
@@ -176,12 +202,14 @@ NOTE_ACTIONS_SYSTEM = """You list the to-dos in a voice note the user recorded f
 themselves. """ + COMMON + """
 The note was recorded on {date}.
 action_items: things the note says the user wants or needs to do ("call the plumber", \
-"remember to buy milk", "I should email Bob"). Not vague wishes. text: imperative and \
+"remember to buy milk", "I should email Bob"), appointments and meetings it \
+mentions, and things to be reminded of. Not vague wishes. text: imperative and \
 self-contained ("Call the plumber about the leaking tap"). owner: "{owner}" unless the \
 note says someone else should do it. due: the deadline as said ("Friday"); due_date: \
 that deadline as YYYY-MM-DD counted from the note's date, or null if there is none. \
 at_seconds: the bracketed number of the line it comes from. Return an empty list if \
-there are none. Keys: action_items[{{text, owner, due, due_date, at_seconds}}]."""
+there are none.
+""" + KINDS + "\n" + ACTION_KEYS
 
 MERGE_SYSTEM = """You merge partial notes of ONE long conversation (given in order) into \
 a single set of notes with the same JSON shape. Deduplicate. Output JSON only."""
@@ -343,14 +371,31 @@ class Summarizer:
         return out
 
     def _resolve_due_dates(self, out: dict[str, Any], origin: float) -> None:
-        """Work the date out in code where the phrase names a day; the model's guess only
-        for the rest (small models get weekday arithmetic wrong)."""
-        today = datetime.fromtimestamp(origin, self.tz).date()
+        """Work the date and time out in code where the phrase names them; the model's
+        date guess only for the rest (small models get weekday arithmetic wrong).
+
+        A time with no date ("remind me at 5") is today, or tomorrow when that time had
+        already passed when the conversation started."""
+        start = datetime.fromtimestamp(origin, self.tz)
+        today = start.date()
         for item in out["action_items"]:
             day = resolve_due(item["due"], today) or (
                 None if item["due"] else resolve_due(item["text"], today))
             if day is not None:
                 item["due_date"] = day.isoformat()
+            said = item.pop("time", None)
+            if said:
+                hhmm, unclear = resolve_time(said)
+                unclear = unclear or hhmm is None  # a time was said but can't be read
+            else:
+                hhmm, unclear = resolve_time(item["due"])
+                if hhmm is None and not unclear:
+                    hhmm, unclear = resolve_time(item["text"])
+            item["due_time"], item["time_unclear"] = hhmm, unclear
+            if hhmm and not item["due_date"]:
+                at = datetime.strptime(hhmm, "%H:%M").time()
+                item["due_date"] = (today if at >= start.time().replace(second=0, microsecond=0)
+                                    else today + timedelta(days=1)).isoformat()
 
     def link_facts(self, date: str, new: list[dict[str, Any]],
                    known: list[dict[str, Any]]) -> list[FactLink]:
@@ -473,12 +518,32 @@ def to_storage(s: ConversationSummary, origin: float) -> dict[str, Any]:
         "key_points": [k.strip() for k in s.key_points if k.strip()],
         "topics": _dedupe(s.topics),
         "people": [p for p in _dedupe(s.people) if not _PLACEHOLDER.match(p)],
-        "action_items": [{"text": a.text, "owner": a.owner, "due": a.due,
-                          "due_date": _iso_date(a.due_date), "source_at": at(a.at_seconds)}
-                         for a in s.action_items],
+        "action_items": [_item_storage(a, at(a.at_seconds)) for a in s.action_items],
         "facts": [{"subject": f.subject, "fact": f.fact, "source_at": at(f.at_seconds)}
                   for f in s.facts],
     }
+
+
+_REPEATING = re.compile(r"\b(every|each)\s+(day|week|month|year|morning|evening|night|"
+                        r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\b|"
+                        r"\b(daily|weekly|monthly|fortnightly)\b", re.IGNORECASE)
+_REPEAT_PREFIX = "Set up a repeating event: "
+
+
+def _item_storage(a: ActionItem, source_at: float | None) -> dict[str, Any]:
+    """One action item for storage; ``time`` (as said) is resolved later and dropped."""
+    kind, text = a.kind, a.text.strip()
+    # a repeating event can't be filed as one calendar event: a task to set it up
+    if kind == "event" and _REPEATING.search(f"{text} {a.due or ''} {a.time or ''}"):
+        kind = "task"
+        if not text.lower().startswith(_REPEAT_PREFIX.lower()):
+            text = _REPEAT_PREFIX + text[:1].lower() + text[1:]
+    duration = a.duration_minutes if a.duration_minutes and 0 < a.duration_minutes <= 1440 \
+        else None
+    return {"text": text, "kind": kind, "owner": a.owner, "due": a.due,
+            "due_date": _iso_date(a.due_date), "time": a.time,
+            "duration_minutes": duration if kind == "event" else None,
+            "location": (a.location or "").strip() or None, "source_at": source_at}
 
 
 def _dedupe(items: list[str]) -> list[str]:

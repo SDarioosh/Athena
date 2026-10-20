@@ -970,14 +970,19 @@ def main() -> None:
     r.add_argument("--level", type=float, default=None,
                    help="headset/array: one fixed gain so all speech sits at this dBFS "
                         "(a device's fixed gain; e.g. -34 = others at ~1 m on the T-Watch)")
-    r.add_argument("--opus-kbps", type=float, default=0.0,
+    r.add_argument("--opus-kbps", "--opus", type=float, default=0.0, dest="opus_kbps",
                    help="round-trip the stream through libopus at this bitrate, like the "
                         "firmware (0 = off)")
+    r.add_argument("--mic", choices=("Mix-Headset", "Array1-01"),
+                   help="older spelling of --audio: Mix-Headset = headset, "
+                        "Array1-01 = array")
     r.add_argument("--set", nargs="*", default=[], metavar="FIELD=VALUE",
                    help="extra Settings overrides, e.g. speaker_cluster_threshold=0.5")
     c = sub.add_parser("compare")
     c.add_argument("labels", nargs="+")
     args = ap.parse_args()
+    if getattr(args, "mic", None):
+        args.audio = "array" if args.mic == "Array1-01" else "headset"
 
     if args.cmd == "fetch":
         fetch(args.meetings, args.audio)

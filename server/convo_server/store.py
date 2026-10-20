@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import date
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -202,6 +203,43 @@ class Segment:
     conversation_id: str | None = None
 
 
+ITEM_STATUSES = ("open", "done", "dismissed")
+ITEM_KINDS = ("task", "event", "reminder")
+UNSET: Any = object()  # "not given" for optional updates (None means "clear")
+
+
+def _valid_date(value: str) -> bool:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value or ""):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def normalize_hhmm(value: str) -> str | None:
+    """'9:05' / '09:05' / '17:30' -> zero-padded 'HH:MM' (24 h), else None."""
+    m = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", (value or "").strip())
+    return f"{int(m.group(1)):02d}:{m.group(2)}" if m else None
+
+
+@contextmanager
+def _init_lock(db_path: str) -> Iterator[None]:
+    """Exclusive file lock next to the database while its schema is set up."""
+    if db_path == ":memory:":
+        yield
+        return
+    import fcntl
+
+    with open(db_path + ".init-lock", "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def _row(r: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(r) if r is not None else None
 
@@ -214,7 +252,13 @@ class Store:
         self._conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
-        self._conn.executescript(SCHEMA)
+        # The API server and the MCP server open the same database at the same time
+        # (deploy starts both): set up and migrate one process at a time.
+        with _init_lock(self.path):
+            self._conn.executescript(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
         if self._conn.execute("PRAGMA user_version").fetchone()[0] < 2:
             # databases created before the line-level index existed
             self._conn.execute("INSERT INTO segments_fts(segments_fts) VALUES ('rebuild')")
@@ -238,6 +282,20 @@ class Store:
             # voice notes: a session is a conversation recording or a voice note
             self._add_column("sessions", "kind", f"TEXT NOT NULL DEFAULT '{CONVERSATION}'")
             self._conn.execute("PRAGMA user_version = 5")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 6:
+            # action items for the calendar: kind, time of day (HH:MM local), length,
+            # place, when the row was first stored, and whether the user changed them
+            self._add_column("action_items", "kind", "TEXT NOT NULL DEFAULT 'task'")
+            self._add_column("action_items", "due_time", "TEXT")
+            self._add_column("action_items", "duration_minutes", "INTEGER")
+            self._add_column("action_items", "location", "TEXT")
+            self._add_column("action_items", "time_unclear", "INTEGER NOT NULL DEFAULT 0")
+            self._add_column("action_items", "created_at", "REAL")
+            self._add_column("action_items", "edited", "INTEGER NOT NULL DEFAULT 0")
+            self._conn.execute(
+                "UPDATE action_items SET created_at = (SELECT started_at FROM conversations"
+                " WHERE id = action_items.conversation_id) WHERE created_at IS NULL")
+            self._conn.execute("PRAGMA user_version = 6")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -495,12 +553,22 @@ class Store:
                  summary.get("kind"), time.time(), conv_id))
             before = _knowledge(c, conv_id)
             self._clear_knowledge(c, conv_id)
+            now = time.time()
             for item in summary["action_items"]:
+                row = {"id": None, "status": "open", "created_at": now,
+                       "kind": item.get("kind") or "task", "due_date": item.get("due_date"),
+                       "due_time": item.get("due_time"),
+                       "time_unclear": int(bool(item.get("time_unclear"))), "edited": 0}
+                row.update(_same_item(before["items"], item))
                 cur = c.execute(
-                    "INSERT INTO action_items (conversation_id, text, owner, due, due_date,"
-                    " source_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    (conv_id, item["text"], item.get("owner"), item.get("due"),
-                     item.get("due_date"), item.get("source_at")))
+                    "INSERT INTO action_items (id, conversation_id, text, owner, due, due_date,"
+                    " source_at, status, kind, due_time, duration_minutes, location,"
+                    " time_unclear, created_at, edited)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (row["id"], conv_id, item["text"], item.get("owner"), item.get("due"),
+                     row["due_date"], item.get("source_at"), row["status"], row["kind"],
+                     row["due_time"], item.get("duration_minutes"), item.get("location"),
+                     row["time_unclear"], row["created_at"], row["edited"]))
                 c.execute("INSERT INTO search_fts VALUES ('action_item', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id, item["text"]))
             for fact in summary["facts"]:
@@ -875,10 +943,52 @@ class Store:
             params = (status,)
         return self._q(sql + " ORDER BY c.started_at DESC, a.id", params)
 
+    def get_action_item(self, item_id: int) -> dict[str, Any] | None:
+        return self._one(
+            "SELECT a.*, c.title AS conversation_title, c.started_at AS conversation_at,"
+            " c.kind AS conversation_kind FROM action_items a"
+            " JOIN conversations c ON c.id = a.conversation_id WHERE a.id = ?", (item_id,))
+
     def set_action_item_status(self, item_id: int, status: str) -> bool:
         with self.tx() as c:
             return c.execute("UPDATE action_items SET status = ? WHERE id = ?",
                              (status, item_id)).rowcount > 0
+
+    def update_action_item(self, item_id: int, *, status: str | None = None,
+                           kind: str | None = None, due_date: str | None = UNSET,
+                           due_time: str | None = UNSET) -> dict[str, Any] | None:
+        """Change an item's status, kind, due date or time of day (``None`` clears a
+        date or time, ``UNSET`` leaves it). Raises ``ValueError`` for bad values; returns
+        the updated item, or None if there is none with that id. A changed kind, date or
+        time survives re-summaries; setting the time also clears ``time_unclear``."""
+        sets: dict[str, Any] = {}
+        if status is not None:
+            if status not in ITEM_STATUSES:
+                raise ValueError("status must be open, done or dismissed")
+            sets["status"] = status
+        if kind is not None:
+            if kind not in ITEM_KINDS:
+                raise ValueError("kind must be task, event or reminder")
+            sets["kind"] = kind
+        if due_date is not UNSET:
+            if due_date is not None and not _valid_date(due_date):
+                raise ValueError("due_date must be YYYY-MM-DD (or 'none' to clear it)")
+            sets["due_date"] = due_date
+        if due_time is not UNSET:
+            if due_time is not None:
+                due_time = normalize_hhmm(due_time)
+                if due_time is None:
+                    raise ValueError("due_time must be HH:MM, 24 h (or 'none' to clear it)")
+            sets["due_time"] = due_time
+            sets["time_unclear"] = 0
+        if not sets:
+            raise ValueError("nothing to change: give status, kind, due_date or due_time")
+        if sets.keys() - {"status"}:
+            sets["edited"] = 1
+        with self.tx() as c:
+            n = c.execute(f"UPDATE action_items SET {', '.join(f'{k} = ?' for k in sets)}"
+                          " WHERE id = ?", (*sets.values(), item_id)).rowcount
+        return self.get_action_item(item_id) if n else None
 
     # ------------------------------------------------------------------ search
     def fts_search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
@@ -1075,6 +1185,26 @@ def _same(text_a: str | None, at_a: float | None, text_b: str | None,
             and SequenceMatcher(None, a, b).ratio() >= _ALIKE)
 
 
+def _same_item(before: list[dict[str, Any]], item: dict[str, Any]) -> dict[str, Any]:
+    """What a re-summarized action item keeps from the matching old one (and takes it
+    out of ``before``): its id (the hub files items by id), status, when it was first
+    stored, and the kind, date and time if the user changed them."""
+    # closed or edited ones first: they are what the user would lose
+    old = next((o for o in sorted(before, key=lambda o: (o["status"] == "open",
+                                                         not o["edited"], o["id"]))
+                if _same(item["text"], item.get("source_at"), o["text"], o["source_at"])),
+               None)
+    if old is None:
+        return {}
+    before.remove(old)
+    keep = {"id": old["id"], "status": old["status"],
+            "created_at": old["created_at"] or time.time()}
+    if old["edited"]:
+        keep.update({k: old[k] for k in ("kind", "due_date", "due_time", "time_unclear",
+                                         "edited")})
+    return keep
+
+
 def _insert_fact(c: sqlite3.Connection, conv_id: str, subject: str | None, fact: str,
                  source_at: float | None) -> int:
     cur = c.execute("INSERT INTO facts (conversation_id, subject, fact, source_at)"
@@ -1098,8 +1228,9 @@ def _knowledge(c: sqlite3.Connection, conv_id: str) -> dict[str, Any]:
             "SELECT id FROM facts WHERE superseded_by = ?", (f["id"],))]
     return {
         "items": [dict(r) for r in c.execute(
-            "SELECT text, source_at, status FROM action_items WHERE conversation_id = ?"
-            " AND status != 'open'", (conv_id,))],
+            "SELECT id, text, source_at, status, created_at, kind, due_date, due_time,"
+            " time_unclear, edited FROM action_items WHERE conversation_id = ? ORDER BY id",
+            (conv_id,))],
         "facts": facts,
         # facts of other conversations that this one said again ("same" links)
         "said_again": [dict(r) for r in c.execute(
@@ -1112,17 +1243,6 @@ def _carry_over(c: sqlite3.Connection, conv_id: str, before: dict[str, Any],
                 fact_ids: list[int]) -> list[int]:
     """Re-apply ``before`` (from ``_knowledge``) to the new items; returns the new fact
     ids that are still unlinked."""
-    items = [dict(r) for r in c.execute(
-        "SELECT id, text, source_at FROM action_items WHERE conversation_id = ?", (conv_id,))]
-    used: set[int] = set()
-    for old in before["items"]:
-        hit = next((i for i in items if i["id"] not in used
-                    and _same(i["text"], i["source_at"], old["text"], old["source_at"])), None)
-        if hit:
-            used.add(hit["id"])
-            c.execute("UPDATE action_items SET status = ? WHERE id = ?",
-                      (old["status"], hit["id"]))
-
     new = {r["id"]: dict(r) for r in c.execute(
         "SELECT id, subject, fact, source_at FROM facts WHERE id IN"
         f" ({','.join('?' * len(fact_ids))})", fact_ids)} if fact_ids else {}

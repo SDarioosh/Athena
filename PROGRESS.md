@@ -27,7 +27,7 @@ _Last updated: 2026-10-20 (round 17: T-Watch Ultra on the owner's watch, bug hun
 | 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | merged (PR #4), **waiting for owner's watch test**; test server is running | `zepp-app/` |
 | 9d | Watch voice profile (guided 60–90 s owner enrollment) | PR open, **needs the real watch** | `zepp-app/page/enroll.js`, `POST /v1/speakers/enroll.json` |
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
-| 9c | Calendar/task integration for action items | later (wanted) | — |
+| 9c | Calendar/task integration for action items | module side built (kinds, times, JSON listing, edits); hub files voice-note items into the Odysseus calendar and to-dos (coordinated hub PR); **needs owner verification on real voice notes** | `server/convo_server/{llm,dates,store,mcp_server}.py` |
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
 | 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **running on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, buttons, haptics and recording work (mic timeout fix; stop early with BOOT+PWR again, `stop` or mute). Mic: raw level was nearly inaudible and muffled; now high-pass + T-Watch EQ (+9 dB 1.6 kHz, -6 dB 3.6 kHz) + 30 dB gain + limiter, speech ~-24 dBFS, owner says it sounds best; `gain`/`eq` on the console. Recordings copy off over USB (`tools/pull.py`). SD_DET confirmed (P12 LOW with card, HIGH without; expander question §2.1 answered); RTC set, files get dated names. Still to check: one recording of fictional speech through `smoke_upload.py` on the server (owner). **Round 12: BLE upload path built, not yet on hardware**: BOOT+PWR records an Opus session (libopus, 16 kbps) as 30 s Ogg/Opus chunks into a queue on the SD card that survives reboots; NimBLE GATT service drains it (protocol `docs/twatch-ble-protocol.md`); `tools/ble_relay.py` is the PC relay; Wi-Fi still not linked. Needs the owner: flash, record, drain with the PC relay and the phone (PR Server verification). Then milestone 2 (power baseline), milestone 3 (gain/EQ/bitrate by transcription) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` §11, `docs/twatch-ble-protocol.md` |
 | 11c | Android relay app (T-Watch → BLE → phone → server) | **built, unit-tested (67 tests), not yet on a phone**: foreground service, scan/bond/drain per the protocol, uploads with the bearer token over LAN/Tailscale, acks only after the server's ok, backoff; settings (URL, token in Keystore) and status screen; no Google services, no analytics. CI builds the APK | `android-relay/` |
@@ -371,6 +371,28 @@ right after its sizes, flags and timings were read; none was uploaded.
 - SD `0x108` errors keep showing up at 4 MHz SPI (round 14: reads after an ACK; now
   writes). Cause unknown; recovery handles it.
 
+## Done on 2026-10-20: voice notes → calendar and to-dos (module side)
+
+- Action items get a `kind` (`task`, `event`, `reminder`), `due_time` (HH:MM in
+  `CONVO_TIMEZONE`), `duration_minutes`, `location`, `time_unclear` and `created_at`
+  (DB migration to `user_version` 6; old rows become tasks, `created_at` = conversation
+  time). Both action prompts explain the three kinds with one example each; times are
+  worked out in code (`resolve_time` in `dates.py`): "12 pm" → 12:00, a bare 5 → 17:00,
+  a bare 9 → 09:00 marked "time unclear". Repeating events become a task "Set up a
+  repeating event: …".
+- MCP (non-breaking, version 0.3.0): `list_action_items(..., format="json")` returns a
+  JSON array for the hub; text lines show "event:"/"reminder:" and the time.
+  `update_action_item(item_id, status, kind, due_date, due_time)`: every field
+  optional. `PATCH /v1/action-items/{id}` takes the same fields.
+- A re-summary keeps item ids (the hub files items by id), creation times and the
+  user's kind/date/time changes.
+- Hub side (filing into the Odysseus calendar and to-dos, push, Undo/Move on
+  `/modules/sound`): coordinated hub PR.
+- **Owner: verify on real voice notes**: record "meeting with Jason on Wednesday at
+  12 pm", "get the proposal done on Wednesday", "remind me at 5 to call Mom" on the
+  watch, then check `list_action_items format=json` shows event / task / reminder with
+  the right date and time (qwen3.5-35b; only fake-LLM tests ran in the sandbox).
+
 ## Done on 2026-10-20: "my latest voice notes" finds voice notes
 
 - Problem (owner): "give me my latest voice notes" returned recent conversations. Voice
@@ -466,6 +488,41 @@ and in the answers (Q2 now leads with the 10% cut, not the old 15%).
   relabelling triggers them.
 - Checked: a failing call in any of the four new LLM calls keeps the conversation
   (`failed`, then retried).
+
+## Done on 2026-10-20: transcription quality (PR #39, combined with #42)
+
+Owner report: transcripts are often off. Branch `claude/wizardly-feynman-i86zg9` (PR #39).
+It was built in parallel with the room-pickup work of PR #42 and now sits on top of it.
+Measured in the cloud sandbox with `server/eval/recognition.py` on public AMI meeting audio
+(large-v3-turbo on CPU, 3 meetings x 300 s); only changes that measured better shipped.
+
+- **Finding**: most errors are missing words, not wrong ones. On far-field audio over half
+  were speech the VAD never sent to whisper (quiet voices); on clean audio they are mostly
+  people talking over each other (whisper writes one voice).
+- **Shipped** (server): speech goes to whisper in clips of up
+  to 28 s instead of one region at a time (`CONVO_WHISPER_WINDOW_SECONDS`, 0 = old way);
+  `suppress_non_speech` on and all decoding settings configurable (`CONVO_WHISPER_BEAM_SIZE`
+  etc.); invented "Thank you."/"Bye." lines whisper was unsure of, subtitle credits and
+  repetition loops are dropped (`CONVO_WHISPER_DROP_HALLUCINATIONS`); one retry when
+  whisper-server drops a kept-alive connection. The VAD gain this round measured
+  (boost toward -20 dBFS) was dropped in favour of #42's `CONVO_VAD_AGC_MAX_GAIN`, which
+  stays **off** until the server eval decides (owner, 2026-10-20): #42 saw it hurt speaker
+  naming at the watch's level.
+- **Shipped** (firmware): T-Watch Opus default 24 kbps instead of 16 (complexity 1 stays).
+  At the watch's level, 16 kbps cost ~7-9 WER points against uncompressed audio; 24 kbps
+  ~1.3. Chunks grow from ~60 to ~90 KB. Not on hardware yet.
+- **Turbo WER, before -> after** (measured with this round's VAD gain on): far-field at T-Watch level, 16 kbps 39.8 -> 38.9 %
+  (34.4 % at 24 kbps); far-field raw level 50.2 -> 40.5 %; headset mix 23.7 -> 23.5 %.
+  About 35 % less whisper time (fewer requests).
+- **Tried, didn't help**: beam search (slower, no better), Silero threshold changes, wider
+  padding, carrying the previous clip's text into the prompt (worse), a descriptive
+  vocabulary prompt (+5.7 points; keep `CONVO_WHISPER_PROMPT` a short word list), denoising
+  (much worse), high-pass/dynamic normalization, boosting the clip sent to whisper (helps
+  small.en only), large-v3-q5_0 (no better than turbo, slower).
+- **Model**: large-v3-turbo-q5_0 scored the same as turbo f16 with ~0.8 GB instead of
+  ~1.9 GB; the recommended model next to the 9B LLM.
+- **Known**: whisper sometimes repeats a sentence a few seconds later inside a 28 s clip;
+  a filter for that removed more real speech than invented text, so none was added.
 
 ## Done in round 15: new T-Watch Ultra buttons and voice notes
 
@@ -767,6 +824,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 ## Next
 
+- **Owner: transcription quality** (PRs #39 and #42, Server verification): the AMI eval on
+  the GPU before/after, switch whisper to large-v3-turbo-q5_0, then the 24 kbps firmware on
+  the watch (encode time per frame, drain time, a fictional-speech recording).
 0. **Owner: Server verification** of SDarioosh/barvis-sound#31 (recognition eval with
    large-v3-turbo, optional pyannote on the GPU) and SDarioosh/barvis-sound#38 (re-summarize a copy of
    the real DB, bakeoff on the test instance with qwen3.5-35b), then a real-device check:
@@ -826,9 +886,9 @@ Still open:
 - Voice notes: is ending the conversation session and resuming it after a note right, or
   should a note be refused while a conversation records? Should notes get their own place
   in the daily digest?
-- T-Watch upload path: is Opus complexity 1 at 16 kbps good enough for whisper on your
-  recordings (milestone 3 decides; 12/16/24 kbps comparison)? (Pairing: answered, a
-  6-digit passkey on the watch screen.)
+- T-Watch upload path: 16 kbps was not good enough in the eval (round 16); 24 kbps is
+  the new default. Confirm on your recordings that it beats 16 kbps and that encode time
+  and drain time are fine. (Pairing: answered, a 6-digit passkey on the watch screen.)
 - T-Watch Ultra: everything under "Needs the real watch" above. Also: does the battery
   take a 4.2 V charge target (set conservatively; LilyGoLib asks the chip for 4.288 V)?
 - T5 PDA: the questions in `docs/t5-pda-plan.md` §11 (firmware layout, feed window,

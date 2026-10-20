@@ -9,8 +9,9 @@ claim so the frontend's model can cite sources.
 from __future__ import annotations
 
 import hmac
+import json
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
@@ -21,7 +22,7 @@ from .diarize import load_voices
 from .links import local_time, transcript_link
 from .search import Embedder, search
 from .speakers import relabel_matches, suggestion
-from .store import CONVERSATION, NOTE, Store
+from .store import CONVERSATION, ITEM_KINDS, NOTE, UNSET, Store
 
 INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
 with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
@@ -78,7 +79,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.2.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.3.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -201,37 +202,86 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         out.append(f"{cite}.")
         return "\n".join(out)
 
+    def item_link(r: dict[str, Any]) -> str:
+        return transcript_link(settings, r["conversation_id"],
+                               (r["source_at"] or r["conversation_at"]) - r["conversation_at"])
+
+    def item_json(r: dict[str, Any]) -> dict[str, Any]:
+        return {"id": r["id"], "status": r["status"], "kind": r.get("kind") or "task",
+                "text": r["text"], "owner": r["owner"], "due": r["due"],
+                "due_date": r["due_date"], "due_time": r.get("due_time"),
+                "duration_minutes": r.get("duration_minutes"), "location": r.get("location"),
+                "time_unclear": bool(r.get("time_unclear")),
+                "conversation_id": r["conversation_id"],
+                "conversation_title": r["conversation_title"],
+                "conversation_kind": r.get("conversation_kind"),
+                "conversation_at": _iso(r["conversation_at"]),
+                "created_at": _iso(r.get("created_at") or r["conversation_at"]),
+                "timezone": settings.timezone, "link": item_link(r)}
+
     @mcp.tool(annotations=ro)
     def list_action_items(status: Annotated[str, Field(description="open, done, dismissed or all")]
                           = "open", person: Person = "", since: Since = "",
-                          until: Until = "") -> str:
-        """Action items from conversations (default: open ones), newest first."""
+                          until: Until = "", format: Annotated[str, Field(  # noqa: A002
+                              description="'text' (default) or 'json' (a JSON array, for "
+                                          "programs)")] = "text") -> str:
+        """Action items from conversations and voice notes (default: open ones), newest
+        first. Each is a task, an event (meeting, appointment) or a reminder, with its due
+        date and time of day if known."""
+        fmt = (format or "text").strip().lower()
+        if fmt not in ("text", "json"):
+            return "format must be text or json"
         a, b = window(since, until)
         rows = store.list_action_items(None if status == "all" else status)
         rows = [r for r in rows
                 if (a is None or r["conversation_at"] >= a)
                 and (b is None or r["conversation_at"] < b)
                 and (not person or person.lower() in (r["owner"] or "").lower())]
+        if fmt == "json":
+            return json.dumps([item_json(r) for r in rows], ensure_ascii=False)
         lines = [header(len(rows), f"{status} action items")]
         for r in rows:
-            lines.append(f"- #{r['id']} [{r['status']}] {r['text']}"
+            lines.append(f"- #{r['id']} [{r['status']}] {_kind_word(r)}{r['text']}"
                          + (f" (owner {r['owner']})" if r["owner"] else "")
                          + _due(r)
                          + f" — from \"{r['conversation_title']}\""
                          + f"{_note(r.get('conversation_kind'))} {when(r['conversation_at'])} "
-                         + transcript_link(settings, r["conversation_id"],
-                                           (r["source_at"] or r["conversation_at"])
-                                           - r["conversation_at"]))
+                         + item_link(r))
         return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=rw)
-    def update_action_item(item_id: int, status: Annotated[
-            str, Field(description="open, done or dismissed")]) -> str:
-        """Mark an action item done/dismissed (or reopen it). Only when the user asks."""
-        if status not in {"open", "done", "dismissed"}:
+    def update_action_item(
+            item_id: int,
+            status: Annotated[str, Field(description="open, done or dismissed; empty = "
+                                                     "unchanged")] = "",
+            kind: Annotated[str, Field(description="task, event or reminder; empty = "
+                                                   "unchanged")] = "",
+            due_date: Annotated[str, Field(description="YYYY-MM-DD, 'none' to clear; empty "
+                                                       "= unchanged")] = "",
+            due_time: Annotated[str, Field(description="HH:MM (24 h, local), 'none' to "
+                                                       "clear; empty = unchanged")] = "") -> str:
+        """Change an action item: mark it done/dismissed (or reopen it), or change its kind,
+        due date or time of day. Only when the user asks."""
+        def opt(value: str) -> Any:
+            v = (value or "").strip()
+            return UNSET if not v else None if v.lower() == "none" else v
+
+        st, kd = (status or "").strip().lower(), (kind or "").strip().lower()
+        kd = "task" if kd in ("todo", "to-do") else kd
+        if st and st not in {"open", "done", "dismissed"}:
             return "status must be open, done or dismissed"
-        ok = store.set_action_item_status(item_id, status)
-        return f"Action item #{item_id} is now {status}." if ok else f"No action item #{item_id}."
+        if kd and kd not in ITEM_KINDS:
+            return "kind must be task, event or reminder"
+        try:
+            item = store.update_action_item(item_id, status=st or None, kind=kd or None,
+                                            due_date=opt(due_date), due_time=opt(due_time))
+        except ValueError as e:  # returned, not raised: the model sees the message
+            return str(e)
+        if item is None:
+            return f"No action item #{item_id}."
+        when_due = " ".join(x for x in (item["due_date"], item.get("due_time")) if x)
+        return (f"Action item #{item_id} is now {item['status']}, {item['kind']}, "
+                + (f"due {when_due}." if when_due else "no due date."))
 
     @mcp.tool(annotations=ro)
     def list_facts(subject: Annotated[str, Field(description="Person/thing the fact is about")]
@@ -428,9 +478,23 @@ def _note(kind: str | None) -> str:
 
 
 def _due(a: dict[str, Any]) -> str:
-    if a.get("due_date"):
-        return f" due {a['due_date']}" + (f" ({a['due']})" if a.get("due") else "")
-    return f" due {a['due']}" if a.get("due") else ""
+    """" due 2026-10-21 12:00 (Wednesday at 12 pm)", plus " [time unclear]" when set."""
+    when_due = " ".join(x for x in (a.get("due_date"), a.get("due_time")) if x)
+    if when_due:
+        out = f" due {when_due}" + (f" ({a['due']})" if a.get("due") else "")
+    else:
+        out = f" due {a['due']}" if a.get("due") else ""
+    return out + (" [time unclear]" if a.get("time_unclear") else "")
+
+
+def _kind_word(a: dict[str, Any]) -> str:
+    """"event: " / "reminder: " before the text; nothing for a task."""
+    kind = a.get("kind") or "task"
+    return "" if kind == "task" else f"{kind}: "
+
+
+def _iso(ts: float | None) -> str | None:
+    return datetime.fromtimestamp(ts, UTC).isoformat() if ts is not None else None
 
 
 def _src(item: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:
@@ -439,7 +503,8 @@ def _src(item: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:
 
 
 def _item(a: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:
-    return (f"Action #{a['id']} [{a['status']}]: {a['text']}"
+    kind = _kind_word(a)
+    return (f"Action #{a['id']} [{a['status']}]{' ' + kind if kind else ': '}{a['text']}"
             + (f" (owner {a['owner']})" if a.get("owner") else "")
             + _due(a) + " " + _src(a, settings, conv))
 

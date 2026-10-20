@@ -14,12 +14,25 @@ from .pipeline import Pipeline
 from .search import OpenAIEmbedder
 from .store import Store
 from .transcribe import (
+    DecodeOptions,
+    HallucinationFilter,
     ParakeetTranscriber,
     Transcriber,
     WhisperCliTranscriber,
     WhisperServerTranscriber,
 )
 from .vad import make_vad
+
+
+def decode_options(settings: Settings) -> DecodeOptions:
+    return DecodeOptions(temperature_inc=settings.whisper_temperature_inc,
+                         beam_size=settings.whisper_beam_size,
+                         best_of=settings.whisper_best_of,
+                         no_speech_thold=settings.whisper_no_speech_thold,
+                         logprob_thold=settings.whisper_logprob_thold,
+                         entropy_thold=settings.whisper_entropy_thold,
+                         suppress_non_speech=settings.whisper_suppress_non_speech,
+                         carry_initial_prompt=settings.whisper_carry_initial_prompt)
 
 
 def build_transcriber(settings: Settings) -> Transcriber | None:
@@ -31,14 +44,20 @@ def build_transcriber(settings: Settings) -> Transcriber | None:
     if settings.transcriber != "whisper":
         raise RuntimeError(f"unknown CONVO_TRANSCRIBER {settings.transcriber!r} "
                            "(whisper or parakeet)")
+    t: WhisperServerTranscriber | WhisperCliTranscriber
     if settings.whisper_server_url:
-        return WhisperServerTranscriber(settings.whisper_server_url, settings.language,
-                                        temperature_inc=settings.whisper_temperature_inc)
-    if settings.whisper_cli and settings.whisper_model:
-        return WhisperCliTranscriber(settings.whisper_cli, settings.whisper_model,
-                                     settings.language,
-                                     temperature_inc=settings.whisper_temperature_inc)
-    return None
+        t = WhisperServerTranscriber(settings.whisper_server_url, settings.language,
+                                     decode=decode_options(settings))
+    elif settings.whisper_cli and settings.whisper_model:
+        t = WhisperCliTranscriber(settings.whisper_cli, settings.whisper_model,
+                                  settings.language, decode=decode_options(settings))
+    else:
+        return None
+    t.hallucinations = HallucinationFilter(
+        phrase_logprob=settings.whisper_drop_phrase_logprob,
+        max_repeats=settings.whisper_max_repeats,
+    ) if settings.whisper_drop_hallucinations else None
+    return t
 
 
 def build_diarizer(settings: Settings, store: Store) -> Diarizer | None:

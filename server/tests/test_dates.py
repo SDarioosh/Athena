@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from convo_server.dates import resolve_due
+from convo_server.dates import resolve_due, resolve_time
 
 TUE = date(2026, 9, 15)  # a Tuesday
 
@@ -51,3 +51,44 @@ def test_code_date_wins_over_the_model(pipeline):
     conv = pipeline.store.get_conversation(record(pipeline))
     assert [a["due_date"] for a in conv["action_items"]] == [
         "2025-10-10", "2025-10-13", "2025-10-09"]
+
+
+@pytest.mark.parametrize(("phrase", "want"), [
+    ("12 pm", ("12:00", False)),
+    ("noon", ("12:00", False)),
+    ("Wednesday at 12 pm", ("12:00", False)),
+    ("3:30 pm", ("15:30", False)),
+    ("3:30 P.M.", ("15:30", False)),
+    ("6 p.m.", ("18:00", False)),
+    ("3pm for an hour at Main Street", ("15:00", False)),
+    ("half past two", ("14:30", False)),
+    ("quarter past ten in the morning", ("10:15", False)),
+    ("quarter to four", ("15:45", False)),
+    ("five thirty pm", ("17:30", False)),
+    ("midnight", ("00:00", False)),
+    ("17:00", ("17:00", False)),
+    ("07:30", ("07:30", False)),
+    ("12", ("12:00", False)),             # bare hours: 12 is noon,
+    ("5", ("17:00", False)),              # 1-6 the afternoon,
+    ("remind me at 5 to call Mom", ("17:00", False)),
+    ("by 2", ("14:00", False)),
+    ("9", ("09:00", True)),               # 7-11 the morning, but maybe the evening
+    ("at 10 o'clock", ("10:00", True)),
+    ("9:15", ("09:15", True)),
+    ("at 9 in the morning", ("09:00", False)),
+    ("at 8 tonight", ("20:00", False)),
+    ("7 in the evening", ("19:00", False)),
+    ("11 at night", ("23:00", False)),
+    ("13 pm", (None, True)),              # said, but can't be
+    ("25:00", (None, True)),
+    ("Wednesday", (None, False)),         # no time at all
+    ("this afternoon", (None, False)),
+    ("at 2 people", (None, False)),
+    ("at one point", (None, False)),
+    ("2026-10-21", (None, False)),
+    ("costs 3.30", (None, False)),
+    ("", (None, False)),
+    (None, (None, False)),
+])
+def test_resolve_time(phrase, want):
+    assert resolve_time(phrase) == want

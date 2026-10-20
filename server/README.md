@@ -77,6 +77,26 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   a 12-word vocabulary list in `CONVO_WHISPER_PROMPT` broke whisper's timestamps (lines
   stretched over 30 s: false alarm 8% → 58%, wrong names 2% → 6%). Leave it empty
   unless the eval shows it helps with your vocabulary.
+  In the transcription-quality eval a 26-name list was neutral, but a descriptive
+  vocabulary sentence raised WER by 5.7 points and a punctuation-style sentence by 1.6
+  (whisper skipped speech after them): keep it to a short list of words.
+- Text whisper invents is dropped: on a short clip of noise (a cough, a rustle the VAD
+  took for speech) large-v3-turbo often answers "Thank you.". A segment that is only such
+  a stock phrase is dropped when whisper was unsure of it (mean token log-probability
+  below `CONVO_WHISPER_DROP_PHRASE_LOGPROB`, -0.7), so a real "thank you" stays. Subtitle
+  credits and lines with no words go too, and repetition loops are cut to
+  `CONVO_WHISPER_MAX_REPEATS` (4). `CONVO_WHISPER_DROP_HALLUCINATIONS=false` turns it off.
+- Speech goes to whisper in clips of up to `CONVO_WHISPER_WINDOW_SECONDS` (28): the VAD
+  regions of a run, padded by `CONVO_WHISPER_PAD_SECONDS` (0.25), are packed in order
+  and the silence between them is shortened to `CONVO_WHISPER_WINDOW_GAP_SECONDS` (1.0).
+  Timestamps are mapped back to the recording; a whisper segment that spans a cut is
+  split by its token times. `CONVO_WHISPER_WINDOW_SECONDS=0` sends every region alone
+  (the behaviour before). `CONVO_WHISPER_CONTEXT_WORDS` (0 = off) adds the end of the
+  previous clip's text to the prompt; it made the eval worse.
+- Decoding settings go with every whisper request (whisper-server form fields, the same
+  flags for whisper-cli): `CONVO_WHISPER_BEAM_SIZE`, `_BEST_OF`, `_SUPPRESS_NON_SPEECH`,
+  `_NO_SPEECH_THOLD`, `_LOGPROB_THOLD`, `_ENTROPY_THOLD`, `_CARRY_INITIAL_PROMPT`,
+  `_TEMPERATURE_INC`. They override whatever whisper-server was started with.
 
 ## Deploy: one command, runs in the background
 
@@ -163,10 +183,25 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
 
+VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD`, `CONVO_VAD_MIN_SILENCE_MS` and
+`CONVO_VAD_SPEECH_PAD_MS` tune it. A far-field or wrist recording can be 20-30 dB quieter
+than a close mic, and Silero then misses some of its speech, so whisper never gets it.
+`CONVO_VAD_AGC_MAX_GAIN` (1 = off, the default) lets Silero score a copy of each chunk
+gained toward a `CONVO_VAD_AGC_TARGET` (0.8) peak, at most that many times; the stored
+audio is unchanged. `CONVO_ASR_AGC_MAX_GAIN` (1 = off) does the same for each clip sent to
+the transcriber, only when the clip is quiet; the diarizer always gets the ungained audio.
+Both are off until the server eval decides (`docs/omi-audio-quality.md` §7: it helped on
+very quiet input, but hurt speaker naming at the watch's level).
+
+`CONVO_TRANSCRIBER=parakeet` swaps whisper for NVIDIA Parakeet TDT 0.6B v3 (int8, via
+sherpa-onnx on CPU, extra `parakeet`, `CONVO_PARAKEET_MODEL_DIR`); see `.env.example`.
+whisper stays the default.
+
 Read API: `/v1/conversations`, `/v1/conversations/{id}`, `/v1/conversations/{id}/transcript`
 (`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items`, `/v1/digests/{date}`,
-`/v1/sessions`, `/v1/speakers`. Conversations carry a signed `link`, and action items and
-facts a `source_url`, of the form `<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`: an HTML
+`/v1/sessions`, `/v1/speakers`; `PATCH /v1/action-items/{id}` takes any of `status`,
+`kind`, `due_date`, `due_time` (`null` clears a date or time). Conversations carry a
+signed `link`, and action items and facts a `source_url`, of the form `<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`: an HTML
 transcript page that opens in a phone browser without the bearer token and jumps to that
 moment. Rotating `CONVO_INGEST_TOKEN` revokes all links.
 
@@ -180,7 +215,8 @@ source of truth, so the frontend can be swapped. Tools:
 | `search_transcripts(speaker, query, since, until)` | "what did X say (about Y) on/since DATE": actual lines, with links |
 | `search_conversations(query, person, since, until)` | conversations by topic / person / date |
 | `get_conversation(id)`, `get_transcript(id, start_seconds, end_seconds)` | details |
-| `list_action_items(status, person, since, until)`, `update_action_item(id, status)` | to-dos |
+| `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs (the hub files voice-note items into its calendar and to-dos from it) |
+| `update_action_item(item_id, status, kind, due_date, due_time)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears) or time (`HH:MM`, `none` clears); every argument but `item_id` is optional |
 | `list_facts(subject, query)`, `get_daily_digest(date)`, `list_people()` | memory |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
 | `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists) |
@@ -240,6 +276,16 @@ small local model does better on narrow questions):
    thirty-first", "tomorrow") the date is worked out in code (`convo_server/dates.py`)
    from the conversation date in `CONVO_TIMEZONE` ("by Friday" said on Wednesday
    2026-10-14 → 2026-10-16); the model's date is used only for vaguer deadlines.
+   Each item has a `kind`: `event` (meeting, appointment, call: "meeting with Jason on
+   Wednesday at 12 pm"), `reminder` ("remind me at 5 to call Mom") or `task` ("get the
+   proposal done on Wednesday"), plus `duration_minutes` and `location` for events if
+   said. Something repeating ("every Monday") becomes a task "Set up a repeating event:
+   …". The model returns the time as said; `resolve_time` in `dates.py` turns it into
+   `due_time` (HH:MM, `CONVO_TIMEZONE`): "12 pm"/"noon" → 12:00, "3:30 pm" → 15:30, "half
+   past two" → 14:30, "midnight" → 00:00; a bare hour 12 → 12:00, 1–6 → afternoon, 7–11 →
+   morning with `time_unclear` set (it could be the evening); "in the evening",
+   "tonight" decide. A time that can't be read leaves `due_time` empty with
+   `time_unclear`. A time without a date is today (tomorrow if it had already passed).
 4. **Facts**, then a **linking** call against related known facts (same subject or
    matching words): a repeat becomes another source of the known fact; a changed value
    replaces the older one (by conversation time, so re-summarizing an old conversation
@@ -248,7 +294,9 @@ small local model does better on narrow questions):
    with "said again" and "replaces:" lines that link every source transcript.
 
 A re-summary (e.g. after a speaker is renamed) keeps what was known about the old items:
-the status of action items, the other sources of a fact and which facts it replaced.
+the id, status and creation time of action items (and the kind, date and time if the user
+changed them with `update_action_item`), the other sources of a fact and which facts it
+replaced. Stable ids matter: Odysseus files voice-note items by id.
 
 ## Recognition eval
 
@@ -262,6 +310,32 @@ CONVO_WHISPER_SERVER_URL=http://127.0.0.1:8178 .venv/bin/python eval/recognition
     --label server-ecapa --enroll 2
 .venv/bin/python eval/recognition.py compare server-ecapa server-pyannote
 ```
+
+`--audio array` uses the far-field table mic instead of the headset mix (`--mic
+Array1-01` still works), `--audio sim --distance N` simulates a room with the others N m
+away, `--opus-kbps KBPS` (or `--opus`) round-trips the stream through Opus like the
+recorders, and `--level DBFS` sets the input level before encoding (the T-Watch's 30 dB
+mic gain puts speech near -24 dBFS). `--set field=value` overrides any setting. More in
+the script's docstring and `docs/omi-audio-quality.md` §7.
+
+Measured 2026-10-20 in the cloud sandbox (large-v3-turbo on CPU, `--diarizer none`, 3
+meetings x 300 s, ~2,100 words). "Before" turns the transcription changes of that round
+off. These numbers include a VAD gain that was on by default then; it is now off by
+default (`--set vad_agc_max_gain=4` turns the current one on), so the "after" column needs
+a rerun on the server:
+`--set whisper_window_seconds=0 whisper_drop_hallucinations=false
+whisper_suppress_non_speech=false`.
+
+| condition | before | after |
+|---|---|---|
+| far-field, T-Watch level (`--mic Array1-01 --level -24 --opus 16`) | 39.8 % | 38.9 % |
+| the same at 24 kbps (`--opus 24`, the new firmware default) | | 34.4 % |
+| far-field, raw level (`--mic Array1-01 --opus 16`) | 50.2 % | 40.5 % |
+| headset mix, WAV | 23.7 % | 23.5 % |
+
+Most remaining errors are deletions where people talk over each other: whisper writes one
+voice. large-v3-turbo-q5_0 scored the same as large-v3-turbo (f16) with less than half
+the memory; large-v3-q5_0 was no better.
 
 ## Checks
 
