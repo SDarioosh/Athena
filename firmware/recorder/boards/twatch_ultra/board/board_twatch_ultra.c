@@ -15,6 +15,7 @@
 #include "drv2605.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -35,6 +36,11 @@ static bool s_have_pmu, s_have_expander, s_have_rtc, s_have_haptic;
 
 #define BUTTON_POLL_MS 10
 #define PWR_LONG_PRESS_MS 1000 /* PKEY_LONG IRQ time (AXP2101 reg 0x27 bits[5:4]) */
+/* A PWR short press within this time of the previous one is ignored. On the owner's watch a
+ * press that started a session was followed 0.5-1 s later by one or two more short presses
+ * with real key edges (the start buzz shaking the key under the finger); console starts never
+ * did it. Every short press, ignored or not, restarts the window. */
+#define PWR_SHORT_GUARD_MS 1500
 
 /* AXP2101 fuel-gauge battery model for the T-Watch Ultra's 1100 mAh cell.
  * Copied from LilyGoLib src/LilyGoWatchUltra.cpp (BATTER_PARAMS), MIT License,
@@ -293,7 +299,15 @@ static void handle_pmu_irq(void)
         return;
     }
     if (st & AXP_IRQ_PKEY_SHORT) {
-        emit(BOARD_BUTTON_PWR, BOARD_PRESS_SHORT);
+        static int64_t last_ms = INT64_MIN / 2;
+        const int64_t now_ms = esp_timer_get_time() / 1000;
+        if (now_ms - last_ms < PWR_SHORT_GUARD_MS) {
+            ESP_LOGI(TAG, "button PWR short ignored: %d ms after the previous one",
+                     (int)(now_ms - last_ms));
+        } else {
+            emit(BOARD_BUTTON_PWR, BOARD_PRESS_SHORT);
+        }
+        last_ms = now_ms;
     }
     if (st & AXP_IRQ_PKEY_LONG) {
         emit(BOARD_BUTTON_PWR, BOARD_PRESS_LONG);

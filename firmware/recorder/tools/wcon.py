@@ -18,6 +18,7 @@ Needs pyserial (it comes with ESP-IDF's Python environment).
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 
@@ -130,11 +131,31 @@ def main(argv: list[str] | None = None) -> int:
 
     s = open_port(a.port)
     if a.listen is not None:
+        # Follows the watch through a reset or power-off: when the port goes away, wait for
+        # it to come back and go on, so the next boot log is kept.
         end = time.monotonic() + a.listen
         while time.monotonic() < end:
-            chunk = s.read(4096)
+            try:
+                chunk = s.read(4096)
+            except OSError:
+                chunk, gone = b"", True
+            else:
+                gone = not chunk and not os.path.exists(a.port)
             if chunk:
                 write_out(chunk)
+            if gone:
+                write_out(b"\n[wcon: port gone, waiting for it]\n")
+                try:
+                    s.close()
+                except OSError:
+                    pass
+                while time.monotonic() < end:
+                    try:
+                        s = open_port(a.port, wait=1.0)
+                        break
+                    except OSError:
+                        pass
+                write_out(b"[wcon: port back]\n")
         s.close()
         return 0
 
