@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # Unpacked sherpa-onnx export, e.g. .../sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
     parakeet_model_dir: Path | None = None
     parakeet_threads: int = 4
+    # Re-decode stretches of speech ≥ 1 s inside a chunk where Parakeet emitted no
+    # tokens, and merge the words in. Off until measured on eval/recognition.py.
+    parakeet_redecode_holes: bool = False
 
     # whisper.cpp: either a running `whisper-server` URL or a `whisper-cli` binary + model.
     whisper_server_url: str | None = None  # e.g. http://127.0.0.1:8178

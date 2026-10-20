@@ -680,6 +680,7 @@ class CachedTranscriber:
                                settings.whisper_model, settings.language,
                                getattr(settings, "transcriber", "whisper"),
                                str(getattr(settings, "parakeet_model_dir", None)),
+                               getattr(settings, "parakeet_redecode_holes", False),
                                getattr(inner, "temperature_inc", None)])
         self.dir = DATA.parent / "cache"
         self.dir.mkdir(parents=True, exist_ok=True)

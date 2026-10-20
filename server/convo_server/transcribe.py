@@ -142,15 +142,25 @@ class ParakeetTranscriber:
     token timestamps, split at sentence punctuation or a pause > ``gap_seconds``, like
     whisper's segments.
 
+    ``redecode_holes``: TDT sometimes stops emitting tokens for a stretch of real speech
+    inside a chunk, then resumes. After decoding a chunk, every gap between tokens (or
+    before the first / after the last) ≥ ``hole_seconds`` that holds ≥ ``hole_seconds``
+    of speech energy (20 ms frames ≥ 10 dB above the chunk's 10th-percentile frame) is
+    decoded again on its own (± 0.25 s), and the words that start inside the gap are
+    merged in. One pass, no recursion.
+
     ``prompt`` is ignored: Parakeet has no prompt or vocabulary biasing. The language
     is detected by the model (25 European languages), so ``CONVO_LANGUAGE`` is not used.
     """
 
     def __init__(self, model_dir: str | Path, threads: int = 4, *,
                  max_chunk_seconds: float = 30.0, gap_seconds: float = 0.8,
+                 redecode_holes: bool = False, hole_seconds: float = 1.0,
                  recognizer: Any = None) -> None:
         self.max_chunk_seconds = max_chunk_seconds
         self.gap_seconds = gap_seconds
+        self.redecode_holes = redecode_holes
+        self.hole_seconds = hole_seconds
         self._rec = recognizer if recognizer is not None else _load_parakeet(
             Path(model_dir), threads)
 
@@ -161,11 +171,105 @@ class ParakeetTranscriber:
             clip = audio[a:b]
             if clip.size < _SAMPLE_RATE // 10:  # < 100 ms: nothing to recognize
                 continue
-            stream = self._rec.create_stream()
-            stream.accept_waveform(_SAMPLE_RATE, clip)
-            self._rec.decode_stream(stream)
-            pieces += tokens_to_pieces(stream.result, a / _SAMPLE_RATE, self.gap_seconds)
+            res = self._decode(clip)
+            if self.redecode_holes:
+                res = self._fill_holes(clip, res)
+            pieces += tokens_to_pieces(res, a / _SAMPLE_RATE, self.gap_seconds)
         return _clean(pieces)
+
+    def _decode(self, clip: np.ndarray) -> Any:
+        stream = self._rec.create_stream()
+        stream.accept_waveform(_SAMPLE_RATE, clip)
+        self._rec.decode_stream(stream)
+        return stream.result
+
+    def _fill_holes(self, clip: np.ndarray, res: Any) -> Any:
+        """Re-decode speech holes in one chunk's result and merge their words in."""
+        timed = _token_times(res)
+        if timed is None or not timed[0]:
+            return res  # no tokens: a re-decode would see the same clip
+        tokens, starts, durs = timed
+        length = clip.size / _SAMPLE_RATE
+        ends = [s + max(d, 0.0) for s, d in zip(starts, durs, strict=True)]
+        bounds = [0.0, *ends]
+        nexts = [*starts, length]
+        speech = _speech_frames(clip)
+        frame_s = _FRAME / _SAMPLE_RATE
+        own = [(s, t, d, False) for s, t, d in zip(starts, tokens, durs, strict=True)]
+        own_words = _words(own)
+        added: list[tuple[float, str, float, bool]] = []
+        for lo, hi in zip(bounds, nexts, strict=True):
+            if hi - lo < self.hole_seconds:
+                continue
+            f0, f1 = int(lo / frame_s), int(np.ceil(hi / frame_s))
+            if speech[f0:f1].sum() * frame_s < self.hole_seconds:
+                continue
+            a = max(0, int((lo - _HOLE_PAD) * _SAMPLE_RATE))
+            b = min(clip.size, int((hi + _HOLE_PAD) * _SAMPLE_RATE))
+            if b - a >= clip.size:
+                continue  # the whole chunk again: same input, same output
+            sub = _token_times(self._decode(clip[a:b]))
+            if sub is None:
+                continue
+            off = a / _SAMPLE_RATE
+            # Edge words of the first decode, to drop if the re-decode repeats them.
+            edge = {_norm(w) for w in own_words
+                    if abs(w[-1][0] + w[-1][2] - lo) < _HOLE_PAD or abs(w[0][0] - hi) < _HOLE_PAD}
+            for word in _words([(s + off, t, d, True) for t, s, d in zip(*sub, strict=True)]):
+                start = word[0][0]
+                if not lo <= start < hi:
+                    continue
+                if _norm(word) in edge and (start - lo < _HOLE_PAD or hi - start < _HOLE_PAD):
+                    continue
+                if not word[0][1].startswith(" "):  # don't glue onto the word before
+                    word[0] = (word[0][0], " " + word[0][1], word[0][2], True)
+                added += word
+        if not added:
+            return res
+        merged = sorted(own + added, key=lambda x: x[0])
+        if merged[0][1].startswith(" ") and merged[0][3]:
+            merged[0] = (merged[0][0], merged[0][1].lstrip(), merged[0][2], True)
+        toks = [m[1] for m in merged]
+        return _Tokens(text="".join(toks).strip(), tokens=toks,
+                       timestamps=[m[0] for m in merged], durations=[m[2] for m in merged])
+
+
+_FRAME = _SAMPLE_RATE // 50  # 20 ms
+_HOLE_PAD = 0.25  # seconds of context on each side of a re-decoded hole
+
+
+@dataclass
+class _Tokens:
+    """A sherpa-onnx-like result after hole re-decoding."""
+
+    text: str
+    tokens: list[str]
+    timestamps: list[float]
+    durations: list[float]
+
+
+def _speech_frames(clip: np.ndarray) -> np.ndarray:
+    """Per 20 ms frame: energy ≥ 10 dB above the clip's 10th-percentile frame."""
+    n = clip.size // _FRAME * _FRAME
+    if n == 0:
+        return np.zeros(0, dtype=bool)
+    db = 10 * np.log10(np.square(clip[:n].reshape(-1, _FRAME)).mean(axis=1) + 1e-12)
+    return db >= np.percentile(db, 10) + 10.0
+
+
+def _words(tokens: list[tuple]) -> list[list[tuple]]:
+    """Group (start, token, ...) tuples into words: a word starts at a leading space."""
+    out: list[list[tuple]] = []
+    for t in tokens:
+        if not out or t[1].startswith(" "):
+            out.append([t])
+        else:
+            out[-1].append(t)
+    return out
+
+
+def _norm(word: list[tuple]) -> str:
+    return re.sub(r"[^\w]", "", "".join(t[1] for t in word).lower())
 
 
 def _load_parakeet(model_dir: Path, threads: int) -> Any:
@@ -219,15 +323,11 @@ def tokens_to_pieces(result: Any, offset: float, gap_seconds: float) -> list[Tra
     with sentence punctuation, or before a word that starts > ``gap_seconds`` after the
     previous token ended.
     """
-    tokens = list(result.tokens)
-    starts = list(result.timestamps)
-    if not tokens or len(starts) != len(tokens):
+    timed = _token_times(result)
+    if not timed or not timed[0]:
         text = (result.text or "").strip()
         return [TranscriptPiece(offset, offset, text)] if text else []
-    durs = list(getattr(result, "durations", None) or [])
-    if len(durs) != len(tokens):  # older sherpa-onnx: estimate from the next token
-        durs = [min(0.08, (starts[i + 1] - starts[i]) if i + 1 < len(tokens) else 0.08)
-                for i in range(len(tokens))]
+    tokens, starts, durs = timed
     pieces: list[TranscriptPiece] = []
     text, p_start, p_end = "", None, 0.0
     for i, tok in enumerate(tokens):
@@ -243,3 +343,16 @@ def tokens_to_pieces(result: Any, offset: float, gap_seconds: float) -> list[Tra
     if text.strip():
         pieces.append(TranscriptPiece(offset + p_start, offset + p_end, text.strip()))
     return pieces
+
+
+def _token_times(result: Any) -> tuple[list[str], list[float], list[float]] | None:
+    """(tokens, starts, durations) of a sherpa-onnx result; None without timestamps."""
+    tokens = list(result.tokens)
+    starts = [float(s) for s in result.timestamps]
+    if len(starts) != len(tokens):
+        return None
+    durs = [float(d) for d in (getattr(result, "durations", None) or [])]
+    if len(durs) != len(tokens):  # older sherpa-onnx: estimate from the next token
+        durs = [min(0.08, (starts[i + 1] - starts[i]) if i + 1 < len(tokens) else 0.08)
+                for i in range(len(tokens))]
+    return tokens, starts, durs

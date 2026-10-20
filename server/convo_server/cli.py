@@ -26,7 +26,8 @@ def build_transcriber(settings: Settings) -> Transcriber | None:
     if settings.transcriber == "parakeet":
         if not settings.parakeet_model_dir:
             raise RuntimeError("CONVO_TRANSCRIBER=parakeet needs CONVO_PARAKEET_MODEL_DIR")
-        return ParakeetTranscriber(settings.parakeet_model_dir, settings.parakeet_threads)
+        return ParakeetTranscriber(settings.parakeet_model_dir, settings.parakeet_threads,
+                                   redecode_holes=settings.parakeet_redecode_holes)
     if settings.transcriber != "whisper":
         raise RuntimeError(f"unknown CONVO_TRANSCRIBER {settings.transcriber!r} "
                            "(whisper or parakeet)")

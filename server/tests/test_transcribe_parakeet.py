@@ -156,14 +156,17 @@ def test_build_transcriber_selects_backend(monkeypatch: pytest.MonkeyPatch, tmp_
     seen = {}
 
     class Stub:
-        def __init__(self, model_dir, threads) -> None:
-            seen.update(model_dir=model_dir, threads=threads)
+        def __init__(self, model_dir, threads, *, redecode_holes=False) -> None:
+            seen.update(model_dir=model_dir, threads=threads, redecode_holes=redecode_holes)
 
     monkeypatch.setattr(cli, "ParakeetTranscriber", Stub)
     s = _settings(tmp_path, transcriber="parakeet", parakeet_model_dir=tmp_path / "pk",
                   parakeet_threads=2, whisper_server_url="http://127.0.0.1:8178")
     assert isinstance(cli.build_transcriber(s), Stub)
-    assert seen == {"model_dir": tmp_path / "pk", "threads": 2}
+    assert seen == {"model_dir": tmp_path / "pk", "threads": 2, "redecode_holes": False}
+    cli.build_transcriber(_settings(tmp_path, transcriber="parakeet", parakeet_model_dir=tmp_path,
+                                    parakeet_redecode_holes=True))
+    assert seen["redecode_holes"] is True
 
     whisper = _settings(tmp_path, whisper_server_url="http://127.0.0.1:8178")
     assert whisper.transcriber == "whisper" and whisper.parakeet_threads == 4
@@ -182,3 +185,81 @@ def test_env_selects_parakeet(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None
     monkeypatch.setenv("CONVO_PARAKEET_THREADS", "2")
     s = _settings(tmp_path)
     assert (s.transcriber, s.parakeet_model_dir, s.parakeet_threads) == ("parakeet", tmp_path, 2)
+    assert s.parakeet_redecode_holes is False
+    monkeypatch.setenv("CONVO_PARAKEET_REDECODE_HOLES", "true")
+    assert _settings(tmp_path).parakeet_redecode_holes is True
+
+
+# --- hole re-decoding ---
+
+
+class ScriptedRecognizer:
+    """Returns the scripted word lists in call order (clip-relative times)."""
+
+    def __init__(self, *scripts: list[tuple[float, str]]) -> None:
+        self.scripts = list(scripts)
+        self.lengths: list[float] = []
+
+    def create_stream(self) -> FakeStream:
+        return FakeStream()
+
+    def decode_stream(self, stream: FakeStream) -> None:
+        self.lengths.append(stream.audio.size / SR)
+        stream.result = result(self.scripts.pop(0) if self.scripts else [])
+
+
+def speech_at(seconds: float, *spans: tuple[float, float]) -> np.ndarray:
+    """Quiet noise floor with loud "speech" in ``spans``."""
+    rng = np.random.default_rng(1)
+    a = (0.001 * rng.standard_normal(int(seconds * SR))).astype(np.float32)
+    for lo, hi in spans:
+        a[int(lo * SR): int(hi * SR)] = 0.3 * rng.standard_normal(int(hi * SR) - int(lo * SR))
+    return a
+
+
+FIRST = [(0.5, "We"), (0.8, "start."), (6.0, "Then"), (6.3, "we"), (6.6, "stop.")]
+
+
+def test_speech_hole_is_redecoded_and_merged_in_order() -> None:
+    # Speech 0.4-7 s, but the first decode emits nothing between 1.0 and 6.0 s.
+    audio = speech_at(8.0, (0.4, 7.0))
+    # Re-decode of 0.75-6.25 s (gap ± 0.25): times relative to that clip. "start." at
+    # its edge repeats a word the first decode already has; "Then" lies past the gap.
+    redo = [(0.1, "start."), (0.6, "the"), (1.0, "budget"), (1.4, "is"), (2.0, "fine."),
+            (5.3, "Then")]
+    rec = ScriptedRecognizer(FIRST, redo)
+    t = ParakeetTranscriber("unused", recognizer=rec, redecode_holes=True)
+    out = t.transcribe(audio)
+    assert rec.lengths == [8.0, pytest.approx(5.5, abs=1e-3)]
+    assert " ".join(p.text for p in out) == "We start. the budget is fine. Then we stop."
+    starts = [p.start for p in out]
+    assert starts == sorted(starts)
+    assert out[1].start == pytest.approx(0.75 + 0.6, abs=1e-3)
+
+
+def test_silent_gap_is_not_redecoded() -> None:
+    audio = speech_at(8.0, (0.4, 1.0), (5.9, 7.0))  # 1-6 s is the noise floor
+    rec = ScriptedRecognizer(FIRST, [(0.5, "ghost")])
+    out = ParakeetTranscriber("unused", recognizer=rec, redecode_holes=True).transcribe(audio)
+    assert rec.lengths == [8.0]
+    assert [p.text for p in out] == ["We start.", "Then we stop."]
+
+
+def test_trailing_hole_and_short_speech_gap() -> None:
+    # Speech after the last token ("Hi." ends at 0.7 s) is a hole; the leading 0-0.5 s
+    # gap is too short.
+    audio = speech_at(4.5, (0.0, 4.0))
+    rec = ScriptedRecognizer([(0.5, "Hi.")], [(0.2, "Hi."), (1.0, "how"), (1.5, "are"),
+                                              (2.0, "you?")])
+    out = ParakeetTranscriber("unused", recognizer=rec, redecode_holes=True).transcribe(audio)
+    assert rec.lengths == [4.5, pytest.approx(4.05, abs=1e-3)]  # 0.45 s to the end
+    assert [p.text for p in out] == ["Hi.", "how are you?"]
+    assert out[1].start == pytest.approx(0.45 + 1.0, abs=1e-3)
+
+
+def test_redecode_is_off_by_default() -> None:
+    audio = speech_at(8.0, (0.4, 7.0))
+    rec = ScriptedRecognizer(FIRST, [(1.0, "budget")])
+    out = ParakeetTranscriber("unused", recognizer=rec).transcribe(audio)
+    assert rec.lengths == [8.0]
+    assert [p.text for p in out] == ["We start.", "Then we stop."]
