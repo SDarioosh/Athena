@@ -243,6 +243,20 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
   vendor string, the `barvis_relay` package, and all `convo` identifiers.
 
+## Done on 2026-10-20: faster transcript requests (hub: same branch in SDarioosh/Barvis)
+
+- Owner report: `/sound` took up to 20 s to show a transcript (qwen3.5-9b, 43 tokens/s).
+  The time went to the model retyping the transcript, not to the lookup.
+- `get_transcript`: one time per line (`#id [45s] Speaker: text`, start time with seconds
+  in the header), 100 lines a page by default (was 200); the result, its description and
+  `INSTRUCTIONS` say to answer with the link and a short summary instead of copying lines.
+  The hub's Conversations page parser reads both line shapes.
+- Sandbox, 60-line fictional meeting: 1,310 s → 125 s; final answer 2,395 → 152 tokens;
+  tool result 2,386 → 1,872 tokens. Eval Q1, Q4, Q16, Q22 with `/sound`: 3/4 (Q4 fails
+  on `main` too).
+- Open for the owner: the PR's Server verification (update the Custom preset with the new
+  `INSTRUCTIONS`, rerun `modules_setup.py`, time a transcript request).
+
 ## Done on 2026-10-20: T5 PDA, phone side
 
 - **Odysseus calendar REST checked** in the hub (read only, `SDarioosh/Barvis@5cc32c5`),
