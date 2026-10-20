@@ -375,4 +375,4 @@ Speed and memory, 5 min of AMI audio, same idle 4-core CPU:
 - Simulated rooms and AMI's table mic stand in for a real watch on a wrist; milestone 3
   of the T-Watch plan records the real thing.
 - `test_chunk_queue` (firmware host tests) fails in this sandbox with or without these
-  changes (`cq_init` returns -5). Not investigated here.
+  changes (`cq_init` returns -5) but passes in CI, so it is sandbox-specific.
