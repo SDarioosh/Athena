@@ -17,12 +17,13 @@ from datetime import UTC, datetime
 from convo_server.config import get_settings
 from convo_server.llm import LLMClient, Summarizer
 from convo_server.pipeline import Pipeline
-from convo_server.store import Segment, Store
+from convo_server.store import CONVERSATION, NOTE, Segment, Store
 from convo_server.vad import EnergyVAD
 
 ME = "Me"
 
-# (key, start UTC, device, [(speaker, text), ...]); lines are ~8 s apart
+# (key, start UTC, device, [(speaker, text), ...]); lines are ~8 s apart. Keys starting
+# with "note-" are voice notes (the owner talking to themselves, session kind NOTE).
 CONVERSATIONS: list[tuple[str, str, str, list[tuple[str, str]]]] = [
     ("budget-sep", "2026-09-15T10:00", "trex3pro", [
         ("Alice", "Morning. So finance came back on the Q4 budget and it's not great."),
@@ -70,12 +71,20 @@ CONVERSATIONS: list[tuple[str, str, str, list[tuple[str, str]]]] = [
         (ME, "Adding it to my list. Do you want the satay?"),
         ("Jonas", "No thanks, I'm allergic to peanuts, remember?"),
     ]),
+    ("note-bike", "2026-10-11T08:15", "twatch", [
+        (ME, "Note to self: the bike needs new brake pads before winter."),
+        (ME, "Ask at the bike shop on Lindenstrasse, and check if the rear light still works."),
+    ]),
     ("alice-1on1", "2026-10-14T15:00", "trex3pro", [
         ("Alice", "It's official, my Berlin move date is January twelfth."),
         (ME, "So soon. Who takes over your vendor contracts?"),
         ("Alice", "I'd like you to take over the vendor contracts. Can you?"),
         (ME, "Yes, I'll take over the vendor contracts."),
         ("Alice", "Thank you. And good news on the budget: the cut is now ten percent, not fifteen."),
+    ]),
+    ("note-offsite", "2026-10-15T07:40", "twatch", [
+        (ME, "Idea for the team offsite: a pasta-making cooking class instead of the escape room."),
+        (ME, "There's a cooking school near the river. Ask Alice before she leaves for Berlin."),
     ]),
     ("maria-oct", "2026-10-16T20:00", "omi", [
         ("Maria", "Casa Lupo is booked for seven p.m. on November eighth, twelve guests."),
@@ -119,11 +128,14 @@ def main() -> int:
             with store.tx() as c:
                 end = segs[-1].ended_at
                 c.execute("INSERT INTO sessions (id, device, started_at, last_chunk_at,"
-                          " last_speech_at, received_at, status, stop_reason)"
-                          " VALUES (?, ?, ?, ?, ?, ?, 'processing', 'demo')",
-                          (sid, device, t0, end, end, time.time()))
+                          " last_speech_at, received_at, status, stop_reason, kind)"
+                          " VALUES (?, ?, ?, ?, ?, ?, 'processing', 'demo', ?)",
+                          (sid, device, t0, end, end, time.time(),
+                           NOTE if key.startswith("note-") else CONVERSATION))
             store.replace_segments(sid, device, segs, [(t0, end + 1)])
-            conv_ids = pipeline._assign_conversations(sid, device)
+            assign = (pipeline._assign_note if key.startswith("note-")
+                      else pipeline._assign_conversations)
+            conv_ids = assign(sid, device)
             store.set_session_status(sid, "done")
         for cid in conv_ids:
             t = time.time()
