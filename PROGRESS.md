@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (round 16: speaker recognition and focused summaries measured and fixed)_
+_Last updated: 2026-10-20 (bug hunt: 8 bugs fixed here, 3 in the hub; `docs/bug-hunt-2026-10.md`)_
 
 ## Status
 
@@ -240,6 +240,23 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   `barvis-sound*` service names and `BARVIS_SOUND_*` vars, the Android app ID
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
   vendor string, the `barvis_relay` package, and all `convo` identifiers.
+
+## Done on 2026-10-20: bug hunt
+
+Eight bugs were reproduced and fixed here, and three in the hub. Each one has a
+regression test. Details are in `docs/bug-hunt-2026-10.md`.
+- **Server:** `pcm16` at other sample rates; a merge lost closed action items; facts
+  stayed hidden after a deletion; the digest wasn't redone for late uploads; a `nan`
+  timestamp gave a 500; speaker clustering was O(n⁴).
+- **Firmware:** `queue drop` read zero-padded ids as octal and could drop the wrong
+  chunk.
+- **PC relay:** crashed on a broken HTTP answer.
+
+Still needs the owner:
+- `idf.py build` and `queue` / `queue drop` on the watch. The console change wasn't
+  compiled here because the sandbox has no ESP-IDF.
+- The found-not-fixed items in that doc (late-chunk diarization, the BYE/backoff
+  conflict) need a decision.
 
 ## Done in round 16: PRs #24 and #25 measured, fixed and improved
 

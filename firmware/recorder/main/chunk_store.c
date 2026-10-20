@@ -347,12 +347,13 @@ void chunk_store_print(void)
     cq_stats(&s_q, &st);
     printf("%" PRIu32 " chunks, %" PRIu64 " bytes, %" PRIu64 " s audio, next id %" PRIu32 "\n",
            st.chunks, st.bytes, st.audio_ms / 1000, s_q.next_id);
-    printf("id        session          seq    start_ms       dur_ms  bytes   crc32    flags\n");
+    /* Ids in decimal, as the relays and the BLE log print them and `queue drop` takes them. */
+    printf("id         session          seq    start_ms       dur_ms  bytes   crc32    flags\n");
     for (size_t i = 0; i < s_q.count; i++) {
         const cq_info_t *c = &s_q.items[i];
         char hex[17];
         cq_session_hex(c->session_id, hex);
-        printf("%08" PRIx32 "  %s %-6" PRIu32 " %-14" PRIu64 " %-7" PRIu32 " %-7" PRIu32 " %08" PRIx32
+        printf("%-10" PRIu32 " %s %-6" PRIu32 " %-14" PRIu64 " %-7" PRIu32 " %-7" PRIu32 " %08" PRIx32
                " %s%s%s\n",
                c->chunk_id, hex, c->sequence, c->start_ms, c->duration_ms, c->bytes, c->crc32,
                (c->flags & CQ_FLAG_LAST) ? "LAST " : "",
@@ -361,7 +362,7 @@ void chunk_store_print(void)
     }
     cq_info_t cur;
     if (cq_current(&s_q, &cur)) {
-        printf("recording: %08" PRIx32 " (seq %" PRIu32 ", %" PRIu32 " bytes so far)\n",
+        printf("recording: %" PRIu32 " (seq %" PRIu32 ", %" PRIu32 " bytes so far)\n",
                cur.chunk_id, cur.sequence, cur.bytes);
     }
     unlock();
