@@ -151,7 +151,7 @@ class FakeWatch(
             data[data.size / 2] = (data[data.size / 2] + 1).toByte()
         }
         val end = if (c.length == 0L) data.size else minOf(data.size.toLong(), c.offset + c.length).toInt()
-        val maxPayload = mtu - WatchGatt.DATA_OVERHEAD
+        val maxPayload = WatchGatt.dataPayloadMax(mtu)
         var off = c.offset.toInt()
         val dropAt = disconnectAfterBytes.remove(c.chunkId)
         var sent = 0

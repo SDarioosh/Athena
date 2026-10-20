@@ -2,6 +2,7 @@ package org.barvis.sound.relay.relay
 
 import kotlinx.coroutines.runBlocking
 import org.barvis.sound.relay.protocol.Command
+import org.barvis.sound.relay.protocol.WatchGatt
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -71,8 +72,8 @@ class DrainSessionTest {
         val data = watch.dataOf(e.chunkId)
         run()
         assertArrayEquals(data, server.uploads.single().audio)
-        assertTrue(watch.dataFrameSizes.all { it <= 517 - 3 })
-        assertEquals((60_000 + 504) / 505, watch.dataFrameSizes.size) // 505-byte payloads at MTU 517
+        assertTrue(watch.dataFrameSizes.all { it <= WatchGatt.MAX_NOTIFICATION })
+        assertEquals((60_000 + 502) / 503, watch.dataFrameSizes.size) // 503-byte payloads at MTU 517
     }
 
     @Test fun duplicateCountsAsOk() {
@@ -181,7 +182,7 @@ class DrainSessionTest {
         assertEquals(DrainOutcome.Done(1, 0), run())
         val reads = watch.commands.filterIsInstance<Command.Read>()
         assertEquals(0L, reads[0].offset)
-        assertEquals(5050L, reads[1].offset) // 10 full 505-byte frames arrived before the drop
+        assertEquals(5030L, reads[1].offset) // 10 full 503-byte frames arrived before the drop
         assertArrayEquals(original, server.uploads.single().audio)
     }
 

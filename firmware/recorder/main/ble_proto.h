@@ -17,8 +17,11 @@ extern "C" {
 #define BLE_PROTO_VERSION 1
 #define BLE_PROTO_MIN_MTU 64
 #define BLE_PROTO_MAX_MTU 517
-/* Largest notification value: ATT MTU minus the 3-byte notification header. */
-#define BLE_PROTO_FRAME_MAX (BLE_PROTO_MAX_MTU - 3)
+/* The Core spec caps an attribute value at 512 bytes (Vol 3 Part F §3.2.9); Android drops
+ * longer notifications even when ATT MTU - 3 would allow 514. */
+#define BLE_PROTO_ATTR_MAX 512
+/* Largest notification value: min(ATT MTU - 3, 512). */
+#define BLE_PROTO_FRAME_MAX BLE_PROTO_ATTR_MAX
 #define BLE_PROTO_LIST_MAX 32
 /* The handler asks the store for at most this many entries per list() call. */
 #define BLE_PROTO_LIST_BATCH 8
@@ -177,7 +180,7 @@ ble_proto_result_t ble_proto_execute(const ble_proto_cmd_t *cmd, uint16_t mtu,
                                      const ble_proto_store_t *store, void *store_ctx,
                                      ble_proto_send_t send, void *send_ctx, uint8_t *frame_buf);
 
-/* DATA payload bytes per frame at this MTU. */
+/* DATA payload bytes per frame at this MTU: min(MTU - 3, 512) - 9, so 503 at MTU >= 515. */
 size_t ble_proto_data_payload_max(uint16_t mtu);
 
 /* ---- advertising rule (§7.1) ---- */

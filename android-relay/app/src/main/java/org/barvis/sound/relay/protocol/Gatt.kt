@@ -22,4 +22,11 @@ object WatchGatt {
 
     /** ATT header (3) + DATA header (9). */
     const val DATA_OVERHEAD = 12
+
+    /** The Core spec caps an attribute value at 512 bytes and Android drops longer
+     *  notifications, so the watch never sends more: a DATA frame carries <= 503 bytes. */
+    const val MAX_NOTIFICATION = 512
+
+    /** DATA payload bytes per frame at this ATT MTU (§7.2). */
+    fun dataPayloadMax(mtu: Int): Int = minOf(mtu - 3, MAX_NOTIFICATION) - (DATA_OVERHEAD - 3)
 }

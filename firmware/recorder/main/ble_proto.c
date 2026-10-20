@@ -224,7 +224,11 @@ size_t ble_proto_data_payload_max(uint16_t mtu)
     if (mtu < BLE_PROTO_MIN_MTU) {
         mtu = BLE_PROTO_MIN_MTU;
     }
-    return (size_t)mtu - 3 - BLE_PROTO_DATA_HDR_LEN;
+    size_t frame = (size_t)mtu - 3;
+    if (frame > BLE_PROTO_FRAME_MAX) {
+        frame = BLE_PROTO_FRAME_MAX;
+    }
+    return frame - BLE_PROTO_DATA_HDR_LEN;
 }
 
 static ble_proto_result_t send_error(const ble_proto_cmd_t *cmd, int code, uint32_t arg,
