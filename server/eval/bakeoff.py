@@ -52,6 +52,8 @@ QUESTIONS: list[tuple[str, list[str], list[str]]] = [
     ("When exactly is Alice moving to Berlin?", ["alice-1on1"], ["12", "twelfth"]),
     ("What do I need to do before October 31?", ["landlord"], ["sign", "lease", "renewal"]),
     ("What did Alice say about Mars?", [], []),
+    # voice notes: the newest recordings are conversations, so this needs kind="note"
+    ("What was my latest voice note about?", ["note-offsite"], ["cooking", "pasta"]),
 ]
 
 CONVO_TOOLS = {"search_transcripts", "search_conversations", "get_conversation",

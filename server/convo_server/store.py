@@ -825,9 +825,17 @@ class Store:
         return row
 
     def list_conversations(self, *, since: float | None = None, until: float | None = None,
-                           person: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+                           person: str | None = None, kind: str | None = None,
+                           limit: int = 50) -> list[dict[str, Any]]:
+        """Newest first. ``kind``: NOTE = only voice notes, CONVERSATION = everything else."""
         sql = "SELECT * FROM conversations WHERE 1=1"
         params: list[Any] = []
+        if kind == NOTE:
+            sql += " AND kind = ?"
+            params.append(NOTE)
+        elif kind == CONVERSATION:
+            sql += " AND kind IS NOT ?"
+            params.append(NOTE)
         if since is not None:
             sql += " AND ended_at >= ?"
             params.append(since)

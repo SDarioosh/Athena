@@ -350,6 +350,21 @@ right after its sizes, flags and timings were read; none was uploaded.
 - SD `0x108` errors keep showing up at 4 MHz SPI (round 14: reads after an ACK; now
   writes). Cause unknown; recovery handles it.
 
+## Done on 2026-10-20: "my latest voice notes" finds voice notes
+
+- Problem (owner): "give me my latest voice notes" returned recent conversations. Voice
+  notes were stored as kind `note` and labelled "(voice note)", but no tool could ask
+  for only them, and the instructions never mentioned them.
+- `search_conversations` takes `kind`: `note` (only voice notes), `conversation` (only
+  the others), empty (both); "voice_note", "memo", "notes" also mean `note`, and a bad
+  value returns a readable message. `INSTRUCTIONS` tell the model to use `kind="note"`
+  for voice notes, notes or memos. Hub: the Conversations page gets a type filter and
+  labels voice notes (coordinated hub PR).
+- Eval: two fictional voice notes in `seed_demo.py` (`note-bike`, `note-offsite`) and
+  question 21 "What was my latest voice note about?". Sandbox (Qwen3-4B, Odysseus
+  `/sound`): 0/1 before, 1/1 after. **Owner:** rerun `seed_demo.py` on the server's demo
+  store (adds only the notes), then the Server verification in the PR.
+
 ## Done on 2026-10-20: bug hunt
 
 Eight bugs were reproduced and fixed here, and three in the hub. Each one has a
