@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     whisper_prompt: str = ""
     # Temperature step for whisper's fallback when a decode looks wrong (0 = no fallback).
     whisper_temperature_inc: float = 0.2
+    # Drop text whisper invents on noise ("Thank you." on a cough) and cut repetition
+    # loops (transcribe.HallucinationFilter; README "Recognition eval").
+    whisper_drop_hallucinations: bool = True
+    # A segment that is only a stock phrase is dropped below this mean token log-prob.
+    whisper_drop_phrase_logprob: float = -0.7
+    # Words, phrases or segments repeated more than this many times in a row are cut.
+    whisper_max_repeats: int = 4
 
     # llama-server (OpenAI-compatible)
     llm_base_url: str = "http://127.0.0.1:8080/v1"
