@@ -305,6 +305,31 @@ right after its sizes, flags and timings were read; none was uploaded.
   chunk closes: no false trigger. Not yet tested during a BLE drain.
 - `pull.py` reset the watch when opening the port on macOS (same fix as `wcon.py`).
 
+**Power logging (step 3, milestone 2)**
+- `power` prints the battery, the state (rec/note/ble_adv/ble_conn/screen/sd), the CPU
+  clock and the drain rate (%/h over >= 30 min on battery). A background log samples every
+  5 min (`power log <min>|off`, NVS) into a 7-day PSRAM ring and writes `/sdcard/power.csv`
+  once an hour, only while nothing records or syncs. `power locks` lists the PM locks.
+  The AXP2101 has no battery-current reading: drain comes from % over time.
+- **Card access from a second task during a recording fails.** Every power-log append while
+  a session recorded got sdspi `0x107` (read timeout); the same append right after the
+  session worked, and the session's own writes were fine. Hence the "only while idle" rule.
+  Together with round 14 (reads failing right after ACK deletes) and the `0x108` write
+  errors, the card or the SPI link seems to need more time after writes than sdspi gives
+  it. Not investigated further yet (ideas: a slower SPI clock, a longer sdspi timeout, another
+  card).
+- **Light sleep with the mic running: not possible.** On the watch, `power locks` shows the
+  I2S driver's `APB_FREQ_MAX` lock held for the whole recording (the PDM DMA needs the APB
+  clock; light sleep would stop it and leave gaps), and BLE's `btLS NO_LIGHT_SLEEP` lock
+  held all the time (the controller runs on the main crystal; there is no 32 kHz crystal,
+  and the 136 kHz RC clock is too inaccurate for BLE connections per ESP-IDF). So while
+  recording the CPU stays at 80 MHz and awake; recording current is set by the mic, the
+  encoder (~53 % of a core) and the card. Light sleep could only save power between
+  recordings, and only if BLE is shut down while idle (and brought back to advertise) or
+  runs on the RC clock: a design choice for the owner. The experiment build was not needed.
+- **Owner, milestone 2:** unplug the watch and use it normally (or record all day) until it
+  is nearly empty, then `power` and `get power.csv` give the drain per state.
+
 **Seen, not fixed**
 - A bonded relay (`8c:a3:ec:...`) connected twice during the tests: once it sent BYE
   without reading, once it read ~111 KB, then the link dropped with 983 notification send

@@ -107,6 +107,11 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 16 kbps VBR, complexity 1) -> 30 s Ogg
   session and BLE tasks are on the task watchdog: a 10 s hang restarts the watch, and a
   conversation that was recording starts again after the boot. `crash yes` / `crash wdt`
   test it.
+- **Power log**: `power` shows the battery, what the watch is doing, the CPU clock and the
+  drain rate; every 5 min (`power log <min>|off`) a sample goes to `/sdcard/power.csv`
+  (written hourly, never while recording or syncing). `power locks` shows what keeps the
+  CPU awake. Light sleep isn't used: while recording the I2S driver holds the APB clock,
+  and BLE on the main crystal blocks it at all times (PROGRESS.md round 17).
 - **Card errors**: a failed write (the card sometimes answers `0x108`) costs at most the
   open page (~1 s): the chunk is cut back to its last page and the session goes on with a
   new chunk after 100/300/1000 ms of skipped (but counted) mic frames; it ends only after 4
