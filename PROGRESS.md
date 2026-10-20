@@ -416,6 +416,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 8. T-Watch Ultra recorder: milestones 3+ (`docs/t-watch-ultra-plan.md` §8) once the
    power baseline says go.
 9. XIAO pendant, after the T-Watch Ultra: a second `boards/` directory on the same firmware.
+10. T5 E-Paper Pro PDA (`docs/t5-pda-plan.md`, planned 2026-10-20): briefing, conversations,
+    action items and the Odysseus calendar over BLE via the phone. First: confirm the hub's
+    calendar REST and scoped tokens (plan §6), then milestone 0 bring-up.
 
 ## Open questions for you
 
@@ -426,6 +429,8 @@ Still open:
   6-digit passkey on the watch screen.)
 - T-Watch Ultra: everything under "Needs the real watch" above. Also: does the battery
   take a 4.2 V charge target (set conservatively; LilyGoLib asks the chip for 4.288 V)?
+- T5 PDA: the questions in `docs/t5-pda-plan.md` §11 (firmware layout, feed window,
+  Wi-Fi at home, transcript QR, auto-blank, languages).
 - Odysseus fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.
 - The remaining XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, extra parts, microSD). They wait until XIAO work
