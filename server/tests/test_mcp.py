@@ -156,7 +156,12 @@ def test_conversation_tools(pipeline, mcp):
     conv_id = pipeline.store.list_conversations()[0]["id"]
     detail = call(mcp, "get_conversation", conversation_id=conv_id)
     assert "Planning the trip" in detail and "Book flights" in detail and "#t=1" in detail
-    assert "Speaker 1: words at 600 hz" in call(mcp, "get_transcript", conversation_id=conv_id)
+    transcript = call(mcp, "get_transcript", conversation_id=conv_id)
+    assert "Speaker 1: words at 600 hz" in transcript
+    # one time per line (seconds from the start; the header has the start time)
+    assert re.search(r"^#\d+ \[\d+s\] Speaker 1: ", transcript, re.M)
+    assert re.search(r"^\"[^\"]*\" \d{4}-\d\d-\d\d \d\d:\d\d:\d\d http", transcript)
+    assert "don't copy these lines" in transcript
     assert call(mcp, "get_conversation", conversation_id="nope").startswith("No conversation")
     found = call(mcp, "search_conversations", query="vegetarian", since=DAY, until=DAY)
     assert conv_id in found
