@@ -9,6 +9,7 @@ import org.barvis.sound.relay.ble.GattClient
 import org.barvis.sound.relay.ble.GattStatusException
 import org.barvis.sound.relay.net.ConvoHttpApi
 import org.barvis.sound.relay.net.OdysseusCalendarClient
+import org.barvis.sound.relay.net.OdysseusTodosClient
 import org.barvis.sound.relay.net.ServerUrl
 import org.barvis.sound.relay.protocol.PdaGatt
 import org.barvis.sound.relay.protocol.PdaStatus
@@ -18,11 +19,13 @@ import org.barvis.sound.relay.relay.CalendarApi
 import org.barvis.sound.relay.relay.Level
 import org.barvis.sound.relay.relay.LinkException
 import org.barvis.sound.relay.relay.NoCalendar
+import org.barvis.sound.relay.relay.NoTodos
 import org.barvis.sound.relay.relay.PdaListener
 import org.barvis.sound.relay.relay.PdaOutcome
 import org.barvis.sound.relay.relay.PdaSchedule
 import org.barvis.sound.relay.relay.PdaStats
 import org.barvis.sound.relay.relay.PdaSync
+import org.barvis.sound.relay.relay.TodosApi
 import org.barvis.sound.relay.store.Settings
 import java.text.DateFormat
 import java.util.Date
@@ -69,7 +72,14 @@ class PdaConnector(private val context: Context, private val settings: Settings)
         if (s.actionsWaiting > 0) parts += "${s.actionsWaiting} waiting"
         if (s.feedsPushed > 0) parts += "feed sent" else parts += "feed unchanged"
         s.calendarNote?.let { parts += "calendar: $it" }
+        s.todosNote?.let { parts += "todos: $it" }
         return " · " + parts.joinToString(" · ")
+    }
+
+    private fun todos(): TodosApi {
+        val url = ServerUrl.check(settings.odysseusUrl)
+        if (url !is ServerUrl.Check.Ok || !settings.hasOdysseusToken) return NoTodos
+        return OdysseusTodosClient(url.base, { settings.odysseusToken() }, log = log)
     }
 
     private fun calendar(): CalendarApi {
@@ -106,6 +116,7 @@ class PdaConnector(private val context: Context, private val settings: Settings)
                 listener = listener,
                 // Manual sync: one pass and BYE, so the watch gets the BLE stack back at once.
                 maxStayMs = if (settings.pdaAutoSync) 10 * 60_000L else 0L,
+                todos = todos(),
             )
             return sync.run().also { client.highPriority(false) }
         } catch (e: GattStatusException) {

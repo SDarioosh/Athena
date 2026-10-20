@@ -23,6 +23,8 @@ data class PdaStats(
     val detailsPushed: Int = 0,
     /** Why the calendar is missing, stale, or `cal_add` waits; null if all is well. */
     val calendarNote: String? = null,
+    /** Why the T5 gets no checklists, or `todo_toggle` waits (plan §4.4); null if all is well. */
+    val todosNote: String? = null,
 )
 
 /** How one PDA connection ended. */
@@ -78,6 +80,8 @@ class PdaSync(
     private val feedRefreshMs: Long = 5 * 60_000L,
     /** The T5, like the watch, drops a link that sent no command for 30 s. */
     private val keepaliveMs: Long = 20_000L,
+    /** The owner's Odysseus checklists (plan §4.4). */
+    private val todos: TodosApi = NoTodos,
 ) {
     private var done = 0
     private var rejected = 0
@@ -85,16 +89,18 @@ class PdaSync(
     private var feeds = 0
     private var details = 0
     private var calendarNote: String? = null
+    private var todosNote: String? = null
+    private var todoNotes: ApiResult<List<TodoNote>>? = null
     private var status: PdaStatus? = null
     private var t5FeedVersion = 0L
     private var lastCommandMs = 0L
-    private val feedBuilder = FeedBuilder(api, calendar, clock, zone, templates, log = log)
+    private val feedBuilder = FeedBuilder(api, calendar, clock, zone, templates, log = log, todos = todos)
     private val detailBuilder = DetailBuilder(api)
 
     private class DeviceProblem(message: String) : Exception(message)
     private class ServerStop(val outcome: (PdaStats) -> PdaOutcome) : Exception()
 
-    private fun stats() = PdaStats(done, rejected, waiting, feeds, details, calendarNote)
+    private fun stats() = PdaStats(done, rejected, waiting, feeds, details, calendarNote, todosNote)
 
     suspend fun run(): PdaOutcome = try {
         runSteps()
@@ -155,6 +161,7 @@ class PdaSync(
      * acked and no feed is built.
      */
     private suspend fun syncOnce(forceFeed: Boolean) {
+        todoNotes = null // read the notes again in each sync
         val fetched = ArrayList<Pair<OutboxEntry, ByteArray>>()
         val refreshFeed = processOutbox(fetched) || forceFeed
         pushFeed(refreshFeed)
@@ -242,6 +249,7 @@ class PdaSync(
                 return r is ServerResult.Ok
             }
             is PdaAction.CalAdd -> calAdd(e, action)
+            is PdaAction.TodoToggle -> todoToggle(e, action)
             is PdaAction.CalDelete -> when (val r = calendar.deleteEvent(action.id)) {
                 is ApiResult.Ok -> ack(e, AckResult.DONE, action.type)
                 is ApiResult.Fail -> {
@@ -321,6 +329,52 @@ class PdaSync(
         }
     }
 
+    /**
+     * Plan §4.4 `todo_toggle`: find the item (index `i` if its text still starts with `text`,
+     * else the one item that does), skip the call if it is already in the wanted state, else
+     * `toggle_item`. The notes are read once per sync.
+     */
+    private suspend fun todoToggle(e: OutboxEntry, action: PdaAction.TodoToggle) {
+        val notes = when (val r = todoNotes ?: todos.notes().also { todoNotes = it }) {
+            is ApiResult.Ok -> r.value
+            is ApiResult.Fail -> return calendarAnswer(e, action, r.error)
+            is ApiResult.Unsupported -> return todosWait(e, action, r.reason)
+        }
+        val note = notes.firstOrNull { it.id == action.note }
+            ?: return ack(e, AckResult.REJECTED, action.type).also { log.log(Level.WARN, "PDA $e (todo_toggle): the note is gone") }
+        val want = normalize(action.text)
+        val items = note.items
+        val index = if (action.index < items.size && normalize(items[action.index].text).startsWith(want)) action.index
+            else items.indices.filter { normalize(items[it].text).startsWith(want) }.singleOrNull()
+        if (index == null) {
+            log.log(Level.WARN, "PDA $e (todo_toggle): the item changed on Odysseus; dropping it")
+            return ack(e, AckResult.REJECTED, action.type)
+        }
+        if (items[index].done == action.done) return ack(e, AckResult.DONE, action.type)
+        when (val r = todos.toggle(note.id, index, action.done)) {
+            is ApiResult.Ok -> if (r.value) {
+                // Keep the cached notes current for a later toggle of the same item in this sync.
+                val updated = note.copy(items = items.toMutableList().also { it[index] = it[index].copy(done = action.done) })
+                todoNotes = ApiResult.Ok(notes.map { if (it.id == note.id) updated else it })
+                ack(e, AckResult.DONE, action.type)
+            } else {
+                log.log(Level.WARN, "PDA $e (todo_toggle): Odysseus refused it (exit_code 1)")
+                ack(e, AckResult.REJECTED, action.type)
+            }
+            is ApiResult.Fail -> calendarAnswer(e, action, r.error)
+            is ApiResult.Unsupported -> todosWait(e, action, r.reason)
+        }
+    }
+
+    private fun todosWait(e: OutboxEntry, action: PdaAction, why: String) {
+        waiting++
+        todosNote = why
+        log.log(Level.WARN, "PDA $e (${action.type}) stays queued: $why")
+        listener.onAction(action.type, "waiting")
+    }
+
+    private fun normalize(s: String) = s.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
+
     private fun calendarWait(e: OutboxEntry, action: PdaAction, why: String) {
         waiting++
         calendarNote = why
@@ -353,12 +407,13 @@ class PdaSync(
                 log.log(Level.WARN, "feed not built (${b.what}), the T5 keeps its last one: ${FeedBuilder.describe(err)}")
                 throw when {
                     // Only odysseus-sound's token stops the relay; Odysseus's is its own.
-                    err is ServerResult.AuthRejected && b.what != ODYSSEUS -> ServerStop { PdaOutcome.AuthRejected(err.code, it) }
+                    err is ServerResult.AuthRejected && !b.what.startsWith("Odysseus") -> ServerStop { PdaOutcome.AuthRejected(err.code, it) }
                     else -> ServerStop { PdaOutcome.ServerUnavailable("${b.what}: ${FeedBuilder.describe(err)}", it) }
                 }
             }
         }
         feedBuilder.calendarNote?.let { calendarNote = calendarNote ?: it }
+        feedBuilder.todosNote?.let { todosNote = todosNote ?: it }
         val lastVersion = memory.lastFeedVersion(deviceKey)
         val unchanged = content.hash == memory.lastFeedHash(deviceKey) && t5FeedVersion == lastVersion && lastVersion != 0L
         if (unchanged && !force) {
@@ -477,6 +532,5 @@ class PdaSync(
 
     companion object {
         const val MAX_PUT_TRIES = 3
-        private const val ODYSSEUS = "Odysseus calendar"
     }
 }

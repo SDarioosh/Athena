@@ -5,6 +5,7 @@ import kotlinx.coroutines.runBlocking
 import org.barvis.sound.relay.relay.ApiResult
 import org.barvis.sound.relay.relay.NewEvent
 import org.barvis.sound.relay.relay.ServerResult
+import org.barvis.sound.relay.relay.TodoItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -119,6 +120,50 @@ class PdaHttpTest {
         assertTrue(c.listEvents("a", "b") is ApiResult.Unsupported)
         t.answer = { _, _ -> HttpAnswer(403, """{"detail": "API token missing required scope: calendar:write"}""") }
         assertEquals(ApiResult.Fail(ServerResult.AuthRejected(403)), c.createEvent(NewEvent("x", "2026-10-22", null, true)))
+        noLeak()
+    }
+
+    @Test fun odysseusTodosClient() = runBlocking {
+        val t = FakeTransport { m, _ ->
+            when (m) {
+                "GET" -> HttpAnswer(200, """{"notes": [{"id": "n1", "title": "Groceries", "type": "checklist", "label": null,
+                    "pinned": true, "due_date": "2026-10-24", "updated_at": "2026-10-20T07:00:00Z",
+                    "items": [{"text": "Milk", "done": false}, {"text": "Bread", "done": true}], "content": null},
+                    {"id": "n2", "title": "Ideas", "type": "note", "pinned": false, "due_date": null, "items": [],
+                    "content": "text"}]}""")
+                else -> HttpAnswer(200, """{"exit_code": 0, "output": "ok"}""")
+            }
+        }
+        val c = OdysseusTodosClient("http://hub.example.ts.net:7000/", { token }, t, log = { _, msg -> logs += msg })
+        val notes = (c.notes() as ApiResult.Ok).value
+        assertEquals("http://hub.example.ts.net:7000/api/codex/todos?format=json", t.calls[0].second)
+        assertEquals("Bearer $token", t.calls[0].third["Authorization"])
+        assertEquals(listOf("n1", "n2"), notes.map { it.id })
+        assertEquals(listOf(TodoItem("Milk", false), TodoItem("Bread", true)), notes[0].items)
+        assertEquals("2026-10-24", notes[0].dueDate)
+        assertTrue(notes[0].pinned)
+
+        assertEquals(ApiResult.Ok(true), c.toggle("n1", 1, false))
+        assertEquals("POST" to "http://hub.example.ts.net:7000/api/codex/todos", t.calls.last().first to t.calls.last().second)
+        assertEquals(mapOf("action" to "toggle_item", "note_id" to "n1", "index" to 1L, "done" to false),
+            Json.parseObject(t.bodies.last()!!))
+        t.answer = { _, _ -> HttpAnswer(200, """{"exit_code": 1, "error": "index out of range"}""") }
+        assertEquals(ApiResult.Ok(false), c.toggle("n1", 9, true))
+
+        // "No todos": a hub without format=json answers text; a token without todos:read gets 403.
+        t.answer = { _, _ -> HttpAnswer(200, "You have 2 notes:\n- Groceries (checklist)") }
+        assertEquals(ApiResult.Unsupported(OdysseusTodosClient.OLD_HUB), c.notes())
+        t.answer = { _, _ -> HttpAnswer(403, """{"detail": "API token missing required scope: todos:read or todos:write"}""") }
+        assertEquals(ApiResult.Unsupported(OdysseusTodosClient.NO_SCOPE), c.notes())
+        assertTrue(c.toggle("n1", 0, true) is ApiResult.Unsupported)
+        // Other failures are failures.
+        t.answer = { _, _ -> HttpAnswer(502, "") }
+        assertTrue((c.notes() as ApiResult.Fail).error is ServerResult.Transient)
+        assertTrue((c.toggle("n1", 0, true) as ApiResult.Fail).error is ServerResult.Transient)
+        t.answer = { _, _ -> throw IOException("connection refused") }
+        assertTrue((c.notes() as ApiResult.Fail).error is ServerResult.Transient)
+        t.answer = { _, _ -> HttpAnswer(401, """{"error": "Invalid API token"}""") }
+        assertEquals(ApiResult.Fail(ServerResult.AuthRejected(401)), c.notes())
         noLeak()
     }
 

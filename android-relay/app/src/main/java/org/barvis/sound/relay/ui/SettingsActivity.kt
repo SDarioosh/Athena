@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import org.barvis.sound.relay.R
 import org.barvis.sound.relay.net.HttpUploader
 import org.barvis.sound.relay.net.OdysseusCalendarClient
+import org.barvis.sound.relay.net.OdysseusTodosClient
 import org.barvis.sound.relay.net.ServerUrl
 import org.barvis.sound.relay.relay.ApiResult
 import org.barvis.sound.relay.relay.FeedBuilder
@@ -147,11 +148,19 @@ class SettingsActivity : Activity() {
             val zone = ZoneId.systemDefault()
             val start = LocalDate.now(zone).atStartOfDay(zone)
             val f = DateTimeFormatter.ISO_OFFSET_DATE_TIME
-            odyResult.text = when (val r = client.listEvents(f.format(start), f.format(start.plusDays(8)))) {
+            val cal = when (val r = client.listEvents(f.format(start), f.format(start.plusDays(8)))) {
                 is ApiResult.Ok -> resources.getQuantityString(R.plurals.odysseus_ok, r.value.size, r.value.size)
                 is ApiResult.Unsupported -> getString(R.string.odysseus_unsupported, r.reason)
                 is ApiResult.Fail -> getString(R.string.odysseus_failed, FeedBuilder.describe(r.error))
             }
+            val todos = OdysseusTodosClient(c.base, { token }, log = RelayState.logger)
+            val checklists = when (val r = todos.notes()) {
+                is ApiResult.Ok -> r.value.count { it.type == "checklist" && it.items.isNotEmpty() }
+                    .let { n -> resources.getQuantityString(R.plurals.odysseus_todos_ok, n, n) }
+                is ApiResult.Unsupported -> getString(R.string.odysseus_todos_unsupported, r.reason)
+                is ApiResult.Fail -> getString(R.string.odysseus_todos_failed, FeedBuilder.describe(r.error))
+            }
+            odyResult.text = getString(R.string.odysseus_test_result, cal, checklists)
         }
     }
 
