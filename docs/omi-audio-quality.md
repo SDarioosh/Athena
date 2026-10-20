@@ -331,9 +331,47 @@ threads. Pooled over the 3 meetings; differences under ~1.5 points are noise.
    still 53–68 % with whisper base. That gap is the open problem; better ASR (item 2) and
    the bitrate (item 1) are the levers found so far.
 
+### 7.3 Parakeet vs whisper large-v3-turbo (the server's model), sandbox CPU
+
+Same eval, whisper.cpp `ggml-large-v3-turbo-q5_0` (the owner's server model) on 4 CPU
+threads. WER %, pooled over 3 meetings:
+
+| condition | whisper base.en | whisper large-v3-turbo | Parakeet + holes |
+|---|---|---|---|
+| headset | 28.9 | **23.6** | 26.3 |
+| table ~1 m (-34 dBFS) | 44.2 | **36.7** | 42.5 |
+| sim 1 m | 33.8 | 28.4 | **27.9** |
+| sim 2 m | 36.8 | **29.0** | 29.1 |
+| sim 3 m | 40.4 | **30.5** | 33.8 |
+| *others only*, table / 2 m / 3 m | 48.4 / 60.3 / 68.0 | **42.9 / 48.8 / 52.4** | 46.9 / 51.9 / 64.2 |
+| *owner only*, 1 / 2 / 3 m | 21.3 / 21.5 / 22.5 | 16.3 / 16.2 / 16.4 | **14.7 / 14.4 / 14.2** |
+| speaker confusion, table / 3 m | 19.6 / 13.4 | 32.6 / 16.4 | **14.5 / 11.4** |
+| named right, table / 3 m | 74.5 / 76.3 | 50.5 / 78.5 | **76.5 / 77.7** |
+
+Speed and memory, 5 min of AMI audio, same idle 4-core CPU:
+
+| model | time | real-time factor | peak RAM |
+|---|---|---|---|
+| whisper base.en | 44 s | 0.15 | 0.6 GB |
+| whisper large-v3-turbo q5_0 | 282 s | 0.94 | 0.9 GB |
+| Parakeet int8 + holes | 33 s | 0.11 | 1.3 GB |
+
+- **turbo is the better model for the people around the wearer**, which is what this work is
+  about: 4–12 points lower WER on the others at 1–3 m and on the table. **Keep whisper
+  large-v3-turbo as the default.** Parakeet's win over base.en (§7.1) doesn't carry over.
+- Parakeet is better on the **owner's own speech** (≈ 14 % vs 16 %) and gives **cleaner
+  speaker labels** (on the table: confusion 14.5 % vs 32.6 %, named right 76.5 % vs
+  50.5 %). turbo's segments seem to run across speaker changes on the table recording.
+  That is a diarization problem worth its own look (e.g. splitting turbo's segments at
+  word timestamps or VAD pauses before embedding).
+- On CPU Parakeet is ~8.5× faster than turbo. On the server turbo runs on the GPU, so speed
+  doesn't decide there. Parakeet stays as an option for a CPU-only box.
+- The server-side Server verification still applies (real GPU, real turbo settings).
+  Expected: turbo ahead on the others, Parakeet ahead on the owner.
+
 ### 7.2 Not settled here
 
-- The sandbox uses whisper base.en; large-v3-turbo may close the gap to Parakeet.
+- §7.1 uses whisper base.en; §7.3 adds large-v3-turbo on CPU (same weights as the server, q5_0).
 - Simulated rooms and AMI's table mic stand in for a real watch on a wrist; milestone 3
   of the T-Watch plan records the real thing.
 - `test_chunk_queue` (firmware host tests) fails in this sandbox with or without these
