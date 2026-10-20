@@ -151,7 +151,7 @@ Same bounded AGC on the PCM sent to whisper, with Omi's 0.4 deadband. Expect lit
 because whisper normalises internally, but it is a one-line A/B on the array eval. Keep
 it only if WER drops.
 
-### 4.4 Parakeet TDT 0.6B v3 as a second `Transcriber` (server, medium)
+### 4.4 Parakeet TDT 0.6B v3 as a second `Transcriber` (server, medium; built, see §7)
 
 - Local, CC-BY-4.0, ~0.6 B parameters. Fits the owner's GPU next to whisper; runs with
   NeMo, or ONNX via `sherpa-onnx` / `onnx-asr` without the NeMo stack.
@@ -161,8 +161,9 @@ it only if WER drops.
 - Gives timestamps per segment/word, so the diarizer and links work unchanged. Lacks
   `CONVO_WHISPER_PROMPT`-style name prompting, and covers 25 European languages
   (whisper: ~99).
-- Shape: `ParakeetServerTranscriber` behind the existing protocol, set with
-  `CONVO_TRANSCRIBER=parakeet` + URL. Keep whisper as the default until the eval says
+- Built as `ParakeetTranscriber` (in-process, sherpa-onnx int8 on CPU), set with
+  `CONVO_TRANSCRIBER=parakeet` + `CONVO_PARAKEET_MODEL_DIR`, plus
+  `CONVO_PARAKEET_REDECODE_HOLES=true`. Keep whisper as the default until the eval says
   otherwise. Post VAD spans as they are (they start at speech, which TDT needs). Add
   Omi's head re-post rule only if missing leading words show up.
 
@@ -210,3 +211,130 @@ watch test.
    - Moving the LLM from qwen3.5-35b to a 9B model would save far more VRAM, but it
      would likely cost answer quality (target ≥ 15/20 is measured with the 35B model).
      Not needed for this.
+
+## 7. Results (sandbox, 2026-10-20)
+
+Setup: `eval/recognition.py` on 3 AMI meetings (ES2004a, IS1009a, TS3003a), 5 min each
+(offset 300 s), 2 speakers enrolled, ECAPA diarizer, **whisper.cpp base.en on CPU** (the
+owner's server runs large-v3-turbo, so absolute numbers are much worse here; compare rows
+with each other only). Parakeet = `parakeet-tdt-0.6b-v3` int8 via sherpa-onnx, 2 CPU
+threads. Pooled over the 3 meetings; differences under ~1.5 points are noise.
+
+- `headset`: AMI close-talk mix (the old eval). `array`: AMI table mic Array1-01, the
+  real ~1 m case, as recorded (~-48 dBFS on 2 of 3 meetings) or with `--level -34` (one
+  fixed gain, roughly where people 1 m away land on the T-Watch with its 30 dB gain).
+  `sim N m`: simulated room (5×4×2.7 m, RT60 0.5 s, SNR 30 dB), owner at 0.2 m at
+  -24 dBFS, the others at N m.
+- *WER owner / others* splits the errors by who said the reference word. *missed
+  others*: share of the others' speech time with no transcript segment over it. It
+  measures the VAD gate for whisper; for Parakeet it is inflated by tighter segment
+  times, so compare it only within one model.
+
+
+#### Baselines, whisper base.en
+
+| run | WER | WER owner | WER others | missed others | confusion | named right | named wrong |
+|---|---|---|---|---|---|---|---|
+| headset (close-talk) (`headset-base`) | 28.9 | – | – | – | 6.7 | 89.1 | 2.5 |
+| table mic, raw (~-48 dBFS) (`array`) | 49.4 | 47.0 | 53.1 | 18.0 | 21.4 | 55.9 | 2.8 |
+| table mic at -34 dBFS (`array34`) | 44.2 | 41.6 | 48.4 | 6.7 | 19.6 | 74.5 | 4.5 |
+| sim 1 m (`sim1`) | 33.8 | 21.3 | 53.0 | 11.8 | 14.0 | 79.7 | 2.6 |
+| sim 2 m (`sim2`) | 36.8 | 21.5 | 60.3 | 12.1 | 18.4 | 70.8 | 1.7 |
+| sim 3 m (`sim3`) | 40.4 | 22.5 | 68.0 | 21.3 | 13.4 | 76.3 | 2.5 |
+
+#### VAD gain (whisper)
+
+| run | WER | WER owner | WER others | missed others | confusion | named right | named wrong |
+|---|---|---|---|---|---|---|---|
+| table raw (`array`) | 49.4 | 47.0 | 53.1 | 18.0 | 21.4 | 55.9 | 2.8 |
+| table raw, VAD gain 4x (`array-v4`) | 45.7 | 43.6 | 49.0 | 6.7 | 21.9 | 69.1 | 3.9 |
+| table raw, VAD gain 8x (`array-v8`) | 45.4 | 43.1 | 49.1 | 3.5 | 24.6 | 62.4 | 4.2 |
+| table -34 (`array34`) | 44.2 | 41.6 | 48.4 | 6.7 | 19.6 | 74.5 | 4.5 |
+| table -34, VAD 4x (`array34-v4`) | 45.9 | 44.7 | 47.6 | 3.2 | 25.8 | 58.8 | 4.1 |
+| table -34, VAD 4x + pad 300 ms (`array34-v4p`) | 44.1 | 41.7 | 47.9 | 4.3 | 28.1 | 50.9 | 2.4 |
+| table -34, VAD 4x + ASR gain (`array34-v4a`) | 45.4 | 44.1 | 47.4 | 3.0 | 28.0 | 67.6 | 4.7 |
+| sim 1 m, VAD 4x (`sim1-v4`) | 33.7 | 21.3 | 52.7 | 11.9 | 14.0 | 79.7 | 2.6 |
+| sim 2 m, VAD 4x (`sim2-v4`) | 36.6 | 21.5 | 60.0 | 12.6 | 18.7 | 70.9 | 1.7 |
+| sim 2 m, VAD 4x + pad (`sim2-v4p`) | 36.5 | 21.7 | 59.3 | 11.7 | 15.0 | 73.9 | 2.3 |
+| sim 3 m, VAD 4x (`sim3-v4`) | 40.5 | 22.5 | 68.1 | 18.0 | 14.0 | 76.2 | 2.7 |
+| sim 3 m, VAD 8x (`sim3-v8`) | 40.5 | 22.5 | 68.1 | 18.0 | 14.0 | 76.2 | 2.7 |
+| sim 3 m, VAD 4x + pad (`sim3-v4p`) | 39.3 | 20.2 | 68.6 | 21.7 | 12.4 | 80.3 | 3.0 |
+| sim 3 m, VAD 4x + ASR gain (`sim3-v4a`) | 40.4 | 22.5 | 68.0 | 17.8 | 13.6 | 76.2 | 2.7 |
+
+#### Opus bitrate (whisper)
+
+| run | WER | WER owner | WER others | missed others | confusion | named right | named wrong |
+|---|---|---|---|---|---|---|---|
+| sim 2 m, no codec (`sim2`) | 36.8 | 21.5 | 60.3 | 12.1 | 18.4 | 70.8 | 1.7 |
+| sim 2 m, 16 kbps (`sim2-o16`) | 41.9 | 22.4 | 72.2 | 19.7 | 21.6 | 63.2 | 1.4 |
+| sim 2 m, 24 kbps (`sim2-o24`) | 37.2 | 21.7 | 61.1 | 13.6 | 17.4 | 72.0 | 2.2 |
+| sim 2 m, 32 kbps (`sim2-o32`) | 36.8 | 21.1 | 60.9 | 16.0 | 15.3 | 79.4 | 1.7 |
+| sim 3 m, no codec (`sim3`) | 40.4 | 22.5 | 68.0 | 21.3 | 13.4 | 76.3 | 2.5 |
+| sim 3 m, 16 kbps (`sim3-o16`) | 44.7 | 25.6 | 74.1 | 19.9 | 17.5 | 69.1 | 4.3 |
+| sim 3 m, 24 kbps (`sim3-o24`) | 40.4 | 20.6 | 71.1 | 19.3 | 16.9 | 77.8 | 3.6 |
+| sim 3 m, 32 kbps (`sim3-o32`) | 39.2 | 22.4 | 65.2 | 17.3 | 17.7 | 68.8 | 3.5 |
+
+#### Parakeet TDT 0.6B v3 (int8, CPU) vs whisper base.en
+
+| run | WER | WER owner | WER others | missed others | confusion | named right | named wrong |
+|---|---|---|---|---|---|---|---|
+| headset, whisper (`headset-base`) | 28.9 | – | – | – | 6.7 | 89.1 | 2.5 |
+| headset, Parakeet (`headset-pk`) | 32.6 | 22.7 | 48.0 | 38.5 | 4.9 | 90.5 | 1.7 |
+| headset, Parakeet + holes (`headset-pk-h`) | 26.3 | 18.7 | 38.0 | 28.9 | 6.0 | 90.5 | 2.0 |
+| table raw, whisper (`array`) | 49.4 | 47.0 | 53.1 | 18.0 | 21.4 | 55.9 | 2.8 |
+| table raw, Parakeet (`array-pk`) | 47.6 | 45.4 | 50.9 | 41.9 | 7.2 | 82.7 | 0.6 |
+| table raw, Parakeet + VAD 4x (`array-pk-v4`) | 44.8 | 41.4 | 50.1 | 38.0 | 9.7 | 81.0 | 0.7 |
+| table -34, whisper (`array34`) | 44.2 | 41.6 | 48.4 | 6.7 | 19.6 | 74.5 | 4.5 |
+| table -34, Parakeet (`array34-pk`) | 44.8 | 41.7 | 49.7 | 36.1 | 12.6 | 78.9 | 0.7 |
+| table -34, Parakeet + VAD 4x (`array34-pk-v4`) | 44.1 | 41.4 | 48.4 | 35.8 | 12.3 | 74.0 | 0.4 |
+| table -34, Parakeet + holes (`array34-pk-h`) | 42.5 | 39.7 | 46.9 | 32.3 | 14.5 | 76.5 | 0.7 |
+| sim 1 m, whisper (`sim1`) | 33.8 | 21.3 | 53.0 | 11.8 | 14.0 | 79.7 | 2.6 |
+| sim 1 m, Parakeet (`sim1-pk`) | 29.7 | 14.9 | 52.5 | 36.4 | 10.2 | 79.4 | 1.4 |
+| sim 2 m, whisper (`sim2`) | 36.8 | 21.5 | 60.3 | 12.1 | 18.4 | 70.8 | 1.7 |
+| sim 2 m, Parakeet (`sim2-pk`) | 31.8 | 15.7 | 56.5 | 39.8 | 12.8 | 75.5 | 0.2 |
+| sim 2 m, Parakeet + VAD 4x (`sim2-pk-v4`) | 32.3 | 15.8 | 57.8 | 40.6 | 12.3 | 77.9 | 0.2 |
+| sim 2 m, Parakeet + holes (`sim2-pk-h`) | 29.1 | 14.4 | 51.9 | 33.2 | 12.9 | 78.6 | 0.2 |
+| sim 3 m, whisper (`sim3`) | 40.4 | 22.5 | 68.0 | 21.3 | 13.4 | 76.3 | 2.5 |
+| sim 3 m, Parakeet (`sim3-pk`) | 35.0 | 14.9 | 66.1 | 39.7 | 10.2 | 80.8 | 0.7 |
+| sim 3 m, Parakeet + VAD 4x (`sim3-pk-v4`) | 35.2 | 14.9 | 66.5 | 44.5 | 8.8 | 82.0 | 0.7 |
+| sim 3 m, Parakeet + holes (`sim3-pk-h`) | 33.8 | 14.2 | 64.2 | 39.1 | 11.4 | 77.7 | 0.7 |
+
+
+### 7.1 What the numbers say
+
+1. **Opus at 16 kbps costs the people around the wearer.** At 2 m, WER goes from 36.8 % (no
+   codec) to 41.9 % (+5.1), at 3 m from 40.4 % to 44.7 % (+4.3). For the others alone,
+   60 % → 72 % at 2 m. 24 kbps is within noise of no codec (37.2 %, 40.4 %), and 32 kbps
+   adds nothing reliable. This passes the owner's rule (≥ 2 points) clearly. **The
+   firmware default is now 24 kbps** (`firmware/recorder/main/opus_enc.h`): 50 % more
+   bytes over BLE and on the SD card. Battery and drain time still need measuring on the
+   watch.
+2. **Parakeet with hole re-decoding beats whisper base.en everywhere:** headset 26.3 vs
+   28.9, table 42.5 vs 44.2, 2 m 29.1 vs 36.8, 3 m 33.8 vs 40.4. The owner's own speech
+   improves most (≈ 14–15 % vs ≈ 21–22 %), and wrong names drop (≤ 0.7 % vs 1.7–4.5 %).
+   Without hole re-decoding Parakeet skips whole stretches mid-chunk (headset 32.6 %,
+   worse than whisper). It costs ~1.1 GB RAM and ~0.11× real time on 2 CPU threads, and
+   no GPU. **The real question is Parakeet vs large-v3-turbo on the server**, which this
+   sandbox can't answer. That is the Server verification. `CONVO_TRANSCRIBER` stays
+   `whisper` until then.
+3. **VAD gain only helps on very quiet input.** On the raw table mic (~-48 dBFS) a 4×
+   gain cuts the others' missed speech from 18 % to 6.7 % and WER from 49.4 % to 45.7 %. At
+   device levels (sim, table at -34 dBFS) it does nothing for WER, and at -34 dBFS it
+   lets noise and crosstalk in: speaker confusion 19.6 → 25.8 %, named right 74.5 →
+   58.8 %. Our firmware already applies a fixed 30 dB gain, so **it stays off by
+   default**. It would matter for a device without gain, such as a phone mic or the XIAO
+   before tuning. 8× is no better than 4×.
+4. **300 ms VAD padding and ASR gain: no consistent gain**, and padding hurt speaker
+   naming on the table mic. Both stay off.
+5. Room acoustics matter more than distance: in the 0.5 s RT60 room the others are only
+   10–13 dB below the owner at 1–3 m (the reverb radius is ~0.6 m), and their WER is
+   still 53–68 % with whisper base. That gap is the open problem; better ASR (item 2) and
+   the bitrate (item 1) are the levers found so far.
+
+### 7.2 Not settled here
+
+- The sandbox uses whisper base.en; large-v3-turbo may close the gap to Parakeet.
+- Simulated rooms and AMI's table mic stand in for a real watch on a wrist; milestone 3
+  of the T-Watch plan records the real thing.
+- `test_chunk_queue` (firmware host tests) fails in this sandbox with or without these
+  changes (`cq_init` returns -5). Not investigated here.

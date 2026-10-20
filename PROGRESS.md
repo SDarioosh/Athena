@@ -529,10 +529,11 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 8. T-Watch Ultra recorder: milestones 3+ (`docs/t-watch-ultra-plan.md` §8) once the
    power baseline says go.
 9. XIAO pendant, after the T-Watch Ultra: a second `boards/` directory on the same firmware.
-10. Room pickup (`docs/omi-audio-quality.md` §4): far-field eval on AMI array audio
-    (owner 2026-10-20: both ~1 m and 1–3 m; higher bitrate OK if notably better;
-    Parakeet if cheap, see the doc's §6) first, then a gained copy for VAD, then Parakeet TDT as a second transcriber, and
-    24/32 kbps Opus in milestone 3.
+10. Room pickup (`docs/omi-audio-quality.md` §7, sandbox results 2026-10-20): the firmware
+    Opus default is now 24 kbps (16 kbps cost 4–5 WER points at 2–3 m). Parakeet + hole
+    re-decoding beat whisper base.en in every case (2 m: 29.1 vs 36.8 %). **Owner: Server
+    verification** against large-v3-turbo, then watch battery and drain time at 24 kbps.
+    VAD gain stays off (it helps only on very quiet input).
 
 ## Open questions for you
 
