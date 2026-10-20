@@ -90,12 +90,14 @@ esp_err_t ui_show_status(const ui_status_t *s)
 
     if (!s->battery.present) {
         snprintf(line, sizeof(line), "NO BATTERY");
+    } else if (s->battery_low) {
+        snprintf(line, sizeof(line), "BAT %d%% LOW", s->battery.percent);
     } else if (s->battery.charging) {
         snprintf(line, sizeof(line), "BAT %d%% CHG", s->battery.percent);
     } else {
         snprintf(line, sizeof(line), "BAT %d%%", s->battery.percent);
     }
-    push_line(y, line, TEXT_SCALE, white);
+    push_line(y, line, TEXT_SCALE, s->battery_low ? red : white);
     y += 60;
     snprintf(line, sizeof(line), "%d.%02dV%s", s->battery.millivolts / 1000,
              (s->battery.millivolts % 1000) / 10, s->battery.vbus ? " USB" : "");

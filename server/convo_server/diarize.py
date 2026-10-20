@@ -130,28 +130,38 @@ def window(audio: np.ndarray, start: float, end: float,
 
 
 def cluster(embeddings: np.ndarray, threshold: float) -> list[int]:
-    """Average-linkage agglomerative clustering; returns a cluster id per row."""
+    """Average-linkage agglomerative clustering; returns a cluster id per row.
+
+    Keeps the sum of pairwise similarities between clusters, so a merge updates one row
+    and column instead of recomputing every pair (fast enough for thousands of pieces).
+    """
     n = len(embeddings)
     if n == 0:
         return []
     x = np.stack([_normalize(e) for e in embeddings])
-    sim = x @ x.T
-    clusters: list[list[int]] = [[i] for i in range(n)]
-    while len(clusters) > 1:
-        best, pair = -2.0, (0, 0)
-        for a in range(len(clusters)):
-            for b in range(a + 1, len(clusters)):
-                s = float(sim[np.ix_(clusters[a], clusters[b])].mean())
-                if s > best:
-                    best, pair = s, (a, b)
-        if best < threshold:
+    sums = (x @ x.T).astype(np.float64)  # sums[a, b]: total similarity of a's and b's rows
+    sizes = np.ones(n)
+    active = np.ones(n, dtype=bool)
+    members: list[list[int]] = [[i] for i in range(n)]
+    upper = np.triu(np.ones((n, n), dtype=bool), k=1)
+    while active.sum() > 1:
+        idx = np.flatnonzero(active)  # a cluster sits at its first member's row
+        k = idx.size
+        mean = sums[np.ix_(idx, idx)] / np.outer(sizes[idx], sizes[idx])
+        mean[~upper[:k, :k]] = -np.inf
+        i, j = divmod(int(np.argmax(mean)), k)  # first best pair, as the pairwise loop
+        if mean[i, j] < threshold:
             break
-        a, b = pair
-        clusters[a].extend(clusters.pop(b))
+        a, b = int(idx[i]), int(idx[j])
+        sums[a, :] += sums[b, :]
+        sums[:, a] += sums[:, b]
+        sizes[a] += sizes[b]
+        active[b] = False
+        members[a].extend(members[b])
     labels = [0] * n
     # number clusters by first appearance so labels are stable/readable
-    for cid, members in enumerate(sorted(clusters, key=min)):
-        for m in members:
+    for cid, a in enumerate(np.flatnonzero(active)):
+        for m in members[a]:
             labels[m] = cid
     return labels
 

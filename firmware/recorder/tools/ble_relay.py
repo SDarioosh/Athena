@@ -200,7 +200,7 @@ def print_list(report: d.Report) -> None:
     if report.info:
         i = report.info
         print(f"watch   device={i.device} fw={i.fw or '?'} board={i.board or '?'} "
-              f"proto={i.proto}")
+              f"proto={i.proto} last reset={i.extra.get('reset', '?')}")
     if report.status:
         print(f"status  {report.status.describe()}")
     print(f"{len(report.listed)} chunk(s) queued")

@@ -88,6 +88,7 @@ static void poke(uint32_t id, const char *ext, long off, uint8_t xor_mask)
 
 static const uint8_t SESSION_A[8] = {0x3f, 0x9a, 0x0c, 0x11, 0xd2, 0xe4, 0xb5, 0x07};
 static const uint8_t SESSION_B[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+static const uint8_t SESSION_C[8] = {9, 9, 9, 9, 9, 9, 9, 9};
 
 /* ---- writing a chunk the way the recorder does ---- */
 
@@ -131,7 +132,7 @@ static uint32_t add_chunk(chunk_queue_t *q, const uint8_t *session, uint32_t seq
     return id;
 }
 
-static void reboot(chunk_queue_t *q, cq_boot_report_t *rep)
+static void reopen_queue(chunk_queue_t *q, cq_boot_report_t *rep)
 {
     cq_deinit(q);
     CHECK_EQ(cq_init(q, g_dir, rep), CQ_OK);
@@ -251,7 +252,7 @@ static void test_basic(void)
     CHECK_EQ(cq_list(&q, 0, list, 8, &remaining), 2);
 
     /* Reboot: the index comes back from the records. */
-    reboot(&q, &rep);
+    reopen_queue(&q, &rep);
     CHECK_EQ(rep.loaded, 2);
     CHECK_EQ(rep.recovered + rep.discarded + rep.corrupt + rep.cleaned, 0);
     CHECK_EQ(cq_list(&q, 0, list, 8, &remaining), 2);
@@ -262,7 +263,7 @@ static void test_basic(void)
     /* Ids are never reused, even after everything is acked and the card remounted. */
     CHECK_EQ(cq_delete(&q, 2, &was), CQ_OK);
     CHECK_EQ(cq_delete(&q, 3, &was), CQ_OK);
-    reboot(&q, &rep);
+    reopen_queue(&q, &rep);
     CHECK_EQ(q.count, 0);
     CHECK_EQ(add_chunk(&q, SESSION_B, 0, 10, true), 4);
 
@@ -272,7 +273,7 @@ static void test_basic(void)
     FILE *f = fopen(path, "r+b");
     fputc(0x7f, f);
     fclose(f);
-    reboot(&q, &rep);
+    reopen_queue(&q, &rep);
     CHECK_EQ(q.next_id, 5);
     cq_deinit(&q);
 }
@@ -292,7 +293,7 @@ static void test_recover_with_audio(void)
     CHECK_EQ(cq_sync(&q), CQ_OK);
     const long cut_size = file_size(id, "opus");
 
-    reboot(&q, &rep); /* power cut: no cq_end */
+    reopen_queue(&q, &rep); /* power cut: no cq_end */
     CHECK_EQ(rep.loaded, 1);
     CHECK_EQ(rep.recovered, 1);
     cq_info_t c;
@@ -307,7 +308,7 @@ static void test_recover_with_audio(void)
     CHECK_EQ(c.duration_ms, (100 * 960 - 312) / 48); /* what decodes: 1993 ms */
 
     /* And it stays that way on the next boot. */
-    reboot(&q, &rep);
+    reopen_queue(&q, &rep);
     CHECK_EQ(rep.loaded, 2);
     CHECK_EQ(rep.recovered, 0);
     CHECK(cq_get(&q, id, &c) && c.flags == CQ_FLAG_LAST);
@@ -326,7 +327,7 @@ static void test_recover_without_audio(void)
     /* Cut while the next chunk of A holds only its headers and 30 buffered packets. */
     const uint32_t a2 = begin(&q, SESSION_A, 2, 0, 0, 7, 0);
     packets(&q, 30);
-    reboot(&q, &rep);
+    reopen_queue(&q, &rep);
     CHECK_EQ(rep.discarded, 1);
     CHECK(!exists(a2, "opus") && !exists(a2, "met"));
     cq_info_t c;
@@ -334,7 +335,7 @@ static void test_recover_without_audio(void)
     CHECK(cq_get(&q, a1, &c) && c.flags == CQ_FLAG_LAST); /* the session still ends */
     CHECK(cq_get(&q, a0, &c) && c.flags == 0);
     CHECK(cq_get(&q, b0, &c) && c.flags == 0);
-    reboot(&q, &rep);
+    reopen_queue(&q, &rep);
     CHECK(cq_get(&q, a1, &c) && c.flags == CQ_FLAG_LAST); /* written to the card */
 
     /* A cut right after the record was written, before any audio file existed. */
@@ -342,7 +343,7 @@ static void test_recover_without_audio(void)
     char path[512];
     path_of(b1, "opus", path, sizeof(path));
     remove(path);
-    reboot(&q, &rep);
+    reopen_queue(&q, &rep);
     CHECK_EQ(rep.discarded, 1);
     CHECK(cq_get(&q, b0, &c) && c.flags == CQ_FLAG_LAST);
     CHECK(!exists(b1, "met"));
@@ -361,25 +362,39 @@ static void test_abandon_and_set_last(void)
     const uint32_t a1 = begin(&q, SESSION_A, 1, 0, 0, 7, 0);
     packets(&q, 60);
     uint32_t kept = 0;
-    CHECK_EQ(cq_abandon(&q, &kept), CQ_OK);
+    CHECK_EQ(cq_abandon(&q, true, &kept), CQ_OK);
     CHECK_EQ(kept, a1);
     cq_info_t c;
     CHECK(cq_get(&q, a1, &c) && c.flags == CQ_FLAG_LAST && c.bytes == file_size(a1, "opus"));
     CHECK(!cq_current(&q, NULL));
-    CHECK_EQ(cq_abandon(&q, &kept), CQ_ERR_STATE);
+    CHECK_EQ(cq_abandon(&q, true, &kept), CQ_ERR_STATE);
 
     /* Without audio: deleted, LAST moves back. */
     const uint32_t b0 = add_chunk(&q, SESSION_B, 0, 1500, false);
     begin(&q, SESSION_B, 1, 0, 0, 7, 0);
-    CHECK_EQ(cq_abandon(&q, &kept), CQ_OK);
+    CHECK_EQ(cq_abandon(&q, true, &kept), CQ_OK);
     CHECK_EQ(kept, 0);
     CHECK(cq_get(&q, b0, &c) && c.flags == CQ_FLAG_LAST);
+
+    /* The session goes on (last = false): kept without LAST, or deleted without moving
+     * LAST back. */
+    const uint32_t c0 = add_chunk(&q, SESSION_C, 0, 1500, false);
+    const uint32_t c1 = begin(&q, SESSION_C, 1, 0, 0, 7, 0);
+    packets(&q, 60);
+    CHECK_EQ(cq_abandon(&q, false, &kept), CQ_OK);
+    CHECK_EQ(kept, c1);
+    CHECK(cq_get(&q, c1, &c) && c.flags == 0 && c.state == CQ_STATE_CLOSED);
+    begin(&q, SESSION_C, 2, 0, 0, 7, 0);
+    CHECK_EQ(cq_abandon(&q, false, &kept), CQ_OK);
+    CHECK_EQ(kept, 0);
+    CHECK(cq_get(&q, c1, &c) && c.flags == 0);
+    CHECK(cq_get(&q, c0, &c) && c.flags == 0);
 
     CHECK_EQ(cq_set_last(&q, a0), CQ_OK);
     CHECK(cq_get(&q, a0, &c) && c.flags == CQ_FLAG_LAST);
     CHECK_EQ(cq_set_last(&q, 999), CQ_ERR_NOT_FOUND);
     cq_boot_report_t rep;
-    reboot(&q, &rep);
+    reopen_queue(&q, &rep);
     CHECK(cq_get(&q, a0, &c) && c.flags == CQ_FLAG_LAST);
 
     /* One chunk open at a time; ending or appending without one is refused. */
@@ -438,7 +453,7 @@ static void test_fix_time(void)
 
     /* Converted records are on the card, the open one too (recovered after a cut). */
     cq_boot_report_t rep;
-    reboot(&q, &rep);
+    reopen_queue(&q, &rep);
     CHECK(cq_get(&q, b, &c) && c.start_ms == (uint64_t)(now_epoch - 39000) && c.flags == CQ_FLAG_LAST);
     CHECK(cq_get(&q, open, &c) && c.start_ms == (uint64_t)(now_epoch - 9000));
     CHECK_EQ(c.flags, CQ_FLAG_LAST);
@@ -479,7 +494,7 @@ static void test_note_flag(void)
 
     /* Reload from the card (cq_deinit + cq_init). */
     cq_boot_report_t rep;
-    reboot(&q, &rep);
+    reopen_queue(&q, &rep);
     CHECK_EQ(rep.loaded, 3);
     CHECK(cq_get(&q, conv, &c));
     CHECK_EQ(c.flags, CQ_FLAG_LAST);
@@ -499,7 +514,7 @@ static void test_note_flag(void)
     const uint8_t session_c[8] = {9, 9, 9, 9, 9, 9, 9, 9};
     const uint32_t cut = begin(&q, session_c, 0, 1792411300000ull, CQ_FLAG_NOTE, 7, 80000);
     packets(&q, 60); /* one audio page on the card */
-    reboot(&q, &rep);
+    reopen_queue(&q, &rep);
     CHECK_EQ(rep.recovered, 1);
     CHECK(cq_get(&q, n0, &c));
     CHECK_EQ(c.flags, CQ_FLAG_NOTE);
@@ -555,6 +570,33 @@ static void test_torn_records(void)
     cq_deinit(&q);
 }
 
+/* `queue drop <id>`: strtoul(base 0) read the zero-padded hex ids `queue` printed as octal,
+ * so "00000010" (chunk 16) dropped chunk 8. Decimal or 0x-hex only, never a leading 0. */
+static void test_parse_id(void)
+{
+    uint32_t id = 0;
+    CHECK(cq_parse_id("16", &id));
+    CHECK_EQ(id, 16);
+    CHECK(cq_parse_id("0x10", &id));
+    CHECK_EQ(id, 16);
+    CHECK(cq_parse_id("0X1a", &id));
+    CHECK_EQ(id, 26);
+    CHECK(cq_parse_id("4294967295", &id));
+    CHECK_EQ(id, UINT32_MAX);
+    id = 7;
+    CHECK(!cq_parse_id("00000010", &id)); /* not octal 8, not decimal 10: refused */
+    CHECK(!cq_parse_id("00000017", &id));
+    CHECK(!cq_parse_id("0", &id));
+    CHECK(!cq_parse_id("0x", &id));
+    CHECK(!cq_parse_id("0x0", &id));
+    CHECK(!cq_parse_id("", &id));
+    CHECK(!cq_parse_id("1a", &id));
+    CHECK(!cq_parse_id("-1", &id));
+    CHECK(!cq_parse_id("4294967296", &id));
+    CHECK(!cq_parse_id("0x100000000", &id));
+    CHECK_EQ(id, 7); /* untouched on failure */
+}
+
 int main(void)
 {
     const char *tmp = getenv("TEST_TMPDIR");
@@ -564,6 +606,7 @@ int main(void)
     mkdir(parent, 0777);
 
     test_record();
+    test_parse_id();
     test_basic();
     test_recover_with_audio();
     test_recover_without_audio();

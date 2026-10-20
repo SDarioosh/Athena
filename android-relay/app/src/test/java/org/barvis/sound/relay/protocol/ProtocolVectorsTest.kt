@@ -133,6 +133,8 @@ class ProtocolVectorsTest {
         assertEquals("twatch-ultra", i.device)
         assertEquals("0.2.0", i.fw)
         assertEquals("twatch_ultra", i.board)
+        assertEquals(null, i.reset)
+        assertEquals("task_wdt", WatchInfo.parse("proto=1;device=d;reset=task_wdt").reset) // §4.1
         val j = WatchInfo.parse("fw=1;future=x=y;proto=1;device=d;")
         assertEquals(1, j.proto)
         assertEquals("d", j.device)

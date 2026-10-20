@@ -19,6 +19,7 @@ import base64
 import binascii
 import hmac
 import logging
+import math
 import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -51,9 +52,12 @@ def parse_ts(value: str) -> float:
     """ISO-8601 (naive = UTC) or epoch seconds/milliseconds."""
     try:
         num = float(value)
-        return num / 1000.0 if num > 1e11 else num
     except ValueError:
         pass
+    else:
+        if not math.isfinite(num):
+            raise HTTPException(400, "timestamp must be ISO-8601 or epoch seconds")
+        return num / 1000.0 if num > 1e11 else num
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as e:

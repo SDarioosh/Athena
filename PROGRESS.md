@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-20 (plain questions reach the module in Odysseus; links kept)_
+_Last updated: 2026-10-20 (round 17: T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus)_
 
 ## Status
 
@@ -253,6 +253,120 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Open for the owner: full 20-question run on the server (both modes) per the hub PR's
   Server verification; the production Custom preset needs the new `INSTRUCTIONS`.
 
+## Done in round 17: T-Watch Ultra buttons, notes and recovery tested on the watch
+
+Branch `feature/twatch-hw-verify`. On the owner's watch over USB from a Mac (ESP-IDF 5.5.1,
+`/dev/cu.usbmodem101`), driven by the new `tools/wcon.py` (one console command per call,
+`--boot`, `--listen`). Every test chunk (real room audio) was deleted with `queue drop`
+right after its sizes, flags and timings were read; none was uploaded.
+
+**Verified on the watch**
+- Buttons: BOOT single (status), fast double (mute 2 buzzes / unmute 1 long buzz, owner can
+  tell them apart), slow double = two singles, BOOT hold 1 s = sync window; PWR short
+  starts/stops a session; PWR hold 1 s starts a note (reg 0x27 reads back 1000 ms); a hold of
+  ~6 s powers the watch off, also on USB (it then needs a PWR press to come back).
+- Voice notes: NOTE on every chunk, `LAST NOTE` on the last; the 5-min cap gives 10 x 30 s
+  chunks and ends "5 min limit"; a note during a conversation ends it with LAST, records the
+  note, and a new conversation starts by itself; mute mid-note ends it and nothing resumes.
+- Recovery: a restart in the middle of a chunk (console `reboot`, the card is left as by a
+  power cut) recovered it at boot (`recovered 1`), cut back to 14.993 s with LAST; the
+  previous chunk intact. A real battery pull wasn't done (a PWR hold first starts a note).
+- Encoder: 10.4-11.9 ms avg per 20 ms frame (about 53 % of a core at 80 MHz), max 15 ms
+  while recording alone, up to 46-68 ms while the screen comes on and a relay syncs (the DMA
+  buffer absorbs it; no gap seen).
+- Heap (new `heap:` line in `status`): 291 KB internal free before BLE, 197 KB after (BLE
+  ~94 KB), largest block 92 KB; lowest during sessions 80 KB; 153 KB after many sessions,
+  steady (no leak). PSRAM 8186 KB free, unused so far.
+
+**Fixed**
+- **A card write error ended the recording.** An sdspi `0x108` at a chunk boundary ended a
+  note after 30 s, and happened again in a conversation. Now the chunk is cut back to its
+  last page without LAST, and the session goes on with a new chunk after 100/300/1000 ms of
+  mic frames that are read and counted (later chunks keep correct start times); it ends
+  after 4 failures in a row. `cq_abandon()` takes a `last` flag (host test added). Tested
+  with `sd failwrite <n>` (new test hook) and by a real error that it recovered.
+- **`queue drop`** read the zero-padded ids that `queue` lists as octal. Fixed here too, but
+  the bug hunt's fix on `main` (ids listed in decimal, `cq_parse_id`) won the merge.
+- **PWR hold during a note** did nothing; either PWR gesture now ends a note (owner).
+- **Extra PWR short presses**: after a real press, the PMU reported more short presses
+  (real key edges) 0.4-2 s later, which once restarted a stopped session. Probably the key
+  under a resting finger (the buzz?); a resting finger alone held it long enough to power
+  off. A short press within 1 s of the previous one is now ignored (1.5 s at first; 1 s at the owner's request), which catches most of
+  them. Owner: not an issue in use, left at that.
+- Host tests build on macOS (`reboot()` clashed with `<unistd.h>`); `/build-host/` ignored.
+
+**Reliability (step 2), all tested on the watch**
+- **Low battery**: `board_battery_limits()` in `board.h` (T-Watch: low at <= 5 % or < 3.5 V,
+  recording allowed again at >= 10 % or on USB); `main/battery_guard.c` (pure, host-tested)
+  needs 2 low readings in a row, checked every 15 s. When low: whatever records ends
+  cleanly (LAST), 3 buzzes, "BATTERY LOW", sessions/notes/WAV refused (3 buzzes, "CHARGE
+  ME"); `status` and the status screen say so. `batt sim <percent> [mV]` / `batt sim off`
+  fakes it (USB unplugged). Not yet seen with a really empty battery.
+- **Reset reason**: boot log, `status` (`reset: ..., up N s`) and BLE `info` `reset=<name>`
+  (protocol §4.1, additive in `proto=1`; the PC relay shows it in `--list`, the Android app
+  on its status screen; Android build not run here, no SDK on the Mac: CI).
+- **Core dump**: 128 KB `coredump` partition after the app (NVS and bonds kept; bonds
+  survived the reflash). Console `coredump` (task, PC, backtrace), `coredump get`, `coredump
+  erase`, `crash yes`; `tools/pull.py --coredump` saves it, `idf.py coredump-info -c` decodes
+  it (decoded to `cmd_crash` on the test). Its own logs off. Costs ~6 KB internal RAM (191 KB
+  free after BLE).
+- **Task watchdog**: it only printed warnings before (`CONFIG_ESP_TASK_WDT_PANIC` off). Now
+  the session and BLE tasks are subscribed and a 10 s hang restarts the watch with a core
+  dump and `reset=task_wdt`; a conversation that was recording starts again after the boot
+  (not a note, not after a power cut or brownout). `crash wdt` tested it: restart after
+  ~10 s, the cut chunk recovered with LAST, a new session started. 70 s of recording and
+  chunk closes: no false trigger. Not yet tested during a BLE drain.
+- `pull.py` reset the watch when opening the port on macOS (same fix as `wcon.py`).
+
+**Power logging (step 3, milestone 2)**
+- `power` prints the battery, the state (rec/note/ble_adv/ble_conn/screen/sd), the CPU
+  clock and the drain rate (%/h over >= 30 min on battery). A background log samples every
+  5 min (`power log <min>|off`, NVS) into a 7-day PSRAM ring and writes `/sdcard/power.csv`
+  once an hour, only while nothing records or syncs. `power locks` lists the PM locks.
+  The AXP2101 has no battery-current reading: drain comes from % over time.
+- **Card access from a second task during a recording fails.** Every power-log append while
+  a session recorded got sdspi `0x107` (read timeout); the same append right after the
+  session worked, and the session's own writes were fine. Hence the "only while idle" rule.
+  Together with round 14 (reads failing right after ACK deletes) and the `0x108` write
+  errors, the card or the SPI link seems to need more time after writes than sdspi gives
+  it. Not investigated further yet (ideas: a slower SPI clock, a longer sdspi timeout, another
+  card).
+- **Light sleep with the mic running: not possible.** On the watch, `power locks` shows the
+  I2S driver's `APB_FREQ_MAX` lock held for the whole recording (the PDM DMA needs the APB
+  clock; light sleep would stop it and leave gaps), and BLE's `btLS NO_LIGHT_SLEEP` lock
+  held all the time (the controller runs on the main crystal; there is no 32 kHz crystal,
+  and the 136 kHz RC clock is too inaccurate for BLE connections per ESP-IDF). So while
+  recording the CPU stays at 80 MHz and awake; recording current is set by the mic, the
+  encoder (~53 % of a core) and the card. Light sleep could only save power between
+  recordings, and only if BLE is shut down while idle (and brought back to advertise) or
+  runs on the RC clock: a design choice for the owner. The experiment build was not needed.
+- **Owner, milestone 2:** unplug the watch and use it normally (or record all day) until it
+  is nearly empty, then `power` and `get power.csv` give the drain per state.
+
+**Seen, not fixed**
+- A bonded relay (`8c:a3:ec:...`) connected twice during the tests: once it sent BYE
+  without reading, once it read ~111 KB, then the link dropped with 983 notification send
+  retries ("no buffers for 5000 ms"). Nothing was acked.
+- SD `0x108` errors keep showing up at 4 MHz SPI (round 14: reads after an ACK; now
+  writes). Cause unknown; recovery handles it.
+
+## Done on 2026-10-20: bug hunt
+
+Eight bugs were reproduced and fixed here, and three in the hub. Each one has a
+regression test. Details are in `docs/bug-hunt-2026-10.md`.
+- **Server:** `pcm16` at other sample rates; a merge lost closed action items; facts
+  stayed hidden after a deletion; the digest wasn't redone for late uploads; a `nan`
+  timestamp gave a 500; speaker clustering was O(n⁴).
+- **Firmware:** `queue drop` read zero-padded ids as octal and could drop the wrong
+  chunk.
+- **PC relay:** crashed on a broken HTTP answer.
+
+Still needs the owner:
+- ~~`idf.py build` and `queue` / `queue drop` on the watch~~: done 2026-10-20 in round 17
+  (merged build; `queue` lists decimal ids, `queue drop 98` dropped chunk 98).
+- The found-not-fixed items in that doc (late-chunk diarization, the BYE/backoff
+  conflict) need a decision.
+
 ## Done in round 16: PRs #24 and #25 measured, fixed and improved
 
 Both were merged before they were measured. Sandbox numbers (CPU, whisper base.en,
@@ -498,9 +612,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
    large-v3-turbo, optional pyannote on the GPU) and SDarioosh/barvis-sound#38 (re-summarize a copy of
    the real DB, bakeoff on the test instance with qwen3.5-35b), then a real-device check:
    name a speaker once, see the name in the next recording.
-- **Owner: voice notes and new buttons** (round 15, branch `feature/voice-notes`): flash,
-  run the "Needs the real watch" list above, then drain with `ble_relay.py --once` and check
-  the note arrives as kind `note` with a title and summary.
+- **Owner: voice notes end to end**: buttons and notes are verified on the watch (round 17);
+  still to do: drain a note with `ble_relay.py --once` and check it arrives as kind `note`
+  with a title and summary.
 0. **Owner: T-Watch Ultra upload path test** (round 12 PR, Server verification): `--list`
    from the Windows PC works, and so does `--once` into the server (round 14). Still to do:
    the Android app; report the BLE transfer time (PC: ~2 s per 53 KB chunk incl. upload). Encoder:
