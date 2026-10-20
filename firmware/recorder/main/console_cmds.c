@@ -17,10 +17,17 @@
 #include "chunk_store.h"
 #include "esp_check.h"
 #include "esp_console.h"
+#include "esp_core_dump.h"
+#include "esp_pm.h"
+#include "esp_task_wdt.h"
+#include "esp_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_rom_crc.h"
 #include "esp_system.h"
 #include "isotime.h"
+#include "power_log.h"
 #include "mic.h"
 #include "recorder.h"
 
@@ -34,10 +41,27 @@ static int cmd_status(int argc, char **argv)
     return 0;
 }
 
+/* `batt`: the real battery. `batt sim <percent> [mV]` makes the app see that battery with
+ * USB unplugged (to test the low-battery guard); `batt sim off` ends it. */
 static int cmd_batt(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
+    if (argc >= 2 && strcmp(argv[1], "sim") == 0) {
+        if (argc == 3 && strcmp(argv[2], "off") == 0) {
+            app_battery_simulate(false, 0, 0);
+            printf("battery simulation off\n");
+            return 0;
+        }
+        if (argc < 3 || argc > 4) {
+            printf("usage: batt sim <percent> [mV] | batt sim off\n");
+            return 1;
+        }
+        const int percent = atoi(argv[2]);
+        const int mv = argc == 4 ? atoi(argv[3]) : 3800;
+        app_battery_simulate(true, percent, mv);
+        printf("simulating %d%%, %d mV, USB unplugged (checked every 15 s; 2 low readings "
+               "in a row count)\n", percent, mv);
+        return 0;
+    }
     board_battery_t b;
     if (board_battery_read(&b) != ESP_OK) {
         printf("battery: read failed\n");
@@ -291,6 +315,126 @@ static int cmd_get(int argc, char **argv)
     return ok ? 0 : 1;
 }
 
+/* `power [log <minutes>|off | flush | locks]`: battery, state and drain now; the power log
+ * (power_log.h); `locks` lists the power-management locks (what keeps the CPU awake). */
+static int cmd_power(int argc, char **argv)
+{
+    if (argc == 1) {
+        power_log_print();
+        return 0;
+    }
+    if (strcmp(argv[1], "log") == 0 && argc == 3) {
+        const int min = strcmp(argv[2], "off") == 0 ? 0 : atoi(argv[2]);
+        const esp_err_t err = power_log_set_period(min);
+        if (min) {
+            printf("power log every %d min (%s)\n", min, esp_err_to_name(err));
+        } else {
+            printf("power log off (%s)\n", esp_err_to_name(err));
+        }
+        return err == ESP_OK ? 0 : 1;
+    }
+    if (strcmp(argv[1], "flush") == 0) {
+        const esp_err_t err = power_log_flush();
+        printf("power log written: %s\n", esp_err_to_name(err));
+        return err == ESP_OK ? 0 : 1;
+    }
+    if (strcmp(argv[1], "locks") == 0) {
+        esp_pm_dump_locks(stdout);
+        return 0;
+    }
+    printf("usage: power [log <minutes>|off | flush | locks]\n");
+    return 1;
+}
+
+/* `coredump [get|erase]`: the crash saved in the coredump partition. Without an argument,
+ * a summary (task, PC, cause, backtrace); `get` sends the ELF over USB in `get`'s framing
+ * (tools/pull.py --coredump saves it; decode with `idf.py coredump-info -c <file>`); `erase`
+ * deletes it. The ELF holds task stacks, which can include a few ms of mic samples: keep the
+ * file outside the repository and delete it after use. */
+static int cmd_coredump(int argc, char **argv)
+{
+    if (argc >= 2 && strcmp(argv[1], "erase") == 0) {
+        const esp_err_t err = esp_core_dump_image_erase();
+        printf("core dump erase: %s\n", esp_err_to_name(err));
+        return err == ESP_OK ? 0 : 1;
+    }
+    const esp_err_t check = esp_core_dump_image_check();
+    if (check != ESP_OK) {
+        printf("no core dump saved (%s)\n", esp_err_to_name(check));
+        return 0;
+    }
+    size_t addr = 0, size = 0;
+    if (esp_core_dump_image_get(&addr, &size) != ESP_OK) {
+        printf("core dump: can't locate it\n");
+        return 1;
+    }
+    if (argc >= 2 && strcmp(argv[1], "get") == 0) {
+        printf("@@BEGIN coredump.elf %u\n", (unsigned)size);
+        static uint8_t buf[57 * 16];
+        char line[80];
+        uint32_t crc = 0;
+        bool ok = true;
+        for (size_t off = 0; off < size; off += sizeof(buf)) {
+            const size_t n = size - off < sizeof(buf) ? size - off : sizeof(buf);
+            if (esp_flash_read(NULL, buf, addr + off, n) != ESP_OK) {
+                ok = false;
+                break;
+            }
+            crc = esp_rom_crc32_le(crc, buf, n);
+            for (size_t i = 0; i < n; i += 57) {
+                base64_line(buf + i, n - i < 57 ? n - i : 57, line);
+                printf("%s\n", line);
+            }
+        }
+        printf("@@END %08" PRIx32 "%s\n", crc, ok ? "" : " READ_ERROR");
+        return ok ? 0 : 1;
+    }
+    if (argc >= 2) {
+        printf("usage: coredump [get|erase]\n");
+        return 1;
+    }
+    static esp_core_dump_summary_t sum; /* ~400 bytes: not on the console task's stack */
+    const esp_err_t err = esp_core_dump_get_summary(&sum);
+    printf("core dump: %u bytes at 0x%x\n", (unsigned)size, (unsigned)addr);
+    if (err != ESP_OK) {
+        printf("summary: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+    printf("task: %s\nPC: 0x%08" PRIx32 "\ncause: %" PRIu32 " (Xtensa EXCCAUSE), vaddr 0x%08" PRIx32
+           "\nbacktrace:", sum.exc_task, sum.exc_pc, sum.ex_info.exc_cause,
+           sum.ex_info.exc_vaddr);
+    for (uint32_t i = 0; i < sum.exc_bt_info.depth; i++) {
+        printf(" 0x%08" PRIx32, sum.exc_bt_info.bt[i]);
+    }
+    printf("%s\n", sum.exc_bt_info.corrupted ? " (corrupted)" : "");
+    printf("decode: tools/pull.py --coredump, then idf.py coredump-info -c <file>\n");
+    return 0;
+}
+
+/* `crash yes`: crash on purpose (abort) to test the core dump and the reset reason. */
+static int cmd_crash(int argc, char **argv)
+{
+    if (argc == 2 && strcmp(argv[1], "wdt") == 0) {
+        /* A task that stops feeding the task watchdog: it fires after
+         * CONFIG_ESP_TASK_WDT_TIMEOUT_S and restarts the watch (reset=task_wdt). */
+        printf("hanging the console task (task watchdog test)\n");
+        fflush(stdout);
+        esp_task_wdt_add(NULL);
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+    if (argc != 2 || strcmp(argv[1], "yes") != 0) {
+        printf("usage: crash yes (abort) | crash wdt (hang a watched task); the watch saves a "
+               "core dump and restarts\n");
+        return 1;
+    }
+    printf("crashing on purpose\n");
+    fflush(stdout);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    abort();
+}
+
 /* `gain [dB]`: show or set the mic gain (saved in NVS, used from the next recording). */
 static int cmd_gain(int argc, char **argv)
 {
@@ -374,7 +518,7 @@ static int cmd_session(int argc, char **argv)
     return 0;
 }
 
-/* `note [start|stop]`: a voice note (same as holding PWR ~1 s; a PWR press stops it). */
+/* `note [start|stop]`: a voice note (same as holding PWR ~1 s; a PWR press or hold stops it). */
 static int cmd_note(int argc, char **argv)
 {
     if (argc >= 2 && strcmp(argv[1], "start") == 0) {
@@ -433,8 +577,12 @@ static int cmd_ble(int argc, char **argv)
 
 static int cmd_sd(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
+    if (argc == 3 && strcmp(argv[1], "failwrite") == 0) {
+        const int n = atoi(argv[2]);
+        chunk_store_fail_writes(n);
+        printf("the next %d chunk write(s) will fail (test)\n", n);
+        return 0;
+    }
     printf("card detect: %s\n", board_storage_card_present() ? "card in" : "no card");
     recorder_state_t rs;
     recorder_get_state(&rs);
@@ -469,7 +617,7 @@ static int cmd_reboot(int argc, char **argv)
 
 static const esp_console_cmd_t cmds[] = {
     {.command = "status", .help = "Recorder state, battery, time, card", .func = cmd_status},
-    {.command = "batt", .help = "Battery voltage, percent, charging", .func = cmd_batt},
+    {.command = "batt", .help = "Battery voltage, percent, charging; `batt sim <percent> [mV]` / `batt sim off` fakes it (test)", .func = cmd_batt},
     {.command = "rails", .help = "Read back every power rail from the PMU", .func = cmd_rails},
     {.command = "exp", .help = "Log the XL9555 expander pins (pin-map check)", .func = cmd_exp},
     {.command = "time", .help = "Show time; `time 2026-10-19T12:34:56Z` sets system + RTC", .func = cmd_time},
@@ -487,8 +635,11 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "sync", .help = "Open the BLE sync window for 2 min (= BOOT long press)", .func = cmd_sync},
     {.command = "ls", .help = "List the files on the SD card; `ls q` the chunk queue", .func = cmd_ls},
     {.command = "get", .help = "Send a card file (or q/<chunk>) over USB as base64 (tools/pull.py saves it)", .func = cmd_get},
-    {.command = "sd", .help = "Power, mount and report the SD card, then power it off", .func = cmd_sd},
+    {.command = "sd", .help = "Power, mount and report the SD card, then power it off; `sd failwrite <n>` makes the next n chunk writes fail (test)", .func = cmd_sd},
     {.command = "reboot", .help = "Restart", .func = cmd_reboot},
+    {.command = "power", .help = "Battery, state, drain rate and the power log; `power log <min>|off`, `power flush`, `power locks`", .func = cmd_power},
+    {.command = "coredump", .help = "The last crash: summary; `coredump get` sends the ELF (tools/pull.py --coredump), `coredump erase`", .func = cmd_coredump},
+    {.command = "crash", .help = "`crash yes` (abort) / `crash wdt` (hang a watched task): crash on purpose to test the core dump, watchdog and resume", .func = cmd_crash},
 };
 
 esp_err_t console_start(void)

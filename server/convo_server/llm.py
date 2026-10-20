@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from . import relevance_rules
 from .dates import resolve_due
 from .store import Segment
 
@@ -256,7 +257,8 @@ def _strip_fences(text: str) -> str:
 class Summarizer:
     """Summaries in small focused calls (easier for a small local model than one big one).
 
-    1. triage: discard junk (TV, noise) and pick the conversation kind;
+    1. triage: discard junk (TV, noise) and pick the conversation kind; plain filler and
+       mic checks are discarded first by fixed rules (``relevance_rules``), without a call;
     2. notes: title, summary, key points, people, topics with a template for that kind;
     3. action items, with due dates resolved against the conversation date;
     4. durable facts.
@@ -288,6 +290,9 @@ class Summarizer:
             return self._summarize_note(parts, origin)
         if sum(len(s.text.split()) for s in segments) < self.min_words:
             return {"discard": True, "discard_reason": "too_short", "kind": "other"}
+        junk = relevance_rules.discard_reason([s.text for s in segments])
+        if junk:  # only filler, or a mic check: no model call
+            return {"discard": True, "discard_reason": junk, "kind": "other"}
         fmt = {"owner": self.owner}
         triage = self.llm.structured(TRIAGE_SYSTEM.format(**fmt), parts[0], Triage)
         assert isinstance(triage, Triage)

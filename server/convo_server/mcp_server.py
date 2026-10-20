@@ -21,13 +21,16 @@ from .diarize import load_voices
 from .links import local_time, transcript_link
 from .search import Embedder, search
 from .speakers import relabel_matches, suggestion
-from .store import Store
+from .store import CONVERSATION, NOTE, Store
 
 INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
 with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
 for any question about what someone said, decided, promised or mentioned, and before \
-answering from memory. Ground every claim in tool results and include the link given \
-with it. Dates are in the user's timezone; pass dates as YYYY-MM-DD.
+answering from memory. Questions about the user's plans, appointments and the people they \
+know ("What is Jonas allergic to?") are answered from these recordings too: search \
+(list_facts, search_transcripts) before saying you don't know, and search instead of offering \
+to. Ground every claim in tool results and include the link given with it. Dates are in the \
+user's timezone; pass dates as YYYY-MM-DD.
 
 Naming speakers: when the user says who an unnamed speaker was ("Speaker 2 was Jenn", \
 "Speaker 1 and Speaker 3 were both Sam"), that is a request to save the name, not a claim \
@@ -36,12 +39,20 @@ each label, then say which labels were renamed (it also renames that voice in ot
 conversations when it is sure). Fixing speakers: a name that is wrong or misspelled \
 everywhere -> rename_speaker_everywhere; one line given to the wrong person -> \
 reassign_line with the line's # number from get_transcript or search_transcripts. \
-list_unnamed_speakers shows voices nobody has named yet, with quotes and a guess."""
+list_unnamed_speakers shows voices nobody has named yet, with quotes and a guess.
+
+Voice notes: recordings the user made for themselves (an idea, a reminder) are voice \
+notes, marked "(voice note)" after the title. When the user asks about their voice notes, \
+notes or memos, call search_conversations with kind="note" (no query needed for the \
+latest ones)."""
 
 Text = Annotated[str, Field(description="Free-text words to look for; empty = no text filter")]
 Person = Annotated[str, Field(description="Person's name as it appears in transcripts")]
 Since = Annotated[str, Field(description="Start date YYYY-MM-DD (inclusive) or ISO time")]
 Until = Annotated[str, Field(description="End date YYYY-MM-DD (inclusive) or ISO time")]
+RecKind = Annotated[str, Field(description=(
+    "'note' = only voice notes (memos the user recorded for themselves); "
+    "'conversation' = only conversations with other people; empty = both"))]
 ConvId = Annotated[str, Field(description="conversation id from a previous result")]
 
 
@@ -82,7 +93,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         return parse_when(since, tz), parse_when(until, tz, end=True)
 
     # Frontends don't reliably forward server instructions (Hermes ignores them), so
-    # the citation rule also rides along with every non-empty result.
+    # the citation rule also rides along with every non-empty result: in the header and
+    # again as the last line, the part a model reads right before it answers.
     cite = "When answering, put the link next to each fact you use"
 
     def header(n: int, what: str) -> str:
@@ -110,35 +122,41 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                          f"(conversation \"{r['conversation_title'] or 'untitled'}\""
                          f"{_note(r.get('conversation_kind'))}, "
                          f"id {r['conversation_id']}) {link}")
-        return "\n".join(lines)
+        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=ro)
     def search_conversations(query: Text = "", person: Person = "", since: Since = "",
-                             until: Until = "", limit: int = 10) -> str:
-        """Find conversations by topic words, a person who spoke or was mentioned, and/or a
-        date range. Returns titles, summaries and links; use get_conversation for details."""
+                             until: Until = "", kind: RecKind = "", limit: int = 10) -> str:
+        """Find conversations and voice notes by topic words, a person who spoke or was
+        mentioned, and/or a date range, newest first. For the user's voice notes (memos,
+        notes to self) set kind="note". Returns titles, summaries and links; use
+        get_conversation for details."""
         a, b = window(since, until)
         limit = max(1, min(limit, 50))
+        try:
+            k = _kind(kind)
+        except ValueError as e:  # returned, not raised: the model sees the message
+            return str(e)
         if query:
             hits = search(store, query, embedder, limit=limit * 5)
             allowed = None
-            if person or a is not None or b is not None:
+            if person or k or a is not None or b is not None:
                 allowed = {c["id"] for c in store.list_conversations(
-                    since=a, until=b, person=person or None, limit=10_000)}
+                    since=a, until=b, person=person or None, kind=k, limit=10_000)}
             convs = [store.get_conversation(h["conversation_id"]) for h in hits
                      if allowed is None or h["conversation_id"] in allowed][:limit]
         else:
             convs = store.list_conversations(since=a, until=b, person=person or None,
-                                             limit=limit)
+                                             kind=k, limit=limit)
         convs = [c for c in convs if c]
-        lines = [header(len(convs), "conversations")]
+        lines = [header(len(convs), "voice notes" if k == NOTE else "conversations")]
         for c in convs:
             lines.append(
                 f"- {when(c['started_at'])}–{when(c['ended_at'], '%H:%M')} "
                 f"\"{_title(c)}\"{_note(c.get('kind'))} id {c['id']}; people: "
                 f"{', '.join(c['people']) or '—'}\n  {c['summary'] or ''}\n  "
                 f"{transcript_link(settings, c['id'])}")
-        return "\n".join(lines)
+        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=ro)
     def get_conversation(conversation_id: ConvId) -> str:
@@ -204,7 +222,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                          + transcript_link(settings, r["conversation_id"],
                                            (r["source_at"] or r["conversation_at"])
                                            - r["conversation_at"]))
-        return "\n".join(lines)
+        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=rw)
     def update_action_item(item_id: int, status: Annotated[
@@ -239,7 +257,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                              + transcript_link(settings, old["conversation_id"],
                                                (old["source_at"] or old["conversation_at"])
                                                - old["conversation_at"]))
-        return "\n".join(lines)
+        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=ro)
     def get_daily_digest(date: Annotated[str, Field(description="YYYY-MM-DD")]) -> str:
@@ -389,6 +407,19 @@ def _title(c: dict[str, Any]) -> str:
     if c.get("status") == "discarded":
         return f"(not summarized: looked like {c.get('discard_reason') or 'junk'})"
     return c.get("title") or "untitled (summary pending)"
+
+
+def _kind(value: str) -> str | None:
+    """search_conversations' ``kind``, read loosely: small models write "voice_note",
+    "memo" or "notes"."""
+    v = (value or "").strip().lower()
+    if not v or v in ("all", "any", "both"):
+        return None
+    if "note" in v or "memo" in v:
+        return NOTE
+    if "conv" in v:
+        return CONVERSATION
+    raise ValueError(f"bad kind {value!r}; use 'note', 'conversation' or ''")
 
 
 def _note(kind: str | None) -> str:

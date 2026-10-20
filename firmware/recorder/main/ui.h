@@ -21,6 +21,7 @@ typedef struct {
     int queued_min;
     bool ble_connected;
     board_battery_t battery;
+    bool battery_low;    /* too low to record */
     int64_t now;      /* UTC epoch seconds */
     bool time_valid;
     bool sd_present;  /* card-detect */

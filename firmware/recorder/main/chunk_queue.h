@@ -122,9 +122,12 @@ int cq_sync(chunk_queue_t *q);
 /* Close the open chunk: final size, CRC, duration and flags (CQ_FLAG_LAST) go into its
  * record and it becomes listable. */
 int cq_end(chunk_queue_t *q, uint32_t duration_ms, bool last);
-/* The open chunk can't be finished normally (write error): recover it like a power cut.
- * *closed_id = the chunk_id if it was kept, 0 if it was deleted. */
-int cq_abandon(chunk_queue_t *q, uint32_t *closed_id);
+/* The open chunk can't be finished normally (write error): recover it like a power cut,
+ * cut back to its last complete page. *closed_id = the chunk_id if it was kept, 0 if it was
+ * deleted. `last`: the session ends here, so the kept chunk gets LAST (or, if nothing was
+ * kept, the session's previous chunk does). Without it the session goes on with a new chunk
+ * and no flag changes. */
+int cq_abandon(chunk_queue_t *q, bool last, uint32_t *closed_id);
 /* Set LAST on a closed chunk (the next chunk of its session couldn't be started). */
 int cq_set_last(chunk_queue_t *q, uint32_t chunk_id);
 /* The open chunk, if any. */

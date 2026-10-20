@@ -6,14 +6,15 @@
  * XIAO ESP32-S3 Sense pendant will implement a subset (no display, no rails) and return
  * ESP_ERR_NOT_SUPPORTED for what it lacks.
  *
- * Later milestones add to this file rather than reaching into board code: a low-battery
- * threshold hook, a "phone sync" status for the screen, light-sleep enter/exit.
+ * Later milestones add to this file rather than reaching into board code: a "phone sync"
+ * status for the screen, light-sleep enter/exit.
  */
 #pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "battery_guard.h"
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -91,6 +92,8 @@ void board_log_power(void);
 void board_log_expander(void);
 
 esp_err_t board_battery_read(board_battery_t *out);
+/* When the battery counts as too low to record (main/battery_guard.c applies them). */
+void board_battery_limits(bg_limits_t *out);
 
 /* ---- wall-clock time (UTC epoch seconds) ---- */
 /* *valid is false if the RTC lost power since it was last set. */
