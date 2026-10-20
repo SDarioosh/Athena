@@ -110,11 +110,12 @@ class EnrollJson(BaseModel):
 
 
 class ActionItemPatch(BaseModel):
-    """Every field optional; ``null`` for due_date / due_time clears it."""
+    """Every field optional; ``null`` for due_date / due_time / list_name clears it."""
     status: str | None = None
     kind: str | None = None
     due_date: str | None = None
     due_time: str | None = None
+    list_name: str | None = None
 
 
 REJECTED_KEEP = 20  # undecodable uploads kept for debugging, newest first
@@ -313,7 +314,8 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
             item = store.update_action_item(
                 item_id, status=body.status, kind=body.kind,
                 due_date=body.due_date if "due_date" in given else UNSET,
-                due_time=body.due_time if "due_time" in given else UNSET)
+                due_time=body.due_time if "due_time" in given else UNSET,
+                list_name=body.list_name if "list_name" in given else UNSET)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         if item is None:

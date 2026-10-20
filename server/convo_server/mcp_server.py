@@ -220,6 +220,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                 "text": r["text"], "owner": r["owner"], "due": r["due"],
                 "due_date": r["due_date"], "due_time": r.get("due_time"),
                 "duration_minutes": r.get("duration_minutes"), "location": r.get("location"),
+                "list_name": r.get("list_name"),
                 "time_unclear": bool(r.get("time_unclear")),
                 "conversation_id": r["conversation_id"],
                 "conversation_title": r["conversation_title"],
@@ -236,7 +237,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                                           "programs)")] = "text") -> str:
         """Action items from conversations and voice notes (default: open ones), newest
         first. Each is a task, an event (meeting, appointment) or a reminder, with its due
-        date and time of day if known."""
+        date and time of day if known, and the to-do list the user named for it."""
         fmt = (format or "text").strip().lower()
         if fmt not in ("text", "json"):
             return "format must be text or json"
@@ -253,6 +254,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             lines.append(f"- #{r['id']} [{r['status']}] {_kind_word(r)}{r['text']}"
                          + (f" (owner {r['owner']})" if r["owner"] else "")
                          + _due(r)
+                         + (f" [list {r['list_name']}]" if r.get("list_name") else "")
                          + f" — from \"{r['conversation_title']}\""
                          + f"{_note(r.get('conversation_kind'))} {when(r['conversation_at'])} "
                          + item_link(r))
@@ -268,9 +270,12 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             due_date: Annotated[str, Field(description="YYYY-MM-DD, 'none' to clear; empty "
                                                        "= unchanged")] = "",
             due_time: Annotated[str, Field(description="HH:MM (24 h, local), 'none' to "
-                                                       "clear; empty = unchanged")] = "") -> str:
+                                                       "clear; empty = unchanged")] = "",
+            list_name: Annotated[str, Field(description="the to-do list it goes on, e.g. "
+                                                        "'shopping'; 'none' to clear; empty "
+                                                        "= unchanged")] = "") -> str:
         """Change an action item: mark it done/dismissed (or reopen it), or change its kind,
-        due date or time of day. Only when the user asks."""
+        due date, time of day or to-do list. Only when the user asks."""
         def opt(value: str) -> Any:
             v = (value or "").strip()
             return UNSET if not v else None if v.lower() == "none" else v
@@ -283,14 +288,16 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             return "kind must be task, event or reminder"
         try:
             item = store.update_action_item(item_id, status=st or None, kind=kd or None,
-                                            due_date=opt(due_date), due_time=opt(due_time))
+                                            due_date=opt(due_date), due_time=opt(due_time),
+                                            list_name=opt(list_name))
         except ValueError as e:  # returned, not raised: the model sees the message
             return str(e)
         if item is None:
             return f"No action item #{item_id}."
         when_due = " ".join(x for x in (item["due_date"], item.get("due_time")) if x)
         return (f"Action item #{item_id} is now {item['status']}, {item['kind']}, "
-                + (f"due {when_due}." if when_due else "no due date."))
+                + (f"due {when_due}" if when_due else "no due date")
+                + (f", on the {item['list_name']} list." if item.get("list_name") else "."))
 
     @mcp.tool(annotations=ro)
     def list_facts(subject: Annotated[str, Field(description="Person/thing the fact is about")]

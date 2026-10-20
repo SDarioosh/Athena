@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import relevance_rules
 from .dates import resolve_due, resolve_time
-from .store import Segment
+from .store import Segment, clean_list_name
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +37,9 @@ class ActionItem(BaseModel):
     duration_minutes: int | None = Field(default=None,
                                          description="How long an event lasts, if said")
     location: str | None = Field(default=None, description="Where an event is, if said")
+    list_name: str | None = Field(default=None,
+                                  description="The user's list it goes on, if they name one "
+                                              "('add milk to my shopping list' -> 'shopping')")
     at_seconds: int | None = Field(default=None,
                                    description="Offset in seconds where it was mentioned")
 
@@ -149,10 +152,13 @@ KINDS = """kind: "event" for a meeting, appointment, call or lunch on a set day,
 task, due "Wednesday". Something repeating ("every Monday") is a task whose text starts \
 "Set up a repeating event: ". time: the time of day as said ("12 pm", "half past two"), \
 or null. duration_minutes: how long an event lasts if said ("for an hour" = 60), else \
-null. location: where an event is if said ("Main Street"), else null."""
+null. location: where an event is if said ("Main Street"), else null. list_name: the \
+list the user wants it on if they name one, e.g. "add milk to my shopping list" -> text \
+"Milk", list_name "shopping"; "put call the bank on my work to-do list" -> text "Call the \
+bank", list_name "work"; else null."""
 
 ACTION_KEYS = ("Keys: action_items[{{text, kind, owner, due, due_date, time, "
-               "duration_minutes, location, at_seconds}}].")
+               "duration_minutes, location, list_name, at_seconds}}].")
 
 ACTIONS_SYSTEM = """You list the action items of one conversation. """ + COMMON + """
 The conversation happened on {date}.
@@ -540,10 +546,37 @@ def _item_storage(a: ActionItem, source_at: float | None) -> dict[str, Any]:
             text = _REPEAT_PREFIX + text[:1].lower() + text[1:]
     duration = a.duration_minutes if a.duration_minutes and 0 < a.duration_minutes <= 1440 \
         else None
+    text, list_ = _list_and_text(text, a.list_name)
     return {"text": text, "kind": kind, "owner": a.owner, "due": a.due,
             "due_date": _iso_date(a.due_date), "time": a.time,
             "duration_minutes": duration if kind == "event" else None,
-            "location": (a.location or "").strip() or None, "source_at": source_at}
+            "location": (a.location or "").strip() or None, "list_name": list_,
+            "source_at": source_at}
+
+
+# "... to my shopping list", "on the work to-do list": a list the user named
+_LIST_PHRASE = re.compile(
+    r"\s*\b(?:to|on|onto|in|into|for)\s+(?:my|the|our)\s+"
+    r"(?P<name>[\w'&-]+(?:\s+[\w'&-]+){0,2}?)\s+(?:to-?do\s+|to\s+do\s+)?list\b",
+    re.IGNORECASE)
+_ADD = re.compile(r"^(?:add|put|write(?:\s+down)?)\s+", re.IGNORECASE)
+
+
+def _list_and_text(text: str, said: str | None) -> tuple[str, str | None]:
+    """The item's text and list. The list is the model's ``list_name``, else an "add X
+    to my shopping list" phrase in the text; a phrase naming that list is taken out of
+    the text ("Add milk to my shopping list" -> "Milk")."""
+    name = clean_list_name(said)
+    m = _LIST_PHRASE.search(text)
+    said_in_text = clean_list_name(m["name"]) if m else None
+    if said_in_text is None:
+        return text, name
+    if name is None and _ADD.match(text):
+        name = said_in_text
+    if name is None or name.lower() != said_in_text.lower():
+        return text, name
+    rest = _ADD.sub("", (text[:m.start()] + text[m.end():]).strip(" ,.")).strip()
+    return (rest[:1].upper() + rest[1:] if rest else text), name
 
 
 def _dedupe(items: list[str]) -> list[str]:
