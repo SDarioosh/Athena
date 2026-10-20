@@ -5,6 +5,7 @@
 
 #include "check.h"
 #include "outbox.h"
+#include "json.h"
 #include "pda_actions.h"
 
 static char dir[256];
@@ -64,6 +65,50 @@ static void test_actions(void)
     CHECK(strcmp(a.ref, "conv:c_9") == 0);
     pda_action_cal_add(b, "X", "2026-10-23", NULL, true, -1);
     CHECK(pda_action_parse(b, strlen(b), &a) && a.all_day && a.item_id == -1);
+    /* todo_toggle (§4.4) */
+    size_t tn = pda_action_todo_toggle(b, "note_7", 3, "Milk", true);
+    CHECK(strcmp(b, "{\"t\":\"todo_toggle\",\"note\":\"note_7\",\"i\":3,\"text\":\"Milk\",\"done\":true}") == 0);
+    CHECK(pda_action_parse(b, tn, &a));
+    CHECK(a.type == PDA_ACT_TODO_TOGGLE && a.item_id == 3 && a.done && strcmp(a.ref, "note_7") == 0);
+    pda_action_todo_toggle(b, "n", 0, "Say \"hi\"", false);
+    CHECK(strcmp(b, "{\"t\":\"todo_toggle\",\"note\":\"n\",\"i\":0,\"text\":\"Say \\\"hi\\\"\",\"done\":false}") == 0);
+    /* text: the first 80 characters, counted in code points (ä is 2 bytes) */
+    char long_text[400];
+    size_t lw = 0;
+    for (int k = 0; k < 100; k++) {
+        memcpy(long_text + lw, "\xc3\xa4", 2); /* ä */
+        lw += 2;
+    }
+    long_text[lw] = 0;
+    tn = pda_action_todo_toggle(b, "n", 1, long_text, true);
+    CHECK(pda_action_parse(b, tn, &a));
+    {
+        json_tok_t tk[16];
+        const int nt = json_parse(b, tn, tk, 16);
+        const json_doc_t d = {.js = b, .t = tk, .n = nt};
+        char got[400];
+        CHECK_EQ(json_str(&d, json_get(&d, 0, "text"), got, sizeof(got)), 160); /* 80 x 2 bytes */
+    }
+    /* 80 characters of a 4-byte script, a long note id: still <= 400 bytes and valid */
+    char wide[400];
+    lw = 0;
+    for (int k = 0; k < 90; k++) {
+        memcpy(wide + lw, "\xf0\x9f\x93\x8c", 4); /* U+1F4CC */
+        lw += 4;
+    }
+    wide[lw] = 0;
+    char note[120];
+    memset(note, 'n', 100);
+    note[100] = 0;
+    tn = pda_action_todo_toggle(b, note, 39, wide, false);
+    CHECK(tn > 0 && tn <= PDA_PROTO_OB_JSON_MAX && strlen(b) == tn);
+    CHECK(pda_action_parse(b, tn, &a) && a.item_id == 39 && !a.done);
+    /* a note id that can't fit is refused, never cut */
+    char huge[500];
+    memset(huge, 'x', 450);
+    huge[450] = 0;
+    CHECK_EQ(pda_action_todo_toggle(b, huge, 0, "x", true), 0);
+
     CHECK(!pda_action_parse("{\"t\":\"nope\"}", 12, &a));
     CHECK(!pda_action_parse("garbage", 7, &a));
 }

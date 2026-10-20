@@ -58,6 +58,53 @@ static bool get_time(ctx_t *c, int obj, const char *key, int64_t *t, bool *date_
     return pda_time_parse(buf, t, date_only);
 }
 
+static void parse_todos(ctx_t *c, feed_t *f)
+{
+    const int arr = json_get(&c->d, 0, "todos");
+    if (arr < 0 || c->d.t[arr].type != JSON_ARR) {
+        return;
+    }
+    f->has_todos = true;
+    for (int o = json_first(&c->d, arr); o >= 0 && f->n_todos < FEED_MAX_TODO_NOTES;
+         o = json_next(&c->d, arr, o)) {
+        if (c->d.t[o].type != JSON_OBJ) {
+            continue;
+        }
+        feed_todo_t *n = &f->todos[f->n_todos];
+        *n = (feed_todo_t){.due_day = FEED_NO_DAY};
+        n->id = get_str(c, o, "id");
+        if (!n->id) {
+            continue;
+        }
+        n->title = get_str(c, o, "title"); /* null or "" -> untitled */
+        json_bool(&c->d, json_get(&c->d, o, "pinned"), &n->pinned);
+        int64_t t;
+        if (get_time(c, o, "due", &t, NULL)) {
+            n->due_day = pda_local_day(t, 0);
+            pda_fmt_ymd(n->due_day, n->due, sizeof(n->due));
+        }
+        const int items = json_get(&c->d, o, "items");
+        for (int k = json_first(&c->d, items); k >= 0 && n->n_items < FEED_MAX_TODO_ITEMS;
+             k = json_next(&c->d, items, k)) {
+            int64_t i;
+            if (c->d.t[k].type != JSON_OBJ || !json_int(&c->d, json_get(&c->d, k, "i"), &i) ||
+                i < 0 || i > INT32_MAX) {
+                continue;
+            }
+            feed_todo_item_t *it = &n->items[n->n_items];
+            it->i = (int32_t)i;
+            it->text = get_str(c, k, "text");
+            if (!it->text) {
+                continue;
+            }
+            it->done = false;
+            json_bool(&c->d, json_get(&c->d, k, "done"), &it->done);
+            n->n_items++;
+        }
+        f->n_todos++;
+    }
+}
+
 static int setup(ctx_t *c, const char *json, size_t len, json_tok_t **toks)
 {
     const int max = (int)(len / 2 + 16);
@@ -205,6 +252,7 @@ int feed_parse(const char *json, size_t len, feed_t *f)
     parse_actions(&c, f);
     parse_calendar(&c, f);
     f->n_templates = str_list(&c, 0, "templates", f->templates, FEED_MAX_TEMPLATES);
+    parse_todos(&c, f);
     free(toks);
     f->arena = c.arena;
     feed_sort_actions(f);

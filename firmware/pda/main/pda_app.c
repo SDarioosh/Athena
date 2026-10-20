@@ -131,6 +131,18 @@ const pda_pending_t *pda_app_pending_item(int64_t item_id)
     return found;
 }
 
+const pda_pending_t *pda_app_pending_todo(const char *note, int32_t i)
+{
+    const pda_pending_t *found = NULL;
+    for (int k = 0; k < s_n_pending; k++) {
+        const pda_action_info_t *a = &s_pending[k].info;
+        if (a->type == PDA_ACT_TODO_TOGGLE && a->item_id == i && strcmp(a->ref, note) == 0) {
+            found = &s_pending[k]; /* the newest one wins */
+        }
+    }
+    return found;
+}
+
 const pda_pending_t *pda_app_pending_fetch(const char *ref)
 {
     for (int i = 0; i < s_n_pending; i++) {

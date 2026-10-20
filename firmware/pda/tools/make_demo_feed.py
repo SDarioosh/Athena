@@ -200,6 +200,22 @@ FEED = {
             "all_day": True,
         },
     ],
+    # The owner's Odysseus checklists (plan §4.4), pinned first. `i` is the hub's index in
+    # the note's item list: gaps (2 is gone) must survive.
+    "todos": [
+        {"id": "note_demo_groceries", "title": "Groceries", "pinned": True, "due": None,
+         "items": [{"i": 0, "text": "Milk", "done": False},
+                   {"i": 1, "text": "Bergkäse für Freitag", "done": True},
+                   {"i": 3, "text": "Coffee beans", "done": False}]},
+        {"id": "note_demo_mom70", "title": "Mom’s 70th — dinner at Casa Lupo", "pinned": False,
+         "due": "2026-11-08",
+         "items": [{"i": 0, "text": "Photo album: pick 40 old family pictures", "done": False},
+                   {"i": 1, "text": "Pick up Aunt Rosa from the station (afternoon)",
+                    "done": False},
+                   {"i": 2, "text": "Confirm twelve guests with Maria", "done": True}]},
+        {"id": "note_demo_untitled", "title": None, "pinned": False, "due": None,
+         "items": [{"i": 0, "text": "Return the library book", "done": False}]},
+    ],
     # Event titles for the "+" picker, configured in the phone app.
     "templates": ["Call", "Meeting", "Reminder", "Focus time"],
 }

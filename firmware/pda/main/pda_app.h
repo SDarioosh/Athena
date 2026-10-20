@@ -73,6 +73,8 @@ int pda_app_failed(const pda_failed_t **out);
 /* The pending item_status for an action item, or NULL. */
 const pda_pending_t *pda_app_pending_item(int64_t item_id);
 const pda_pending_t *pda_app_pending_fetch(const char *ref);
+/* The newest pending todo_toggle for a checklist item (note id, hub index), or NULL. */
+const pda_pending_t *pda_app_pending_todo(const char *note, int32_t i);
 
 /* Queue an action from a tap. Returns 0, or -1 outbox full, -2 too long, -3 I/O. */
 int pda_app_queue(const char *json, size_t len);

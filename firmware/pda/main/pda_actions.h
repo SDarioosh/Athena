@@ -26,7 +26,11 @@ typedef enum {
     PDA_ACT_CAL_DELETE,
     PDA_ACT_FETCH,
     PDA_ACT_DIGEST_REFRESH,
+    PDA_ACT_TODO_TOGGLE,
 } pda_action_type_t;
+
+/* todo_toggle's `text`: the item's first 80 characters (code points), §4.4 */
+#define PDA_TODO_TEXT_CHARS 80
 
 /* {"t":"item_status","id":42,"status":"done"}; status: done, dismissed, open. */
 size_t pda_action_item_status(char *out, int64_t id, const char *status);
@@ -38,15 +42,20 @@ size_t pda_action_cal_delete(char *out, const char *id);
 /* ref: conv:<id>, transcript:<id> or transcript:<id>@<from>-<to> */
 size_t pda_action_fetch(char *out, const char *ref);
 size_t pda_action_digest_refresh(char *out, const char *date);
+/* {"t":"todo_toggle","note":"<id>","i":2,"text":"<first 80 chars>","done":true} (§4.4).
+ * `text` is cut to 80 characters, and further if the action would pass 400 bytes; 0 if
+ * the note id alone doesn't fit. */
+size_t pda_action_todo_toggle(char *out, const char *note, int32_t i, const char *text, bool done);
 
 typedef struct {
     pda_action_type_t type;
-    int64_t item_id;                 /* item_status, cal_add from_item (-1 none) */
+    int64_t item_id;                 /* item_status, cal_add from_item (-1 none), todo_toggle i */
     char status[12];                 /* item_status */
-    char ref[PDA_REF_MAX];           /* fetch: ref; cal_delete: event id; digest: date */
+    char ref[PDA_REF_MAX];           /* fetch: ref; cal_delete: event id; digest: date; todo: note */
     char title[96];                  /* cal_add */
     char start[32], end[32];         /* cal_add */
     bool all_day;
+    bool done;                       /* todo_toggle */
 } pda_action_info_t;
 
 /* Read an action's JSON back. false if it isn't a JSON object with a known "t". */
