@@ -33,6 +33,7 @@ typedef struct {
 typedef struct {
     bool down;
     bool reported; /* a long press already fired for this touch */
+    bool moved;    /* went further than GESTURE_MOVE_PX from the start at some point */
     int x0, y0, x, y;
     int64_t t0;
 } gesture_state_t;

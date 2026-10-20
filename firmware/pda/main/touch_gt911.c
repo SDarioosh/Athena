@@ -21,9 +21,9 @@ static const char *TAG = "touch";
 #define REG_CONFIG_RES 0x8048 /* x max u16 LE, y max u16 LE */
 
 /* Panel -> screen mapping, checked on the board (touch trace in the corners). */
-#define TOUCH_SWAP_XY 0
+#define TOUCH_SWAP_XY 1
 #define TOUCH_FLIP_X 0
-#define TOUCH_FLIP_Y 0
+#define TOUCH_FLIP_Y 1
 
 static i2c_master_dev_handle_t s_dev;
 static touch_cb_t s_cb;

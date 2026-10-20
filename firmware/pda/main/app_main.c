@@ -38,6 +38,18 @@ void pda_draw_test_screen(void)
                       (uint8_t)(i * 17), fb);
     }
     epd_draw_rect((EpdRect){.x = 0, .y = 0, .width = PDA_EPD_W, .height = PDA_EPD_H}, 0, fb);
+    /* Touch targets for the coordinate check: 1 top left .. 4 bottom left, clockwise. */
+    static const int cx[4] = {60, PDA_EPD_W - 60, PDA_EPD_W - 60, 60};
+    static const int cy[4] = {320, 320, PDA_EPD_H - 40, PDA_EPD_H - 40};
+    for (int i = 0; i < 4; i++) {
+        epd_fill_circle(cx[i], cy[i], 22, EPD_BLACK, fb);
+        char n[2] = {(char)('1' + i), 0};
+        int tx = cx[i] - 7, ty = cy[i] + 10;
+        EpdFontProperties p = epd_font_properties_default();
+        p.fg_color = 0xF;
+        p.bg_color = 0x0;
+        epd_write_string(&FONT_TEXT, n, &tx, &ty, fb, &p);
+    }
     pda_epd_update(PDA_EPD_FULL);
 }
 

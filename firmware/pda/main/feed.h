@@ -1,0 +1,105 @@
+/* The feed (kind 1, docs/t5-pda-plan.md §4.1) and detail blobs (kind 2, §4.3), parsed
+ * into fixed-size structs. Pure C; host-tested (test/test_feed.c).
+ *
+ * Strings are unescaped into one arena owned by the struct (feed_free / detail_free).
+ * Unknown keys are ignored, so the phone can add fields without a firmware change. Items
+ * missing a required field are skipped, not fatal; a wrong "v" or broken JSON is. */
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define FEED_MAX_CONV 20
+#define FEED_MAX_ACTIONS 40
+#define FEED_MAX_EVENTS 60
+#define FEED_MAX_HIGHLIGHTS 8
+#define FEED_MAX_POINTS 8
+#define FEED_MAX_PEOPLE 8
+#define FEED_NO_DAY INT32_MIN
+#define DETAIL_MAX_SEGMENTS 200
+
+#define FEED_E_JSON 1     /* not JSON, or too many tokens */
+#define FEED_E_VERSION 2  /* "v" isn't 1 */
+#define FEED_E_FIELD 3    /* a required top-level field is missing or of the wrong type */
+#define FEED_E_NOMEM 4
+
+typedef struct {
+    const char *id, *title, *summary;
+    int64_t at; /* 0 if missing */
+    const char *people[FEED_MAX_PEOPLE];
+    int n_people;
+    const char *points[FEED_MAX_POINTS];
+    int n_points;
+} feed_conv_t;
+
+typedef struct {
+    int64_t id;
+    const char *text, *owner, *conv; /* owner and conv may be NULL */
+    int32_t due_day;                 /* days since epoch, FEED_NO_DAY if none */
+    char due[11];                    /* "YYYY-MM-DD" or "" */
+} feed_action_t;
+
+typedef struct {
+    const char *id, *title, *where; /* where may be NULL */
+    int64_t start, end;             /* end = start if missing */
+    bool all_day;
+    int32_t start_day; /* all-day: the date's day number; timed: FEED_NO_DAY (use start) */
+} feed_event_t;
+
+typedef struct {
+    uint32_t version;
+    int64_t generated;
+    const char *tz; /* IANA name, shown on the Status screen; may be NULL */
+    bool has_briefing;
+    const char *brief_date, *brief_text;
+    const char *highlights[FEED_MAX_HIGHLIGHTS];
+    int n_highlights;
+    feed_conv_t conv[FEED_MAX_CONV];
+    int n_conv;
+    feed_action_t actions[FEED_MAX_ACTIONS];
+    int n_actions;
+    feed_event_t events[FEED_MAX_EVENTS];
+    int n_events;
+    char *arena;
+} feed_t;
+
+typedef struct {
+    double o;         /* offset in seconds */
+    const char *s;    /* speaker, may be NULL */
+    bool me;
+    const char *x;
+} detail_seg_t;
+
+typedef struct {
+    const char *ref, *title, *summary; /* summary may be NULL */
+    const char *points[FEED_MAX_POINTS];
+    int n_points;
+    detail_seg_t seg[DETAIL_MAX_SEGMENTS];
+    int n_seg;
+    bool more; /* a transcript page with more after it (§4.3 paging) */
+    char *arena;
+} detail_t;
+
+/* 0 or FEED_E_*. On success the caller owns out->arena (feed_free). */
+int feed_parse(const char *json, size_t len, feed_t *out);
+void feed_free(feed_t *f);
+
+int detail_parse(const char *json, size_t len, detail_t *out);
+void detail_free(detail_t *d);
+
+/* The ref of a detail blob without parsing all of it (the detail cache's key). */
+bool detail_peek_ref(const char *json, size_t len, char *ref, size_t cap);
+
+/* Actions sorted for the Actions screen: due soonest first, undated last, then by id. */
+void feed_sort_actions(feed_t *f);
+/* Events by start time. */
+void feed_sort_events(feed_t *f);
+
+#ifdef __cplusplus
+}
+#endif

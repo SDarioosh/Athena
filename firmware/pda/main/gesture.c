@@ -17,8 +17,8 @@ gesture_t gesture_feed(gesture_state_t *g, bool touching, int x, int y, int64_t 
         }
         g->x = x;
         g->y = y;
-        const bool still = abs(x - g->x0) <= GESTURE_MOVE_PX && abs(y - g->y0) <= GESTURE_MOVE_PX;
-        if (!g->reported && still && now_ms - g->t0 >= GESTURE_LONG_MS) {
+        g->moved |= abs(x - g->x0) > GESTURE_MOVE_PX || abs(y - g->y0) > GESTURE_MOVE_PX;
+        if (!g->reported && !g->moved && now_ms - g->t0 >= GESTURE_LONG_MS) {
             g->reported = true;
             out = (gesture_t){.kind = GESTURE_LONG, .x = g->x0, .y = g->y0};
         }
@@ -39,8 +39,7 @@ gesture_t gesture_feed(gesture_state_t *g, bool touching, int x, int y, int64_t 
         out.kind = dx < 0 ? GESTURE_SWIPE_LEFT : GESTURE_SWIPE_RIGHT;
     } else if (abs(dy) >= GESTURE_SWIPE_PX && abs(dy) >= 2 * abs(dx)) {
         out.kind = dy < 0 ? GESTURE_SWIPE_UP : GESTURE_SWIPE_DOWN;
-    } else if (abs(dx) <= GESTURE_MOVE_PX && abs(dy) <= GESTURE_MOVE_PX &&
-               now_ms - g->t0 <= GESTURE_TAP_MAX_MS) {
+    } else if (!g->moved && now_ms - g->t0 <= GESTURE_TAP_MAX_MS) {
         out.kind = GESTURE_TAP;
     }
     return out;

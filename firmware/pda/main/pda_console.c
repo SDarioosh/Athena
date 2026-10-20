@@ -17,6 +17,8 @@
 #include "t5_board.h"
 #include "touch_gt911.h"
 
+void pda_draw_test_screen(void); /* app_main.c */
+
 static int cmd_i2c(int argc, char **argv)
 {
     (void)argc;
@@ -57,40 +59,56 @@ static int cmd_rtc(int argc, char **argv)
     return 0;
 }
 
+static const char *const KIND_NAME[] = {"partial (GL16)", "full (GC16)", "clean (clear + GC16)"};
+
+static void print_epd_stats(void)
+{
+    pda_epd_stats_t s;
+    pda_epd_get_stats(&s);
+    for (int k = 0; k < 3; k++) {
+        printf("epd %-22s %4" PRIu32 " updates, last %d ms\n", KIND_NAME[k], s.count[k],
+               s.last_ms[k]);
+    }
+    printf("epd updates since clean: %d (clean after %d)\n", s.since_clean,
+           PDA_EPD_PARTIAL_LIMIT);
+}
+
+static int bench_one(pda_epd_kind_t kind, const EpdRect *area, const char *what)
+{
+    const pda_epd_kind_t done = area ? pda_epd_update_area(*area) : pda_epd_update(kind);
+    pda_epd_stats_t s;
+    pda_epd_get_stats(&s);
+    printf("%-28s %s: %d ms\n", what, KIND_NAME[done], s.last_ms[done]);
+    return 0;
+}
+
 static int cmd_epd(int argc, char **argv)
 {
     if (argc >= 2 && strcmp(argv[1], "bench") == 0) {
         uint8_t *fb = pda_epd_fb();
-        for (int i = 0; i < 3; i++) {
-            pda_epd_update(PDA_EPD_FULL);
-        }
-        pda_epd_stats_t s;
-        pda_epd_get_stats(&s);
-        printf("full (GC16, flashing): %d ms\n", s.last_full_ms);
-        for (int i = 0; i < 3; i++) {
-            const EpdRect r = {.x = 100 + i * 120, .y = 320, .width = 100, .height = 100};
-            epd_fill_rect(r, (i & 1) ? EPD_WHITE : EPD_BLACK, fb);
-            pda_epd_update_area(r);
-            pda_epd_get_stats(&s);
-            printf("partial 100x100 (GL16): %d ms\n", s.last_partial_ms);
-        }
+        bench_one(PDA_EPD_CLEAN, NULL, "clean refresh");
+        bench_one(PDA_EPD_PARTIAL, NULL, "nothing changed");
+        const EpdRect sq = {.x = 100, .y = 320, .width = 100, .height = 100};
+        epd_fill_rect(sq, EPD_BLACK, fb);
+        bench_one(PDA_EPD_PARTIAL, &sq, "100x100 area changed");
         const EpdRect row = {.x = 0, .y = 440, .width = PDA_EPD_W, .height = 60};
         epd_fill_rect(row, EPD_GREY, fb);
-        pda_epd_update_area(row);
-        pda_epd_get_stats(&s);
-        printf("partial 960x60 row (GL16): %d ms\n", s.last_partial_ms);
-        pda_epd_update(PDA_EPD_PARTIAL);
-        pda_epd_get_stats(&s);
-        printf("partial whole screen (GL16): %d ms\n", s.last_partial_ms);
+        bench_one(PDA_EPD_PARTIAL, &row, "960x60 row changed");
+        for (int i = 0; i < PDA_EPD_W; i += 8) {
+            epd_draw_vline(i, 0, PDA_EPD_H, (i / 8) & 1 ? EPD_BLACK : EPD_LIGHT, fb);
+        }
+        bench_one(PDA_EPD_PARTIAL, NULL, "whole screen changed");
+        pda_epd_clear_fb();
+        epd_fill_rect(sq, EPD_DARK, fb);
+        bench_one(PDA_EPD_FULL, NULL, "new screen (mostly white)");
+        pda_draw_test_screen();
+        print_epd_stats();
         return 0;
     }
-    if (argc >= 2 && strcmp(argv[1], "full") == 0) {
-        pda_epd_update(PDA_EPD_FULL);
+    if (argc >= 2 && strcmp(argv[1], "clean") == 0) {
+        pda_epd_update(PDA_EPD_CLEAN);
     }
-    pda_epd_stats_t s;
-    pda_epd_get_stats(&s);
-    printf("epd: %" PRIu32 " full (last %d ms), %" PRIu32 " partial (last %d ms), %d since full\n",
-           s.full, s.last_full_ms, s.partial, s.last_partial_ms, s.partials_since_full);
+    print_epd_stats();
     return 0;
 }
 
@@ -151,7 +169,7 @@ void pda_console_start(void)
     pda_console_register("i2c", "Probe the board's I2C chips", cmd_i2c);
     pda_console_register("batt", "Battery gauge and charger", cmd_batt);
     pda_console_register("rtc", "rtc [set <epoch|ISO>]: read or set the RTC", cmd_rtc);
-    pda_console_register("epd", "epd [bench|full]: refresh stats, timing test, full refresh",
+    pda_console_register("epd", "epd [bench|clean]: refresh stats, timing test, clean refresh",
                          cmd_epd);
     pda_console_register("touch", "touch [trace <s>]: touch stats, raw sample log", cmd_touch);
     pda_console_register("fb", "Dump the framebuffer (tools/fbdump.py)", cmd_fb);

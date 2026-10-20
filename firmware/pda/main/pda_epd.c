@@ -65,8 +65,9 @@ static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area)
         return kind;
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (kind == PDA_EPD_PARTIAL && s_stats.partials_since_full >= PDA_EPD_PARTIAL_LIMIT) {
-        kind = PDA_EPD_FULL; /* ghosting budget used up */
+    if (kind != PDA_EPD_CLEAN && s_stats.since_clean >= PDA_EPD_PARTIAL_LIMIT) {
+        kind = PDA_EPD_CLEAN; /* ghosting budget used up */
+        area = NULL;
     }
     if (s_pm) {
         esp_pm_lock_acquire(s_pm);
@@ -75,7 +76,15 @@ static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area)
     epd_poweron();
     const int temp = (int)epd_ambient_temperature();
     enum EpdDrawError e;
-    if (kind == PDA_EPD_FULL) {
+    if (kind == PDA_EPD_CLEAN) {
+        /* epdiy's highlevel update only drives pixels that differ from the back buffer, so
+         * unchanged (ghosted) areas are never touched otherwise. Flash the panel white (one
+         * black/white cycle; epd_clear()'s default takes ~1.9 s), tell epdiy so, and draw
+         * everything from white. */
+        epd_clear_area_cycles(epd_full_screen(), 1, 50);
+        memset(s_hl.back_fb, 0xFF, PDA_EPD_W / 2 * PDA_EPD_H);
+        e = epd_hl_update_screen(&s_hl, MODE_GC16, temp);
+    } else if (kind == PDA_EPD_FULL) {
         e = epd_hl_update_screen(&s_hl, MODE_GC16, temp);
     } else if (area) {
         e = epd_hl_update_area(&s_hl, MODE_GL16, temp, *area);
@@ -87,20 +96,14 @@ static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area)
     if (s_pm) {
         esp_pm_lock_release(s_pm);
     }
-    if (kind == PDA_EPD_FULL) {
-        s_stats.full++;
-        s_stats.last_full_ms = ms;
-        s_stats.partials_since_full = 0;
-    } else {
-        s_stats.partial++;
-        s_stats.last_partial_ms = ms;
-        s_stats.partials_since_full++;
-    }
+    s_stats.count[kind]++;
+    s_stats.last_ms[kind] = ms;
+    s_stats.since_clean = kind == PDA_EPD_CLEAN ? 0 : s_stats.since_clean + 1;
     xSemaphoreGive(s_lock);
     if (e != EPD_DRAW_SUCCESS) {
         ESP_LOGW(TAG, "update error 0x%x", (unsigned)e);
     }
-    ESP_LOGD(TAG, "%s update %d ms", kind == PDA_EPD_FULL ? "full" : "partial", ms);
+    ESP_LOGD(TAG, "update kind %d: %d ms", (int)kind, ms);
     return kind;
 }
 
