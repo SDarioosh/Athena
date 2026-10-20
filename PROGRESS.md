@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-20 (round 17: T-Watch Ultra tested on the owner's watch, reliability, power log; bug hunt)_
+_Last updated: 2026-10-20 (round 17: T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus)_
 
 ## Status
 
@@ -240,6 +240,18 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   `barvis-sound*` service names and `BARVIS_SOUND_*` vars, the Android app ID
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
   vendor string, the `barvis_relay` package, and all `convo` identifiers.
+
+## Done on 2026-10-20: plain questions and links (PR #40, hub SDarioosh/Barvis#24)
+
+- Hub: a plain recording question in Odysseus "Auto" (no `/sound`) is offered our read tools
+  (`src/module_turn_scope.py` in the hub, through the existing slash-skill hooks; no
+  upstream lines).
+- Here: list results end with the cite rule; `INSTRUCTIONS` say to search before saying
+  "I don't know"; `bakeoff.py` takes `ODYSSEUS_MODE=chat`.
+- Sandbox (every tool on + Auto, Q1 4 13 16 20): 0/4 before → 5/5 agent, 4/5 chat; every
+  pass cited its link.
+- Open for the owner: full 20-question run on the server (both modes) per the hub PR's
+  Server verification; the production Custom preset needs the new `INSTRUCTIONS`.
 
 ## Done in round 17: T-Watch Ultra buttons, notes and recovery tested on the watch
 

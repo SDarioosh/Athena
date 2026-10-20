@@ -26,8 +26,11 @@ from .store import Store
 INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
 with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
 for any question about what someone said, decided, promised or mentioned, and before \
-answering from memory. Ground every claim in tool results and include the link given \
-with it. Dates are in the user's timezone; pass dates as YYYY-MM-DD.
+answering from memory. Questions about the user's plans, appointments and the people they \
+know ("What is Jonas allergic to?") are answered from these recordings too: search \
+(list_facts, search_transcripts) before saying you don't know, and search instead of offering \
+to. Ground every claim in tool results and include the link given with it. Dates are in the \
+user's timezone; pass dates as YYYY-MM-DD.
 
 Naming speakers: when the user says who an unnamed speaker was ("Speaker 2 was Jenn", \
 "Speaker 1 and Speaker 3 were both Sam"), that is a request to save the name, not a claim \
@@ -82,7 +85,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         return parse_when(since, tz), parse_when(until, tz, end=True)
 
     # Frontends don't reliably forward server instructions (Hermes ignores them), so
-    # the citation rule also rides along with every non-empty result.
+    # the citation rule also rides along with every non-empty result: in the header and
+    # again as the last line, the part a model reads right before it answers.
     cite = "When answering, put the link next to each fact you use"
 
     def header(n: int, what: str) -> str:
@@ -110,7 +114,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                          f"(conversation \"{r['conversation_title'] or 'untitled'}\""
                          f"{_note(r.get('conversation_kind'))}, "
                          f"id {r['conversation_id']}) {link}")
-        return "\n".join(lines)
+        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=ro)
     def search_conversations(query: Text = "", person: Person = "", since: Since = "",
@@ -138,7 +142,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                 f"\"{_title(c)}\"{_note(c.get('kind'))} id {c['id']}; people: "
                 f"{', '.join(c['people']) or '—'}\n  {c['summary'] or ''}\n  "
                 f"{transcript_link(settings, c['id'])}")
-        return "\n".join(lines)
+        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=ro)
     def get_conversation(conversation_id: ConvId) -> str:
@@ -204,7 +208,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                          + transcript_link(settings, r["conversation_id"],
                                            (r["source_at"] or r["conversation_at"])
                                            - r["conversation_at"]))
-        return "\n".join(lines)
+        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=rw)
     def update_action_item(item_id: int, status: Annotated[
@@ -239,7 +243,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                              + transcript_link(settings, old["conversation_id"],
                                                (old["source_at"] or old["conversation_at"])
                                                - old["conversation_at"]))
-        return "\n".join(lines)
+        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=ro)
     def get_daily_digest(date: Annotated[str, Field(description="YYYY-MM-DD")]) -> str:
