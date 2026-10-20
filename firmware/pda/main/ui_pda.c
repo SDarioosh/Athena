@@ -1,5 +1,6 @@
-/* PDA screens (docs/t5-pda-plan.md §5). Landscape 960x540: a header (title, clock,
- * battery, sync), the content area and a tab bar. Each redraw paints the whole
+/* PDA screens (docs/t5-pda-plan.md §5). Portrait 540x960 (pda_epd's rotation): a
+ * header (title and clock, then date, battery, sync), the content area, a row for the
+ * screen's buttons and the pager, and a tab bar. Each redraw paints the whole
  * framebuffer and records tap regions; epdiy then drives only the pixels that changed.
  *
  * Refresh policy (§5): a new screen is a full (flashing) update, a change on the same
@@ -29,16 +30,19 @@
 
 static const char *TAG = "ui";
 
-#define W PDA_EPD_W
-#define H PDA_EPD_H
-#define HEADER_H 64
-#define TAB_H 64
+#define W PDA_SCR_W
+#define H PDA_SCR_H
+#define HEADER_H 100
+#define TAB_H 76
 #define TAB_Y (H - TAB_H)
 #define TOP (HEADER_H + 8)
 #define BOTTOM (TAB_Y - 6)
 #define MARGIN 16
-#define PAGER_W 64              /* the page up/down buttons on the right */
-#define LIST_W (W - 2 * MARGIN - PAGER_W - 8)
+#define ROW_H 52                /* the bottom row: the screen's buttons and the pager */
+#define ROW_Y (BOTTOM - ROW_H)
+#define LIST_BOTTOM (ROW_Y - 10) /* lists and text end here */
+#define LIST_W (W - 2 * MARGIN)
+#define PAGER_BTN 64
 #define TEXT (&FONT_TEXT)
 #define BIG (&FONT_BIG)
 #define LH 30                   /* FONT_TEXT line advance */
@@ -50,7 +54,7 @@ static const char *const SCREEN_NAMES[UI_SCREEN_COUNT] = {
     "today", "briefing", "calendar", "actions", "talks", "status",
     "conversation", "transcript", "event", "templates", "new-event",
 };
-static const char *const TAB_LABELS[6] = {"Today", "Briefing", "Calendar", "Actions", "Talks", "Status"};
+static const char *const TAB_LABELS[6] = {"Today", "Brief", "Cal", "Tasks", "Talks", "Status"};
 static const char *const DEFAULT_TEMPLATES[] = {"Call", "Meeting", "Reminder"};
 
 typedef enum {
@@ -77,6 +81,7 @@ typedef enum {
     A_CLEAN,
     A_WIPE,       /* long press only */
     A_CANCEL_PENDING, /* arg: index into the pending list */
+    A_ROTATE,     /* the other portrait orientation */
 } action_t;
 
 typedef struct {
@@ -164,12 +169,14 @@ static void go(ui_screen_t s)
 static void draw_header(const char *title)
 {
     gfx_fill((EpdRect){0, 0, W, HEADER_H}, 0xFF);
-    gfx_text_fit(BIG, MARGIN, 46, 400, title, GFX_INK);
-    char right[160], clock[40] = "--:--", date[24] = "";
+    char clock[16] = "--:--", date[24] = "";
     if (pda_app_time_valid()) {
         pda_fmt_date(pda_app_now(), tz(), date, sizeof(date));
         pda_fmt_hm(pda_app_now(), tz(), clock, sizeof(clock));
     }
+    const int cw = gfx_text_width(BIG, clock);
+    gfx_text_fit(BIG, MARGIN, 48, W - 2 * MARGIN - cw - 20, title, GFX_INK);
+    gfx_text(BIG, W - MARGIN - cw, 48, clock, GFX_INK);
     t5_battery_t b;
     char batt[24] = "";
     if (t5_battery_read(&b) == ESP_OK && b.percent >= 0) {
@@ -192,12 +199,16 @@ static void draw_header(const char *title)
         snprintf(sync, sizeof(sync), f ? "feed loaded" : "no feed");
     }
     const int ob = pda_app_outbox_count();
-    char obs[16] = "";
+    char line[160];
+    snprintf(line, sizeof(line), "%s \xc2\xb7 %s \xc2\xb7 %s", date, batt, sync);
     if (ob > 0) {
-        snprintf(obs, sizeof(obs), "  \xe2\x86\x91%d", ob); /* ↑n: actions waiting for the phone */
+        char obs[16];
+        snprintf(obs, sizeof(obs), "\xe2\x86\x91%d", ob); /* ↑n: actions waiting for the phone */
+        gfx_text_right(TEXT, W - MARGIN, 86, obs, GFX_INK);
+        gfx_text_fit(TEXT, MARGIN, 86, W - 2 * MARGIN - 60, line, GFX_INK);
+    } else {
+        gfx_text_fit(TEXT, MARGIN, 86, W - 2 * MARGIN, line, GFX_INK);
     }
-    snprintf(right, sizeof(right), "%s  %s  %s  %s%s", date, clock, batt, sync, obs);
-    gfx_text_right(TEXT, W - MARGIN, 40, right, GFX_INK);
     gfx_hline(0, HEADER_H - 2, W, 0x00);
     gfx_hline(0, HEADER_H - 1, W, 0x00);
 }
@@ -230,32 +241,44 @@ static void draw_toast(void)
     if (!ui.toast[0]) {
         return;
     }
-    const EpdRect r = {MARGIN, BOTTOM - 40, W - 2 * MARGIN, 38};
+    const EpdRect r = {MARGIN, ROW_Y - 50, W - 2 * MARGIN, 44};
     gfx_fill(r, 0x00);
     EpdFontProperties p = epd_font_properties_default();
     p.fg_color = 0xF;
     p.bg_color = 0x0;
     p.fallback_glyph = '?';
-    int x = r.x + 12, y = r.y + 27;
+    int x = r.x + 12, y = r.y + 31;
     epd_write_string(TEXT, ui.toast, &x, &y, pda_epd_fb(), &p);
     ui.toast[0] = 0; /* shown once */
 }
 
-/* Page buttons on the right edge when the content has more than one page. */
+/* ▲ n/m ▼ at the right end of the bottom row when there is more than one page. */
 static void draw_pager(void)
 {
     if (ui.pages <= 1) {
         return;
     }
-    const int x = W - MARGIN - PAGER_W;
-    const EpdRect up = {x, TOP, PAGER_W, 80}, down = {x, BOTTOM - 80, PAGER_W, 80};
+    const EpdRect down = {W - MARGIN - PAGER_BTN, ROW_Y, PAGER_BTN, ROW_H - 4};
+    const EpdRect up = {down.x - 70 - PAGER_BTN, ROW_Y, PAGER_BTN, ROW_H - 4};
     gfx_button(up, "\xe2\x96\xb2", false);   /* ▲ */
     gfx_button(down, "\xe2\x96\xbc", false); /* ▼ */
     char pg[16];
     snprintf(pg, sizeof(pg), "%d/%d", ui.page + 1, ui.pages);
-    gfx_text(TEXT, x + (PAGER_W - gfx_text_width(TEXT, pg)) / 2, (TOP + BOTTOM) / 2 + 10, pg, GFX_FAINT);
+    gfx_text(TEXT, up.x + PAGER_BTN + (70 - gfx_text_width(TEXT, pg)) / 2, ROW_Y + 33, pg, GFX_FAINT);
     hit(up, A_PAGE, -1);
     hit(down, A_PAGE, 1);
+}
+
+/* A button in the bottom row, from the left. */
+static EpdRect row_button(int x, int w)
+{
+    return (EpdRect){x, ROW_Y, w, ROW_H - 4};
+}
+
+/* Text lines that fit between y0 (first baseline) and LIST_BOTTOM. */
+static int lines_from(int y0)
+{
+    return (LIST_BOTTOM - y0) / LH + 1;
 }
 
 static void clamp_page(int pages)
@@ -377,9 +400,10 @@ static void draw_today(const feed_t *f)
         return;
     }
     const int64_t now = now_s();
-    const int col = W / 2;
-    /* left: the next three events */
-    int y = TOP + 22;
+    char buf[96];
+    /* the next three events */
+    int y = TOP + 26;
+    const int y_ev = TOP;
     gfx_text(TEXT, MARGIN, y, "NEXT", GFX_FAINT);
     y += LH + 4;
     int shown = 0;
@@ -392,22 +416,37 @@ static void draw_today(const feed_t *f)
         fmt_event_when(e, when, sizeof(when), true);
         gfx_text(TEXT, MARGIN, y, when, GFX_INK);
         y += LH;
-        gfx_text_fit(TEXT, MARGIN + 20, y, col - MARGIN - 40, e->title, GFX_INK);
+        gfx_text_fit(TEXT, MARGIN + 20, y, LIST_W - 20, e->title, GFX_INK);
         y += LH;
         if (e->where) {
-            gfx_text_fit(TEXT, MARGIN + 20, y, col - MARGIN - 40, e->where, GFX_FAINT);
+            gfx_text_fit(TEXT, MARGIN + 20, y, LIST_W - 20, e->where, GFX_FAINT);
             y += LH;
         }
-        y += 6;
+        y += 8;
         shown++;
     }
     if (!shown) {
         gfx_text(TEXT, MARGIN, y, "Nothing in the next 7 days", GFX_FAINT);
         y += LH;
     }
-    hit((EpdRect){0, TOP, col, y - TOP}, A_OPEN, UI_CALENDAR);
+    hit((EpdRect){0, y_ev, W, y - y_ev - 10}, A_OPEN, UI_CALENDAR);
+    gfx_hline(MARGIN, y - 14, LIST_W, 0xA0);
 
-    /* left bottom: open actions */
+    /* the briefing's first lines */
+    y += 16;
+    if (f->has_briefing) {
+        const int y_b = y - 30;
+        snprintf(buf, sizeof(buf), "BRIEFING %s", f->brief_date ? f->brief_date : "");
+        gfx_text(TEXT, MARGIN, y, buf, GFX_FAINT);
+        y += LH + 4;
+        const int n = gfx_wrap(TEXT, MARGIN, y, LIST_W, f->brief_text ? f->brief_text : "", GFX_INK, 0, 7);
+        y += (n < 7 ? n : 7) * LH + 8;
+        hit((EpdRect){0, y_b, W, y - y_b - 10}, A_OPEN, UI_BRIEFING);
+        gfx_hline(MARGIN, y - 14, LIST_W, 0xA0);
+        y += 16;
+    }
+
+    /* open actions */
     int due_week = 0;
     const int32_t today = pda_local_day(now, tz());
     for (int i = 0; i < f->n_actions; i++) {
@@ -415,33 +454,23 @@ static void draw_today(const feed_t *f)
             due_week++;
         }
     }
-    char buf[96];
+    const int y_a = y - 30;
     snprintf(buf, sizeof(buf), "%d open action item%s", f->n_actions, f->n_actions == 1 ? "" : "s");
-    const int ay = BOTTOM - 70;
-    gfx_text(BIG, MARGIN, ay, buf, GFX_INK);
+    gfx_text(BIG, MARGIN, y + 14, buf, GFX_INK);
+    y += 50;
     if (due_week) {
         snprintf(buf, sizeof(buf), "%d due within a week", due_week);
-        gfx_text(TEXT, MARGIN, ay + LH + 4, buf, GFX_FAINT);
+        gfx_text(TEXT, MARGIN, y, buf, GFX_FAINT);
+        y += LH;
     }
-    hit((EpdRect){0, ay - 44, col, BOTTOM - ay + 44}, A_OPEN, UI_ACTIONS);
+    hit((EpdRect){0, y_a, W, y - y_a}, A_OPEN, UI_ACTIONS);
 
-    /* right: the briefing's first lines, the latest conversation */
-    const int rx = col + 10, rw = W - rx - MARGIN;
-    epd_draw_vline(col - 4, TOP, BOTTOM - TOP, 0x80, pda_epd_fb());
-    y = TOP + 22;
-    if (f->has_briefing) {
-        snprintf(buf, sizeof(buf), "BRIEFING %s", f->brief_date ? f->brief_date : "");
-        gfx_text(TEXT, rx, y, buf, GFX_FAINT);
-        y += LH + 4;
-        const int n = gfx_wrap(TEXT, rx, y, rw, f->brief_text ? f->brief_text : "", GFX_INK, 0, 7);
-        y += (n < 7 ? n : 7) * LH + 8;
-        hit((EpdRect){col, TOP, W - col, y - TOP}, A_OPEN, UI_BRIEFING);
-    }
-    if (f->n_conv > 0) {
-        const int cy = y + 10;
-        gfx_text(TEXT, rx, cy, "LATEST CONVERSATION", GFX_FAINT);
-        gfx_text_fit(TEXT, rx, cy + LH + 4, rw, f->conv[0].title, GFX_INK);
-        hit((EpdRect){col, cy - 24, W - col, 2 * LH + 20}, A_CONV, 0);
+    /* the latest conversation */
+    if (f->n_conv > 0 && y + 2 * LH + 20 < BOTTOM) {
+        y += 16;
+        gfx_text(TEXT, MARGIN, y, "LATEST CONVERSATION", GFX_FAINT);
+        gfx_text_fit(TEXT, MARGIN, y + LH + 4, LIST_W, f->conv[0].title, GFX_INK);
+        hit((EpdRect){0, y - 26, W, 2 * LH + 20}, A_CONV, 0);
     }
 }
 
@@ -452,7 +481,7 @@ static void draw_briefing(const feed_t *f)
         draw_no_feed();
         return;
     }
-    pw_t pw = pw_begin(MARGIN, TOP + 22, LIST_W, 11);
+    pw_t pw = pw_begin(MARGIN, TOP + 26, LIST_W, lines_from(TOP + 26));
     if (!f->has_briefing) {
         pw_para(&pw, TEXT, "No digest yet. Ask the server to build today's:", GFX_INK, 0);
     } else {
@@ -484,7 +513,7 @@ static void draw_briefing(const feed_t *f)
             p = &all[i];
         }
     }
-    const EpdRect b = {W - MARGIN - PAGER_W - 300, BOTTOM - 50, 290, 46};
+    const EpdRect b = row_button(MARGIN, 250);
     gfx_button(b, p ? "Refresh requested" : "Refresh digest", false);
     hit(b, A_DIGEST, 0);
 }
@@ -552,32 +581,47 @@ static void draw_calendar(const feed_t *f)
     }
     static cal_row_t rows[FEED_MAX_EVENTS + OUTBOX_MAX + 16];
     const int n = build_cal_rows(f, rows, (int)(sizeof(rows) / sizeof(rows[0])));
-    const int per_page = 11;
-    clamp_page((n + per_page - 1) / per_page);
+    /* Row heights: one line, two when an event has a place. Pages break by height. */
+    const int y0 = TOP + 26;
+    int page_start[64] = {0}, pages = 1;
+    for (int i = 0, h = 0; i < n; i++) {
+        const int rh = (rows[i].ev >= 0 && f->events[rows[i].ev].where ? 2 * LH : LH) + 6;
+        if (h + rh > LIST_BOTTOM - y0 + 24 && pages < 64) {
+            page_start[pages++] = i;
+            h = 0;
+        }
+        h += rh;
+    }
+    clamp_page(pages);
+    const int first = page_start[ui.page], last = ui.page + 1 < pages ? page_start[ui.page + 1] : n;
     const pda_pending_t *pend;
     pda_app_pending(&pend);
     const pda_failed_t *failed;
     const int nf = pda_app_failed(&failed);
-    int y = TOP + 26;
+    int y = y0;
     if (n == 0) {
         gfx_text(TEXT, MARGIN, y, "No events from today to +7 days.", GFX_FAINT);
     }
-    for (int i = ui.page * per_page; i < n && i < (ui.page + 1) * per_page; i++) {
+    for (int i = first; i < last; i++) {
         const cal_row_t *r = &rows[i];
         if (r->header) {
             char d[24];
             pda_fmt_day(r->day, d, sizeof(d));
             gfx_text(TEXT, MARGIN, y, d, GFX_FAINT);
             gfx_hline(MARGIN + gfx_text_width(TEXT, d) + 10, y - 8, LIST_W - gfx_text_width(TEXT, d) - 10, 0xC0);
+            y += LH + 6;
         } else if (r->ev >= 0) {
             const feed_event_t *e = &f->events[r->ev];
-            char when[32], line[200];
+            char when[32];
             fmt_event_when(e, when, sizeof(when), false);
-            gfx_text(TEXT, MARGIN + 20, y, when, GFX_INK);
-            snprintf(line, sizeof(line), "%s%s%s", e->title, e->where ? "  \xc2\xb7 " : "",
-                     e->where ? e->where : "");
-            gfx_text_fit(TEXT, MARGIN + 200, y, LIST_W - 200, line, GFX_INK);
-            hit((EpdRect){0, y - 24, MARGIN + LIST_W, LH}, A_EVENT, r->ev);
+            gfx_text(TEXT, MARGIN + 10, y, when, GFX_INK);
+            gfx_text_fit(TEXT, MARGIN + 170, y, LIST_W - 170, e->title, GFX_INK);
+            const int rh = (e->where ? 2 * LH : LH) + 6;
+            if (e->where) {
+                gfx_text_fit(TEXT, MARGIN + 170, y + LH, LIST_W - 170, e->where, GFX_FAINT);
+            }
+            hit((EpdRect){0, y - 26, W, rh}, A_EVENT, r->ev);
+            y += rh;
         } else {
             const pda_action_info_t *a = &pend[r->pend].info;
             int64_t t = 0;
@@ -587,15 +631,15 @@ static void draw_calendar(const feed_t *f)
             if (!date_only && !a->all_day) {
                 pda_fmt_hm(t, tz(), when, sizeof(when));
             }
-            gfx_text(TEXT, MARGIN + 20, y, when, GFX_PENDING);
+            gfx_text(TEXT, MARGIN + 10, y, when, GFX_PENDING);
             snprintf(line, sizeof(line), "%s  (pending%s)", a->title,
                      pend[r->pend].listed ? ", sent" : " \xe2\x80\x93 tap to undo");
-            gfx_text_fit(TEXT, MARGIN + 200, y, LIST_W - 200, line, GFX_PENDING);
-            hit((EpdRect){0, y - 24, MARGIN + LIST_W, LH}, A_CANCEL_PENDING, r->pend);
+            gfx_text_fit(TEXT, MARGIN + 170, y, LIST_W - 170, line, GFX_PENDING);
+            hit((EpdRect){0, y - 26, W, LH + 6}, A_CANCEL_PENDING, r->pend);
+            y += LH + 6;
         }
-        y += LH + 4;
     }
-    for (int i = 0; i < nf && y < BOTTOM - 60; i++) {
+    for (int i = 0; i < nf && y < LIST_BOTTOM; i++) {
         if (failed[i].type == PDA_ACT_CAL_ADD) {
             char line[120];
             snprintf(line, sizeof(line), "Couldn't sync: %s", failed[i].what);
@@ -604,7 +648,7 @@ static void draw_calendar(const feed_t *f)
         }
     }
     draw_pager();
-    const EpdRect plus = {W - MARGIN - PAGER_W - 170, BOTTOM - 50, 160, 46};
+    const EpdRect plus = row_button(MARGIN, 150);
     gfx_button(plus, "+ New", false);
     hit(plus, A_PLUS, 0);
 }
@@ -628,12 +672,14 @@ static void draw_actions(const feed_t *f)
         draw_no_feed();
         return;
     }
-    const int row_h = 2 * LH + 8, per_page = 5;
+    /* rows of three lines: the item (wrapped to two), then due / owner and "→ cal" */
+    const int row_h = 3 * LH + 16;
+    int y = TOP + 26;
+    gfx_text_fit(TEXT, MARGIN, y, LIST_W, "Tap: done \xc2\xb7 hold: dismiss \xc2\xb7 tap again: undo",
+                 GFX_FAINT);
+    y += LH + 14;
+    const int per_page = (LIST_BOTTOM - y + 24) / row_h;
     clamp_page((f->n_actions + per_page - 1) / per_page);
-    int y = TOP + 24;
-    gfx_text(TEXT, MARGIN, y, "Tap: done \xc2\xb7 hold: dismiss \xc2\xb7 tap a pending one: undo",
-             GFX_FAINT);
-    y += LH + 10;
     if (f->n_actions == 0) {
         gfx_text(TEXT, MARGIN, y, "No open action items.", GFX_INK);
     }
@@ -645,18 +691,22 @@ static void draw_actions(const feed_t *f)
         const pda_failed_t *fail = failed_item(a->id);
         const uint8_t color = pending_close ? GFX_PENDING : GFX_INK;
         /* checkbox */
-        const EpdRect box = {MARGIN, y - 22, 26, 26};
+        const EpdRect box = {MARGIN, y - 22, 28, 28};
         gfx_frame(box, color == GFX_INK ? 0x00 : 0x70);
         if (pending_close) {
-            gfx_text(TEXT, box.x + 4, y, strcmp(p->info.status, "done") == 0 ? "\xe2\x9c\x93" : "\xc3\x97",
+            gfx_text(TEXT, box.x + 5, y + 1, strcmp(p->info.status, "done") == 0 ? "\xe2\x9c\x93" : "\xc3\x97",
                      GFX_PENDING); /* ✓ or × */
         }
-        const int tx = MARGIN + 40, tw = LIST_W - 40 - (a->due[0] ? 130 : 0);
-        const int end = gfx_text_fit(TEXT, tx, y, tw, a->text, color);
+        const int tx = MARGIN + 42, tw = LIST_W - 42;
+        const int lines = gfx_wrap(TEXT, tx, y, tw, a->text, color, 0, 2);
         if (pending_close) {
-            gfx_strike(TEXT, tx, y, end - tx);
+            /* strike each drawn line */
+            for (int l = 0; l < (lines < 2 ? lines : 2); l++) {
+                gfx_strike(TEXT, tx, y + l * LH, l == 0 && lines > 1 ? tw : tw / 2);
+            }
         }
-        /* meta line */
+        /* meta line, with "→ cal" at its right end */
+        const int my = y + 2 * LH;
         char meta[200], due[40] = "";
         if (a->due_day != FEED_NO_DAY) {
             char d[24];
@@ -664,22 +714,26 @@ static void draw_actions(const feed_t *f)
             snprintf(due, sizeof(due), "%s%s", a->due_day < today ? "overdue, " : "due ", d);
         }
         if (fail) {
-            snprintf(meta, sizeof(meta), "couldn't sync \xe2\x80\x93 the server refused it");
+            snprintf(meta, sizeof(meta), "couldn't sync \xe2\x80\x93 refused");
         } else if (p) {
-            snprintf(meta, sizeof(meta), "%s, %s", strcmp(p->info.status, "dismissed") == 0 ? "dismissed" : p->info.status,
-                     p->listed ? "sent to the phone" : "waiting for the phone (tap to undo)");
+            snprintf(meta, sizeof(meta), "%s, %s",
+                     strcmp(p->info.status, "dismissed") == 0 ? "dismissed" : p->info.status,
+                     p->listed ? "sent to the phone" : "waiting (tap to undo)");
         } else {
             snprintf(meta, sizeof(meta), "%s%s%s", due, a->owner && due[0] ? " \xc2\xb7 " : "",
                      a->owner ? a->owner : "");
         }
-        gfx_text_fit(TEXT, tx, y + LH, tw, meta, fail ? GFX_INK : GFX_FAINT);
-        hit((EpdRect){0, y - 28, MARGIN + LIST_W - (a->due[0] ? 130 : 0), row_h}, A_ITEM, i);
-        if (a->due[0]) {
-            const EpdRect cal = {MARGIN + LIST_W - 120, y - 24, 120, 50};
+        const int cal_w = a->due[0] ? 110 : 0;
+        gfx_text_fit(TEXT, tx, my, tw - cal_w - 10, meta, fail ? GFX_INK : GFX_FAINT);
+        hit((EpdRect){0, y - 30, W, row_h - (cal_w ? 54 : 0)}, A_ITEM, i);
+        if (cal_w) {
+            hit((EpdRect){0, my - 30, W - MARGIN - cal_w - 10, 54}, A_ITEM, i);
+            const EpdRect cal = {W - MARGIN - cal_w, my - 32, cal_w, 46};
             gfx_button(cal, "\xe2\x86\x92 cal", false); /* → cal */
             hit(cal, A_ITEM_CAL, i);
         }
         y += row_h;
+        gfx_hline(MARGIN, y - 36, LIST_W, 0xD0);
     }
     draw_pager();
 }
@@ -691,15 +745,17 @@ static void draw_conversations(const feed_t *f)
         draw_no_feed();
         return;
     }
-    const int row_h = 2 * LH + 10, per_page = 6;
+    /* rows: the title on up to two lines, then time and people */
+    const int row_h = 3 * LH + 22;
+    int y = TOP + 30;
+    const int per_page = (LIST_BOTTOM - y + 24) / row_h;
     clamp_page((f->n_conv + per_page - 1) / per_page);
-    int y = TOP + 26;
     if (f->n_conv == 0) {
         gfx_text(TEXT, MARGIN, y, "No conversations in the last 48 hours.", GFX_FAINT);
     }
     for (int i = ui.page * per_page; i < f->n_conv && i < (ui.page + 1) * per_page; i++) {
         const feed_conv_t *c = &f->conv[i];
-        gfx_text_fit(TEXT, MARGIN, y, LIST_W, c->title, GFX_INK);
+        const int lines = gfx_wrap(TEXT, MARGIN, y, LIST_W, c->title, GFX_INK, 0, 2);
         char meta[200] = "", when[48] = "";
         if (c->at) {
             char d[24], t[12];
@@ -712,9 +768,10 @@ static void draw_conversations(const feed_t *f)
             m += (size_t)snprintf(meta + m, sizeof(meta) - m, "%s%s", k == 0 ? (m ? " \xc2\xb7 " : "") : ", ",
                                   c->people[k]);
         }
-        gfx_text_fit(TEXT, MARGIN + 20, y + LH, LIST_W - 20, meta, GFX_FAINT);
-        hit((EpdRect){0, y - 26, MARGIN + LIST_W, row_h}, A_CONV, i);
+        gfx_text_fit(TEXT, MARGIN + 20, y + (lines > 1 ? 2 : 1) * LH, LIST_W - 20, meta, GFX_FAINT);
+        hit((EpdRect){0, y - 30, W, row_h}, A_CONV, i);
         y += row_h;
+        gfx_hline(MARGIN, y - 36, LIST_W, 0xD0);
     }
     draw_pager();
 }
@@ -728,7 +785,7 @@ static void draw_conv_detail(const feed_t *f)
     }
     const feed_conv_t *c = &f->conv[ui.sel];
     draw_header("Conversation");
-    pw_t pw = pw_begin(MARGIN, TOP + 22, LIST_W, 10);
+    pw_t pw = pw_begin(MARGIN, TOP + 26, LIST_W, lines_from(TOP + 26));
     pw_para(&pw, TEXT, c->title, GFX_INK, 0);
     char meta[200] = "";
     size_t m = 0;
@@ -752,8 +809,8 @@ static void draw_conv_detail(const feed_t *f)
     }
     clamp_page(pw_pages(&pw));
     draw_pager();
-    const EpdRect back = {MARGIN, BOTTOM - 50, 160, 46};
-    const EpdRect tr = {MARGIN + 180, BOTTOM - 50, 220, 46};
+    const EpdRect back = row_button(MARGIN, 110);
+    const EpdRect tr = row_button(MARGIN + 122, 160);
     gfx_button(back, "Back", false);
     gfx_button(tr, "Transcript", false);
     hit(back, A_BACK, 0);
@@ -791,7 +848,7 @@ static void open_transcript(const char *ref)
 static void draw_transcript(void)
 {
     draw_header("Transcript");
-    pw_t pw = pw_begin(MARGIN, TOP + 22, LIST_W, 11);
+    pw_t pw = pw_begin(MARGIN, TOP + 26, LIST_W, lines_from(TOP + 26));
     if (!ui.detail) {
         const bool pend = pda_app_pending_fetch(ui.transcript_ref) != NULL;
         pw_para(&pw, TEXT, pend ? "Waiting for the phone: the transcript comes with the next sync."
@@ -817,11 +874,11 @@ static void draw_transcript(void)
     }
     clamp_page(pw_pages(&pw));
     draw_pager();
-    const EpdRect back = {MARGIN, BOTTOM - 50, 160, 46};
+    const EpdRect back = row_button(MARGIN, 110);
     gfx_button(back, "Back", false);
     hit(back, A_BACK, 0);
     if (ui.detail && ui.detail->next && ui.page == ui.pages - 1) {
-        const EpdRect nx = {MARGIN + 180, BOTTOM - 50, 220, 46};
+        const EpdRect nx = row_button(MARGIN + 122, 160);
         gfx_button(nx, "Next part", false);
         hit(nx, A_NEXT_PAGE, 0);
     }
@@ -844,7 +901,7 @@ static void draw_event(const feed_t *f)
     if (e->where) {
         gfx_text_fit(TEXT, MARGIN, y + 10 + LH + 6, W - 2 * MARGIN, e->where, GFX_FAINT);
     }
-    const EpdRect back = {MARGIN, BOTTOM - 50, 160, 46};
+    const EpdRect back = row_button(MARGIN, 110);
     gfx_button(back, "Back", false);
     hit(back, A_BACK, 0);
 }
@@ -854,13 +911,13 @@ static void draw_templates(const feed_t *f)
     draw_header("New event");
     gfx_text(TEXT, MARGIN, TOP + 26, "Pick a title:", GFX_FAINT);
     const int n = f && f->n_templates ? f->n_templates : (int)(sizeof(DEFAULT_TEMPLATES) / sizeof(DEFAULT_TEMPLATES[0]));
-    const int cols = 3, bw = (W - 2 * MARGIN - (cols - 1) * 12) / cols, bh = 70;
+    const int cols = 2, bw = (W - 2 * MARGIN - (cols - 1) * 12) / cols, bh = 80;
     for (int i = 0; i < n && i < 12; i++) {
         const EpdRect r = {MARGIN + (i % cols) * (bw + 12), TOP + 50 + (i / cols) * (bh + 12), bw, bh};
         gfx_button(r, f && f->n_templates ? f->templates[i] : DEFAULT_TEMPLATES[i], false);
         hit(r, A_TEMPLATE, i);
     }
-    const EpdRect back = {MARGIN, BOTTOM - 50, 160, 46};
+    const EpdRect back = row_button(MARGIN, 130);
     gfx_button(back, "Cancel", false);
     hit(back, A_BACK, 0);
 }
@@ -888,52 +945,53 @@ static void start_new_event(const char *title, int32_t day, int64_t from_item)
 static void draw_new_event(void)
 {
     draw_header("New event");
-    int y = TOP + 34;
-    gfx_text_fit(BIG, MARGIN, y + 6, W - 2 * MARGIN, ui.ev_title, GFX_INK);
-    y += 56;
-    /* date */
+    int y = TOP + 40;
+    y += 50 * gfx_wrap(BIG, MARGIN, y, W - 2 * MARGIN, ui.ev_title, GFX_INK, 0, 2);
+    /* date: ◀ Sat 31 Oct ▶ */
     char d[24];
     pda_fmt_day(ui.ev_day, d, sizeof(d));
-    const EpdRect prev = {MARGIN, y, 70, 50}, next = {MARGIN + 340, y, 70, 50};
+    const EpdRect prev = {MARGIN, y, 76, 56}, next = {W - MARGIN - 76, y, 76, 56};
     gfx_button(prev, "\xe2\x97\x80", false); /* ◀ */
     gfx_button(next, "\xe2\x96\xb6", false); /* ▶ */
-    gfx_text(BIG, MARGIN + 90, y + 38, d, GFX_INK);
+    gfx_text(BIG, (W - gfx_text_width(BIG, d)) / 2, y + 42, d, GFX_INK);
     hit(prev, A_DAY, -1);
     hit(next, A_DAY, 1);
-    /* time */
+    y += 72;
+    /* time: −15  09:30  +15 */
     char t[16];
     if (ui.ev_dur == 0) {
         snprintf(t, sizeof(t), "all day");
     } else {
         snprintf(t, sizeof(t), "%02d:%02d", ui.ev_min / 60, ui.ev_min % 60);
     }
-    gfx_text(BIG, MARGIN + 470, y + 38, t, GFX_INK);
-    const EpdRect minus = {MARGIN + 640, y, 110, 50}, plus = {MARGIN + 770, y, 110, 50};
+    const EpdRect minus = {MARGIN, y, 120, 56}, plus = {W - MARGIN - 120, y, 120, 56};
     gfx_button(minus, "\xe2\x88\x92" "15 min", false);
     gfx_button(plus, "+15 min", false);
+    gfx_text(BIG, (W - gfx_text_width(BIG, t)) / 2, y + 42, t, GFX_INK);
     hit(minus, A_STEP, -15);
     hit(plus, A_STEP, 15);
-    y += 66;
-    /* slots 08:00 .. 19:00 */
-    const int sw = (W - 2 * MARGIN - 5 * 10) / 6;
+    y += 76;
+    /* slots 08:00 .. 19:00, three per row */
+    const int cols = 3, gap = 12, sw = (W - 2 * MARGIN - (cols - 1) * gap) / cols, sh = 56;
     for (int i = 0; i < 12; i++) {
         const int min = (8 + i) * 60;
         char s[8];
         snprintf(s, sizeof(s), "%02d:00", 8 + i);
-        const EpdRect r = {MARGIN + (i % 6) * (sw + 10), y + (i / 6) * 56, sw, 48};
+        const EpdRect r = {MARGIN + (i % cols) * (sw + gap), y + (i / cols) * (sh + 10), sw, sh};
         gfx_button(r, s, ui.ev_dur != 0 && ui.ev_min == min);
         hit(r, A_SLOT, min);
     }
-    y += 2 * 56 + 8;
+    y += 4 * (sh + 10) + 10;
+    /* duration */
     static const int durs[] = {15, 30, 60, 0};
     static const char *const dl[] = {"15 min", "30 min", "60 min", "all day"};
+    const int dw = (W - 2 * MARGIN - 3 * 10) / 4;
     for (int i = 0; i < 4; i++) {
-        const EpdRect r = {MARGIN + i * (sw + 10), y, sw, 48};
+        const EpdRect r = {MARGIN + i * (dw + 10), y, dw, sh};
         gfx_button(r, dl[i], ui.ev_dur == durs[i]);
         hit(r, A_DURATION, durs[i]);
     }
-    y += 58;
-    const EpdRect cancel = {W - MARGIN - 2 * 170 - 10, y, 170, 48}, add = {W - MARGIN - 170, y, 170, 48};
+    const EpdRect cancel = row_button(MARGIN, 150), add = row_button(W - MARGIN - 200, 200);
     gfx_button(cancel, "Cancel", false);
     gfx_button(add, "Add", true);
     hit(cancel, A_BACK, 0);
@@ -969,12 +1027,15 @@ static void draw_status(const feed_t *f)
             pda_fmt_date(f->generated, tz(), d, sizeof(d));
             pda_fmt_hm(f->generated, tz(), t, sizeof(t));
         }
-        snprintf(line, sizeof(line), "Feed: version %" PRIu32 ", built %s %s%s%s%s", f->version, d, t,
-                 f->tz ? " (" : "", f->tz ? f->tz : "", f->tz ? ")" : "");
+        snprintf(line, sizeof(line), "Feed: version %" PRIu32, f->version);
+        gfx_text_fit(TEXT, MARGIN, y, LIST_W, line, GFX_INK);
+        y += LH;
+        snprintf(line, sizeof(line), "   built %s %s%s%s%s", d, t, f->tz ? " (" : "", f->tz ? f->tz : "",
+                 f->tz ? ")" : "");
     } else {
         snprintf(line, sizeof(line), "Feed: none");
     }
-    gfx_text_fit(TEXT, MARGIN, y, W - 2 * MARGIN, line, GFX_INK);
+    gfx_text_fit(TEXT, MARGIN, y, LIST_W, line, GFX_INK);
     y += LH;
     const int z = tz() < 0 ? -tz() : tz();
     snprintf(line, sizeof(line), "Clock: %s, UTC%c%02d:%02d", pda_app_time_valid() ? "set" : "not set",
@@ -990,13 +1051,20 @@ static void draw_status(const feed_t *f)
     }
     gfx_text(TEXT, MARGIN, y, line, GFX_INK);
     y += LH;
-    snprintf(line, sizeof(line), "Firmware %s, board t5_epaper_pro, BLE name odysseus-pda", PDA_FW_VERSION);
-    gfx_text(TEXT, MARGIN, y, line, GFX_FAINT);
+    snprintf(line, sizeof(line), "Screen: portrait %d\xc2\xb0", pda_epd_rotation());
+    gfx_text(TEXT, MARGIN, y, line, GFX_INK);
+    y += LH;
+    snprintf(line, sizeof(line), "Firmware %s, board t5_epaper_pro", PDA_FW_VERSION);
+    gfx_text_fit(TEXT, MARGIN, y, LIST_W, line, GFX_FAINT);
+    y += LH;
+    gfx_text(TEXT, MARGIN, y, "BLE name odysseus-pda", GFX_FAINT);
 
-    const int bw = 280;
-    const EpdRect pair = {MARGIN, BOTTOM - 50, bw, 46};
-    const EpdRect clean = {MARGIN + bw + 16, BOTTOM - 50, bw, 46};
-    const EpdRect wipe = {MARGIN + 2 * (bw + 16), BOTTOM - 50, bw, 46};
+    /* buttons, two per row above the bottom row, wipe in the bottom row */
+    const int bw = (W - 2 * MARGIN - 12) / 2, bh = ROW_H - 4;
+    const EpdRect pair = {MARGIN, ROW_Y - 2 * (bh + 12), bw, bh};
+    const EpdRect clean = {MARGIN + bw + 12, ROW_Y - 2 * (bh + 12), bw, bh};
+    const EpdRect rot = {MARGIN, ROW_Y - (bh + 12), bw, bh};
+    const EpdRect wipe = {MARGIN, ROW_Y, bw, bh};
     char pl[48];
     const int left = ble_pda_window_left_s();
     if (left > 0) {
@@ -1007,6 +1075,8 @@ static void draw_status(const feed_t *f)
     gfx_button(pair, pl, left > 0);
     gfx_button(clean, "Clean refresh", false);
     gfx_button(wipe, "Wipe cache (hold)", false);
+    gfx_button(rot, "Turn 180\xc2\xb0", false);
+    hit(rot, A_ROTATE, 0);
     hit(pair, A_PAIR, 0);
     hit(clean, A_CLEAN, 0);
     hit(wipe, A_WIPE, 0);
@@ -1251,6 +1321,10 @@ static void act(const hit_t *h, bool is_long)
         break;
     case A_CLEAN:
         pda_epd_update(PDA_EPD_CLEAN);
+        break;
+    case A_ROTATE:
+        pda_epd_set_rotation(pda_epd_rotation() == 90 ? 270 : 90);
+        ui.screen_changed = true; /* everything moves: redraw as a new screen */
         break;
     case A_WIPE:
         if (is_long) {

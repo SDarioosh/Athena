@@ -89,24 +89,31 @@ def cmd_put(a) -> int:
     return 0
 
 
-def png_gray4(path: str, w: int, h: int, fb: bytes) -> None:
-    rows = bytearray()
+def png_gray4(path: str, w: int, h: int, fb: bytes, rot: int = 0) -> None:
+    """Write the 4-bit panel buffer as an 8-bit grey PNG, turned upright for `rot`."""
+    px = [[0] * w for _ in range(h)]
     for y in range(h):
-        rows.append(0)
         line = fb[y * w // 2 : (y + 1) * w // 2]
-        for b in line:
-            rows.append((b & 0x0F) * 17)  # the lower nibble is the left pixel in epdiy
-            rows.append((b >> 4) * 17)
+        row = px[y]
+        for i, b in enumerate(line):
+            row[2 * i] = (b & 0x0F) * 17  # the lower nibble is the left pixel in epdiy
+            row[2 * i + 1] = (b >> 4) * 17
+    if rot == 270:  # EPD_ROT_INVERTED_PORTRAIT: screen (x, y) = panel (y, h - 1 - x)
+        px = [[px[h - 1 - x][y] for x in range(h)] for y in range(w)]
+    elif rot == 90:  # EPD_ROT_PORTRAIT: screen (x, y) = panel (w - 1 - y, x)
+        px = [[px[x][w - 1 - y] for x in range(h)] for y in range(w)]
+    out_h, out_w = len(px), len(px[0])
+    rows = bytearray()
+    for r in px:
+        rows.append(0)
+        rows += bytes(r)
 
     def chunk(tag: bytes, body: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(body))
-            + tag
-            + body
-            + struct.pack(">I", binascii.crc32(tag + body) & 0xFFFFFFFF)
-        )
+        crc = binascii.crc32(tag + body) & 0xFFFFFFFF
+        return struct.pack(">I", len(body)) + tag + body + struct.pack(">I", crc)
 
-    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
+    png = b"\x89PNG\r\n\x1a\n"
+    png += chunk(b"IHDR", struct.pack(">IIBBBBB", out_w, out_h, 8, 0, 0, 0, 0))
     png += chunk(b"IDAT", zlib.compress(bytes(rows), 6)) + chunk(b"IEND", b"")
     with open(path, "wb") as f:
         f.write(png)
@@ -126,14 +133,16 @@ def cmd_fb(a) -> int:
         _, _, rest = text.partition("FB BEGIN ")
         if not rest:
             continue
-        w, h, crc = rest.split("\n", 1)[0].split()
+        head = rest.split("\n", 1)[0].split()
+        w, h, crc = head[:3]
+        rot = int(head[3]) if len(head) > 3 else 0
         body = rest.split("\n", 1)[1].split("FB END", 1)[0]
         # Log lines from other tasks can land between the data lines: skip them.
         lines = [x.strip() for x in body.splitlines() if B64_LINE.match(x.strip())]
         fb = b"".join(base64.b64decode(x) for x in lines)
         if zlib.crc32(fb) & 0xFFFFFFFF == int(crc, 16):
-            png_gray4(a.out, int(w), int(h), fb)
-            print(f"wrote {a.out} ({w}x{h})")
+            png_gray4(a.out, int(w), int(h), fb, rot)
+            print(f"wrote {a.out} (panel {w}x{h}, shown upright for rotation {rot})")
             return 0
         print(f"framebuffer CRC mismatch (attempt {attempt + 1})", file=sys.stderr)
     return 1

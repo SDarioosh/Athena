@@ -8,6 +8,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "nvs.h"
 
 static const char *TAG = "epd";
 
@@ -16,6 +17,7 @@ static SemaphoreHandle_t s_lock;
 static esp_pm_lock_handle_t s_pm;
 static pda_epd_stats_t s_stats;
 static bool s_ready;
+static int s_rot_deg = PDA_ROT_DEFAULT;
 
 esp_err_t pda_epd_init(i2c_master_bus_handle_t bus)
 {
@@ -23,6 +25,15 @@ esp_err_t pda_epd_init(i2c_master_bus_handle_t bus)
     const EpdInitConfig cfg = {.i2c = &i2c};
     epd_init_with_config(&epd_board_v7, &ED047TC1, EPD_LUT_64K, &cfg);
     epd_set_vcom(PDA_EPD_VCOM_MV);
+    nvs_handle_t h;
+    if (nvs_open("pda", NVS_READONLY, &h) == ESP_OK) {
+        int16_t r = 0;
+        if (nvs_get_i16(h, "rot", &r) == ESP_OK && (r == 90 || r == 270)) {
+            s_rot_deg = r;
+        }
+        nvs_close(h);
+    }
+    epd_set_rotation(s_rot_deg == 90 ? EPD_ROT_PORTRAIT : EPD_ROT_INVERTED_PORTRAIT);
     s_hl = epd_hl_init(EPD_BUILTIN_WAVEFORM);
     s_lock = xSemaphoreCreateMutex();
     /* The waveform lookup runs on the CPU while the LCD peripheral streams lines: keep the
@@ -44,9 +55,42 @@ esp_err_t pda_epd_init(i2c_master_bus_handle_t bus)
     if (s_pm) {
         esp_pm_lock_release(s_pm);
     }
-    ESP_LOGI(TAG, "ready: %dx%d, VCOM %d mV, clear %d ms", epd_width(), epd_height(),
-             PDA_EPD_VCOM_MV, (int)((esp_timer_get_time() - t0) / 1000));
+    ESP_LOGI(TAG, "ready: %dx%d, portrait %d, VCOM %d mV, clear %d ms", epd_width(), epd_height(),
+             s_rot_deg, PDA_EPD_VCOM_MV, (int)((esp_timer_get_time() - t0) / 1000));
     return ESP_OK;
+}
+
+void pda_epd_set_rotation(int degrees)
+{
+    if (degrees != 90 && degrees != 270) {
+        return;
+    }
+    s_rot_deg = degrees;
+    epd_set_rotation(degrees == 90 ? EPD_ROT_PORTRAIT : EPD_ROT_INVERTED_PORTRAIT);
+    nvs_handle_t h;
+    if (nvs_open("pda", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_i16(h, "rot", (int16_t)degrees);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "rotation: portrait %d", degrees);
+}
+
+int pda_epd_rotation(void)
+{
+    return s_rot_deg;
+}
+
+/* The inverse of epdiy's _rotate() for the two portrait modes. */
+void pda_epd_touch_to_screen(int px, int py, int *x, int *y)
+{
+    if (s_rot_deg == 90) { /* EPD_ROT_PORTRAIT: phys x = 959 - y, phys y = x */
+        *x = py;
+        *y = PDA_EPD_W - 1 - px;
+    } else { /* EPD_ROT_INVERTED_PORTRAIT: phys x = y, phys y = 539 - x */
+        *x = PDA_EPD_H - 1 - py;
+        *y = px;
+    }
 }
 
 uint8_t *pda_epd_fb(void)

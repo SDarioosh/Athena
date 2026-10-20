@@ -70,8 +70,10 @@ cmake -S firmware/pda/test -B build-pda-host && cmake --build build-pda-host && 
 
 ## Use
 
-- **Tabs** at the bottom: Today, Briefing, Calendar, Actions, Talks (conversations),
-  Status. Swipe left/right for the next tab, up/down (or ▲ ▼) to page.
+- **Portrait**, 540 × 960. Two orientations: 270 (default, the way LilyGO's factory firmware
+  holds the board) and 90 (turned 180°): Status → "Turn 180°" or `rotate 90|270` on the
+  console; kept in NVS.
+- **Tabs** at the bottom: Today, Brief, Cal, Tasks, Talks (conversations), Status. Swipe left/right for the next tab, up/down (or ▲ ▼) to page.
 - **Actions:** tap = done, hold = dismiss, tap a pending one = undo (before the phone has
   taken it; after that, a tap queues `open`). "→ cal" opens the event form with the item's
   title and due date.
@@ -98,9 +100,10 @@ cmd "<command>"` runs one from a script.
 | `feed`, `detail <ref>` | what is stored |
 | `ob`, `ob ack <id hex> [result]` | the outbox; ack like a relay would (result 1 = rejected) |
 | `screen <name>`, `tap <x> <y>`, `hold <x> <y>`, `swipe <dir>`, `button boot\|side [long]`, `redraw [clean]` | drive the UI without touching it |
-| `fb` | framebuffer as base64 (`pda_serial.py fb out.png`) |
+| `fb` | framebuffer as base64 with the rotation (`pda_serial.py fb out.png` writes it upright) |
 | `time [<epoch\|ISO> [utc_offset_min]]` | clock and display offset (normally set by TIME) |
 | `ble [pair\|forget]` | BLE state, open the pairing window, delete all bonds |
+| `rotate [90\|270]` | portrait orientation |
 | `wipe` | delete feed, details and outbox |
 | `i2c`, `batt`, `rtc [set <t>]`, `touch [trace <s>]`, `epd [bench\|clean]` | board bring-up and timing |
 | `reboot` | restart |
@@ -126,7 +129,8 @@ python tools/pda_serial.py -p COM36 fb today.png
   the mapping is swap X/Y + flip Y (four corner targets); a tab tap, done and undo on an
   action item, swipes left and right; the side button (clean refresh); BOOT long (pairing
   window) and short.
-- All §5 screens drawn from the demo feed, checked from framebuffer dumps; tap
+- All §5 screens drawn from the demo feed in landscape, then in portrait (both
+  orientations), checked from framebuffer dumps; tap
   navigation, done / dismiss / undo, couldn't-sync, the event form, a queued `cal_add`, a
   queued `fetch` and the transcript appearing when its detail is loaded.
 - Reboot and reflash: the feed, the outbox and its id counter, the clock (RTC) and the
@@ -137,6 +141,7 @@ python tools/pda_serial.py -p COM36 fb today.png
   with the feed unchanged, disconnect in the middle of a PUT (discarded), a lost OB_ACK
   (the same id is listed again and acked once), BYE and disconnect, the scan response
   with and without the outbox flag.
+- Idle link rule: 60 s without a `ctrl` write or a `status` read (plan §3.6).
 - A crash found and fixed: a flash write (outbox ack) during a refresh raised "Cache
   disabled but cached memory region accessed" in epdiy's LCD interrupt;
   `CONFIG_SPIRAM_XIP_FROM_PSRAM` keeps the cache on during flash writes.

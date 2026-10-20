@@ -60,13 +60,18 @@ against LilyGO's `docs/pinmap.md` and examples (github.com/Xinyuan-LilyGO/T5S3-4
 | ESP32-S3R8 (QFN56, rev 0.2), 16 MB QIO flash, 8 MB **octal** PSRAM | esptool `flash_id`, boot log | firmware; epdiy's framebuffers (3 × 260 KB) in PSRAM; code and rodata run from PSRAM too (`CONFIG_SPIRAM_XIP_FROM_PSRAM`, §2) |
 | 4.7" ED047TC1, 960×540, 16 greys, 8-bit parallel bus; TPS65185 power IC (0x68) | drawn and timed; the owner saw all 16 grey steps and clean text | epdiy 2.1.3 board **`epd_board_v7`** works unchanged; VCOM 1560 mV (LilyGO's default) |
 | PCA9535 I/O expander (0x20, INT GPIO38) | read back | port 1: e-paper control (epdiy); IO1_2 the side button (epdiy makes it an output, the firmware sets it back to input); IO0_0 the LoRa/GPS rail enable, held off |
-| GT911 touch (0x5D, INT GPIO3, RST GPIO9) | taps on four corner targets | its raw frame is portrait (540 × 960): swap X/Y and flip Y for the landscape screen |
+| GT911 touch (0x5D, INT GPIO3, RST GPIO9) | taps on four corner targets | its raw frame is portrait (540 × 960): swap X/Y and flip Y gives the upright landscape panel, then the screen's portrait rotation is applied |
 | PCF8563 RTC (0x51, INT GPIO2), coin cell holder | kept the time over reboots | wall clock between phone connections |
 | BQ25896 charger (0x6B), BQ27220 fuel gauge (0x55) | 4.13–4.17 V, 93–99 %, USB, charging | battery %, charging state |
 | Buttons: BOOT (GPIO0), side button (PCA IO1_2, active low), RST | pressed by hand: BOOT short and long, side short | back, pairing window, clean refresh |
 | Front light (GPIO11, LED driver enable) | off | not used (daylight reading) |
 | microSD (SPI, CS 12), LoRa SX1262 and GPS on the Pro | not touched | not used (§7) |
 
+- **The screen is portrait (owner's choice, 2026-10-20):** a logical 540 × 960 screen on
+  the 960 × 540 panel through epdiy's rotation (drawing and partial-update areas), and
+  touches mapped the same way. Two orientations, a console (`rotate 90|270`) and Status
+  screen ("Turn 180°") setting kept in NVS: **270 (default)** is `EPD_ROT_INVERTED_PORTRAIT`,
+  the orientation LilyGO's factory firmware uses; 90 is the same turned 180°.
 - The I2C bus is SDA 39 / SCL 40 for every chip. The firmware creates it and hands it to
   epdiy (`epd_init_with_config`), so there is one ESP-IDF `i2c_master` bus.
 - **The COM ports swap.** On the owner's PC the T5 was COM35 first and later COM36 (the
@@ -266,9 +271,12 @@ where both say something.
   the outbox has entries**, with the shortened name (AD `0x08`) `odysseus-p`; otherwise the
   complete name. No service data means nothing is waiting. The GAP device name is always
   `odysseus-pda`.
-- **Idle disconnect:** 30 s without a command, or 6 min while `status` bit4 (user active:
-  a touch or button in the last 60 s) is set, so a relay can stay and refresh every 5 min.
-  After `BYE_OK` the T5 disconnects after ~1 s if the relay hasn't.
+- **Idle disconnect:** the T5 drops a relay after **60 s with neither a `ctrl` write nor a
+  `status` read**. Both count as activity, so the PC relay's `status` read every 30 s and
+  android-relay's `TIME` every 20 s keep a link up while `status` bit4 (user active: a
+  touch or button in the last 60 s) asks them to stay. A relay that stays connected must
+  do one of the two at least every 60 s (every 30 s leaves margin). After `BYE_OK` the T5
+  disconnects after ~1 s if the relay hasn't.
 - **`status`** is notified (at most once a second) when any of its bytes changes: the
   outbox count, the feed version, the flags.
 - **Actions** are written exactly as in §4.2, for example
@@ -342,6 +350,12 @@ page when the reader reaches the end.
   are none). An empty string in an optional field (`"owner": ""`) reads as missing.
 
 ## 5. Screens
+
+Portrait, 540 × 960 (§1): a two-line header (title and clock; date, battery, sync and the
+outbox count), the content, a bottom row for the screen's buttons and the pager (▲ n/m ▼),
+and a tab bar of six (Today, Brief, Cal, Tasks, Talks, Status). Lists use the full width
+with rows of two or three lines; the new-event form stacks the date, the time with ±15 min,
+a 3 × 4 grid of hour slots and the durations.
 
 | Screen | Content | Interactions |
 |---|---|---|

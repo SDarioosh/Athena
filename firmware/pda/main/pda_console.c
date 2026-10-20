@@ -90,11 +90,11 @@ static int cmd_epd(int argc, char **argv)
         const EpdRect sq = {.x = 100, .y = 320, .width = 100, .height = 100};
         epd_fill_rect(sq, EPD_BLACK, fb);
         bench_one(PDA_EPD_PARTIAL, &sq, "100x100 area changed");
-        const EpdRect row = {.x = 0, .y = 440, .width = PDA_EPD_W, .height = 60};
+        const EpdRect row = {.x = 0, .y = 700, .width = PDA_SCR_W, .height = 60};
         epd_fill_rect(row, EPD_GREY, fb);
         bench_one(PDA_EPD_PARTIAL, &row, "960x60 row changed");
-        for (int i = 0; i < PDA_EPD_W; i += 8) {
-            epd_draw_vline(i, 0, PDA_EPD_H, (i / 8) & 1 ? EPD_BLACK : EPD_LIGHT, fb);
+        for (int i = 0; i < PDA_SCR_W; i += 8) {
+            epd_draw_vline(i, 0, PDA_SCR_H, (i / 8) & 1 ? EPD_BLACK : EPD_LIGHT, fb);
         }
         bench_one(PDA_EPD_PARTIAL, NULL, "whole screen changed");
         pda_epd_clear_fb();
@@ -130,7 +130,9 @@ static int cmd_fb(int argc, char **argv)
     (void)argv;
     const uint8_t *fb = pda_epd_fb();
     const size_t total = PDA_EPD_W / 2 * PDA_EPD_H;
-    printf("FB BEGIN %d %d %08" PRIx32 "\n", PDA_EPD_W, PDA_EPD_H, crc32_update(0, fb, total));
+    /* the physical (landscape) buffer, and the rotation to view it upright */
+    printf("FB BEGIN %d %d %08" PRIx32 " %d\n", PDA_EPD_W, PDA_EPD_H, crc32_update(0, fb, total),
+           pda_epd_rotation());
     unsigned char line[160];
     for (size_t off = 0; off < total; off += 96) {
         const size_t n = total - off < 96 ? total - off : 96;

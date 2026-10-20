@@ -20,8 +20,18 @@
 extern "C" {
 #endif
 
+/* The panel (physical, landscape). */
 #define PDA_EPD_W 960
 #define PDA_EPD_H 540
+/* The screen as the UI draws it: portrait (plan §5). epdiy rotates drawing and update
+ * areas; touch_gt911.c maps touches into the same frame. */
+#define PDA_SCR_W 540
+#define PDA_SCR_H 960
+
+/* The two portrait orientations, as degrees for the console and NVS:
+ * 270 = EPD_ROT_INVERTED_PORTRAIT (default; LilyGO's factory firmware holds it this way),
+ * 90 = EPD_ROT_PORTRAIT (turned 180 degrees from that). */
+#define PDA_ROT_DEFAULT 270
 #define PDA_EPD_PARTIAL_LIMIT 10
 /* VCOM in mV: LilyGO's factory firmware default for this panel. */
 #define PDA_EPD_VCOM_MV 1560
@@ -47,6 +57,13 @@ typedef struct {
 
 /* epdiy on the board's I2C bus (TPS65185 and PCA9535 port 1 belong to epdiy after this). */
 esp_err_t pda_epd_init(i2c_master_bus_handle_t bus);
+
+/* 90 or 270; kept in NVS ("pda"/"rot"). Takes effect for the next drawing; the caller
+ * redraws everything. */
+void pda_epd_set_rotation(int degrees);
+int pda_epd_rotation(void);
+/* A touch on the physical panel (landscape, 960x540) to screen coordinates. */
+void pda_epd_touch_to_screen(int px, int py, int *x, int *y);
 
 uint8_t *pda_epd_fb(void);
 /* Fill the framebuffer white. */

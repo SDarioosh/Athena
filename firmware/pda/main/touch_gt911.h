@@ -1,7 +1,7 @@
 /* GT911 capacitive touch on the T5 E-Paper Pro (I2C 0x5D, INT GPIO3, RST GPIO9).
  * A task polls the panel while the INT line says a finger is there, runs gesture.c and
- * calls the callback with each tap, long press or swipe in screen coordinates (960x540,
- * landscape, origin top left). */
+ * calls the callback with each tap, long press or swipe in screen coordinates (540x960,
+ * portrait, origin top left, pda_epd's rotation). */
 #pragma once
 
 #include <stdbool.h>

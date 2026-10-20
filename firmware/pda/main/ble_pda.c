@@ -36,8 +36,10 @@ static const char *TAG = "ble";
 /* The scan response holds 31 bytes: with the 19-byte service data the name is shortened. */
 #define SHORT_NAME "odysseus-p"
 #define WINDOW_MS (2 * 60 * 1000)
-#define IDLE_DISCONNECT_MS 30000
-#define ACTIVE_IDLE_DISCONNECT_MS (6 * 60 * 1000) /* the relay refreshes every 5 min */
+/* A relay is dropped after this long with neither a ctrl write nor a status read (plan
+ * §3.6): the PC relay reads status every 30 s and android-relay sends TIME every 20 s
+ * while they stay connected. */
+#define IDLE_DISCONNECT_MS 60000
 #define BYE_DISCONNECT_MS 1000
 #define STATUS_MIN_PERIOD_MS 1000
 #define SEND_GIVE_UP_MS 5000
@@ -484,9 +486,7 @@ static void drop_link(uint32_t gen, uint8_t reason)
 
 static int idle_timeout_ms(void)
 {
-    ble_pda_state_t app;
-    app_state(&app);
-    return app.user_active ? ACTIVE_IDLE_DISCONNECT_MS : IDLE_DISCONNECT_MS;
+    return IDLE_DISCONNECT_MS;
 }
 
 static void run_command(const job_t *job)
@@ -892,6 +892,7 @@ static int on_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt
         return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
     }
     if (chr == CHR_STATUS && ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        restart_timer(s_idle_timer, idle_timeout_ms()); /* a status read keeps the link */
         post_kick(); /* refresh the cache for the next read */
         return os_mbuf_append(ctxt->om, status, sizeof(status)) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }

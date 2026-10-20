@@ -13,6 +13,7 @@
 #include "mbedtls/base64.h"
 #include "pda_app.h"
 #include "pda_console.h"
+#include "pda_epd.h"
 #include "pda_proto.h"
 #include "t5_board.h"
 #include "ui_pda.h"
@@ -226,6 +227,23 @@ static int cmd_time(int argc, char **argv)
     return 0;
 }
 
+static int cmd_rotate(int argc, char **argv)
+{
+    if (argc >= 2) {
+        const int deg = atoi(argv[1]);
+        if (deg != 90 && deg != 270) {
+            printf("usage: rotate [90|270]\n");
+            return 1;
+        }
+        pda_epd_set_rotation(deg);
+        const pda_ev_t ev = {.type = PDA_EV_REDRAW};
+        pda_app_post(&ev);
+    }
+    printf("rotation: portrait %d (270 = LilyGO's default hold, 90 = turned 180)\n",
+           pda_epd_rotation());
+    return 0;
+}
+
 static int cmd_wipe(int argc, char **argv)
 {
     (void)argc;
@@ -284,5 +302,6 @@ void pda_console_register_app(void)
     pda_console_register("time", "time [<epoch|ISO> [utc_offset_min]]", cmd_time);
     pda_console_register("feed", "Summary of the stored feed", cmd_feed);
     pda_console_register("detail", "detail <ref>: a cached detail", cmd_detail);
+    pda_console_register("rotate", "rotate [90|270]: portrait orientation (kept in NVS)", cmd_rotate);
     pda_console_register("wipe", "Delete the feed, details and outbox", cmd_wipe);
 }

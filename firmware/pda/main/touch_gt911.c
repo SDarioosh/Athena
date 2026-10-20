@@ -20,7 +20,8 @@ static const char *TAG = "touch";
 #define REG_POINT1 0x814F
 #define REG_CONFIG_RES 0x8048 /* x max u16 LE, y max u16 LE */
 
-/* Panel -> screen mapping, checked on the board (touch trace in the corners). */
+/* GT911 frame -> upright landscape panel, checked on the board (taps on corner targets);
+ * pda_epd_touch_to_screen() then turns it into the portrait screen. */
 #define TOUCH_SWAP_XY 1
 #define TOUCH_FLIP_X 0
 #define TOUCH_FLIP_Y 1
@@ -80,8 +81,10 @@ static void map_point(int rx, int ry, int *x, int *y)
 #if TOUCH_FLIP_Y
     sy = PDA_EPD_H - 1 - sy;
 #endif
-    *x = sx < 0 ? 0 : sx >= PDA_EPD_W ? PDA_EPD_W - 1 : sx;
-    *y = sy < 0 ? 0 : sy >= PDA_EPD_H ? PDA_EPD_H - 1 : sy;
+    sx = sx < 0 ? 0 : sx >= PDA_EPD_W ? PDA_EPD_W - 1 : sx;
+    sy = sy < 0 ? 0 : sy >= PDA_EPD_H ? PDA_EPD_H - 1 : sy;
+    /* panel (landscape) -> the portrait screen the UI draws */
+    pda_epd_touch_to_screen(sx, sy, x, y);
 }
 
 static void touch_task(void *arg)
