@@ -232,11 +232,17 @@ class WhisperServerTranscriber:
                 **self.decode.form_fields()}
         if prompt:
             data["prompt"] = prompt
-        resp = self._http.post(
-            self.url,
-            files={"file": ("audio.wav", to_wav_bytes(audio), "audio/wav")},
-            data=data,
-        )
+        wav = to_wav_bytes(audio)
+        for attempt in (1, 2):
+            try:
+                resp = self._http.post(self.url, files={"file": ("audio.wav", wav, "audio/wav")},
+                                       data=data)
+                break
+            except httpx.RemoteProtocolError:
+                # whisper-server closed a kept-alive connection we reused: one retry on a
+                # fresh connection, instead of failing the whole session.
+                if attempt == 2:
+                    raise
         resp.raise_for_status()
         return parse_verbose_json(resp.json(), self.hallucinations)
 

@@ -125,3 +125,27 @@ def test_cut_loop_keeps_no_word_times_kept_text_does():
     plain = parse_verbose_json({"segments": [seg("see you at noon", 0.9)]}, ON)
     assert loop[0].text.split().count("go") == 4 and loop[0].words == ()
     assert [w[2] for w in plain[0].words] == [" see", " you", " at", " noon"]
+
+
+def test_whisper_server_retries_a_dropped_connection_once():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        return httpx.Response(200, json={"segments": [seg("Hello there.", 0.9)]})
+
+    t = WhisperServerTranscriber("http://whisper.test", transport=httpx.MockTransport(handler))
+    assert [p.text for p in t.transcribe(tone(300, 1))] == ["Hello there."]
+
+    def always(request: httpx.Request) -> httpx.Response:
+        raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+
+    t = WhisperServerTranscriber("http://whisper.test", transport=httpx.MockTransport(always))
+    try:
+        t.transcribe(tone(300, 1))
+    except httpx.RemoteProtocolError:
+        pass
+    else:
+        raise AssertionError("a second drop must fail the request")
