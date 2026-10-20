@@ -2,6 +2,9 @@ package org.barvis.sound.relay.protocol
 
 import java.util.UUID
 
+/** Which service a GATT link talks to, and where its notifications arrive. */
+data class GattProfile(val service: UUID, val data: UUID, val status: UUID)
+
 /** GATT layout, docs/twatch-ble-protocol.md §3. */
 object WatchGatt {
     val SERVICE: UUID = UUID.fromString("f8060000-61c0-4fda-8b7b-26b08e916438")
@@ -9,6 +12,8 @@ object WatchGatt {
     val STATUS: UUID = UUID.fromString("f8060002-61c0-4fda-8b7b-26b08e916438")
     val CTRL: UUID = UUID.fromString("f8060003-61c0-4fda-8b7b-26b08e916438")
     val DATA: UUID = UUID.fromString("f8060004-61c0-4fda-8b7b-26b08e916438")
+
+    val PROFILE = GattProfile(SERVICE, DATA, STATUS)
 
     /** Client Characteristic Configuration descriptor (standard). */
     val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
