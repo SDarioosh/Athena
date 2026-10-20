@@ -28,6 +28,9 @@ typedef enum {
 
 esp_err_t ui_pda_start(void);
 
+/* Console: show a transcript page by ref (from the cache, or queue a fetch). */
+void ui_pda_open(const char *ref);
+
 /* For the console: name <-> screen. */
 const char *ui_screen_name(ui_screen_t s);
 int ui_screen_from_name(const char *name);

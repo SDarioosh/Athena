@@ -15,7 +15,6 @@ extern "C" {
 #define GFX_INK 0x0
 #define GFX_PENDING 0x7 /* queued but not confirmed by a feed yet */
 #define GFX_FAINT 0x9
-#define GFX_ME 0x4     /* the owner's own lines in a transcript */
 
 void gfx_begin(uint8_t *fb);
 

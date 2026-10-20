@@ -244,6 +244,16 @@ static int cmd_rotate(int argc, char **argv)
     return 0;
 }
 
+static int cmd_open(int argc, char **argv)
+{
+    if (argc < 2 || strncmp(argv[1], "transcript:", 11) != 0) {
+        printf("usage: open transcript:<id>@<from>-<to>\n");
+        return 1;
+    }
+    ui_pda_open(argv[1]);
+    return 0;
+}
+
 static int cmd_wipe(int argc, char **argv)
 {
     (void)argc;
@@ -303,5 +313,6 @@ void pda_console_register_app(void)
     pda_console_register("feed", "Summary of the stored feed", cmd_feed);
     pda_console_register("detail", "detail <ref>: a cached detail", cmd_detail);
     pda_console_register("rotate", "rotate [90|270]: portrait orientation (kept in NVS)", cmd_rotate);
+    pda_console_register("open", "open transcript:<ref>: show a transcript page", cmd_open);
     pda_console_register("wipe", "Delete the feed, details and outbox", cmd_wipe);
 }

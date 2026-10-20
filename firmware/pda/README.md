@@ -98,6 +98,7 @@ cmd "<command>"` runs one from a script.
 |---|---|
 | `put begin <kind> <bytes> <crc32 hex>`, `put data <base64>`, `put end` | load a blob (1 = feed, 2 = detail) through the same checks as a BLE PUT; `pda_serial.py put <file> [--kind 2]` does it all |
 | `feed`, `detail <ref>` | what is stored |
+| `open transcript:<ref>` | show a transcript page (cached, or queue a `fetch`) |
 | `ob`, `ob ack <id hex> [result]` | the outbox; ack like a relay would (result 1 = rejected) |
 | `screen <name>`, `tap <x> <y>`, `hold <x> <y>`, `swipe <dir>`, `button boot\|side [long]`, `redraw [clean]` | drive the UI without touching it |
 | `fb` | framebuffer as base64 with the rotation (`pda_serial.py fb out.png` writes it upright) |
