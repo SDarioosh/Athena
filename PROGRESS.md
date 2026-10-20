@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-20 (round 17: T-Watch Ultra tested on the owner's watch, reliability, power log; bug hunt)_
+_Last updated: 2026-10-20 (round 17: T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus)_
 
 ## Status
 
@@ -241,6 +241,18 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
   vendor string, the `barvis_relay` package, and all `convo` identifiers.
 
+## Done on 2026-10-20: plain questions and links (PR #40, hub SDarioosh/Barvis#24)
+
+- Hub: a plain recording question in Odysseus "Auto" (no `/sound`) is offered our read tools
+  (`src/module_turn_scope.py` in the hub, through the existing slash-skill hooks; no
+  upstream lines).
+- Here: list results end with the cite rule; `INSTRUCTIONS` say to search before saying
+  "I don't know"; `bakeoff.py` takes `ODYSSEUS_MODE=chat`.
+- Sandbox (every tool on + Auto, Q1 4 13 16 20): 0/4 before → 5/5 agent, 4/5 chat; every
+  pass cited its link.
+- Open for the owner: full 20-question run on the server (both modes) per the hub PR's
+  Server verification; the production Custom preset needs the new `INSTRUCTIONS`.
+
 ## Done in round 17: T-Watch Ultra buttons, notes and recovery tested on the watch
 
 Branch `feature/twatch-hw-verify`. On the owner's watch over USB from a Mac (ESP-IDF 5.5.1,
@@ -337,6 +349,21 @@ right after its sizes, flags and timings were read; none was uploaded.
   retries ("no buffers for 5000 ms"). Nothing was acked.
 - SD `0x108` errors keep showing up at 4 MHz SPI (round 14: reads after an ACK; now
   writes). Cause unknown; recovery handles it.
+
+## Done on 2026-10-20: "my latest voice notes" finds voice notes
+
+- Problem (owner): "give me my latest voice notes" returned recent conversations. Voice
+  notes were stored as kind `note` and labelled "(voice note)", but no tool could ask
+  for only them, and the instructions never mentioned them.
+- `search_conversations` takes `kind`: `note` (only voice notes), `conversation` (only
+  the others), empty (both); "voice_note", "memo", "notes" also mean `note`, and a bad
+  value returns a readable message. `INSTRUCTIONS` tell the model to use `kind="note"`
+  for voice notes, notes or memos. Hub: the Conversations page gets a type filter and
+  labels voice notes (coordinated hub PR).
+- Eval: two fictional voice notes in `seed_demo.py` (`note-bike`, `note-offsite`) and
+  question 21 "What was my latest voice note about?". Sandbox (Qwen3-4B, Odysseus
+  `/sound`): 0/1 before, 1/1 after. **Owner:** rerun `seed_demo.py` on the server's demo
+  store (adds only the notes), then the Server verification in the PR.
 
 ## Done on 2026-10-20: junk discarded without a model call
 

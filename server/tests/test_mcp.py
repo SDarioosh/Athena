@@ -237,3 +237,13 @@ def test_placeholder_mcp_token_is_rejected(tmp_path):
         Settings(ingest_token="real-token-0123456789", data_dir=tmp_path,
                  mcp_token="change-me-generate-another-long-random-token")
     assert Settings(ingest_token="real-token-0123456789", data_dir=tmp_path).mcp_token is None
+
+
+
+def test_list_results_end_with_the_cite_rule_unless_empty(pipeline, mcp):
+    hint = "put the link next to each fact you use"
+    assert hint not in call(mcp, "search_conversations", since=DAY)  # nothing yet
+    process_two_speakers(pipeline)
+    for tool, args in [("search_transcripts", {"speaker": "Me"}),
+                       ("search_conversations", {"since": DAY})]:
+        assert hint in call(mcp, tool, **args).splitlines()[-1].lower(), tool
