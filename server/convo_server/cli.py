@@ -13,18 +13,33 @@ from .llm import LLMClient, Summarizer
 from .pipeline import Pipeline
 from .search import OpenAIEmbedder
 from .store import Store
-from .transcribe import Transcriber, WhisperCliTranscriber, WhisperServerTranscriber
+from .transcribe import (
+    DecodeOptions,
+    Transcriber,
+    WhisperCliTranscriber,
+    WhisperServerTranscriber,
+)
 from .vad import make_vad
+
+
+def decode_options(settings: Settings) -> DecodeOptions:
+    return DecodeOptions(temperature_inc=settings.whisper_temperature_inc,
+                         beam_size=settings.whisper_beam_size,
+                         best_of=settings.whisper_best_of,
+                         no_speech_thold=settings.whisper_no_speech_thold,
+                         logprob_thold=settings.whisper_logprob_thold,
+                         entropy_thold=settings.whisper_entropy_thold,
+                         suppress_non_speech=settings.whisper_suppress_non_speech,
+                         carry_initial_prompt=settings.whisper_carry_initial_prompt)
 
 
 def build_transcriber(settings: Settings) -> Transcriber | None:
     if settings.whisper_server_url:
         return WhisperServerTranscriber(settings.whisper_server_url, settings.language,
-                                        temperature_inc=settings.whisper_temperature_inc)
+                                        decode=decode_options(settings))
     if settings.whisper_cli and settings.whisper_model:
         return WhisperCliTranscriber(settings.whisper_cli, settings.whisper_model,
-                                     settings.language,
-                                     temperature_inc=settings.whisper_temperature_inc)
+                                     settings.language, decode=decode_options(settings))
     return None
 
 

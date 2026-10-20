@@ -70,6 +70,10 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   threshold) is labelled as the owner. `CONVO_OWNER_HINT_MARGIN=0` turns it off.
 - whisper gets a prompt: `CONVO_WHISPER_PROMPT` (names, places, jargon) plus the names
   of known speakers, so they are spelled right.
+- Decoding settings go with every whisper request (whisper-server form fields, the same
+  flags for whisper-cli): `CONVO_WHISPER_BEAM_SIZE`, `_BEST_OF`, `_SUPPRESS_NON_SPEECH`,
+  `_NO_SPEECH_THOLD`, `_LOGPROB_THOLD`, `_ENTROPY_THOLD`, `_CARRY_INITIAL_PROMPT`,
+  `_TEMPERATURE_INC`. They override whatever whisper-server was started with.
 
 ## Deploy: one command, runs in the background
 

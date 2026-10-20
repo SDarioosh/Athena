@@ -51,21 +51,65 @@ def _clean(pieces: list[TranscriptPiece]) -> list[TranscriptPiece]:
     return out
 
 
+@dataclass(frozen=True)
+class DecodeOptions:
+    """whisper.cpp decoding settings, sent with every request (CONVO_WHISPER_*).
+
+    The defaults are whisper.cpp's own, except where the recognition eval measured better.
+    """
+
+    # Decode at temperature 0; when a result looks like a failure (repetition, low
+    # log-probability) whisper retries with the temperature raised by this step.
+    temperature_inc: float = 0.2
+    beam_size: int = -1  # > 1 = beam search, else greedy
+    best_of: int = 2  # candidates sampled at temperature > 0 (fallback)
+    no_speech_thold: float = 0.6
+    logprob_thold: float = -1.0
+    entropy_thold: float = 2.4
+    suppress_non_speech: bool = False
+    carry_initial_prompt: bool = False
+
+    def form_fields(self) -> dict[str, str]:
+        """Multipart fields for whisper-server's /inference."""
+        return {"temperature": "0.0", "temperature_inc": str(self.temperature_inc),
+                "beam_size": str(self.beam_size), "best_of": str(self.best_of),
+                "no_speech_thold": str(self.no_speech_thold),
+                "logprob_thold": str(self.logprob_thold),
+                "entropy_thold": str(self.entropy_thold),
+                "suppress_non_speech": _bool(self.suppress_non_speech),
+                "carry_initial_prompt": _bool(self.carry_initial_prompt)}
+
+    def cli_args(self) -> list[str]:
+        """The same settings as whisper-cli flags."""
+        args = ["-tp", "0.0", "-tpi", str(self.temperature_inc),
+                "-bs", str(self.beam_size), "-bo", str(self.best_of),
+                "-nth", str(self.no_speech_thold), "-lpt", str(self.logprob_thold),
+                "-et", str(self.entropy_thold)]
+        if self.suppress_non_speech:
+            args.append("-sns")
+        if self.carry_initial_prompt:
+            args.append("--carry-initial-prompt")
+        return args
+
+
+def _bool(v: bool) -> str:
+    return "true" if v else "false"
+
+
 class WhisperServerTranscriber:
     def __init__(self, base_url: str, language: str = "en", timeout: float = 600.0,
                  temperature_inc: float = 0.2,
-                 transport: httpx.BaseTransport | None = None) -> None:
+                 transport: httpx.BaseTransport | None = None,
+                 decode: DecodeOptions | None = None) -> None:
         self.url = base_url.rstrip("/") + "/inference"
         self.language = language
         self.timeout = timeout
-        # Decode at temperature 0; when a result looks like a failure (repetition, low
-        # log-probability) whisper retries with the temperature raised by this step.
-        self.temperature_inc = temperature_inc
+        self.decode = decode or DecodeOptions(temperature_inc=temperature_inc)
         self._http = httpx.Client(timeout=timeout, transport=transport)
 
     def transcribe(self, audio: np.ndarray, prompt: str = "") -> list[TranscriptPiece]:
         data = {"response_format": "verbose_json", "language": self.language,
-                "temperature": "0.0", "temperature_inc": str(self.temperature_inc)}
+                **self.decode.form_fields()}
         if prompt:
             data["prompt"] = prompt
         resp = self._http.post(
@@ -88,16 +132,16 @@ def parse_verbose_json(payload: dict) -> list[TranscriptPiece]:
 
 class WhisperCliTranscriber:
     def __init__(self, binary: str, model: str, language: str = "en", threads: int = 4,
-                 temperature_inc: float = 0.2) -> None:
+                 temperature_inc: float = 0.2, decode: DecodeOptions | None = None) -> None:
         self.binary = binary
         self.model = model
         self.language = language
         self.threads = threads
-        self.temperature_inc = temperature_inc
+        self.decode = decode or DecodeOptions(temperature_inc=temperature_inc)
 
     def command(self, wav: Path, out_base: Path, prompt: str = "") -> list[str]:
         cmd = [self.binary, "-m", self.model, "-f", str(wav), "-l", self.language,
-               "-t", str(self.threads), "-tp", "0.0", "-tpi", str(self.temperature_inc),
+               "-t", str(self.threads), *self.decode.cli_args(),
                "-oj", "-of", str(out_base), "-np"]
         return cmd + (["--prompt", prompt] if prompt else [])
 

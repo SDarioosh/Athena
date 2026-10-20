@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     whisper_prompt: str = ""
     # Temperature step for whisper's fallback when a decode looks wrong (0 = no fallback).
     whisper_temperature_inc: float = 0.2
+    # Decoding, sent with every request (whisper.cpp names; README "Recognition eval").
+    whisper_beam_size: int = -1  # > 1 = beam search with this many beams, else greedy
+    whisper_best_of: int = 2  # candidates at temperature > 0 (the fallback)
+    whisper_no_speech_thold: float = 0.6
+    whisper_logprob_thold: float = -1.0
+    whisper_entropy_thold: float = 2.4
+    whisper_suppress_non_speech: bool = False
+    # Keep the prompt for every 30 s window of a long clip, not just the first one.
+    whisper_carry_initial_prompt: bool = False
 
     # llama-server (OpenAI-compatible)
     llm_base_url: str = "http://127.0.0.1:8080/v1"
