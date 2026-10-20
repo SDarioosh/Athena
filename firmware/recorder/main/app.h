@@ -22,6 +22,7 @@ typedef enum {
     APP_EV_SESSION_DONE,  /* session ended; arg = session_rec_end_t */
     APP_EV_QUEUE_CHANGED, /* chunk added, acked or changed */
     APP_EV_PASSKEY,       /* BLE pairing code to show; arg = 0..999999, or -1 to hide */
+    APP_EV_STANDBY,       /* console: standby now (skips the idle time and the USB rule) */
 } app_event_type_t;
 
 void app_post(app_event_type_t type, int arg);

@@ -441,6 +441,16 @@ static int cmd_sd(int argc, char **argv)
     return 0;
 }
 
+static int cmd_standby(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    printf("standby: deep sleep until PWR is pressed or USB power is plugged in\n");
+    fflush(stdout);
+    app_post(APP_EV_STANDBY, 0);
+    return 0;
+}
+
 static int cmd_reboot(int argc, char **argv)
 {
     (void)argc;
@@ -471,6 +481,7 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "ls", .help = "List the files on the SD card; `ls q` the chunk queue", .func = cmd_ls},
     {.command = "get", .help = "Send a card file (or q/<chunk>) over USB as base64 (tools/pull.py saves it)", .func = cmd_get},
     {.command = "sd", .help = "Power, mount and report the SD card, then power it off", .func = cmd_sd},
+    {.command = "standby", .help = "Deep sleep now; PWR or USB power wakes it", .func = cmd_standby},
     {.command = "reboot", .help = "Restart", .func = cmd_reboot},
 };
 

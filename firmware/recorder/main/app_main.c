@@ -1,6 +1,12 @@
 /* odysseus-sound recorder (docs/t-watch-ultra-plan.md §8): recording sessions to Opus chunks
  * on the SD card, drained by a phone or PC relay over BLE (docs/twatch-ble-protocol.md).
  *
+ * Power: the chip light-sleeps whenever every task is blocked (BLE keeps working). After
+ * STANDBY_IDLE_MS with nothing to do (no session, no relay wanted or connected, screen
+ * off, card unmounted, no USB power) it goes into standby: deep sleep until PWR is pressed
+ * or USB power is plugged in. Waking is a reboot that keeps the mute state and shows the
+ * status screen.
+ *
  * Boot: board bring-up with every unused rail off, RTC -> system clock, mic ready, chunk
  * queue rebuilt from the card, BLE (advertising only when there is something to sync), USB
  * console.
@@ -19,11 +25,13 @@
 #include "board.h"
 #include "chunk_store.h"
 #include "console_cmds.h"
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_pm.h"
 #include "esp_random.h"
+#include "esp_sleep.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -41,6 +49,7 @@ static const char *TAG = "app";
 #define PASSKEY_ON_MS 30000 /* pairing code: the SMP timeout, pairing fails after it anyway */
 #define TEST_RECORDING_SECONDS 60
 #define BATTERY_LOG_PERIOD_MS 60000
+#define STANDBY_IDLE_MS (2 * 60 * 1000)
 #define FW_VERSION "0.2.0"
 
 typedef struct {
@@ -50,9 +59,11 @@ typedef struct {
 
 static QueueHandle_t s_events;
 static esp_timer_handle_t s_screen_timer;
-static volatile bool s_muted;
+/* RTC memory: survives standby (deep sleep), cleared by a power-on or a reset. */
+static RTC_DATA_ATTR volatile bool s_muted;
 static volatile bool s_time_valid;
 static esp_err_t s_session_result; /* set by the session's done callback */
+static int64_t s_last_activity_ms; /* main task only */
 
 void app_post(app_event_type_t type, int arg)
 {
@@ -314,6 +325,64 @@ static void toggle_mute(void)
     board_haptic_pulse(s_muted ? 2 : 1);
 }
 
+static int64_t now_ms(void)
+{
+    return esp_timer_get_time() / 1000;
+}
+
+/* Why the watch can't go into standby now, or NULL if it can. */
+static const char *standby_blocker(bool forced)
+{
+    recorder_state_t rs;
+    recorder_get_state(&rs);
+    if (session_rec_running() || rs.running) {
+        return "recording";
+    }
+    if (ble_sync_is_connected()) {
+        return "relay connected";
+    }
+    if (ble_sync_wants_relay()) {
+        return "advertising for a relay";
+    }
+    if (ui_is_shown()) {
+        return "screen on";
+    }
+    if (board_storage_is_mounted()) {
+        return "SD card in use";
+    }
+    if (forced) {
+        return NULL;
+    }
+    board_battery_t b;
+    if (board_battery_read(&b) == ESP_OK && b.vbus) {
+        return "USB power"; /* charging, and the console stays usable */
+    }
+    return NULL;
+}
+
+static void enter_standby(bool forced)
+{
+    const char *why = standby_blocker(forced);
+    if (why) {
+        /* The automatic check runs once a minute while blocked: keep it out of the log. */
+        if (forced) {
+            ESP_LOGW(TAG, "no standby: %s", why);
+        } else {
+            ESP_LOGD(TAG, "no standby: %s", why);
+        }
+        return;
+    }
+    if (board_standby_prepare() != ESP_OK) {
+        ESP_LOGW(TAG, "no standby: board wake sources not armed");
+        return;
+    }
+    ESP_LOGI(TAG, "standby: deep sleep until PWR is pressed or USB power is plugged in");
+    /* The BT controller asked for the main crystal through light sleep
+     * (BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP); deep sleep would keep it running too. */
+    esp_sleep_pd_config(ESP_PD_DOMAIN_XTAL, ESP_PD_OPTION_AUTO);
+    esp_deep_sleep_start();
+}
+
 static void handle(const app_event_t *ev)
 {
     switch (ev->type) {
@@ -418,6 +487,9 @@ static void handle(const app_event_t *ev)
         refresh_screen_if_shown();
         break;
     }
+    case APP_EV_STANDBY:
+        enter_standby(true);
+        break;
     }
 }
 
@@ -448,7 +520,9 @@ static void log_battery(void)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "odysseus-sound recorder %s", FW_VERSION);
+    const bool from_standby = esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED;
+    ESP_LOGI(TAG, "odysseus-sound recorder %s%s", FW_VERSION,
+             from_standby ? " (woken from standby)" : "");
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -458,10 +532,11 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
 
 #if CONFIG_PM_ENABLE
-    /* DFS between 80 and 40 MHz. Light sleep stays off: it would stop the mic DMA and the USB
-     * console; whether it can coexist with I2S is the milestone-2 question. */
+    /* DFS between 80 and 40 MHz, light sleep when idle. Recording can't be cut by it: the
+     * I2S channel holds a PM lock while enabled. A connected USB host holds one too
+     * (CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION), so the console keeps working. */
     const esp_pm_config_t pm = {.max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-                                .min_freq_mhz = 40, .light_sleep_enable = false};
+                                .min_freq_mhz = 40, .light_sleep_enable = true};
     ESP_ERROR_CHECK(esp_pm_configure(&pm));
 #endif
 
@@ -492,22 +567,41 @@ void app_main(void)
         .on_passkey = ble_on_passkey};
     ESP_ERROR_CHECK(ble_sync_init(&hooks));
 
-    /* One buzz: haptics work and the recorder starts unmuted. */
-    board_haptic_pulse(1);
+    /* After a power-on one buzz: haptics work and the recorder starts unmuted. Out of
+     * standby the mute state was kept: buzz it (1 = unmuted, 2 = muted) and show the
+     * screen, so the press that woke the watch shows it is awake. */
+    board_haptic_pulse(s_muted ? 2 : 1);
+    if (from_standby) {
+        show_screen();
+    }
 
     ESP_ERROR_CHECK(console_start());
     ESP_LOGI(TAG, "ready: PWR = status screen, BOOT = mute, BOOT long = BLE sync window, "
                   "BOOT+PWR = start/stop a recording session; type `help` on the USB console");
 
-    TickType_t last_batt = xTaskGetTickCount();
+    /* Wake only for events, the battery log and the standby check, so the chip can light
+     * sleep in between. */
+    int64_t last_batt = now_ms();
+    s_last_activity_ms = last_batt;
     for (;;) {
-        app_event_t ev;
-        if (xQueueReceive(s_events, &ev, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            handle(&ev);
+        const int64_t now = now_ms();
+        int64_t wait = last_batt + BATTERY_LOG_PERIOD_MS - now;
+        const int64_t idle_left = s_last_activity_ms + STANDBY_IDLE_MS - now;
+        if (idle_left > 0 && idle_left < wait) {
+            wait = idle_left;
         }
-        if (xTaskGetTickCount() - last_batt >= pdMS_TO_TICKS(BATTERY_LOG_PERIOD_MS)) {
-            last_batt = xTaskGetTickCount();
+        app_event_t ev;
+        if (xQueueReceive(s_events, &ev, pdMS_TO_TICKS(wait > 10 ? wait : 10)) == pdTRUE) {
+            s_last_activity_ms = now_ms();
+            handle(&ev);
+            continue;
+        }
+        if (now_ms() - last_batt >= BATTERY_LOG_PERIOD_MS) {
+            last_batt = now_ms();
             log_battery();
+        }
+        if (now_ms() - s_last_activity_ms >= STANDBY_IDLE_MS) {
+            enter_standby(false); /* returns if something keeps the watch awake */
         }
     }
 }

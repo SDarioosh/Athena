@@ -253,6 +253,11 @@ bool ble_sync_window_is_open(void)
     return open;
 }
 
+bool ble_sync_wants_relay(void)
+{
+    return s_adv_reason != BLE_ADV_NONE; /* one word, written by the BLE task */
+}
+
 bool ble_sync_is_connected(void)
 {
     taskENTER_CRITICAL(&s_lock);

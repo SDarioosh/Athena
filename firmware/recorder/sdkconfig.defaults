@@ -8,7 +8,9 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 
-# Power management: DFS now, light sleep is a milestone-2 question
+# Power management: DFS, and automatic light sleep whenever every task is blocked and
+# nothing holds a PM lock (the mic's I2S channel, SPI/I2C transfers and a connected USB
+# host each hold one). app_main.c turns light sleep on.
 CONFIG_PM_ENABLE=y
 CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
 CONFIG_PM_DFS_INIT_AUTO=y
@@ -17,6 +19,9 @@ CONFIG_PM_DFS_INIT_AUTO=y
 # (GPIO43/44) go to the GPS on the T-Watch Ultra.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+# The USB-Serial/JTAG link dies in light sleep: hold the chip awake while a USB host is
+# attached (console, flashing). On battery it sleeps.
+CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION=y
 
 # Logging
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
@@ -64,6 +69,9 @@ CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
 CONFIG_BT_CTRL_MODEM_SLEEP=y
 CONFIG_BT_CTRL_MODEM_SLEEP_MODE_1=y
 CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y
+# Keep that crystal running in light sleep. Without this the controller holds a
+# no-light-sleep lock for as long as BT is enabled, and the chip never sleeps.
+CONFIG_BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP=y
 # TX power: the controller default (+9 dBm). Lower it after milestone 2 measures range.
 
 # FAT on the SD card: long file names

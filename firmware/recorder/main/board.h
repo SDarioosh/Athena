@@ -7,7 +7,11 @@
  * ESP_ERR_NOT_SUPPORTED for what it lacks.
  *
  * Later milestones add to this file rather than reaching into board code: a low-battery
- * threshold hook, a "phone sync" status for the screen, light-sleep enter/exit.
+ * threshold hook, a "phone sync" status for the screen.
+ *
+ * Sleep: light sleep is automatic (esp_pm), so board_init() must arm its buttons as GPIO
+ * wake sources and nothing in the board layer may poll while idle. Standby (deep sleep)
+ * goes through board_standby_prepare().
  */
 #pragma once
 
@@ -87,6 +91,12 @@ void board_log_power(void);
 void board_log_expander(void);
 
 esp_err_t board_battery_read(board_battery_t *out);
+
+/* Standby: arm the board's deep-sleep wake sources (its power button, USB power) and leave
+ * its chips in their lowest state. The caller then calls esp_deep_sleep_start(); waking is
+ * a reset with a wakeup cause other than ESP_SLEEP_WAKEUP_UNDEFINED. Fails, leaving the
+ * board as it was, if a wake source is already active (the chip would wake at once). */
+esp_err_t board_standby_prepare(void);
 
 /* ---- wall-clock time (UTC epoch seconds) ---- */
 /* *valid is false if the RTC lost power since it was last set. */
