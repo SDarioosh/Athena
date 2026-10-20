@@ -79,6 +79,15 @@ class GlanceVectorsTest {
         assertEquals(-1, PdaStatus.decode(h("01 00 ff 00 0000 0000 00000000 00000000")).batteryPercent)
     }
 
+    @Test fun outboxWaitingFlagInTheScanResponse() {
+        assertTrue(PdaGatt.outboxWaiting(h("01")))
+        assertTrue(PdaGatt.outboxWaiting(h("ff")))
+        assertFalse(PdaGatt.outboxWaiting(h("00")))
+        assertFalse(PdaGatt.outboxWaiting(h("fe")))
+        assertFalse(PdaGatt.outboxWaiting(ByteArray(0)))
+        assertFalse(PdaGatt.outboxWaiting(null))
+    }
+
     @Test fun infoUsesTheWatchParser() {
         val i = WatchInfo.parse("proto=1;device=t5-pda;fw=0.1.0;board=t5_epaper_pro")
         assertEquals(1, i.proto)

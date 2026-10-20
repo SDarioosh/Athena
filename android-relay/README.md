@@ -91,24 +91,27 @@ odysseus-sound /v1/digests, /v1/conversations, /v1/action-items ┐
 Odysseus /api/codex/calendar/events (ody_ token, calendar scopes) ┴→ this app → BLE → T5
 ```
 
-- **One BLE job at a time.** The scan filter holds the watch's service UUID and, while a
-  PDA sync is due (every *N* minutes, default 15), the PDA's too. Whichever device shows up
-  is served; the other waits for the next scan.
-- **Per connection** (`PdaSync`, plan §3.4): read `info` (`proto=1`), MTU ≥ 420, `TIME`
-  with the phone's UTC offset, `GET /health` (on failure: `BYE`, the T5 keeps its feed,
-  back off 1, 2, 5, 10, 15 min). Then the **outbox**: each action is checked (type and
-  fields, 400 bytes at most; anything else is acked with result 1 and never forwarded),
-  sent to the server, and acked only after the answer: result 0 on 2xx, 1 on a final 4xx,
-  no ack on 5xx or a network error. `cal_add` is deduped per action, because the hub's
-  create isn't idempotent. Then the **feed** (≤ 32 KB; summaries are cut first, then the
-  oldest conversations), sent only when its content changed or the T5 lost it; then the
-  `fetch` answers as detail blobs (transcripts in 10-minute pages). While the T5 says the
-  user is active the app stays connected for up to 10 min: new actions are handled within
-  seconds, the feed is refreshed every 5 min, and a `TIME` every 20 s keeps the link
-  inside the T5's 30 s idle limit.
-- **Calendar.** Odysseus is optional. Without it the feed has no `calendar` section and
-  `cal_add` stays queued on the T5 ("not supported" in the status line), never guessed.
-  If Odysseus can't be reached, the last calendar is reused.
+- **One BLE job at a time.** The scan filter holds the watch's and the PDA's service UUIDs.
+  A T5 is taken when its sync is due (every *N* minutes, default 15) or at once when its
+  scan response says the outbox has entries (plan §3.5); otherwise it is ignored and the
+  watch gets the stack.
+- **Per connection** (`PdaSync`, plan §3.4 and §3.5, the same rules as the PC relay): read
+  `info` (`proto=1`), MTU ≥ 420, `TIME` with the zone's UTC offset at that moment,
+  `GET /health` (on failure: `BYE`, the T5 keeps its feed, back off 1, 2, 5, 10, 15 min).
+  Then the **outbox**, in order: each action is checked strictly (exact fields, times with
+  an offset, 400 bytes at most; anything else is acked with result 1 and never forwarded)
+  and sent to its server. Result 0 on 2xx, 1 on a final 4xx. A 5xx, network error or
+  rejected token (of either server) stops the sync at that action: nothing after it is
+  acked and no feed is built. `cal_add` is deduped per action, because the hub's create
+  isn't idempotent. Then the **feed** (≤ 32 KB), sent only when its content changed or the
+  T5 holds another version; then each `fetch` answer is `PUT` (blob id = the action's id)
+  and acked after `PUT_OK`. While the T5 says the user is active the app stays connected
+  for up to 10 min: new actions are handled within seconds, the feed is refreshed every
+  5 min, and a `TIME` every 20 s keeps the link inside the T5's 30 s idle limit.
+- **Calendar.** Odysseus is optional. Without it (or with a hub that lacks the calendar
+  routes) the feed has `"calendar": []` and `cal_add` / `cal_delete` stay queued on the T5
+  ("not supported" in the status line) without blocking the other actions. If Odysseus
+  can't be reached, the sync stops and retries like a server outage.
 
 Setup:
 
@@ -154,7 +157,7 @@ line on the last sync (actions handled or waiting, feed sent or unchanged, calen
   answers, never the token or audio. PDA logs hold action ids and types, feed sizes and
   versions, never summaries, titles or event names.
 - The Odysseus token is a second token, encrypted the same way. Give it only the calendar
-  scopes. The app remembers the last calendar section and the `cal_add` dedupe table
+  scopes. The app remembers the last feed hash per T5 and the `cal_add` dedupe table
   (30 days) in private, non-backed-up storage.
 - Cleartext `http://` is allowed because Tailscale and LAN addresses can't be listed by
   range in Android's network security config. Settings shows a warning when an `http://`
@@ -225,5 +228,5 @@ check with a real phone and T5 (plan milestone 4):
   doesn't create a second event.
 - The stay-connected loop: outbox replies within seconds while the T5 is awake, `BYE`
   when it sleeps, and the 30 s idle limit never hit.
-- The "outbox waiting" hint in the T5's scan response (plan §3.4 step 6) isn't used yet:
-  the relay syncs on its interval.
+- The "outbox waiting" flag in the T5's scan response (Service Data, plan §3.5) read by
+  Android's `ScanRecord`, so a tap is synced within seconds while the T5 isn't due.

@@ -15,10 +15,9 @@ class PdaFeedTest {
     private val zone = ZoneId.of("Europe/Berlin")
     private val server = FakeConvoApi()
     private val cal = FakeCalendar()
-    private val memory = MemoryPdaMemory()
 
     private fun build(maxBytes: Int = FeedBuilder.MAX_FEED_BYTES, calendar: CalendarApi = cal): FeedContent {
-        val r = runBlocking { FeedBuilder(server, calendar, memory, clock, zone, listOf("Call"), maxBytes).build() }
+        val r = runBlocking { FeedBuilder(server, calendar, clock, zone, listOf("Call"), maxBytes).build() }
         return (r as FeedBuild.Ok).content
     }
 
@@ -32,15 +31,18 @@ class PdaFeedTest {
         assertEquals("2026-10-20T08:00:00Z", f["generated"])
         val b = f["briefing"] as Map<*, *>
         assertEquals("2026-10-19", b["date"]) // no digest for today yet: yesterday's
-        assertEquals("Anna and you planned the garden party.", b["text"])
+        assertEquals("Planning day\n\nAnna and you planned the garden party.", b["text"])
         val c = (f["conversations"] as List<*>)[0] as Map<*, *>
-        assertEquals("2026-10-19T17:00:00+02:00", c["at"])
+        assertEquals("2026-10-19T15:00:00Z", c["at"])
         assertEquals(listOf("Point one", "Point two"), c["points"])
         val a = (f["actions"] as List<*>).map { it as Map<*, *> }
         assertEquals(mapOf("id" to 42L, "text" to "Order the lanterns", "owner" to "me", "due" to "2026-10-23", "conv" to "c1"), a[0])
-        assertEquals("", a[1]["due"])
+        assertNull(a[1]["due"])
+        assertNull(a[1]["owner"])
         val e = (f["calendar"] as List<*>).map { it as Map<*, *> }
-        assertEquals("2026-10-21T10:00:00+02:00", e[0]["start"])
+        assertEquals("2026-10-21T08:00:00Z", e[0]["start"])
+        assertEquals("Main St", e[0]["where"])
+        assertNull(e[1]["where"])
         assertEquals("2026-10-24", e[1]["start"])
         assertEquals(true, e[1]["all_day"])
         // Today 00:00 local to +8 days.
@@ -64,7 +66,7 @@ class PdaFeedTest {
         val small = parsed(build(maxBytes = 12_000))
         val convs = (small["conversations"] as List<*>).map { it as Map<*, *> }
         assertTrue(build(maxBytes = 12_000).render(1, clock.ms).size <= 12_000)
-        assertTrue(convs.all { (it["summary"] as String).length <= 300 })
+        assertTrue(convs.all { (it["summary"] as String).length <= FeedBuilder.SUMMARY_CUT })
         val big = parsed(build())
         assertEquals(20, (big["conversations"] as List<*>).size)
         assertTrue(((big["conversations"] as List<*>)[0] as Map<*, *>)["summary"].toString().endsWith("…"))
@@ -77,12 +79,12 @@ class PdaFeedTest {
 
     @Test fun serverFailureFailsTheBuild() {
         server.conversationsFail = ServerResult.Transient("HTTP 502")
-        val r = runBlocking { FeedBuilder(server, cal, memory, clock, zone, emptyList()).build() }
+        val r = runBlocking { FeedBuilder(server, cal, clock, zone, emptyList()).build() }
         assertTrue(r is FeedBuild.Fail)
     }
 
     @Test fun conversationDetail() {
-        val d = runBlocking { DetailBuilder(server, zone).build(DetailRef.Conv("c2")) }
+        val d = runBlocking { DetailBuilder(server).build(DetailRef.Conv("c2")) }
         val m = Json.parseObject(((d as ApiResult.Ok).value).toString(Charsets.UTF_8))
         assertEquals("conv:c2", m["ref"])
         assertEquals("Bike repair", m["title"])
@@ -94,17 +96,19 @@ class PdaFeedTest {
             mapOf("offset" to i * 10.0, "speaker" to if (i % 2 == 0) "Anna" else "Me", "is_owner" to (i % 2 == 1),
                 "text" to "Line $i about lanterns.")
         })
-        val b = DetailBuilder(server, zone)
+        val b = DetailBuilder(server)
         val p1 = Json.parseObject(String((runBlocking { b.build(DetailRef.Transcript("c1")) } as ApiResult.Ok).value))
         assertEquals(60, (p1["segments"] as List<*>).size)
         assertEquals("transcript:c1@600-1200", p1["next"])
+        assertEquals(0.0, p1["from"])
+        assertEquals(600.0, p1["to"])
         val seg = (p1["segments"] as List<*>)[1] as Map<*, *>
         assertEquals(mapOf("o" to 10.0, "s" to "Me", "me" to true, "x" to "Line 1 about lanterns."), seg)
-        val last = Json.parseObject(String((runBlocking { b.build(DetailRef.Transcript("c1", 600, 1200)) } as ApiResult.Ok).value))
-        assertNull(last["next"])
+        val last = Json.parseObject(String((runBlocking { b.build(DetailRef.Transcript("c1", 600.0, 1200.0)) } as ApiResult.Ok).value))
+        assertTrue("next is null at the end", last.containsKey("next") && last["next"] == null)
 
         // A page over the size limit stops early; next starts at the first segment left out.
-        val small = DetailBuilder(server, zone, maxBytes = 1500)
+        val small = DetailBuilder(server, maxBytes = 1500)
         val p = Json.parseObject(String((runBlocking { small.build(DetailRef.Transcript("c1")) } as ApiResult.Ok).value))
         val n = (p["segments"] as List<*>).size
         assertTrue(n in 2..59)
@@ -112,23 +116,40 @@ class PdaFeedTest {
     }
 
     @Test fun actionParsing() {
-        fun p(s: String) = PdaAction.parse(s.toByteArray(), zone)
+        fun p(s: String) = PdaAction.parse(s.toByteArray())
         assertEquals(PdaAction.ItemStatus(42, "dismissed"), p("""{"t":"item_status","id":42,"status":"dismissed"}"""))
-        assertEquals(PdaAction.Fetch(DetailRef.Transcript("c1", 0, 600)), p("""{"t":"fetch","ref":"transcript:c1@0-600"}"""))
-        assertEquals(PdaAction.Fetch(DetailRef.Conv("ab12")), p("""{"t":"fetch","ref":"conv:ab12"}"""))
+        assertEquals(PdaAction.Fetch(DetailRef.Transcript("c1", 0.0, 600.0)), p("""{"t":"fetch","ref":"transcript:c1@0-600"}"""))
+        assertEquals(PdaAction.Fetch(DetailRef.Transcript("c1", 12.5, 612.25)), p("""{"t":"fetch","ref":"transcript:c1@12.5-612.25"}"""))
+        assertEquals("transcript:c1@12.5-612.25", DetailRef.Transcript("c1", 12.5, 612.25).text)
+        assertEquals(PdaAction.Fetch(DetailRef.Conv("ab.12:x-y_z")), p("""{"t":"fetch","ref":"conv:ab.12:x-y_z"}"""))
         assertEquals(PdaAction.DigestRefresh("2026-10-19"), p("""{"t":"digest_refresh","date":"2026-10-19"}"""))
         assertEquals(PdaAction.CalDelete("u1::20261020"), p("""{"t":"cal_delete","id":"u1::20261020"}"""))
-        val add = p("""{"t":"cal_add","title":" Call\u0007 Ben ","start":"2026-10-22T10:00:00Z","end":"2026-10-22T10:15:00Z"}""")
-        assertEquals(NewEvent("Call Ben", "2026-10-22T10:00:00Z", "2026-10-22T10:15:00Z", false, "Added on the T5 PDA"),
+        val add = p("""{"t":"cal_add","title":"Call Ben","start":"2026-10-22T10:00:00Z","end":"2026-10-22T12:15:00+02:00"}""")
+        assertEquals(NewEvent("Call Ben", "2026-10-22T10:00:00Z", "2026-10-22T12:15:00+02:00", false, "Added on the T5 PDA"),
             (add as PdaAction.CalAdd).event)
-        val allDay = p("""{"t":"cal_add","title":"Trip","start":"2026-10-24","end":"2026-10-26","all_day":true}""")
-        assertEquals("2026-10-26", (allDay as PdaAction.CalAdd).event.end)
+        val allDay = p("""{"t":"cal_add","title":"Trip","start":"2026-10-24","all_day":true,"from_item":7}""")
+        assertEquals(NewEvent("Trip", "2026-10-24", null, true, "Added on the T5 PDA from odysseus-sound action item #7"),
+            (allDay as PdaAction.CalAdd).event)
+        // Plan §3.5 strict checks: anything else is acked with result 1.
         for (bad in listOf(
             """{"t":"digest_refresh","date":"2026-02-30"}""",
             """{"t":"fetch","ref":"transcript:c1@600-600"}""",
-            """{"t":"cal_add","title":"x","start":"2026-10-22T10:00","end":"2026-10-22T09:00"}""",
-            """{"t":"cal_add","title":"x","start":"tomorrow"}""",
+            """{"t":"fetch","ref":"conv:c1@0-600"}""",
+            """{"t":"fetch","ref":"conv:../etc"}""",
+            """{"t":"cal_add","title":"x","start":"2026-10-22T10:00:00Z","end":"2026-10-22T09:00:00Z"}""",
+            """{"t":"cal_add","title":"x","start":"2026-10-22T10:00","end":"2026-10-22T11:00"}""",
+            """{"t":"cal_add","title":"x","start":"2026-10-22T10:00:00Z"}""",
+            """{"t":"cal_add","title":"x","start":"2026-10-24","end":"2026-10-25","all_day":true}""",
+            """{"t":"cal_add","title":"x","start":"2026-10-24T10:00:00Z","all_day":true}""",
+            """{"t":"cal_add","title":"x","start":"2026-10-24","all_day":"yes"}""",
+            """{"t":"cal_add","title":"   ","start":"2026-10-24","all_day":true}""",
+            """{"t":"cal_add","title":"x","start":"tomorrow","end":"later"}""",
+            """{"t":"item_status","id":42.0,"status":"done"}""",
+            """{"t":"item_status","id":0,"status":"done"}""",
+            """{"t":"item_status","id":42,"status":"done","extra":1}""",
+            """{"t":"item_status","id":42}""",
             """{"t":"cal_delete","id":""}""",
+            """{"t":"cal_delete","id":7}""",
             """[1,2]""",
             "{\"t\":\"item_status\",\"id\":1,\"status\":\"done\",\"pad\":\"${"x".repeat(400)}\"}",
         )) assertTrue(bad, p(bad) is PdaAction.Invalid)

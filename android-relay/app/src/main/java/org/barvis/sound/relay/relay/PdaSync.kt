@@ -88,9 +88,8 @@ class PdaSync(
     private var status: PdaStatus? = null
     private var t5FeedVersion = 0L
     private var lastCommandMs = 0L
-    private var nextBlobId = 0L
-    private val feedBuilder = FeedBuilder(api, calendar, memory, clock, zone, templates, log = log)
-    private val detailBuilder = DetailBuilder(api, zone)
+    private val feedBuilder = FeedBuilder(api, calendar, clock, zone, templates, log = log)
+    private val detailBuilder = DetailBuilder(api)
 
     private class DeviceProblem(message: String) : Exception(message)
     private class ServerStop(val outcome: (PdaStats) -> PdaOutcome) : Exception()
@@ -149,11 +148,22 @@ class PdaSync(
         return PdaOutcome.Done(s)
     }
 
+    /**
+     * Plan §3.5 order: every action's server call in outbox order (each acked at once, except
+     * `fetch`), then the feed, then each fetched detail is `PUT` and acked after its `PUT_OK`.
+     * A temporary failure or a rejected token stops the sync there: nothing after it is
+     * acked and no feed is built.
+     */
     private suspend fun syncOnce(forceFeed: Boolean) {
-        val fetches = ArrayList<Pair<OutboxEntry, DetailRef>>()
-        val refreshFeed = processOutbox(fetches) || forceFeed
+        val fetched = ArrayList<Pair<OutboxEntry, ByteArray>>()
+        val refreshFeed = processOutbox(fetched) || forceFeed
         pushFeed(refreshFeed)
-        for ((entry, ref) in fetches) answerFetch(entry, ref)
+        for ((entry, blob) in fetched) {
+            // A detail's blob id is the fetch action's id (plan §3.5).
+            put(BlobKind.DETAIL, entry.actionId, blob)
+            details++
+            ack(entry, AckResult.DONE, "fetch")
+        }
     }
 
     private suspend fun stay() {
@@ -188,30 +198,35 @@ class PdaSync(
     // ------------------------------------------------------------------ outbox (§3.4 step 4)
 
     /** Returns true when an action asks for a new feed (`digest_refresh`). */
-    private suspend fun processOutbox(fetches: MutableList<Pair<OutboxEntry, DetailRef>>): Boolean {
+    private suspend fun processOutbox(fetched: MutableList<Pair<OutboxEntry, ByteArray>>): Boolean {
         var afterId = 0L
         var refresh = false
         while (true) {
             send(PdaCommand.ObList(afterId, PdaGatt.OB_LIST_MAX))
             val entries = ArrayList<OutboxEntry>()
+            var remaining = 0L
             while (true) {
                 when (val r = PdaResponse.decode(link.receive(receiveTimeoutMs))) {
                     is PdaResponse.Entry -> entries += r.entry
-                    is PdaResponse.ObEnd -> break
+                    is PdaResponse.ObEnd -> {
+                        remaining = r.remaining
+                        break
+                    }
                     is PdaResponse.Error -> throw DeviceProblem("OB_LIST failed: ${r.code}")
                     else -> log.log(Level.DEBUG, "ignored during OB_LIST: $r")
                 }
             }
-            if (entries.isEmpty()) return refresh
             for (e in entries.sortedBy { it.actionId }) {
-                if (handle(e, fetches)) refresh = true
+                if (handle(e, fetched)) refresh = true
             }
+            // Plan §3.5: continue after the last id listed while `remaining > 0`.
+            if (entries.isEmpty() || remaining == 0L) return refresh
             afterId = entries.maxOf { it.actionId }
         }
     }
 
-    private suspend fun handle(e: OutboxEntry, fetches: MutableList<Pair<OutboxEntry, DetailRef>>): Boolean {
-        val action = PdaAction.parse(e.json, zone)
+    private suspend fun handle(e: OutboxEntry, fetched: MutableList<Pair<OutboxEntry, ByteArray>>): Boolean {
+        val action = PdaAction.parse(e.json)
         when (action) {
             is PdaAction.Invalid -> {
                 log.log(Level.WARN, "PDA $e rejected: ${action.reason}")
@@ -236,7 +251,11 @@ class PdaSync(
                 }
                 is ApiResult.Unsupported -> calendarWait(e, action, r.reason)
             }
-            is PdaAction.Fetch -> fetches += e to action.ref
+            is PdaAction.Fetch -> when (val r = detailBuilder.build(action.ref)) {
+                is ApiResult.Ok -> fetched += e to r.value // PUT and acked after the feed
+                is ApiResult.Fail -> convoAnswer(e, action, r.error) // 404: result 1, no PUT
+                is ApiResult.Unsupported -> ack(e, AckResult.REJECTED, action.type)
+            }
         }
         return false
     }
@@ -280,7 +299,11 @@ class PdaSync(
         }
     }
 
-    /** Odysseus is a second server: its failures leave the action queued but don't stop the sync. */
+    /**
+     * Odysseus's answer. A temporary failure or a rejected Odysseus token stops the sync like
+     * the server's (plan §3.5), but as "unavailable" with backoff: it must not mark the
+     * odysseus-sound token as rejected.
+     */
     private suspend fun calendarAnswer(e: OutboxEntry, action: PdaAction, r: ServerResult) {
         when (r) {
             is ServerResult.Ok -> ack(e, AckResult.DONE, action.type)
@@ -288,8 +311,13 @@ class PdaSync(
                 log.log(Level.WARN, "PDA $e (${action.type}): Odysseus said HTTP ${r.code}; dropping it")
                 ack(e, AckResult.REJECTED, action.type)
             }
-            is ServerResult.Transient -> calendarWait(e, action, "Odysseus: ${r.detail}")
-            is ServerResult.AuthRejected -> calendarWait(e, action, "Odysseus rejected its token (HTTP ${r.code})")
+            is ServerResult.Transient, is ServerResult.AuthRejected -> {
+                val why = "Odysseus: " + FeedBuilder.describe(r)
+                waiting++
+                calendarNote = why
+                log.log(Level.WARN, "PDA $e (${action.type}): $why; stopping, retrying later")
+                throw ServerStop { PdaOutcome.ServerUnavailable(why, it) }
+            }
         }
     }
 
@@ -322,14 +350,15 @@ class PdaSync(
             is FeedBuild.Ok -> b.content
             is FeedBuild.Fail -> {
                 val err = b.error
-                log.log(Level.WARN, "feed not built (${b.what}): ${FeedBuilder.describe(err)}")
-                throw when (err) {
-                    is ServerResult.AuthRejected -> ServerStop { PdaOutcome.AuthRejected(err.code, it) }
+                log.log(Level.WARN, "feed not built (${b.what}), the T5 keeps its last one: ${FeedBuilder.describe(err)}")
+                throw when {
+                    // Only odysseus-sound's token stops the relay; Odysseus's is its own.
+                    err is ServerResult.AuthRejected && b.what != ODYSSEUS -> ServerStop { PdaOutcome.AuthRejected(err.code, it) }
                     else -> ServerStop { PdaOutcome.ServerUnavailable("${b.what}: ${FeedBuilder.describe(err)}", it) }
                 }
             }
         }
-        if (content.calendarNote != null) calendarNote = calendarNote ?: content.calendarNote
+        feedBuilder.calendarNote?.let { calendarNote = calendarNote ?: it }
         val lastVersion = memory.lastFeedVersion(deviceKey)
         val unchanged = content.hash == memory.lastFeedHash(deviceKey) && t5FeedVersion == lastVersion && lastVersion != 0L
         if (unchanged && !force) {
@@ -339,41 +368,20 @@ class PdaSync(
         val now = clock.nowMs()
         val version = maxOf(now / 1000, lastVersion + 1, t5FeedVersion + 1) and 0xFFFFFFFFL
         val bytes = content.render(version, now)
-        if (put(BlobKind.FEED, version, bytes)) {
-            memory.feedPushed(deviceKey, content.hash, version)
-            t5FeedVersion = version
-            feeds++
-            listener.onFeedPushed(version, bytes.size)
-            log.log(Level.INFO, "feed $version sent (${bytes.size} B)")
-        }
-    }
-
-    private suspend fun answerFetch(e: OutboxEntry, ref: DetailRef) {
-        when (val r = detailBuilder.build(ref)) {
-            is ApiResult.Ok -> {
-                val id = blobId()
-                if (put(BlobKind.DETAIL, id, r.value)) {
-                    details++
-                    ack(e, AckResult.DONE, "fetch")
-                } else {
-                    ack(e, AckResult.REJECTED, "fetch")
-                }
-            }
-            is ApiResult.Fail -> convoAnswer(e, PdaAction.Fetch(ref), r.error)
-            is ApiResult.Unsupported -> ack(e, AckResult.REJECTED, "fetch")
-        }
-    }
-
-    private fun blobId(): Long {
-        nextBlobId = maxOf(nextBlobId + 1, clock.nowMs() / 1000) and 0xFFFFFFFFL
-        return nextBlobId
+        put(BlobKind.FEED, version, bytes) // a feed's blob id is its version (plan §3.5)
+        memory.feedPushed(deviceKey, content.hash, version)
+        t5FeedVersion = version
+        feeds++
+        listener.onFeedPushed(version, bytes.size)
+        log.log(Level.INFO, "feed $version sent (${bytes.size} B)")
     }
 
     /**
-     * §3.3 PUT: BEGIN, DATA frames (write with response is the flow control), END. A bad CRC
-     * starts it again, up to [MAX_PUT_TRIES] times. Returns false if the T5 says it's too large.
+     * §3.3 PUT: BEGIN, DATA frames of MTU − 8 bytes (write with response is the flow control),
+     * END. On `bad_crc` the blob is sent again, [MAX_PUT_TRIES] times in all.
      */
-    private suspend fun put(kind: Int, blobId: Long, bytes: ByteArray): Boolean {
+    private suspend fun put(kind: Int, blobId: Long, bytes: ByteArray) {
+        if (bytes.size > PdaGatt.MAX_BLOB) throw DeviceProblem("blob $blobId is ${bytes.size} B, more than ${PdaGatt.MAX_BLOB}")
         val crc = crc32(bytes)
         val chunk = link.mtu - PdaGatt.PUT_OVERHEAD
         for (attempt in 1..MAX_PUT_TRIES) {
@@ -382,10 +390,7 @@ class PdaSync(
                 is PdaResponse.PutReady -> if (r.kind != kind || r.blobId != blobId) {
                     throw DeviceProblem("PUT_READY for ${r.kind}/${r.blobId}, expected $kind/$blobId")
                 }
-                is PdaResponse.Error -> if (r.code == PdaErrorCode.TOO_LARGE) {
-                    log.log(Level.WARN, "PDA refused a ${bytes.size} B blob (too_large)")
-                    return false
-                } else throw DeviceProblem("PUT_BEGIN failed: ${r.code}")
+                is PdaResponse.Error -> throw DeviceProblem("PUT_BEGIN of ${bytes.size} B failed: ${r.code}")
                 else -> throw DeviceProblem("unexpected answer to PUT_BEGIN: $r")
             }
             var off = 0
@@ -396,7 +401,7 @@ class PdaSync(
             }
             send(PdaCommand.PutEnd)
             when (val r = awaitFinal("PUT_END")) {
-                is PdaResponse.PutOk -> if (r.kind == kind && r.blobId == blobId) return true
+                is PdaResponse.PutOk -> if (r.kind == kind && r.blobId == blobId) return
                     else throw DeviceProblem("PUT_OK for ${r.kind}/${r.blobId}, expected $kind/$blobId")
                 is PdaResponse.Error -> if (r.code == PdaErrorCode.BAD_CRC) {
                     log.log(Level.WARN, "PDA: bad CRC on blob $blobId, sending it again ($attempt/$MAX_PUT_TRIES)")
@@ -472,5 +477,6 @@ class PdaSync(
 
     companion object {
         const val MAX_PUT_TRIES = 3
+        private const val ODYSSEUS = "Odysseus calendar"
     }
 }

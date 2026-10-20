@@ -138,19 +138,20 @@ class PdaSyncTest {
         run()
         assertEquals((1L..20L).toList(), pda.acks.map { it.first })
         val lists = pda.commands.filterIsInstance<PdaCommand.ObList>().map { it.afterId }
-        assertEquals(listOf(0L, 16L, 20L), lists)
+        assertEquals("continues only while remaining > 0", listOf(0L, 16L), lists)
     }
 
-    @Test fun calAddCreatesTheEventWithAnOffset() {
-        pda.queue("""{"t":"cal_add","title":"Order the lanterns","start":"2026-10-23T09:00","end":"2026-10-23T09:30","from_item":42}""")
+    @Test fun calAddCreatesTheEventAsSent() {
+        pda.queue("""{"t":"cal_add","title":"Order the lanterns","start":"2026-10-23T09:00:00+02:00","end":"2026-10-23T09:30:00+02:00","from_item":42}""")
         val out = run()
         assertEquals(1, out.stats.actionsDone)
         val ev = cal.created.single()
         assertEquals("2026-10-23T09:00:00+02:00", ev.start)
         assertEquals("2026-10-23T09:30:00+02:00", ev.end)
         assertTrue(ev.description.contains("#42"))
-        // The new event is in the feed sent after the outbox.
-        assertTrue((pda.feedJson()["calendar"] as List<*>).any { (it as Map<*, *>)["title"] == "Order the lanterns" })
+        // The new event is in the feed sent after the outbox, in UTC.
+        val e = (pda.feedJson()["calendar"] as List<*>).map { it as Map<*, *> }.single { it["title"] == "Order the lanterns" }
+        assertEquals("2026-10-23T07:00:00Z", e["start"])
     }
 
     @Test fun calAddAfterALostAckDoesNotCreateASecondEvent() {
@@ -178,29 +179,38 @@ class PdaSyncTest {
         assertEquals(listOf("A", "B"), cal.created.map { it.title })
     }
 
-    @Test fun calendarProblemsKeepCalAddQueuedButTheRestSyncs() {
-        pda.queue("""{"t":"cal_add","title":"Call","start":"2026-10-22T10:00:00+02:00"}""")
+    @Test fun odysseusDownStopsTheSyncAtThatAction() {
+        val add = pda.queue("""{"t":"cal_add","title":"Call","start":"2026-10-22T10:00:00+02:00","end":"2026-10-22T10:15:00+02:00"}""")
         pda.queue("""{"t":"item_status","id":42,"status":"done"}""")
         cal.createAnswer = ApiResult.Fail(ServerResult.Transient("Odysseus not reachable (network error)"))
-        cal.listAnswer = ApiResult.Fail(ServerResult.Transient("Odysseus not reachable (network error)"))
-        memory.calendarFetched(listOf(CalEvent("old", "Cached event", "2026-10-21T10:00:00+02:00", "2026-10-21T11:00:00+02:00", "", false)))
         val out = run()
-        assertTrue(out is PdaOutcome.Done)
-        assertEquals(1, out.stats.actionsWaiting)
-        assertEquals(1, out.stats.actionsDone)
-        assertEquals(1, pda.outbox.size) // the cal_add
-        assertNotNull(out.stats.calendarNote)
-        // The feed keeps the last good calendar.
-        assertEquals("Cached event", ((pda.feedJson()["calendar"] as List<*>).single() as Map<*, *>)["title"])
+        assertTrue(out is PdaOutcome.ServerUnavailable)
+        assertTrue("nothing after it is acked", pda.acks.isEmpty())
+        assertTrue(server.patches.isEmpty())
+        assertNull("no feed", pda.feed)
+        assertEquals(2, pda.outbox.size)
+        assertNotNull(pda.outbox[add.actionId])
+        // A rejected Odysseus token stops it too, but isn't the server's token.
+        cal.createAnswer = ApiResult.Fail(ServerResult.AuthRejected(403))
+        pda.reconnect()
+        assertTrue(run() is PdaOutcome.ServerUnavailable)
     }
 
-    @Test fun withoutOdysseusTheCalendarIsLeftOutAndCalAddWaits() {
-        pda.queue("""{"t":"cal_add","title":"Call","start":"2026-10-22T10:00:00+02:00"}""")
+    @Test fun calendarListFailureFailsTheFeed() {
+        cal.listAnswer = ApiResult.Fail(ServerResult.Transient("HTTP 502"))
+        assertTrue(run() is PdaOutcome.ServerUnavailable)
+        assertNull(pda.feed)
+    }
+
+    @Test fun withoutOdysseusTheCalendarIsEmptyAndCalendarActionsWait() {
+        pda.queue("""{"t":"cal_add","title":"Call","start":"2026-10-22T10:00:00+02:00","end":"2026-10-22T10:15:00+02:00"}""")
+        pda.queue("""{"t":"cal_delete","id":"e1"}""")
+        val item = pda.queue("""{"t":"item_status","id":42,"status":"done"}""")
         val out = run(NoCalendar)
         assertTrue(out is PdaOutcome.Done)
-        assertFalse(pda.feedJson().containsKey("calendar"))
-        assertEquals(1, out.stats.actionsWaiting)
-        assertTrue(pda.acks.isEmpty())
+        assertEquals(emptyList<Any?>(), pda.feedJson()["calendar"])
+        assertEquals(2, out.stats.actionsWaiting)
+        assertEquals(listOf(item.actionId to AckResult.DONE), pda.acks)
         assertTrue(out.stats.calendarNote!!.contains("isn't set up"))
     }
 
@@ -219,9 +229,29 @@ class PdaSyncTest {
         val d = pda.details.single()
         assertEquals("conv:c1", d["ref"])
         assertEquals("Garden party", d["title"])
-        assertEquals(1, (d["actions"] as List<*>).size)
+        assertEquals(listOf(mapOf("id" to 42L, "text" to "Order the lanterns", "status" to "open", "due" to "2026-10-23")),
+            d["actions"])
+        // Plan §3.5: server call in outbox order, then the feed, then PUT, then the ack.
+        assertTrue(idx("server:conversation c1") < idx("pda:PUT 1"))
         assertTrue(idx("pda:PUT 1") < idx("pda:PUT 2"))
         assertTrue(idx("pda:PUT 2") < idx("pda:OB_ACK ${e.actionId}=0"))
+        // A detail's blob id is the fetch action's id; a feed's is its version.
+        val puts = pda.commands.filterIsInstance<PdaCommand.PutBegin>()
+        assertEquals(e.actionId, puts.single { it.kind == 2 }.blobId)
+        assertEquals(pda.feedVersion, puts.single { it.kind == 1 }.blobId)
+    }
+
+    @Test fun aServerErrorOnAFetchStopsBeforeTheFeed() {
+        pda.queue("""{"t":"fetch","ref":"transcript:c1"}""")
+        server.transcripts["c1"] = emptyMap() // unused: the call fails first
+        val api = object : ConvoApi by server {
+            override suspend fun transcript(id: String): ApiResult<Map<String, Any?>> =
+                ApiResult.Fail(ServerResult.Transient("HTTP 503"))
+        }
+        val out = runBlocking { PdaSync(pda, api, cal, memory, "AA:BB", clock, zone).run() }
+        assertTrue(out is PdaOutcome.ServerUnavailable)
+        assertNull(pda.feed)
+        assertTrue(pda.acks.isEmpty())
     }
 
     @Test fun fetchOfAMissingConversationIsRejected() {

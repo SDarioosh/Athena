@@ -91,7 +91,7 @@ interface CalendarApi {
     suspend fun deleteEvent(uid: String): ApiResult<Unit>
 }
 
-/** Used when no Odysseus URL and token are set: the calendar section is left out of the feed. */
+/** Used when no Odysseus URL and token are set: the feed has `"calendar": []`, calendar actions wait. */
 object NoCalendar : CalendarApi {
     private val why = ApiResult.Unsupported("Odysseus isn't set up in the relay settings")
     override suspend fun listEvents(fromIso: String, toIso: String) = why
@@ -112,11 +112,6 @@ interface PdaMemory {
 
     fun feedPushed(device: String, hash: String, version: Long)
 
-    /** The calendar section of the last good feed, reused while Odysseus can't be reached. */
-    fun lastCalendar(): List<CalEvent>?
-
-    fun calendarFetched(events: List<CalEvent>)
-
     /** `cal_add` dedupe (§4.2): the event uid created for [actionKey], if any. */
     fun createdEvent(actionKey: String): String?
 
@@ -125,17 +120,12 @@ interface PdaMemory {
 
 class MemoryPdaMemory : PdaMemory {
     private val hashes = HashMap<String, Pair<String, Long>>()
-    private var calendar: List<CalEvent>? = null
     val created = LinkedHashMap<String, String>()
 
     @Synchronized override fun lastFeedHash(device: String) = hashes[device]?.first
     @Synchronized override fun lastFeedVersion(device: String) = hashes[device]?.second ?: 0L
     @Synchronized override fun feedPushed(device: String, hash: String, version: Long) {
         hashes[device] = hash to version
-    }
-    @Synchronized override fun lastCalendar() = calendar
-    @Synchronized override fun calendarFetched(events: List<CalEvent>) {
-        calendar = events
     }
     @Synchronized override fun createdEvent(actionKey: String) = created[actionKey]
     @Synchronized override fun eventCreated(actionKey: String, uid: String, nowMs: Long) {

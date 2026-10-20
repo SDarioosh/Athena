@@ -28,6 +28,15 @@ object PdaGatt {
 
     /** §3.1. */
     const val MAX_BLOB = 256 * 1024
+
+    /**
+     * Scan response (plan §3.5): Service Data for the 128-bit service UUID (AD type 0x21),
+     * one flags byte, bit0 = the outbox isn't empty.
+     */
+    const val ADV_OUTBOX_WAITING = 0x01
+
+    fun outboxWaiting(serviceData: ByteArray?): Boolean =
+        serviceData != null && serviceData.isNotEmpty() && (serviceData[0].toInt() and ADV_OUTBOX_WAITING) != 0
 }
 
 /** Blob kinds, §3.1. */

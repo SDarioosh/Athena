@@ -138,15 +138,19 @@ class RelayService : Service() {
             }
 
             setPhase(Phase.SCANNING, "")
-            // The PDA's service joins the scan filter only while its sync is due (t5-pda-plan §3.4).
+            // A T5 is taken when its sync is due, or at once when its scan response says the
+            // outbox has entries (t5-pda-plan §3.4 step 6, §3.5); otherwise it is ignored.
             val now = System.currentTimeMillis()
-            val pdaDue = settings.pdaEnabled && pda.schedule.isDue(now)
-            val services = if (pdaDue) listOf(WatchGatt.SERVICE, PdaGatt.SERVICE) else listOf(WatchGatt.SERVICE)
-            val window = if (settings.pdaEnabled && !pdaDue) {
+            val pdaOn = settings.pdaEnabled
+            val pdaDue = pdaOn && pda.schedule.isDue(now)
+            val services = if (pdaOn) listOf(WatchGatt.SERVICE, PdaGatt.SERVICE) else listOf(WatchGatt.SERVICE)
+            val window = if (pdaOn && !pdaDue) {
                 pda.schedule.msUntilDue(now).coerceIn(5_000L, SCAN_WINDOW_MS)
             } else SCAN_WINDOW_MS
             val hit = try {
-                Scanner(adapter, throttle, log).scanFor(window, services)
+                Scanner(adapter, throttle, log).scanFor(window, services) { h ->
+                    h.service != PdaGatt.SERVICE || pdaDue || PdaGatt.outboxWaiting(h.serviceData)
+                }
             } catch (e: Scanner.ScanFailed) {
                 log.log(Level.WARN, e.message ?: "scan failed")
                 RelayState.update { it.copy(lastError = e.message) }

@@ -32,31 +32,37 @@ class Scanner(
 ) {
     class ScanFailed(val code: Int) : Exception("BLE scan failed (code $code)")
 
-    /** A device that advertised one of the scanned services. */
-    class Hit(val device: BluetoothDevice, val service: UUID)
+    /**
+     * A device that advertised one of the scanned services. [serviceData] is its Service Data
+     * for that UUID (the PDA's "outbox waiting" flags byte, plan §3.5), if any.
+     */
+    class Hit(val device: BluetoothDevice, val service: UUID, val serviceData: ByteArray?)
 
     suspend fun scan(windowMs: Long): BluetoothDevice? = scanFor(windowMs, listOf(WatchGatt.SERVICE))?.device
 
     /**
-     * Scans for any of [services] (the watch's and, when a PDA sync is due, the PDA's,
-     * docs/t5-pda-plan.md §3.4 step 1) and says which one the device advertised.
+     * Scans for any of [services] (the watch's and the PDA's, docs/t5-pda-plan.md §3.4
+     * step 1) and returns the first device [accept] takes, with the service it advertised.
      */
-    suspend fun scanFor(windowMs: Long, services: List<UUID>): Hit? {
+    suspend fun scanFor(windowMs: Long, services: List<UUID>, accept: (Hit) -> Boolean = { true }): Hit? {
         val wait = throttle.delayBeforeStartMs(clock.nowMs())
         if (wait > 0) delay(wait)
         val scanner = adapter.bluetoothLeScanner ?: return null // Bluetooth turned off
         val found = CompletableDeferred<Hit>()
         fun hit(r: ScanResult): Hit {
             val advertised = r.scanRecord?.serviceUuids?.map { it.uuid }.orEmpty()
-            return Hit(r.device, services.firstOrNull { it in advertised } ?: services.first())
+            val service = services.firstOrNull { it in advertised } ?: services.first()
+            return Hit(r.device, service, r.scanRecord?.getServiceData(ParcelUuid(service)))
+        }
+        fun offer(r: ScanResult) {
+            val h = hit(r)
+            if (accept(h)) found.complete(h)
         }
         val cb = object : ScanCallback() {
-            override fun onScanResult(callbackType: Int, result: ScanResult) {
-                found.complete(hit(result))
-            }
+            override fun onScanResult(callbackType: Int, result: ScanResult) = offer(result)
 
             override fun onBatchScanResults(results: MutableList<ScanResult>) {
-                results.firstOrNull()?.let { found.complete(hit(it)) }
+                results.forEach { offer(it) }
             }
 
             override fun onScanFailed(errorCode: Int) {

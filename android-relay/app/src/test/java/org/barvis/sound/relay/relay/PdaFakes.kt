@@ -215,9 +215,9 @@ class FakeConvoApi(private val timeline: Timeline = Timeline()) : ConvoApi {
         conv("c2", "Bike repair", "2026-10-19T09:30:00+00:00", "Ben fixes the bike on Friday."),
     )
     val items = mutableListOf<Map<String, Any?>>(
-        mapOf("id" to 42L, "text" to "Order the lanterns", "owner" to "me", "due" to "2026-10-23",
+        mapOf("id" to 42L, "text" to "Order the lanterns", "owner" to "me", "due" to "Friday", "due_date" to "2026-10-23",
             "conversation_id" to "c1", "status" to "open"),
-        mapOf("id" to 43L, "text" to "Call Ben", "owner" to null, "due" to null, "conversation_id" to "c2", "status" to "open"),
+        mapOf("id" to 43L, "text" to "Call Ben", "owner" to null, "due" to null, "due_date" to null, "conversation_id" to "c2", "status" to "open"),
     )
     val transcripts = mutableMapOf<String, Map<String, Any?>>()
 
