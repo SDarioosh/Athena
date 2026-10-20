@@ -122,12 +122,18 @@ pyannote.
 
 ### 4.1 Measure far-field first (eval only, small)
 
-Add `--audio {headset,array}` to `eval/recognition.py`. `array` downloads
-`{m}.Array1-01.wav`, one omni mic of the AMI table array about 1 m from the
-speakers. That is a fair stand-in for "pendant on the table / on the wearer, others
-around". Same references, same metrics. Report missed speech (DER component)
-separately: that number is the VAD gate. Optionally, mix `Headset-0.wav` (the owner,
-close) with the array signal of the others to imitate a wearable exactly.
+The owner wants both cases (2026-10-20): others at **~1 m** (a table) and at **1–3 m**
+(standing or walking). Add `--audio {headset,array,sim}` to `eval/recognition.py`:
+
+- `array` (the 1 m case): `{m}.Array1-01.wav`, one omni mic of the AMI table array in the
+  middle of the table, about 1 m from each speaker. A real room, real reverb, real
+  overlap. Same references, same metrics.
+- `sim` (the 1–3 m case): AMI has no fixed-distance recordings, so simulate them. Take
+  each speaker's own headset track (`{m}.Headset-<n>.wav`), keep the owner close
+  (~20 cm), and place the others at 1, 2 and 3 m in a simulated room
+  (`pyroomacoustics`, MIT, as an eval-only extra), plus some room noise. Report the
+  result per distance.
+- Report missed speech (a DER component) separately: that number is the VAD gate.
 
 ### 4.2 Gained copy for VAD (server, small)
 
@@ -185,9 +191,22 @@ watch test.
 - Speech enhancement / denoising: Omi doesn't use it, and on whisper it often costs WER
   (artefacts). Only try it if 4.1 shows noise, not level, as the problem.
 
-## 6. Open questions for the owner
+## 6. Owner decisions (2026-10-20)
 
-1. Is "the room" mostly a table (pendant/watch ~1 m from others) or the wearer walking
-   with people at 1–3 m? This picks the eval mix in 4.1.
-2. OK to spend battery on 24–32 kbps Opus if the eval shows a clear WER gain?
-3. Worth running Parakeet next to whisper on the server GPU (~2–3 GB VRAM) for the A/B?
+1. **Both cases count:** others at ~1 m and at 1–3 m. The eval covers both (§4.1).
+2. **A higher Opus bitrate is OK** if it gives notably better transcription. "Notably"
+   still needs a number. Proposal: keep 24 or 32 kbps when it cuts WER by ≥ 2 points
+   absolute, or missed speech by ≥ 20% relative, on the 2–3 m case.
+3. **Parakeet: depends on its cost.** It is small, so the LLM doesn't need to shrink:
+   - `parakeet-tdt-0.6b-v3` has ~0.6 B parameters, about 1.2 GB of weights in
+     fp16/bf16. Expect roughly 2–3 GB of VRAM for long recordings with local attention
+     (to measure). whisper large-v3 has 1.55 B parameters, and turbo q5 in whisper.cpp
+     needs about 1–1.5 GB.
+   - If Parakeet wins, it **replaces** whisper, so the extra VRAM is only the
+     difference: about 1 GB.
+   - The int8 ONNX export (`sherpa-onnx`, ~0.7 GB) runs on CPU faster than real time.
+     Our transcription is batch work after a session ends, so it could stay off the
+     GPU entirely.
+   - Moving the LLM from qwen3.5-35b to a 9B model would save far more VRAM, but it
+     would likely cost answer quality (target ≥ 15/20 is measured with the 35B model).
+     Not needed for this.
