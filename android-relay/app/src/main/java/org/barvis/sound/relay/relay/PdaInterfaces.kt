@@ -99,6 +99,41 @@ object NoCalendar : CalendarApi {
     override suspend fun deleteEvent(uid: String) = why
 }
 
+/** One Odysseus checklist item (plan §4.4). */
+data class TodoItem(val text: String, val done: Boolean)
+
+/** One Odysseus note as `GET /api/codex/todos?format=json` lists it (plan §4.4). */
+data class TodoNote(
+    val id: String,
+    val title: String?,
+    val type: String,
+    val pinned: Boolean,
+    val dueDate: String?,
+    val items: List<TodoItem>,
+)
+
+/** The owner's Odysseus notes (hub `/api/codex/todos`, plan §4.4). */
+interface TodosApi {
+    /**
+     * The notes in the hub's order. [ApiResult.Unsupported] for "no todos": Odysseus isn't set
+     * up, the hub answers text (no `format=json`), or the token lacks `todos:read` (403).
+     */
+    suspend fun notes(): ApiResult<List<TodoNote>>
+
+    /**
+     * `toggle_item`. Ok(true) = `exit_code` 0, Ok(false) = `exit_code` 1 (the hub refused it:
+     * result 1). [ApiResult.Fail] for 5xx / network errors, [ApiResult.Unsupported] as above.
+     */
+    suspend fun toggle(noteId: String, index: Int, done: Boolean): ApiResult<Boolean>
+}
+
+/** Used when no Odysseus URL and token are set: no `todos`, `todo_toggle` waits. */
+object NoTodos : TodosApi {
+    private val why = ApiResult.Unsupported("Odysseus isn't set up in the relay settings")
+    override suspend fun notes() = why
+    override suspend fun toggle(noteId: String, index: Int, done: Boolean) = why
+}
+
 /**
  * What the relay remembers per PDA between connections. The app persists it in
  * SharedPreferences; tests use [MemoryPdaMemory].

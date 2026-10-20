@@ -371,6 +371,7 @@ The phone builds it from these sources:
 | `conversations` | `GET /v1/conversations?since=<now − 48 h>&limit=20`: id, title, start, people, summary, key points (cut to fit) |
 | `actions` | `GET /v1/action-items?status=open`: id, text, owner, `due_date`, conversation id |
 | `calendar` | Odysseus calendar REST, today to +7 days: id, title, start, end, location, all-day |
+| `todos` | Odysseus notes (§4.4): the owner's checklists, pinned first, with their items |
 
 ```json
 {"v": 1, "version": 1729411200, "generated": "2026-10-20T07:00:00Z", "tz": "Europe/Berlin",
@@ -379,12 +380,14 @@ The phone builds it from these sources:
                     "summary": "…", "points": ["…"]}],
  "actions": [{"id": 42, "text": "…", "owner": "…", "due": "2026-10-23", "conv": "c_…"}],
  "calendar": [{"id": "…", "title": "…", "start": "…", "end": "…", "where": "…", "all_day": false}],
+ "todos": [{"id": "3f2c…", "title": "Groceries", "pinned": true, "due": null,
+            "items": [{"i": 0, "text": "Milk", "done": false}, {"i": 2, "text": "Eggs", "done": false}]}],
  "templates": ["Call", "Meeting", "Reminder"]}
 ```
 
-- **Optional `templates`** (the Android relay only): up to 12 event titles the owner set in
-  the phone app, for the T5's "+" picker (§5). The PC relay doesn't send it; the firmware
-  must not require it and falls back to built-in titles. Readers ignore unknown keys.
+- **Optional `templates`:** up to 12 event titles for the T5's "+" picker (§5). The owner
+  sets them in the phone app, or with the PC relay's `--templates`. The firmware must not
+  require the key and falls back to built-in titles. Readers ignore unknown keys.
 - The Android relay builds the feed, actions and details exactly as the PC relay does
   (§3.5, the next bullet and §4.3). Calendar times from Odysseus are sent in UTC with `Z`
   like the conversations' `at`, and all-day events as dates.
@@ -399,6 +402,7 @@ The phone builds it from these sources:
   - `actions`: the soonest `due` first, undated ones last. A missing `owner` or `due` is
     `null`.
   - `calendar`: sorted by `start`.
+  - `todos`: see §4.4.
   - `templates` (optional): the owner's event titles for the "+" picker (§5), e.g.
     `["Call", "Meeting", "Reminder"]`. At most 12 of up to 40 characters. The phone takes
     them from its settings, the PC relay from `--templates "Call,Meeting,Reminder"`. The key
@@ -406,9 +410,11 @@ The phone builds it from these sources:
   - Field caps in characters: title 120, summary 600, 5 points of 160, action text 200.
   - The size limit is 32,768 bytes of compact UTF-8 JSON. Over it, each summary is cut to
     240 characters, then the oldest conversations are dropped. If it is still too big
-    (hundreds of open items), the last action items go, then the last calendar entries.
+    (hundreds of open items), done checklist items go, then the last action items, then the
+  last unpinned checklists, then the last calendar entries.
   - A source that fails fails the whole build, so nothing is pushed and the T5 keeps its
-    feed. Two cases don't count as failures: a digest 404, and no calendar configured.
+    feed. These don't count as failures: a digest 404, no Odysseus configured (no `calendar`
+  entries, no `todos`), and a hub that can't list notes for this token (§4.4).
   - **Push rule:** the content hash is SHA-256 over the feed without `version` and
     `generated`. The relay pushes when this hash differs from the last one it pushed to
     this T5, or when `status.feed_version` isn't the version it pushed (the T5 was wiped,
@@ -431,6 +437,7 @@ Each action is one JSON object of 400 bytes at most, with `"t"` saying the type:
 | `cal_delete` | `id` | `DELETE /api/codex/calendar/events/{id}` (§6; v2 on the T5) |
 | `fetch` | `ref`: `conv:<id>`, `transcript:<id>`, or `transcript:<id>@<from>-<to>` | `GET /v1/conversations/{id}` or `/transcript`, then `PUT` a detail blob |
 | `digest_refresh` | `date` | `POST /v1/digests/{date}` (exists), then a new feed |
+| `todo_toggle` | `note`, `i`, `text`, `done` | Odysseus `POST /api/codex/todos` `toggle_item` (§4.4) |
 
 - The T5 shows a queued action at once (the item is struck through, the event is shown in
   grey as "pending"). The T5 doesn't change its own feed. The next feed from the phone
@@ -462,6 +469,77 @@ The PC relay's formats (v1):
 - It also reads the feed's `templates` (the "+" picker; Call, Meeting, Reminder when there
   are none). An empty string in an optional field (`"owner": ""`) reads as missing.
 
+### 4.4 Odysseus checklists (`todos`, added 2026-10-20)
+
+The T5's Tasks tab shows the owner's own to-dos: the checklists in Odysseus notes, the
+same ones the Odysseus website shows. The action items the server suggests from
+conversations (`actions`) move into the conversation's detail screen (§5).
+
+- **Token:** the same Odysseus token as the calendar, with **Todos** (`todos:read`) and
+  **Todos write** (`todos:write`) added.
+- **Reading (hub change, SDarioosh/Barvis):** `GET /api/codex/todos?format=json` (scope
+  `todos:read`). Without `format=json` the route keeps answering with the chat-model text it
+  has today. Answer:
+  `{"notes": [{"id", "title", "type": "checklist"|"note", "label", "pinned", "due_date",
+  "updated_at", "items": [{"text", "done"}], "content"}]}`: the token owner's notes that
+  aren't archived, without calendar-reminder notes, pinned first, then the most recently
+  updated (the order the website uses). `items` is `[]` for a plain note, `content` is
+  `null` for a checklist. A hub without this option answers text, and a token without
+  `todos:read` gets 403: both mean "no todos" (the feed leaves `todos` out and the phone
+  says why), not a failed feed.
+- **Feed `todos`:** only `type: checklist` notes with at least one item, in the hub's order,
+  at most 20 notes and 40 items per note. Each item keeps its index `i` in the note's item
+  list (the hub toggles by index). `title` ≤ 120 characters (an empty title is `null`), item
+  `text` ≤ 160, `due` = `due_date` as `YYYY-MM-DD` or `null`. Done items are kept (shown
+  struck through) unless the feed is too big (§4.1).
+- **`todo_toggle`:** `{"t":"todo_toggle","note":"<note id>","i":<index>,"text":"<the item's
+  first 80 characters>","done":true|false}`. The relay:
+  1. reads the note's current items (`GET /api/codex/todos?format=json`, once per sync);
+  2. uses item `i` if its text starts with `text` (after trimming and collapsing spaces);
+     otherwise the single item in that note whose text starts with `text`; if there is
+     none or more than one, or the note is gone, it acks with result 1 ("couldn't sync":
+     the item changed on the website since the last feed);
+  3. if the item is already `done`, acks with result 0 without a call; otherwise
+     `POST /api/codex/todos` `{"action": "toggle_item", "note_id", "index", "done"}`
+     (scope `todos:write`). The hub answers HTTP 200 with `{"exit_code": 0, …}` on
+     success and `{"exit_code": 1, "error"}` on failure: `exit_code` 1 is result 1.
+  It is idempotent: `done` is explicit, never a flip. No Odysseus configured: the action
+  stays queued, like `cal_add`.
+- **Details settled by the PC relay** (the Android relay does the same):
+  - **Matching:** `text` and the item texts are trimmed and their runs of whitespace
+    collapsed to one space. Then a case-sensitive prefix match is made. The note is looked
+    up by `id` among all the notes the hub returned.
+  - **No call needed:** an item already in the wanted state (`done` *or* open) is result 0
+    without a call.
+  - **The hub answers:**
+    - an `exit_code` other than 0 is result 1;
+    - an answer without an integer `exit_code` is temporary (no ack);
+    - a 403 on the toggle (the token lacks `todos:write`) leaves the action queued and
+      doesn't stop the sync.
+  - **Hub can't list notes:** when the hub can't list notes for the token (a text answer
+    or a 403), `todo_toggle` stays queued too and the feed leaves `todos` out.
+  - **Once per sync:** the notes are read once per sync, before the first `todo_toggle`.
+    A successful toggle updates that copy, so a second action on the same item in the
+    same sync (a tap, then the reverse) is matched against the new state. The feed reads
+    the notes again afterwards.
+  - **Checks:** `i` is an integer from 0 to 9999. `note` is 1–64 characters, `text` 1–80
+    (neither may be only whitespace), and `done` is a JSON boolean.
+  - **Feed items:**
+    - only the first 40 items of a note, by index; an item that isn't a JSON object is
+      skipped, and the others keep their `i`;
+    - `due` is the first 10 characters of `due_date` if they are `YYYY-MM-DD`, else
+      `null`.
+  - **Trimming order** (§4.1):
+    1. Done items go one at a time, from the last checklist backwards. A checklist left
+       without items goes with them.
+    2. Unpinned checklists go from the end.
+    3. After the calendar entries, the pinned checklists go from the end, as a last
+       resort.
+- **On the T5:** a tap on an item queues `todo_toggle` with the opposite of its `done` and
+  shows it at once (struck through, or not); a second tap before the relay has listed the
+  action deletes it, after that it queues the reverse. Nothing else is editable on the T5
+  (no adding or renaming items, no plain notes).
+
 ## 5. Screens
 
 Portrait, 540 × 960 (§1): a two-line header (title and clock; date, battery, sync and the
@@ -472,15 +550,15 @@ a 3 × 4 grid of hour slots and the durations.
 
 | Screen | Content | Interactions |
 |---|---|---|
-| **Today** (home) | clock and date, battery, sync age; the next 3 events; the briefing's first lines; the count of open action items | tap a section to open it |
+| **Today** (home) | clock and date, battery, sync age; the next 3 events; the briefing's first lines; the count of open checklist items | tap a section to open it |
 | **Briefing** | yesterday's digest, highlights | `digest_refresh` |
 | **Calendar** | agenda, today to +7 days | tap an event for details; "+" opens the template picker |
-| **Actions** | open items, the ones due soon first | tap: done; long press: dismiss; "→ calendar" when `due` is set |
-| **Conversations** | the last 48 h, title, people, time | tap: summary and key points; "transcript" → `fetch` |
+| **Tasks** | the owner's Odysseus checklists (§4.4): a heading per note (pinned first, with its due date), its items below | tap an item: done / not done (`todo_toggle`); without Odysseus: "No checklists. Set up Odysseus in the phone app" |
+| **Conversations** | the last 48 h, title, people, time | tap: summary and key points, then that conversation's suggested action items (`actions` with this `conv`); on those: tap done, long press dismiss, "→ calendar" when `due` is set; "transcript" → `fetch` |
 | **Status** | bond, phone last seen, outbox, feed version, battery, pairing window button | |
 
 - **Adding an event without a keyboard:**
-  - From an action item: "→ calendar" fills in the title from the item and the date from
+  - From a suggested action item (in its conversation): "→ calendar" fills in the title from the item and the date from
     `due_date`. The user picks a time from a grid (morning slots, then +/− 15 min) and a
     duration (15/30/60 min, all day).
   - From scratch: pick the date and time the same way, then a title from a short list of

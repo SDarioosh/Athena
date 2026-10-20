@@ -87,6 +87,7 @@ typedef enum {
     A_WIPE,       /* long press only */
     A_CANCEL_PENDING, /* arg: index into the pending list */
     A_ROTATE,     /* the other portrait orientation */
+    A_TODO,       /* arg: note * 64 + item */
 } action_t;
 
 typedef struct {
@@ -346,6 +347,21 @@ static void pw_gap(pw_t *pw)
     }
 }
 
+/* A block of `lines` text lines that mustn't be split over pages: the baseline of its
+ * first line if it is on the current page, else -1. */
+static int pw_block(pw_t *pw, int lines)
+{
+    int start = pw->line;
+    if (start % pw->per_page + lines > pw->per_page && lines <= pw->per_page) {
+        start = (start / pw->per_page + 1) * pw->per_page; /* to the next page */
+    }
+    pw->line = start + lines;
+    if (start >= pw->first && start + lines <= pw->first + pw->per_page) {
+        return pw->y0 + (start - pw->first) * LH;
+    }
+    return -1;
+}
+
 static int pw_pages(const pw_t *pw)
 {
     return (pw->line + pw->per_page - 1) / pw->per_page;
@@ -451,22 +467,30 @@ static void draw_today(const feed_t *f)
         y += 16;
     }
 
-    /* open actions */
-    int due_week = 0;
-    const int32_t today = pda_local_day(now, tz());
-    for (int i = 0; i < f->n_actions; i++) {
-        if (f->actions[i].due_day != FEED_NO_DAY && f->actions[i].due_day <= today + 7) {
-            due_week++;
-        }
-    }
+    /* open checklist items (Odysseus notes, §4.4) */
     const int y_a = y - 30;
-    snprintf(buf, sizeof(buf), "%d open action item%s", f->n_actions, f->n_actions == 1 ? "" : "s");
-    gfx_text(BIG, MARGIN, y + 14, buf, GFX_INK);
-    y += 50;
-    if (due_week) {
-        snprintf(buf, sizeof(buf), "%d due within a week", due_week);
-        gfx_text(TEXT, MARGIN, y, buf, GFX_FAINT);
-        y += LH;
+    if (f->has_todos) {
+        int open = 0, notes_due = 0;
+        const int32_t today = pda_local_day(now, tz());
+        for (int n = 0; n < f->n_todos; n++) {
+            const feed_todo_t *note = &f->todos[n];
+            for (int k = 0; k < note->n_items; k++) {
+                const pda_pending_t *pt = pda_app_pending_todo(note->id, note->items[k].i);
+                open += !(pt ? pt->info.done : note->items[k].done);
+            }
+            notes_due += note->due_day != FEED_NO_DAY && note->due_day <= today + 7;
+        }
+        snprintf(buf, sizeof(buf), "%d open to-do%s", open, open == 1 ? "" : "s");
+        gfx_text(BIG, MARGIN, y + 14, buf, GFX_INK);
+        y += 50;
+        if (notes_due) {
+            snprintf(buf, sizeof(buf), "%d checklist%s due within a week", notes_due, notes_due == 1 ? "" : "s");
+            gfx_text(TEXT, MARGIN, y, buf, GFX_FAINT);
+            y += LH;
+        }
+    } else {
+        gfx_text(TEXT, MARGIN, y + 6, "No checklists", GFX_FAINT);
+        y += LH + 10;
     }
     hit((EpdRect){0, y_a, W, y - y_a}, A_OPEN, UI_ACTIONS);
 
@@ -670,75 +694,181 @@ static const pda_failed_t *failed_item(int64_t id)
     return NULL;
 }
 
-static void draw_actions(const feed_t *f)
+#define ACTION_ROW_H (3 * LH + 16)
+
+/* One suggested action item (feed `actions`), three lines starting at baseline y: the text
+ * (two lines), then due / owner and "→ cal". Tap = done, hold = dismiss. */
+static void draw_action_row(const feed_action_t *a, int idx, int y, int32_t today)
 {
-    draw_header("Action items");
+    const pda_pending_t *p = pda_app_pending_item(a->id);
+    const bool pending_close = p && strcmp(p->info.status, "open") != 0;
+    const pda_failed_t *fail = failed_item(a->id);
+    const uint8_t color = pending_close ? GFX_PENDING : GFX_INK;
+    const EpdRect box = {MARGIN, y - 22, 28, 28};
+    gfx_frame(box, color == GFX_INK ? 0x00 : 0x70);
+    if (pending_close) {
+        gfx_text(TEXT, box.x + 5, y + 1, strcmp(p->info.status, "done") == 0 ? "\xe2\x9c\x93" : "\xc3\x97",
+                 GFX_PENDING); /* ✓ or × */
+    }
+    const int tx = MARGIN + 42, tw = LIST_W - 42;
+    gfx_wrap(TEXT, tx, y, tw, a->text, color, 0, 2);
+    if (pending_close) {
+        int wl[2];
+        const int nw = gfx_wrap_widths(wl, 2);
+        for (int l = 0; l < nw; l++) {
+            gfx_strike(TEXT, tx, y + l * LH, wl[l]);
+        }
+    }
+    const int my = y + 2 * LH;
+    char meta[200], due[40] = "";
+    if (a->due_day != FEED_NO_DAY) {
+        char d[24];
+        pda_fmt_day(a->due_day, d, sizeof(d));
+        snprintf(due, sizeof(due), "%s%s", a->due_day < today ? "overdue, " : "due ", d);
+    }
+    if (fail) {
+        snprintf(meta, sizeof(meta), "couldn't sync \xe2\x80\x93 refused");
+    } else if (p) {
+        snprintf(meta, sizeof(meta), "%s, %s",
+                 strcmp(p->info.status, "dismissed") == 0 ? "dismissed" : p->info.status,
+                 p->listed ? "sent to the phone" : "waiting (tap to undo)");
+    } else {
+        snprintf(meta, sizeof(meta), "%s%s%s", due, a->owner && due[0] ? " \xc2\xb7 " : "",
+                 a->owner ? a->owner : "");
+    }
+    const int cal_w = a->due[0] ? 110 : 0;
+    gfx_text_fit(TEXT, tx, my, tw - cal_w - 10, meta, fail ? GFX_INK : GFX_FAINT);
+    hit((EpdRect){0, y - 30, W, ACTION_ROW_H - (cal_w ? 54 : 0)}, A_ITEM, idx);
+    if (cal_w) {
+        hit((EpdRect){0, my - 30, W - MARGIN - cal_w - 10, 54}, A_ITEM, idx);
+        const EpdRect cal = {W - MARGIN - cal_w, my - 32, cal_w, 46};
+        gfx_button(cal, "\xe2\x86\x92 cal", false); /* → cal */
+        hit(cal, A_ITEM_CAL, idx);
+    }
+}
+
+static const pda_failed_t *failed_todo(const char *note, int32_t i)
+{
+    const pda_failed_t *f;
+    const int n = pda_app_failed(&f);
+    for (int k = 0; k < n; k++) {
+        if (f[k].type == PDA_ACT_TODO_TOGGLE && f[k].item_id == i && strcmp(f[k].what, note) == 0) {
+            return &f[k];
+        }
+    }
+    return NULL;
+}
+
+/* Tasks rows: a heading per checklist note, then its items. */
+typedef struct {
+    int16_t note, item; /* item -1: the heading */
+    int16_t lines;      /* item text lines (1..3) */
+} task_row_t;
+
+#define TASK_TEXT_X (MARGIN + 52)
+#define TASK_TEXT_W (LIST_W - 52)
+#define TASK_HEAD_H 58
+
+static int task_row_h(const task_row_t *r, bool failed)
+{
+    return r->item < 0 ? TASK_HEAD_H : (r->lines + (failed ? 1 : 0)) * LH + 14;
+}
+
+static void draw_tasks(const feed_t *f)
+{
+    draw_header("Tasks");
     if (!f) {
         draw_no_feed();
         return;
     }
-    /* rows of three lines: the item (wrapped to two), then due / owner and "→ cal" */
-    const int row_h = 3 * LH + 16;
-    int y = TOP + 26;
-    gfx_text_fit(TEXT, MARGIN, y, LIST_W, "Tap: done \xc2\xb7 hold: dismiss \xc2\xb7 tap again: undo",
-                 GFX_FAINT);
-    y += LH + 14;
-    const int per_page = (LIST_BOTTOM - y + 24) / row_h;
-    clamp_page((f->n_actions + per_page - 1) / per_page);
-    if (f->n_actions == 0) {
-        gfx_text(TEXT, MARGIN, y, "No open action items.", GFX_INK);
+    if (!f->has_todos || f->n_todos == 0) {
+        int y = TOP + 60;
+        gfx_text(BIG, MARGIN, y, "No checklists", GFX_INK);
+        y += 50;
+        gfx_wrap(TEXT, MARGIN, y, LIST_W,
+                 f->has_todos ? "Odysseus has no checklists with items. Add one on the Odysseus "
+                                "website; it shows up here after the next sync."
+                              : "Set up Odysseus in the phone app (URL and a token with Todos "
+                                "and Todos write) to see your checklists here.",
+                 GFX_INK, 0, 6);
+        return;
     }
-    const int32_t today = pda_local_day(now_s(), tz());
-    for (int i = ui.page * per_page; i < f->n_actions && i < (ui.page + 1) * per_page; i++) {
-        const feed_action_t *a = &f->actions[i];
-        const pda_pending_t *p = pda_app_pending_item(a->id);
-        const bool pending_close = p && strcmp(p->info.status, "open") != 0;
-        const pda_failed_t *fail = failed_item(a->id);
-        const uint8_t color = pending_close ? GFX_PENDING : GFX_INK;
-        /* checkbox */
-        const EpdRect box = {MARGIN, y - 22, 28, 28};
-        gfx_frame(box, color == GFX_INK ? 0x00 : 0x70);
-        if (pending_close) {
-            gfx_text(TEXT, box.x + 5, y + 1, strcmp(p->info.status, "done") == 0 ? "\xe2\x9c\x93" : "\xc3\x97",
-                     GFX_PENDING); /* ✓ or × */
+    /* rows and their heights; pages break by height */
+    static task_row_t rows[FEED_MAX_TODO_NOTES * (FEED_MAX_TODO_ITEMS + 1)];
+    int n = 0;
+    for (int ni = 0; ni < f->n_todos; ni++) {
+        const feed_todo_t *note = &f->todos[ni];
+        rows[n++] = (task_row_t){.note = (int16_t)ni, .item = -1};
+        for (int k = 0; k < note->n_items; k++) {
+            int lines = gfx_wrap(TEXT, 0, -1000, TASK_TEXT_W, note->items[k].text, GFX_INK, 1 << 20, 0);
+            lines = lines < 1 ? 1 : lines > 3 ? 3 : lines;
+            rows[n++] = (task_row_t){.note = (int16_t)ni, .item = (int16_t)k, .lines = (int16_t)lines};
         }
-        const int tx = MARGIN + 42, tw = LIST_W - 42;
-        const int lines = gfx_wrap(TEXT, tx, y, tw, a->text, color, 0, 2);
-        if (pending_close) {
-            /* strike each drawn line */
-            for (int l = 0; l < (lines < 2 ? lines : 2); l++) {
-                gfx_strike(TEXT, tx, y + l * LH, l == 0 && lines > 1 ? tw : tw / 2);
+    }
+    const int y0 = TOP + 34;
+    int page_start[64] = {0}, pages = 1;
+    for (int r = 0, h = 0; r < n; r++) {
+        const feed_todo_t *note = &f->todos[rows[r].note];
+        const bool failed = rows[r].item >= 0 && failed_todo(note->id, note->items[rows[r].item].i);
+        const int rh = task_row_h(&rows[r], failed);
+        if (h + rh > LIST_BOTTOM - y0 + 24 && pages < 64 && h > 0) {
+            page_start[pages++] = r;
+            h = 0;
+        }
+        h += rh;
+    }
+    clamp_page(pages);
+    const int first = page_start[ui.page], last = ui.page + 1 < pages ? page_start[ui.page + 1] : n;
+    const int32_t today = pda_local_day(now_s(), tz());
+    int y = y0;
+    for (int r = first; r < last; r++) {
+        const task_row_t *row = &rows[r];
+        const feed_todo_t *note = &f->todos[row->note];
+        if (row->item < 0) {
+            /* heading: ★ for pinned, the title, the due date on the right */
+            char title[160], due[40] = "";
+            snprintf(title, sizeof(title), "%s%s", note->pinned ? "\xe2\x98\x85 " : "",
+                     note->title ? note->title : "Untitled checklist");
+            if (note->due_day != FEED_NO_DAY) {
+                char d[24];
+                pda_fmt_day(note->due_day, d, sizeof(d));
+                snprintf(due, sizeof(due), "%s%s", note->due_day < today ? "overdue " : "due ", d);
+            }
+            const int dw = due[0] ? gfx_text_width(TEXT, due) + 12 : 0;
+            gfx_text_fit(BIG, MARGIN, y + 8, LIST_W - dw, title, GFX_INK);
+            if (due[0]) {
+                gfx_text_right(TEXT, W - MARGIN, y + 6, due, note->due_day < today ? GFX_INK : GFX_FAINT);
+            }
+            gfx_hline(MARGIN, y + 20, LIST_W, 0x00);
+            y += TASK_HEAD_H;
+            continue;
+        }
+        const feed_todo_item_t *it = &note->items[row->item];
+        const pda_pending_t *pt = pda_app_pending_todo(note->id, it->i);
+        const pda_failed_t *fail = failed_todo(note->id, it->i);
+        const bool done = pt ? pt->info.done : it->done;
+        const uint8_t color = pt ? GFX_PENDING : done ? GFX_FAINT : GFX_INK;
+        const EpdRect box = {MARGIN + 10, y - 22, 28, 28};
+        gfx_frame(box, pt ? 0x70 : 0x00);
+        if (done) {
+            gfx_text(TEXT, box.x + 5, y + 1, "\xe2\x9c\x93", pt ? GFX_PENDING : GFX_INK); /* ✓ */
+        }
+        gfx_wrap(TEXT, TASK_TEXT_X, y, TASK_TEXT_W, it->text, color, 0, row->lines);
+        if (done) {
+            int wl[3];
+            const int nw = gfx_wrap_widths(wl, 3);
+            for (int l = 0; l < nw; l++) {
+                gfx_strike(TEXT, TASK_TEXT_X, y + l * LH, wl[l]);
             }
         }
-        /* meta line, with "→ cal" at its right end */
-        const int my = y + 2 * LH;
-        char meta[200], due[40] = "";
-        if (a->due_day != FEED_NO_DAY) {
-            char d[24];
-            pda_fmt_day(a->due_day, d, sizeof(d));
-            snprintf(due, sizeof(due), "%s%s", a->due_day < today ? "overdue, " : "due ", d);
-        }
+        int rh = row->lines * LH + 14;
         if (fail) {
-            snprintf(meta, sizeof(meta), "couldn't sync \xe2\x80\x93 refused");
-        } else if (p) {
-            snprintf(meta, sizeof(meta), "%s, %s",
-                     strcmp(p->info.status, "dismissed") == 0 ? "dismissed" : p->info.status,
-                     p->listed ? "sent to the phone" : "waiting (tap to undo)");
-        } else {
-            snprintf(meta, sizeof(meta), "%s%s%s", due, a->owner && due[0] ? " \xc2\xb7 " : "",
-                     a->owner ? a->owner : "");
+            gfx_text(TEXT, TASK_TEXT_X, y + row->lines * LH, "couldn't sync \xe2\x80\x93 changed on the website?",
+                     GFX_INK);
+            rh += LH;
         }
-        const int cal_w = a->due[0] ? 110 : 0;
-        gfx_text_fit(TEXT, tx, my, tw - cal_w - 10, meta, fail ? GFX_INK : GFX_FAINT);
-        hit((EpdRect){0, y - 30, W, row_h - (cal_w ? 54 : 0)}, A_ITEM, i);
-        if (cal_w) {
-            hit((EpdRect){0, my - 30, W - MARGIN - cal_w - 10, 54}, A_ITEM, i);
-            const EpdRect cal = {W - MARGIN - cal_w, my - 32, cal_w, 46};
-            gfx_button(cal, "\xe2\x86\x92 cal", false); /* → cal */
-            hit(cal, A_ITEM_CAL, i);
-        }
-        y += row_h;
-        gfx_hline(MARGIN, y - 36, LIST_W, 0xD0);
+        hit((EpdRect){0, y - 30, W, rh}, A_TODO, row->note * 64 + row->item);
+        y += rh;
     }
     draw_pager();
 }
@@ -811,6 +941,25 @@ static void draw_conv_detail(const feed_t *f)
         char line[420];
         snprintf(line, sizeof(line), "\xe2\x80\xa2 %s", c->points[i]);
         pw_para(&pw, TEXT, line, GFX_INK, 0);
+    }
+    /* the suggested action items from this conversation (feed `actions` with its id) */
+    bool any = false;
+    const int32_t today = pda_local_day(now_s(), tz());
+    for (int i = 0; i < f->n_actions; i++) {
+        const feed_action_t *a = &f->actions[i];
+        if (!a->conv || strcmp(a->conv, c->id) != 0) {
+            continue;
+        }
+        if (!any) {
+            pw_gap(&pw);
+            pw_para(&pw, TEXT, "SUGGESTED ACTION ITEMS \xc2\xb7 tap: done \xc2\xb7 hold: dismiss", GFX_FAINT, 0);
+            pw.line++; /* room above the first checkbox */
+            any = true;
+        }
+        const int y = pw_block(&pw, 4); /* ACTION_ROW_H is a little over three lines */
+        if (y >= 0) {
+            draw_action_row(a, i, y, today);
+        }
     }
     clamp_page(pw_pages(&pw));
     draw_pager();
@@ -1120,7 +1269,7 @@ static void draw(void)
     case UI_TODAY: draw_today(f); break;
     case UI_BRIEFING: draw_briefing(f); break;
     case UI_CALENDAR: draw_calendar(f); break;
-    case UI_ACTIONS: draw_actions(f); break;
+    case UI_ACTIONS: draw_tasks(f); break;
     case UI_CONVERSATIONS: draw_conversations(f); break;
     case UI_STATUS: draw_status(f); break;
     case UI_CONV_DETAIL: draw_conv_detail(f); break;
@@ -1176,6 +1325,51 @@ static void on_item(int idx, bool is_long)
     queue_item_status(&a, is_long ? "dismissed" : "done");
 }
 
+/* A tap on a checklist item (§4.4): toggle it at once; a second tap undoes the pending
+ * toggle, or, once the relay has it, queues the reverse. */
+static void on_todo(int note_idx, int item_idx)
+{
+    char note_id[PDA_REF_MAX], text[4 * FEED_TODO_TEXT_MAX + 1];
+    int32_t i;
+    bool done, have_pending = false, listed = false, pending_done = false;
+    uint32_t pid = 0;
+    pda_app_lock();
+    const feed_t *f = pda_app_feed();
+    if (!f || note_idx >= f->n_todos || item_idx >= f->todos[note_idx].n_items) {
+        pda_app_unlock();
+        return;
+    }
+    const feed_todo_t *note = &f->todos[note_idx];
+    const feed_todo_item_t *it = &note->items[item_idx];
+    snprintf(note_id, sizeof(note_id), "%s", note->id);
+    snprintf(text, sizeof(text), "%s", it->text);
+    i = it->i;
+    done = it->done;
+    const pda_pending_t *p = pda_app_pending_todo(note->id, it->i);
+    if (p) {
+        have_pending = true;
+        listed = p->listed;
+        pending_done = p->info.done;
+        pid = p->id;
+    }
+    pda_app_unlock();
+    if (have_pending && !listed && pda_app_cancel(pid) == 0) {
+        toast("Undone");
+        return;
+    }
+    const bool want = have_pending ? !pending_done : !done;
+    char json[PDA_ACTION_BUF];
+    const size_t n = pda_action_todo_toggle(json, note_id, i, text, want);
+    const int rc = n ? pda_app_queue(json, n) : -2;
+    if (rc == -1) {
+        toast("Outbox full: sync with the phone first");
+    } else if (rc != 0) {
+        toast("Couldn't save the change");
+    } else if (have_pending) {
+        toast("Changing it back with the next sync");
+    }
+}
+
 static void act(const hit_t *h, bool is_long)
 {
     const feed_t *f;
@@ -1191,6 +1385,9 @@ static void act(const hit_t *h, bool is_long)
         break;
     case A_ITEM:
         on_item(h->arg, is_long);
+        break;
+    case A_TODO:
+        on_todo(h->arg / 64, h->arg % 64);
         break;
     case A_ITEM_CAL:
         pda_app_lock();

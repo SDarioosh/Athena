@@ -91,6 +91,7 @@ class FeedBuilder(
     private val templates: List<String>,
     private val maxBytes: Int = MAX_FEED_BYTES,
     private val log: RelayLog = RelayLog.NONE,
+    private val todos: TodosApi = NoTodos,
 ) {
     private class Stop(val fail: FeedBuild.Fail) : Exception()
 
@@ -102,6 +103,10 @@ class FeedBuilder(
 
     /** Why the last build has an empty calendar, if it is because Odysseus isn't usable. */
     var calendarNote: String? = null
+        private set
+
+    /** Why the last build has no `todos` (plan §4.4), or null. */
+    var todosNote: String? = null
         private set
 
     suspend fun build(): FeedBuild = try {
@@ -156,11 +161,25 @@ class FeedBuilder(
             is ApiResult.Fail -> throw Stop(FeedBuild.Fail(r.error, "Odysseus calendar"))
         }.toMutableList()
         m["calendar"] = events
-        // Not read by the PC relay or required by the firmware (plan §4.1: optional).
-        m["templates"] = templates.map { it.trim().take(40) }.filter { it.isNotEmpty() }.distinct().take(12)
 
-        // Too big (§4.1): cut summaries, then drop the oldest conversations, then the last
-        // action items, then the last calendar entries.
+        todosNote = null
+        val notes = when (val r = todos.notes()) {
+            is ApiResult.Ok -> todoSection(r.value)
+            is ApiResult.Unsupported -> {
+                todosNote = r.reason
+                null
+            }
+            is ApiResult.Fail -> throw Stop(FeedBuild.Fail(r.error, "Odysseus todos"))
+        }
+        if (notes != null) m["todos"] = notes
+        // Not read by the PC relay or required by the firmware (plan §4.1: optional, left out
+        // when there are none).
+        val templateList = templates.map { it.trim().take(40) }.filter { it.isNotEmpty() }.distinct().take(12)
+        if (templateList.isNotEmpty()) m["templates"] = templateList
+
+        // Too big (§4.1): cut summaries, then drop the oldest conversations, then done
+        // checklist items, then the last action items, then the last unpinned checklists,
+        // then the last calendar entries.
         fun size() = FeedContent(m).render(0xFFFFFFFFL, now).size
         if (size() > maxBytes) {
             for (c in convs) c["summary"] = cut(c["summary"] as String?, SUMMARY_CUT)
@@ -169,7 +188,10 @@ class FeedBuilder(
                 steps++
                 when {
                     convs.isNotEmpty() -> convs.removeAt(convs.size - 1)
+                    notes != null && dropLastDoneItem(notes) -> Unit
                     actions.isNotEmpty() -> actions.removeAt(actions.size - 1)
+                    notes != null && notes.any { it["pinned"] != true } ->
+                        notes.removeAt(notes.indexOfLast { it["pinned"] != true })
                     events.isNotEmpty() -> events.removeAt(events.size - 1)
                     else -> break
                 }
@@ -177,6 +199,34 @@ class FeedBuilder(
             log.log(Level.INFO, "feed trimmed to ${size()} B (summaries cut, $steps entries dropped)")
         }
         return FeedContent(m)
+    }
+
+    /** §4.4: checklists with items, in the hub's order; 20 notes, 40 items each, items keep `i`. */
+    private fun todoSection(notes: List<TodoNote>): MutableList<MutableMap<String, Any?>> =
+        notes.filter { it.type == "checklist" && it.items.isNotEmpty() }.take(MAX_TODO_NOTES).map { n ->
+            linkedMapOf<String, Any?>(
+                "id" to n.id,
+                "title" to n.title?.let { cut(it, TITLE_MAX) }?.takeIf { it.isNotEmpty() },
+                "pinned" to n.pinned,
+                "due" to n.dueDate?.takeIf { DATE.matches(it.take(10)) }?.take(10),
+                "items" to n.items.mapIndexed { i, it -> Triple(i, it.text, it.done) }.take(MAX_TODO_ITEMS).map { (i, text, done) ->
+                    linkedMapOf<String, Any?>("i" to i, "text" to cut(text, TODO_TEXT_MAX), "done" to done)
+                }.toMutableList(),
+            )
+        }.toMutableList()
+
+    /** Drops the last done item of the last checklist that has one; false if none is left. */
+    @Suppress("UNCHECKED_CAST")
+    private fun dropLastDoneItem(notes: List<MutableMap<String, Any?>>): Boolean {
+        for (n in notes.asReversed()) {
+            val items = n["items"] as MutableList<Map<String, Any?>>
+            val k = items.indexOfLast { it["done"] == true }
+            if (k >= 0) {
+                items.removeAt(k)
+                return true
+            }
+        }
+        return false
     }
 
     private suspend fun briefing(today: LocalDate): Map<String, Any?>? {
@@ -228,6 +278,10 @@ class FeedBuilder(
         const val TEXT_MAX = 200
         const val HIGHLIGHTS_MAX = 5
         const val BRIEFING_MAX = 1200
+        const val MAX_TODO_NOTES = 20
+        const val MAX_TODO_ITEMS = 40
+        const val TODO_TEXT_MAX = 160
+        private val DATE = Regex("\\d{4}-\\d{2}-\\d{2}")
 
         /** [text] as one line of at most [limit] characters, cut at a word with an ellipsis. */
         fun cut(text: String?, limit: Int): String {

@@ -22,6 +22,9 @@ extern "C" {
 #define FEED_MAX_POINTS 8
 #define FEED_MAX_PEOPLE 8
 #define FEED_MAX_TEMPLATES 12
+#define FEED_MAX_TODO_NOTES 20 /* plan §4.4 */
+#define FEED_MAX_TODO_ITEMS 40
+#define FEED_TODO_TEXT_MAX 160 /* characters of an item text the relay sends (§4.4) */
 #define DETAIL_MAX_ACTIONS 16
 #define FEED_NO_DAY INT32_MIN
 #define DETAIL_MAX_SEGMENTS 200
@@ -54,6 +57,25 @@ typedef struct {
     int32_t start_day; /* all-day: the date's day number; timed: FEED_NO_DAY (use start) */
 } feed_event_t;
 
+/* One checklist item (§4.4). `i` is the hub's index in the note's item list: actions use
+ * it as is, never a renumbered position. */
+typedef struct {
+    int32_t i;
+    const char *text;
+    bool done;
+} feed_todo_item_t;
+
+/* One Odysseus checklist note. */
+typedef struct {
+    const char *id;
+    const char *title; /* NULL: untitled */
+    bool pinned;
+    int32_t due_day;   /* FEED_NO_DAY if none */
+    char due[11];
+    feed_todo_item_t items[FEED_MAX_TODO_ITEMS];
+    int n_items;
+} feed_todo_t;
+
 typedef struct {
     uint32_t version;
     int64_t generated;
@@ -70,6 +92,9 @@ typedef struct {
     int n_events;
     const char *templates[FEED_MAX_TEMPLATES]; /* event titles for the "+" picker */
     int n_templates;
+    bool has_todos;  /* the feed has a `todos` key (Odysseus is set up) */
+    feed_todo_t todos[FEED_MAX_TODO_NOTES]; /* in the hub's order: pinned first */
+    int n_todos;
     char *arena;
 } feed_t;
 

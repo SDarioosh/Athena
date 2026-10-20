@@ -38,10 +38,10 @@
     <string name="pda_not_seen">Not seen yet. Open the pairing window on the T5\'s Status screen the first time.</string>
     <string name="pda_last_sync">Last sync: %1$s</string>
     <string name="pda_enabled">Sync a T5 E-Paper PDA (briefing, conversations, action items, calendar)</string>
-    <string name="odysseus_url">Odysseus URL (calendar)</string>
-    <string name="odysseus_url_hint">For example http://myserver.example-tailnet.ts.net:7000. Leave it empty to sync without a calendar.</string>
-    <string name="odysseus_token">Odysseus calendar token</string>
-    <string name="odysseus_token_hint">No token saved. In Odysseus, create an API token with only the \"Calendar read\" and \"Calendar write\" scopes (ody_…).</string>
+    <string name="odysseus_url">Odysseus URL (calendar and checklists)</string>
+    <string name="odysseus_url_hint">For example http://myserver.example-tailnet.ts.net:7000. Leave it empty to sync without a calendar and checklists.</string>
+    <string name="odysseus_token">Odysseus API token</string>
+    <string name="odysseus_token_hint">No token saved. In Odysseus, create an API token with only the \"Calendar\", \"Calendar write\", \"Todos\" and \"Todos write\" permissions (ody_…).</string>
     <string name="odysseus_token_saved">Odysseus token saved (hidden). Type a new one to replace it.</string>
     <string name="odysseus_token_shape">That doesn\'t look like an Odysseus API token (they start with ody_).</string>
     <string name="odysseus_calendar">Calendar id (optional)</string>
@@ -50,13 +50,20 @@
     <string name="pda_interval">Minutes between automatic syncs (5 to 240)</string>
     <string name="pda_auto">Sync the T5 automatically (turn off while the T5 is off or away)</string>
     <string name="pda_sync_now">Sync T5 now</string>
-    <string name="test_odysseus">Test Odysseus calendar</string>
+    <string name="test_odysseus">Test Odysseus (calendar and checklists)</string>
     <string name="odysseus_not_set">Enter the Odysseus URL and token first.</string>
     <plurals name="odysseus_ok">
-        <item quantity="one">OK: %1$d event in the next 7 days.</item>
-        <item quantity="other">OK: %1$d events in the next 7 days.</item>
+        <item quantity="one">Calendar: %1$d event in the next 7 days.</item>
+        <item quantity="other">Calendar: %1$d events in the next 7 days.</item>
     </plurals>
-    <string name="odysseus_unsupported">Not supported: %1$s</string>
-    <string name="odysseus_failed">Odysseus calendar check failed: %1$s</string>
+    <string name="odysseus_unsupported">Calendar: not supported, %1$s.</string>
+    <string name="odysseus_failed">Calendar check failed: %1$s</string>
+    <plurals name="odysseus_todos_ok">
+        <item quantity="one">Checklists: %1$d found.</item>
+        <item quantity="other">Checklists: %1$d found.</item>
+    </plurals>
+    <string name="odysseus_todos_unsupported">Checklists: not available, %1$s.</string>
+    <string name="odysseus_test_result">%1$s\n%2$s</string>
+    <string name="odysseus_todos_failed">Checklist check failed: %1$s</string>
     <string name="privacy_note">Audio goes only from the watch to this server. The token is encrypted on this phone and never shown, logged or backed up.</string>
 </resources>

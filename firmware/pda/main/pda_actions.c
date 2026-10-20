@@ -119,6 +119,54 @@ size_t pda_action_digest_refresh(char *out, const char *date)
     return one_string(out, "digest_refresh", "date", date);
 }
 
+/* The first `chars` code points of s, as a new string in buf. */
+static const char *first_chars(const char *s, int chars, char *buf, size_t cap)
+{
+    size_t n = 0;
+    for (int c = 0; s[n] && c < chars; c++) {
+        size_t step = 1;
+        while (s[n + step] && ((unsigned char)s[n + step] & 0xC0) == 0x80) {
+            step++; /* continuation bytes of the same character */
+        }
+        if (n + step >= cap) {
+            break;
+        }
+        n += step;
+    }
+    memcpy(buf, s, n);
+    buf[n] = 0;
+    return buf;
+}
+
+size_t pda_action_todo_toggle(char *out, const char *note, int32_t i, const char *text, bool done)
+{
+    char head[MAX + 1];
+    sb_t h = {.out = head};
+    lit(&h, "{\"t\":\"todo_toggle\",\"note\":");
+    quoted(&h, note, 0);
+    if (h.overflow || h.w >= sizeof(head) || (size_t)strlen(note) + 2 + 26 > h.w) {
+        /* the note id was cut: it has to be exact */
+        out[0] = 0;
+        return 0;
+    }
+    char num[16];
+    snprintf(num, sizeof(num), ",\"i\":%" PRId32 ",\"text\":", i);
+    lit(&h, num);
+    if (h.overflow) {
+        out[0] = 0;
+        return 0;
+    }
+    const char *tail = done ? ",\"done\":true}" : ",\"done\":false}";
+    char t80[PDA_TODO_TEXT_CHARS * 4 + 1];
+    first_chars(text ? text : "", PDA_TODO_TEXT_CHARS, t80, sizeof(t80));
+    sb_t b = {.out = out};
+    memcpy(out, head, h.w);
+    b.w = h.w;
+    quoted(&b, t80, strlen(tail)); /* cut further only if 400 bytes would pass */
+    lit(&b, tail);
+    return finish(&b);
+}
+
 bool pda_action_parse(const char *json, size_t len, pda_action_info_t *a)
 {
     memset(a, 0, sizeof(*a));
@@ -150,6 +198,12 @@ bool pda_action_parse(const char *json, size_t len, pda_action_info_t *a)
     } else if (json_str_eq(&d, t, "digest_refresh")) {
         a->type = PDA_ACT_DIGEST_REFRESH;
         json_str(&d, json_get(&d, 0, "date"), a->ref, sizeof(a->ref));
+    } else if (json_str_eq(&d, t, "todo_toggle")) {
+        a->type = PDA_ACT_TODO_TOGGLE;
+        json_str(&d, json_get(&d, 0, "note"), a->ref, sizeof(a->ref));
+        json_int(&d, json_get(&d, 0, "i"), &a->item_id);
+        json_str(&d, json_get(&d, 0, "text"), a->title, sizeof(a->title));
+        json_bool(&d, json_get(&d, 0, "done"), &a->done);
     } else {
         return false;
     }

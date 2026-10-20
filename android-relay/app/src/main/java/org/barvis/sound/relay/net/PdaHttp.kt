@@ -11,6 +11,9 @@ import org.barvis.sound.relay.relay.Level
 import org.barvis.sound.relay.relay.NewEvent
 import org.barvis.sound.relay.relay.RelayLog
 import org.barvis.sound.relay.relay.ServerResult
+import org.barvis.sound.relay.relay.TodoItem
+import org.barvis.sound.relay.relay.TodoNote
+import org.barvis.sound.relay.relay.TodosApi
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -186,6 +189,70 @@ class ConvoHttpApi(
 
     private companion object {
         val DATE = Regex("\\d{4}-\\d{2}-\\d{2}")
+    }
+}
+
+/**
+ * The owner's Odysseus notes through `/api/codex/todos` (plan §4.4), with the same URL and
+ * token as the calendar (scopes `todos:read`, `todos:write`).
+ */
+class OdysseusTodosClient(
+    baseUrl: String,
+    token: () -> String,
+    transport: HttpTransport = UrlConnectionTransport(),
+    log: RelayLog = RelayLog.NONE,
+) : TodosApi {
+    private val c = JsonClient(baseUrl, token, transport, log, "Odysseus")
+
+    override suspend fun notes(): ApiResult<List<TodoNote>> {
+        val a = c.call("GET", "$TODOS?format=json", logPath = TODOS) ?: return ApiResult.Fail(c.networkError())
+        noTodos(a)?.let { return it }
+        if (a.code !in 200..299) return ApiResult.Fail(HttpUploader.classify(a.code, a.body, needOkField = false))
+        val body = try {
+            Json.parseObject(a.body)
+        } catch (e: Json.ParseException) {
+            return ApiResult.Unsupported(OLD_HUB) // the chat-model text of a hub without format=json
+        }
+        if (body["notes"] !is List<*>) return ApiResult.Unsupported(OLD_HUB)
+        return ApiResult.Ok(body.objects("notes").mapNotNull { n ->
+            val id = n.str("id") ?: (n["id"] as? Long)?.toString() ?: return@mapNotNull null
+            TodoNote(
+                id = id,
+                title = n.str("title"),
+                type = n.str("type") ?: "",
+                pinned = n.bool("pinned") ?: false,
+                dueDate = n.str("due_date"),
+                items = n.objects("items").map { TodoItem(it.str("text") ?: "", it.bool("done") ?: false) },
+            )
+        })
+    }
+
+    override suspend fun toggle(noteId: String, index: Int, done: Boolean): ApiResult<Boolean> {
+        val body = linkedMapOf<String, Any?>("action" to "toggle_item", "note_id" to noteId, "index" to index, "done" to done)
+        val a = c.call("POST", TODOS, json = body) ?: return ApiResult.Fail(c.networkError())
+        noTodos(a)?.let { return it }
+        return when (val r = c.objOf(a)) {
+            is ApiResult.Ok -> when (r.value.long("exit_code")) {
+                0L -> ApiResult.Ok(true)
+                1L -> ApiResult.Ok(false)
+                else -> ApiResult.Fail(ServerResult.Transient("Odysseus todos answer has no exit_code"))
+            }
+            is ApiResult.Fail -> r
+            is ApiResult.Unsupported -> r
+        }
+    }
+
+    /** 403 (no `todos` scope) and a missing route mean "no todos", not a failure. */
+    private fun noTodos(a: HttpAnswer): ApiResult.Unsupported? = when (a.code) {
+        403 -> ApiResult.Unsupported(NO_SCOPE)
+        404, 405 -> ApiResult.Unsupported(OLD_HUB)
+        else -> null
+    }
+
+    companion object {
+        const val TODOS = "/api/codex/todos"
+        const val NO_SCOPE = "add the Todos and Todos write permissions to the Odysseus token"
+        const val OLD_HUB = "this Odysseus can't list checklists (update the hub)"
     }
 }
 

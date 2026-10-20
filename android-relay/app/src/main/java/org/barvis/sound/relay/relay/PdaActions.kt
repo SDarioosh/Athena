@@ -66,6 +66,11 @@ sealed class PdaAction {
         override val type get() = "digest_refresh"
     }
 
+    /** Plan §4.4: set item [index] of note [note] to [done]; [text] is the item's first 80 characters. */
+    data class TodoToggle(val note: String, val index: Int, val text: String, val done: Boolean) : PdaAction() {
+        override val type get() = "todo_toggle"
+    }
+
     /** Acked with result 1: the T5 shows "couldn't sync" and drops it. */
     data class Invalid(val reason: String) : PdaAction() {
         override val type get() = "invalid"
@@ -83,6 +88,7 @@ sealed class PdaAction {
             "cal_delete" to (setOf("id") to emptySet<String>()),
             "fetch" to (setOf("ref") to emptySet<String>()),
             "digest_refresh" to (setOf("date") to emptySet<String>()),
+            "todo_toggle" to (setOf("note", "i", "text", "done") to emptySet<String>()),
         )
 
         private class Bad(val reason: String) : Exception(reason)
@@ -115,6 +121,12 @@ sealed class PdaAction {
                 "cal_delete" -> CalDelete(str(o["id"], "id", 200))
                 "digest_refresh" -> DigestRefresh(date(o["date"], "date").toString())
                 "fetch" -> Fetch((o["ref"] as? String)?.let { DetailRef.parse(it) } ?: throw Bad("fetch: bad ref"))
+                "todo_toggle" -> TodoToggle(
+                    str(o["note"], "note", 64),
+                    (o["i"] as? Long)?.takeIf { it in 0..Int.MAX_VALUE }?.toInt() ?: throw Bad("i must be an integer >= 0"),
+                    (o["text"] as? String)?.takeIf { it.length in 1..80 } ?: throw Bad("text must be 1-80 characters"),
+                    o["done"] as? Boolean ?: throw Bad("done must be true or false"),
+                )
                 else -> calAdd(o)
             }
         }

@@ -30,6 +30,10 @@ void gfx_text_right(const EpdFont *f, int x_right, int y, const char *s, uint8_t
  * total (drawn or not), so callers can page. */
 int gfx_wrap(const EpdFont *f, int x, int y, int w, const char *s, uint8_t color, int skip_lines,
              int max_lines);
+/* Pixel widths of the lines the last gfx_wrap() drew, at most max; returns how many
+ * (for strike-through). */
+int gfx_wrap_widths(int *out, int max);
+
 /* Line height of a font. */
 int gfx_line(const EpdFont *f);
 

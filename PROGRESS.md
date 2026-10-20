@@ -659,6 +659,10 @@ are an hour off until the next TIME; v2 fix proposed: a `tz_posix` feed field).
   `--odysseus-url`, `--odysseus-token-file` and `--calendar-href`. Without them it is a
   "not configured" stub, and calendar actions wait on the T5. It is tested against a fake
   Odysseus only. The optional feed key `templates` comes from `--templates`.
+- Tasks tab (plan §4.4): `OdysseusTodos` (`barvis_relay/pda_todos.py`) reads the owner's
+  checklists (`GET /api/codex/todos?format=json`) into the feed's `todos`. The new action
+  `todo_toggle` posts `toggle_item`, finding the item by index or by its text. Tests run
+  against a fake Odysseus. The hub's `format=json` option is a hub change still to land.
 - Where the plan left a choice, the answer is now in plan §3.5, §4.1 and §4.3.
 - Tests: `tools/tests/test_pda.py` (fake T5 GATT peer, fake server: lost ack, bad CRC,
   paging, MTU, stay mode) and `server/tests/test_pda_feed.py` (the real API, seeded

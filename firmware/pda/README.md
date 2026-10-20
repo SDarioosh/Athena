@@ -74,9 +74,13 @@ cmake -S firmware/pda/test -B build-pda-host && cmake --build build-pda-host && 
   holds the board) and 90 (turned 180°): Status → "Turn 180°" or `rotate 90|270` on the
   console; kept in NVS.
 - **Tabs** at the bottom: Today, Brief, Cal, Tasks, Talks (conversations), Status. On a tab: swipe left/right for the next/previous tab, up/down (or ▲ ▼) to page. In a detail (conversation, transcript, event): swipe right = back to the list, left = next page, then the next transcript part or the next item, nothing at the end.
-- **Actions:** tap = done, hold = dismiss, tap a pending one = undo (before the phone has
-  taken it; after that, a tap queues `open`). "→ cal" opens the event form with the item's
-  title and due date.
+- **Tasks:** the owner's Odysseus checklists (feed `todos`, plan §4.4), a heading per note
+  (★ pinned, due date on the right), done items struck through. Tap an item: done / not
+  done (`todo_toggle`, shown at once in grey); tap it again before the phone has taken it to
+  undo, after that it queues the reverse. Without Odysseus: "No checklists".
+- **Suggested action items** (feed `actions`) are in their conversation's detail screen,
+  below the summary: tap = done, hold = dismiss, tap a pending one = undo, "→ cal" opens
+  the event form with the item's title and due date.
 - **Calendar:** "+ New" → pick a template (from the feed's `templates`) → day, time slot,
   ±15 min, duration or all day → Add. Queued events show grey until the next feed.
 - **Talks:** tap a conversation for its summary; "Transcript" shows the cached page or

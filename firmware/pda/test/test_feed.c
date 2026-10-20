@@ -112,6 +112,17 @@ static void test_fixture(void)
     CHECK(feed.events[2].where == NULL);
     CHECK_EQ(feed.events[0].end - feed.events[0].start, 15 * 60);
     CHECK_EQ(feed.events[4].end, feed.events[4].start);
+    /* todos (§4.4): the hub's order and item indexes kept, null title, due date */
+    CHECK(feed.has_todos);
+    CHECK_EQ(feed.n_todos, 3);
+    CHECK(strcmp(feed.todos[0].id, "note_demo_groceries") == 0 && feed.todos[0].pinned);
+    CHECK_EQ(feed.todos[0].n_items, 3);
+    CHECK_EQ(feed.todos[0].items[2].i, 3); /* not renumbered */
+    CHECK(strcmp(feed.todos[0].items[1].text, "Bergk\xc3\xa4se f\xc3\xbcr Freitag") == 0);
+    CHECK(feed.todos[0].items[1].done && !feed.todos[0].items[0].done);
+    CHECK_EQ(feed.todos[0].due_day, FEED_NO_DAY);
+    CHECK(strcmp(feed.todos[1].due, "2026-11-08") == 0);
+    CHECK(feed.todos[2].title == NULL);
     CHECK_EQ(feed.n_templates, 4);
     CHECK(strcmp(feed.templates[0], "Call") == 0);
     feed_free(&feed);
@@ -129,12 +140,27 @@ static void test_tolerance(void)
     CHECK_EQ(feed_parse(js, strlen(js), &feed), 0);
     CHECK_EQ(feed.version, 5u);
     CHECK(!feed.has_briefing);
+    CHECK(!feed.has_todos); /* no key: Odysseus not set up */
     CHECK_EQ(feed.n_conv, 1);
     CHECK_EQ(feed.conv[0].at, 0);
     CHECK_EQ(feed.n_actions, 1);
     CHECK_EQ(feed.actions[0].due_day, FEED_NO_DAY);
     CHECK(feed.actions[0].owner == NULL);
     CHECK_EQ(feed.n_events, 1);
+    feed_free(&feed);
+
+    /* todos: bad notes and items are skipped; an empty list is "set up, nothing there" */
+    const char *td = "{\"v\":1,\"version\":1,\"todos\":[{\"title\":\"no id\"},"
+                     "{\"id\":\"n1\",\"title\":\"\",\"items\":[{\"i\":-1,\"text\":\"neg\"},"
+                     "{\"text\":\"no index\"},{\"i\":5,\"text\":\"ok\"},{\"i\":6}]}]}";
+    CHECK_EQ(feed_parse(td, strlen(td), &feed), 0);
+    CHECK(feed.has_todos && feed.n_todos == 1);
+    CHECK(feed.todos[0].title == NULL && feed.todos[0].n_items == 1);
+    CHECK(feed.todos[0].items[0].i == 5 && !feed.todos[0].items[0].done);
+    feed_free(&feed);
+    const char *te = "{\"v\":1,\"version\":1,\"todos\":[]}";
+    CHECK_EQ(feed_parse(te, strlen(te), &feed), 0);
+    CHECK(feed.has_todos && feed.n_todos == 0);
     feed_free(&feed);
 
     /* an empty feed is valid */

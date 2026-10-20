@@ -88,7 +88,7 @@ to the servers.
 
 ```
 odysseus-sound /v1/digests, /v1/conversations, /v1/action-items ┐
-Odysseus /api/codex/calendar/events (ody_ token, calendar scopes) ┴→ this app → BLE → T5
+Odysseus /api/codex/calendar/events, /api/codex/todos (one ody_ token)  ┴→ this app → BLE → T5
 ```
 
 - **One BLE job at a time.** The watch drain is unchanged. By default the T5 is synced
@@ -117,11 +117,22 @@ Odysseus /api/codex/calendar/events (ody_ token, calendar scopes) ┴→ this ap
   routes) the feed has `"calendar": []` and `cal_add` / `cal_delete` stay queued on the T5
   ("not supported" in the status line) without blocking the other actions. If Odysseus
   can't be reached, the sync stops and retries like a server outage.
+- **Checklists** (plan §4.4, the same rules as the PC relay). The T5's Tasks tab shows the
+  owner's Odysseus checklists: `GET /api/codex/todos?format=json` with the same URL and
+  token. The feed's `todos` holds the checklists that have items, in Odysseus's order (at
+  most 20, 40 items each, every item with its original index `i`). A tap on the T5 queues
+  `todo_toggle`; the app reads the notes once per sync, finds the item (index `i` if its text
+  still starts with the T5's text, else the one item that does, else result 1), skips the
+  call if it is already in the wanted state, and otherwise sends `toggle_item`
+  (`exit_code` 0 is result 0, 1 is result 1). A hub without `format=json` or a token without
+  the Todos permission means "no checklists": the status line says why and the rest syncs.
+  Without Odysseus, `todo_toggle` stays queued.
 
 Setup:
 
-1. In Odysseus (Settings → API tokens), create a token with only **Calendar read** and
-   **Calendar write**. Copy the `ody_…` value; it is shown once.
+1. In Odysseus (Settings → API tokens), create a token with only **Calendar**,
+   **Calendar write**, **Todos** and **Todos write**. Copy the `ody_…` value; it is shown
+   once.
 2. In the relay's **Settings → PDA**: turn the sync on, enter the Odysseus URL (the same
    Tailscale host as the server, port 7000 on the owner's install, for example
    `http://myserver.<tailnet>.ts.net:7000`), the token, and the **calendar id** of your
@@ -129,8 +140,8 @@ Setup:
    without an id Odysseus picks your first calendar. To find the id, open
    `<Odysseus URL>/api/calendar/calendars` in a browser that is logged in to Odysseus and
    copy the `href` of the calendar whose `source` is `caldav`. Edit the event templates (one per
-   line; the T5 offers them in its "+" picker), and, for automatic sync, the interval. **Test Odysseus
-   calendar** lists the next 7 days. **Save**.
+   line; the T5 offers them in its "+" picker), and, for automatic sync, the interval. **Test Odysseus**
+   counts the events of the next 7 days and the checklists. **Save**.
 3. Open the pairing window on the T5's Status screen and let the relay find it; type the
    code shown on the T5 when Android asks.
 

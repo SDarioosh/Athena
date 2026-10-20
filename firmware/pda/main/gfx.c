@@ -197,9 +197,12 @@ typedef struct {
     int x, y, w, lh;
     uint8_t color;
     int skip, max, lines, drawn;
+    int widths[8]; /* of the drawn lines, for gfx_wrap_widths() */
     char line[LINE_MAX_BYTES + 4];
     size_t ll;
 } wrap_t;
+
+static wrap_t s_wrap; /* UI task only; keeps 400+ bytes off the stack */
 
 /* Emit the current line; more = text follows it (the last drawn line then ends in "…"). */
 static void wrap_emit(wrap_t *st, bool more)
@@ -207,6 +210,9 @@ static void wrap_emit(wrap_t *st, bool more)
     st->line[st->ll] = 0;
     if (st->lines >= st->skip && st->drawn < st->max) {
         const int y = st->y + st->drawn * st->lh;
+        if (st->drawn < 8) {
+            st->widths[st->drawn] = width_n(st->f, st->line, st->ll);
+        }
         if (st->drawn == st->max - 1 && more) {
             memcpy(st->line + st->ll, "…", 4); /* cut to fit by gfx_text_fit */
             gfx_text_fit(st->f, st->x, y, st->w, st->line, st->color);
@@ -227,13 +233,12 @@ int gfx_wrap(const EpdFont *f, int x, int y, int w, const char *s, uint8_t color
     }
     static char tl[4096]; /* UI task only */
     s = translit(f, s, tl, sizeof(tl));
-    static wrap_t st; /* UI task only; keeps 400+ bytes off the stack */
-    st = (wrap_t){.f = f, .x = x, .y = y, .w = w, .lh = gfx_line(f), .color = color,
+    s_wrap = (wrap_t){.f = f, .x = x, .y = y, .w = w, .lh = gfx_line(f), .color = color,
                   .skip = skip_lines, .max = max_lines};
     const char *p = s;
     while (*p) {
         if (*p == '\n') {
-            wrap_emit(&st, p[1] != 0);
+            wrap_emit(&s_wrap, p[1] != 0);
             p++;
             continue;
         }
@@ -246,25 +251,25 @@ int gfx_wrap(const EpdFont *f, int x, int y, int w, const char *s, uint8_t color
             we++;
         }
         const size_t wl = (size_t)(we - p);
-        const size_t need = st.ll + (st.ll ? 1 : 0) + wl;
+        const size_t need = s_wrap.ll + (s_wrap.ll ? 1 : 0) + wl;
         if (need <= LINE_MAX_BYTES) {
             char cand[LINE_MAX_BYTES + 1];
-            memcpy(cand, st.line, st.ll);
-            size_t cl = st.ll;
-            if (st.ll) {
+            memcpy(cand, s_wrap.line, s_wrap.ll);
+            size_t cl = s_wrap.ll;
+            if (s_wrap.ll) {
                 cand[cl++] = ' ';
             }
             memcpy(cand + cl, p, wl);
             cl += wl;
             if (width_n(f, cand, cl) <= w) {
-                memcpy(st.line, cand, cl);
-                st.ll = cl;
+                memcpy(s_wrap.line, cand, cl);
+                s_wrap.ll = cl;
                 p = we;
                 continue;
             }
         }
-        if (st.ll) {
-            wrap_emit(&st, true);
+        if (s_wrap.ll) {
+            wrap_emit(&s_wrap, true);
             continue; /* retry the word on an empty line */
         }
         /* a word wider than the line: break it */
@@ -278,17 +283,26 @@ int gfx_wrap(const EpdFont *f, int x, int y, int w, const char *s, uint8_t color
         if (n > LINE_MAX_BYTES) {
             n = LINE_MAX_BYTES;
         }
-        memcpy(st.line, p, n);
-        st.ll = n;
+        memcpy(s_wrap.line, p, n);
+        s_wrap.ll = n;
         p += n;
         if (*p && *p != ' ' && *p != '\n') {
-            wrap_emit(&st, true);
+            wrap_emit(&s_wrap, true);
         }
     }
-    if (st.ll) {
-        wrap_emit(&st, false);
+    if (s_wrap.ll) {
+        wrap_emit(&s_wrap, false);
     }
-    return st.lines;
+    return s_wrap.lines;
+}
+
+int gfx_wrap_widths(int *out, int max)
+{
+    const int n = s_wrap.drawn < max ? s_wrap.drawn : max;
+    for (int i = 0; i < n && i < 8; i++) {
+        out[i] = s_wrap.widths[i];
+    }
+    return n;
 }
 
 void gfx_strike(const EpdFont *f, int x, int y, int w)
