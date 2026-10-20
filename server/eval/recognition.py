@@ -55,7 +55,7 @@ from convo_server.config import Settings  # noqa: E402
 from convo_server.diarize import enroll_voice  # noqa: E402
 from convo_server.pipeline import Pipeline  # noqa: E402
 from convo_server.store import Store  # noqa: E402
-from convo_server.vad import make_vad  # noqa: E402
+from convo_server.vad import level_dbfs, make_vad  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data" / "ami"
@@ -180,6 +180,9 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
     full = audio_mod.decode((DATA / f"{meeting}.{args.mic}.wav").read_bytes(), "wav")
     start, end = args.offset, args.offset + args.seconds
     window = full[int(start * SAMPLE_RATE): int(end * SAMPLE_RATE)]
+    if args.level is not None:  # fixed gain, like a recorder's mic gain before its encoder
+        gain = 10 ** ((args.level - level_dbfs(window)) / 20)
+        window = np.clip(window * gain, -1.0, 1.0).astype(np.float32)
     turns = rttm_turns(meeting)
     ref = annotation(turns, start, end)
 
@@ -329,6 +332,9 @@ def main() -> None:
     r.add_argument("--opus", type=float, default=0.0, metavar="KBPS",
                    help="send chunks as Ogg/Opus at this bitrate (T-Watch: 16), else WAV")
     r.add_argument("--opus-complexity", type=int, default=1, help="T-Watch default: 1")
+    r.add_argument("--level", type=float, metavar="DBFS",
+                   help="scale the window so its speech level (95th pct frame RMS) is DBFS "
+                        "before encoding; the T-Watch's mic gain puts speech near -24")
     r.add_argument("--offset", type=float, default=300.0, help="window start (s)")
     r.add_argument("--seconds", type=float, default=300.0, help="window length (s)")
     r.add_argument("--whisper-url", help="whisper-server URL (else CONVO_WHISPER_*)")
