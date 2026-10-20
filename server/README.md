@@ -165,8 +165,9 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 
 Read API: `/v1/conversations`, `/v1/conversations/{id}`, `/v1/conversations/{id}/transcript`
 (`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items`, `/v1/digests/{date}`,
-`/v1/sessions`, `/v1/speakers`. Conversations carry a signed `link`, and action items and
-facts a `source_url`, of the form `<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`: an HTML
+`/v1/sessions`, `/v1/speakers`; `PATCH /v1/action-items/{id}` takes any of `status`,
+`kind`, `due_date`, `due_time` (`null` clears a date or time). Conversations carry a
+signed `link`, and action items and facts a `source_url`, of the form `<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`: an HTML
 transcript page that opens in a phone browser without the bearer token and jumps to that
 moment. Rotating `CONVO_INGEST_TOKEN` revokes all links.
 
@@ -180,7 +181,8 @@ source of truth, so the frontend can be swapped. Tools:
 | `search_transcripts(speaker, query, since, until)` | "what did X say (about Y) on/since DATE": actual lines, with links |
 | `search_conversations(query, person, since, until)` | conversations by topic / person / date |
 | `get_conversation(id)`, `get_transcript(id, start_seconds, end_seconds)` | details |
-| `list_action_items(status, person, since, until)`, `update_action_item(id, status)` | to-dos |
+| `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs (the hub files voice-note items into its calendar and to-dos from it) |
+| `update_action_item(item_id, status, kind, due_date, due_time)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears) or time (`HH:MM`, `none` clears); every argument but `item_id` is optional |
 | `list_facts(subject, query)`, `get_daily_digest(date)`, `list_people()` | memory |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
 | `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists) |
@@ -240,6 +242,16 @@ small local model does better on narrow questions):
    thirty-first", "tomorrow") the date is worked out in code (`convo_server/dates.py`)
    from the conversation date in `CONVO_TIMEZONE` ("by Friday" said on Wednesday
    2026-10-14 → 2026-10-16); the model's date is used only for vaguer deadlines.
+   Each item has a `kind`: `event` (meeting, appointment, call: "meeting with Jason on
+   Wednesday at 12 pm"), `reminder` ("remind me at 5 to call Mom") or `task` ("get the
+   proposal done on Wednesday"), plus `duration_minutes` and `location` for events if
+   said. Something repeating ("every Monday") becomes a task "Set up a repeating event:
+   …". The model returns the time as said; `resolve_time` in `dates.py` turns it into
+   `due_time` (HH:MM, `CONVO_TIMEZONE`): "12 pm"/"noon" → 12:00, "3:30 pm" → 15:30, "half
+   past two" → 14:30, "midnight" → 00:00; a bare hour 12 → 12:00, 1–6 → afternoon, 7–11 →
+   morning with `time_unclear` set (it could be the evening); "in the evening",
+   "tonight" decide. A time that can't be read leaves `due_time` empty with
+   `time_unclear`. A time without a date is today (tomorrow if it had already passed).
 4. **Facts**, then a **linking** call against related known facts (same subject or
    matching words): a repeat becomes another source of the known fact; a changed value
    replaces the older one (by conversation time, so re-summarizing an old conversation
@@ -248,7 +260,9 @@ small local model does better on narrow questions):
    with "said again" and "replaces:" lines that link every source transcript.
 
 A re-summary (e.g. after a speaker is renamed) keeps what was known about the old items:
-the status of action items, the other sources of a fact and which facts it replaced.
+the id, status and creation time of action items (and the kind, date and time if the user
+changed them with `update_action_item`), the other sources of a fact and which facts it
+replaced. Stable ids matter: Odysseus files voice-note items by id.
 
 ## Recognition eval
 
