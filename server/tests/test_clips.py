@@ -17,14 +17,15 @@ T0 = 1_760_000_000.0
 
 def test_window_zero_sends_each_padded_region_alone():
     ws = plan_windows([Span(1, 3), Span(8, 10)], 30, pad=0.25, max_seconds=0, max_gap=1)
-    assert ws == [Window(((0.75, 3.25),)), Window(((7.75, 10.25),))]
+    assert [w.parts for w in ws] == [((0.75, 3.25),), ((7.75, 10.25),)]
+    assert [w.speech for w in ws] == [w.parts for w in ws]
 
 
 def test_padding_stays_in_run_and_does_not_overlap_neighbours():
     ws = plan_windows([Span(0.2, 3), Span(4, 5), Span(9, 9.9)], 10, pad=1.0, max_seconds=0,
                       max_gap=1)
     # 0.2-3 and 4-5 padded by 1 s meet: one interval, the shared second not sent twice
-    assert ws == [Window(((0.0, 6.0),)), Window(((8.0, 10.0),))]
+    assert [w.parts for w in ws] == [((0.0, 6.0),), ((8.0, 10.0),)]
 
 
 def test_packing_cuts_long_gaps_and_respects_max_length():
@@ -32,10 +33,12 @@ def test_packing_cuts_long_gaps_and_respects_max_length():
     ws = plan_windows(regions, 30, pad=0.25, max_seconds=8, max_gap=1.0)
     assert all(w.duration <= 8 + 1e-9 for w in ws)
     # 0.75-3.25 and 7.75-10.25: 4.5 s gap shortened to 1 s, half on each side
-    assert ws[0] == Window(((0.75, 3.75), (7.25, 10.25)))
+    assert ws[0].parts == ((0.75, 3.75), (7.25, 10.25))
+    assert ws[0].speech == ((0.75, 3.25), (7.75, 10.25))
     assert ws[0].duration == pytest.approx(6.0)
     # 19.75-22.25 and 23.25-25.25: 1 s gap kept as is -> one contiguous slice
-    assert ws[1] == Window(((19.75, 25.25),))
+    assert ws[1].parts == ((19.75, 25.25),)
+    assert ws[1].speech == ((19.75, 22.25), (23.25, 25.25))
     # every padded region is in exactly one window
     covered = [p for w in ws for p in w.parts]
     assert covered == sorted(covered)
@@ -49,7 +52,11 @@ def test_long_region_gets_its_own_window():
 
 def test_gaps_kept_whole_with_large_max_gap():
     ws = plan_windows([Span(1, 3), Span(8, 10)], 30, pad=0.25, max_seconds=28, max_gap=99)
-    assert ws == [Window(((0.75, 10.25),))]
+    assert [w.parts for w in ws] == [((0.75, 10.25),)]
+    # a whisper segment stretched over the kept silence is trimmed to the speech
+    assert ws[0].clamp(0.9, 7.0) == (0.9, 3.25)
+    assert ws[0].clamp(2.0, 9.0) == (2.0, 9.0)
+    assert ws[0].clamp(4.0, 6.0) == (4.0, 6.0)  # only silence: left alone
 
 
 def test_to_run_maps_across_cuts():

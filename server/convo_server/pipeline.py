@@ -235,6 +235,7 @@ class Pipeline:
                 for p in (q for piece in got for q in w.split(piece)):
                     s = w.to_run(p.start)
                     e = max(s, w.to_run(max(p.end, p.start), end=True))
+                    s, e = w.clamp(s, e)
                     pieces.append((run_start + s, run_start + e, p.text,
                                    PieceRef(len(runs) - 1, s, e)))
                 if cfg.whisper_context_words > 0 and got:

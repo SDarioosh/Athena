@@ -25,6 +25,8 @@ from .vad import Span
 @dataclass(frozen=True)
 class Window:
     parts: tuple[tuple[float, float], ...]  # run-time slices (s), back to back in the clip
+    # the padded speech regions in it (run time); silence kept between them is not speech
+    speech: tuple[tuple[float, float], ...] = ()
 
     @property
     def duration(self) -> float:
@@ -45,6 +47,18 @@ class Window:
                 return a + min(t - off, length)
             off += length
         raise AssertionError("unreachable")
+
+    def clamp(self, start: float, end: float) -> tuple[float, float]:
+        """Trim a piece's run-time span to the speech regions it overlaps.
+
+        whisper stretches segment times over pauses; in a window those pauses are kept
+        silence between regions. A piece that overlaps no region is left as is.
+        """
+        hit = [(a, b) for a, b in self.speech if a < end and b > start]
+        if not hit:
+            return start, end
+        s, e = max(start, hit[0][0]), min(end, hit[-1][1])
+        return (s, e) if e > s else (start, end)
 
     def part_of(self, t: float) -> int:
         """Index of the part clip time ``t`` falls in."""
@@ -88,10 +102,11 @@ def plan_windows(regions: list[Span], run_seconds: float, *, pad: float, max_sec
         else:
             padded.append([a, b])
     if max_seconds <= 0:
-        return [Window(((a, b),)) for a, b in padded]
+        return [Window(((a, b),), ((a, b),)) for a, b in padded]
 
     windows: list[Window] = []
     parts: list[list[float]] = []
+    speech: list[tuple[float, float]] = []
     length = 0.0
     for a, b in padded:
         if parts:
@@ -104,11 +119,12 @@ def plan_windows(regions: list[Span], run_seconds: float, *, pad: float, max_sec
                     parts[-1][1] += kept / 2
                     parts.append([a - kept / 2, b])
                 length += kept + (b - a)
+                speech.append((a, b))
                 continue
-            windows.append(Window(tuple((x, y) for x, y in parts)))
-        parts, length = [[a, b]], b - a
+            windows.append(Window(tuple((x, y) for x, y in parts), tuple(speech)))
+        parts, speech, length = [[a, b]], [(a, b)], b - a
     if parts:
-        windows.append(Window(tuple((x, y) for x, y in parts)))
+        windows.append(Window(tuple((x, y) for x, y in parts), tuple(speech)))
     return windows
 
 
