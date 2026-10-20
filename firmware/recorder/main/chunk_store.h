@@ -64,6 +64,10 @@ bool chunk_store_get(uint32_t chunk_id, chunk_info_t *out);
 
 /* Reference-counted card access for reads/acks (mounts and powers the card). */
 esp_err_t chunk_store_media_open(void);
+/* Append to a file at the card's root (e.g. the power log), mounting it if needed; the
+ * header goes first into a new or empty file. Serialized with the queue's card access. */
+esp_err_t chunk_store_append_file(const char *name, const char *header, const void *data,
+                                  size_t len);
 void chunk_store_media_close(void);
 /* Read up to `len` bytes at `offset`. *got = 0 at the end of the file. ESP_ERR_NOT_FOUND
  * if the chunk isn't queued. Needs chunk_store_media_open(). */

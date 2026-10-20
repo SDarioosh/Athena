@@ -41,6 +41,7 @@
 #include "isotime.h"
 #include "mic.h"
 #include "nvs_flash.h"
+#include "power_log.h"
 #include "recorder.h"
 #include "reset_reason.h"
 #include "session_rec.h"
@@ -781,6 +782,41 @@ static void log_battery(void)
     }
 }
 
+/* One power-log sample: the battery (or `batt sim`) and what the watch is doing. */
+static void power_sample(ps_sample_t *out)
+{
+    board_battery_t b;
+    if (app_battery_read(&b, NULL) != ESP_OK) {
+        b = (board_battery_t){.percent = -1};
+    }
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    session_rec_state_t ss;
+    session_rec_get_state(&ss);
+    uint8_t f = 0;
+    f |= b.charging ? PS_CHARGING : 0;
+    f |= b.vbus ? PS_USB : 0;
+    f |= ss.running && ss.kind == SESSION_KIND_CONVERSATION ? PS_RECORDING : 0;
+    f |= ss.running && ss.kind == SESSION_KIND_NOTE ? PS_NOTE : 0;
+    f |= ble_sync_is_advertising() ? PS_BLE_ADV : 0;
+    f |= ble_sync_is_connected() ? PS_BLE_CONN : 0;
+    f |= ui_is_shown() ? PS_SCREEN : 0;
+    f |= board_rail_is_on(BOARD_RAIL_SD) ? PS_SD : 0;
+    *out = (ps_sample_t){
+        .epoch = isotime_is_plausible(tv.tv_sec) ? tv.tv_sec : 0,
+        .uptime_s = (uint32_t)(esp_timer_get_time() / 1000000),
+        .percent = (int16_t)b.percent,
+        .mv = (uint16_t)(b.millivolts > 0 ? b.millivolts : 0),
+        .flags = f,
+    };
+}
+
+/* The power log leaves the card alone while it records or a relay syncs. */
+static bool power_card_busy(void)
+{
+    return session_rec_running() || test_wav_running() || ble_sync_is_connected();
+}
+
 /* Low-battery guard: at the board's limit, end whatever records (its last chunk closes with
  * LAST as on a normal stop), buzz 3 times, and refuse new recordings until it recovers. */
 static void check_battery(void)
@@ -872,6 +908,10 @@ void app_main(void)
     /* One buzz: haptics work and the recorder starts unmuted. */
     board_haptic_pulse(1);
 
+    if (power_log_init(power_sample, power_card_busy) != ESP_OK) {
+        ESP_LOGW(TAG, "power log: no memory");
+    }
+
     /* A crash or a watchdog restart cut a conversation off: record again. A power cut,
      * brownout or reboot by hand doesn't (s_rec_resume is not kept, or not wanted). */
     const esp_reset_reason_t rr = esp_reset_reason();
@@ -896,6 +936,7 @@ void app_main(void)
         if (xQueueReceive(s_events, &ev, pdMS_TO_TICKS(1000)) == pdTRUE) {
             handle(&ev);
         }
+        power_log_poll();
         if (xTaskGetTickCount() - last_check >= pdMS_TO_TICKS(BATTERY_CHECK_PERIOD_MS)) {
             last_check = xTaskGetTickCount();
             check_battery();

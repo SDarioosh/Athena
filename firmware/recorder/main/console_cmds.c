@@ -17,6 +17,7 @@
 #include "esp_check.h"
 #include "esp_console.h"
 #include "esp_core_dump.h"
+#include "esp_pm.h"
 #include "esp_task_wdt.h"
 #include "esp_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -25,6 +26,7 @@
 #include "esp_rom_crc.h"
 #include "esp_system.h"
 #include "isotime.h"
+#include "power_log.h"
 #include "mic.h"
 #include "recorder.h"
 
@@ -310,6 +312,37 @@ static int cmd_get(int argc, char **argv)
     board_storage_unmount();
     printf("@@END %08" PRIx32 "%s\n", crc, ok ? "" : " READ_ERROR");
     return ok ? 0 : 1;
+}
+
+/* `power [log <minutes>|off | flush | locks]`: battery, state and drain now; the power log
+ * (power_log.h); `locks` lists the power-management locks (what keeps the CPU awake). */
+static int cmd_power(int argc, char **argv)
+{
+    if (argc == 1) {
+        power_log_print();
+        return 0;
+    }
+    if (strcmp(argv[1], "log") == 0 && argc == 3) {
+        const int min = strcmp(argv[2], "off") == 0 ? 0 : atoi(argv[2]);
+        const esp_err_t err = power_log_set_period(min);
+        if (min) {
+            printf("power log every %d min (%s)\n", min, esp_err_to_name(err));
+        } else {
+            printf("power log off (%s)\n", esp_err_to_name(err));
+        }
+        return err == ESP_OK ? 0 : 1;
+    }
+    if (strcmp(argv[1], "flush") == 0) {
+        const esp_err_t err = power_log_flush();
+        printf("power log written: %s\n", esp_err_to_name(err));
+        return err == ESP_OK ? 0 : 1;
+    }
+    if (strcmp(argv[1], "locks") == 0) {
+        esp_pm_dump_locks(stdout);
+        return 0;
+    }
+    printf("usage: power [log <minutes>|off | flush | locks]\n");
+    return 1;
 }
 
 /* `coredump [get|erase]`: the crash saved in the coredump partition. Without an argument,
@@ -605,6 +638,7 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "get", .help = "Send a card file (or q/<chunk>) over USB as base64 (tools/pull.py saves it)", .func = cmd_get},
     {.command = "sd", .help = "Power, mount and report the SD card, then power it off; `sd failwrite <n>` makes the next n chunk writes fail (test)", .func = cmd_sd},
     {.command = "reboot", .help = "Restart", .func = cmd_reboot},
+    {.command = "power", .help = "Battery, state, drain rate and the power log; `power log <min>|off`, `power flush`, `power locks`", .func = cmd_power},
     {.command = "coredump", .help = "The last crash: summary; `coredump get` sends the ELF (tools/pull.py --coredump), `coredump erase`", .func = cmd_coredump},
     {.command = "crash", .help = "`crash yes` (abort) / `crash wdt` (hang a watched task): crash on purpose to test the core dump, watchdog and resume", .func = cmd_crash},
 };

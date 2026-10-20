@@ -254,6 +254,11 @@ bool ble_sync_window_is_open(void)
     return open;
 }
 
+bool ble_sync_is_advertising(void)
+{
+    return ble_gap_adv_active() != 0;
+}
+
 bool ble_sync_is_connected(void)
 {
     taskENTER_CRITICAL(&s_lock);

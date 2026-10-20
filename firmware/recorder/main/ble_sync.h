@@ -53,6 +53,8 @@ void ble_sync_open_window(void);
 bool ble_sync_window_is_open(void);
 /* A relay is connected. Safe from any task. */
 bool ble_sync_is_connected(void);
+/* The radio is advertising (power log). */
+bool ble_sync_is_advertising(void);
 
 /* Something changed (chunk added/acked, recording or mute toggled, card in/out):
  * re-evaluate advertising and notify status if a relay is subscribed (at most 1/s).

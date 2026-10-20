@@ -232,6 +232,36 @@ bool chunk_store_get(uint32_t chunk_id, chunk_info_t *out)
     return found;
 }
 
+esp_err_t chunk_store_append_file(const char *name, const char *header, const void *data,
+                                  size_t len)
+{
+    lock();
+    const char *mp = NULL;
+    esp_err_t err = board_storage_mount(&mp);
+    if (err == ESP_OK) {
+        s_media_users++;
+        char path[64];
+        snprintf(path, sizeof(path), "%s/%s", mp, name);
+        FILE *f = fopen(path, "a");
+        if (!f) {
+            err = ESP_FAIL;
+        } else {
+            if (header && ftell(f) == 0) {
+                fputs(header, f);
+            }
+            if (fwrite(data, 1, len, f) != len) {
+                err = ESP_FAIL;
+            }
+            if (fclose(f) != 0) {
+                err = ESP_FAIL;
+            }
+        }
+        unmount_locked();
+    }
+    unlock();
+    return err;
+}
+
 esp_err_t chunk_store_media_open(void)
 {
     lock();
