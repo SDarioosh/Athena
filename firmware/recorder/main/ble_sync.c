@@ -17,6 +17,7 @@
 #include "board.h"
 #include "chunk_store.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -166,7 +167,7 @@ static uint8_t s_status_sent[BLE_PROTO_STATUS_LEN];
 static bool s_status_sent_valid;
 static int64_t s_status_sent_ms;
 static uint8_t s_frame[BLE_PROTO_FRAME_MAX];
-static char s_info[96];
+static char s_info[128];
 static struct {
     uint32_t connections, rejected, commands, frames, acked, retries, link_lost, host_resets,
         read_retries;
@@ -251,6 +252,16 @@ bool ble_sync_window_is_open(void)
     const bool open = window_open_locked();
     taskEXIT_CRITICAL(&s_lock);
     return open;
+}
+
+bool ble_sync_wants_relay(void)
+{
+    return s_adv_reason != BLE_ADV_NONE; /* one word, written by the BLE task */
+}
+
+bool ble_sync_is_advertising(void)
+{
+    return ble_gap_adv_active() != 0;
 }
 
 bool ble_sync_is_connected(void)
@@ -338,6 +349,7 @@ static int notify(uint32_t gen, uint16_t attr, const uint8_t *buf, size_t len)
 {
     const int64_t give_up = now_ms() + SEND_GIVE_UP_MS;
     int backoff = 1;
+    esp_task_wdt_reset(); /* one per frame while a READ streams */
     for (;;) {
         const uint16_t h = handle_for(gen);
         if (h == BLE_HS_CONN_HANDLE_NONE) {
@@ -581,10 +593,14 @@ static int ensure_media(void)
     return 0;
 }
 
+_Static_assert(BLE_ENTRY_LAST == CHUNK_FLAG_LAST && BLE_ENTRY_TIME_UNSET == CHUNK_FLAG_TIME_UNSET &&
+                   BLE_ENTRY_NOTE == CHUNK_FLAG_NOTE,
+               "ble_proto.h entry flags and chunk_store.h flags differ");
+
 static void to_entry(const chunk_info_t *c, ble_proto_entry_t *e)
 {
     e->chunk_id = c->chunk_id;
-    e->flags = c->flags & (BLE_ENTRY_LAST | BLE_ENTRY_TIME_UNSET);
+    e->flags = c->flags & (BLE_ENTRY_LAST | BLE_ENTRY_TIME_UNSET | BLE_ENTRY_NOTE);
     memcpy(e->session_id, c->session_id, sizeof(e->session_id));
     e->sequence = c->sequence;
     e->start_ms = c->start_ms;
@@ -811,12 +827,19 @@ static void handle_job(const job_t *job)
     }
 }
 
+/* Task watchdog: the task waits for jobs at most JOB_WAIT_MS and feeds it every round and
+ * while it streams (notify retries, READ frames), so a stuck card read or host call
+ * restarts the watch with a core dump and reset=task_wdt. */
+#define JOB_WAIT_MS 2000
+
 static void ble_task(void *arg)
 {
     (void)arg;
     job_t job;
+    esp_task_wdt_add(NULL);
     for (;;) {
-        if (xQueueReceive(s_jobs, &job, portMAX_DELAY) != pdTRUE) {
+        esp_task_wdt_reset();
+        if (xQueueReceive(s_jobs, &job, pdMS_TO_TICKS(JOB_WAIT_MS)) != pdTRUE) {
             continue;
         }
         handle_job(&job);
@@ -1224,8 +1247,12 @@ esp_err_t ble_sync_init(const ble_sync_hooks_t *hooks)
             *p = '-';
         }
     }
-    snprintf(s_info, sizeof(s_info), "proto=%d;device=%s;fw=%s;board=%s", BLE_PROTO_VERSION,
-             device, s_hooks.fw_version ? s_hooks.fw_version : "unknown", board_name());
+    int n = snprintf(s_info, sizeof(s_info), "proto=%d;device=%s;fw=%s;board=%s",
+                     BLE_PROTO_VERSION, device,
+                     s_hooks.fw_version ? s_hooks.fw_version : "unknown", board_name());
+    if (s_hooks.reset_reason && n > 0 && (size_t)n < sizeof(s_info)) {
+        snprintf(s_info + n, sizeof(s_info) - (size_t)n, ";reset=%s", s_hooks.reset_reason);
+    }
 
     s_jobs = xQueueCreate(JOB_QUEUE_LEN, sizeof(job_t));
     if (!s_jobs) {

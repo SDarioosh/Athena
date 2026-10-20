@@ -12,6 +12,7 @@ firmware-archive/
 # generated sdkconfig, build dirs or downloaded components
 firmware/**/build/
 firmware/**/build-*/
+/build-host/
 firmware/**/sdkconfig
 firmware/**/sdkconfig.old
 firmware/**/managed_components/

@@ -48,7 +48,8 @@ class HttpUploader(
         val body = multipart(boundary, chunk)
         val r = request("POST", "/v1/ingest/chunk", auth = true,
             body = body, contentType = "multipart/form-data; boundary=$boundary")
-        log.log(Level.INFO, "POST /v1/ingest/chunk session ${chunk.sessionId} seq ${chunk.sequence} " +
+        log.log(Level.INFO, "POST /v1/ingest/chunk session ${chunk.sessionId} seq ${chunk.sequence}" +
+            (if (chunk.kind != null) " kind ${chunk.kind}" else "") + " " +
             "(${chunk.audio.size} B) -> ${describe(r)}")
         return r
     }
@@ -74,6 +75,8 @@ class HttpUploader(
         field("sequence", c.sequence.toString())
         field("timestamp", Timestamps.iso(c.timestampMs))
         field("codec", "ogg")
+        // Omitted for ordinary chunks so their uploads stay byte-identical to before.
+        c.kind?.let { field("kind", it) }
         line("--$boundary")
         line("Content-Disposition: form-data; name=\"audio\"; filename=\"${c.sessionId}-${c.sequence}.opus\"")
         line("Content-Type: audio/ogg")

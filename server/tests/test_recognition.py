@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import numpy as np
+import pytest
 from conftest import tone
 from test_pipeline import ingest
 
@@ -262,3 +263,212 @@ def test_rename_everywhere_and_reassign_line(pipeline):
     assert seg.speaker == "Me" and seg.is_owner
     assert "already" in call(mcp, "reassign_line", line_id=line, name="Me")
     assert "No line #999" in call(mcp, "reassign_line", line_id=999, name="Me")
+
+
+def test_relabel_never_overwrites_a_name_a_person_set(pipeline):
+    from test_mcp import T0, call, process_two_speakers
+
+    from convo_server.mcp_server import build_mcp
+
+    store = pipeline.store
+    mcp = build_mcp(store, pipeline.settings)
+    for i in range(3):  # three recordings with the same unnamed voice
+        process_two_speakers(pipeline, session=f"s{i}", start=T0 + i * 3600)
+    convs = sorted(store.list_conversations(), key=lambda c: c["started_at"])
+    first = store.conversation_segments(convs[0]["id"])[1]
+    call(mcp, "reassign_line", line_id=first.id, name="Dan")  # the user: that line was Dan
+    owner_line = store.conversation_segments(convs[2]["id"])[0]
+    call(mcp, "reassign_line", line_id=owner_line.id, name="Eve")
+    out = call(mcp, "name_speaker", conversation_id=convs[1]["id"], speaker_label="Speaker 1",
+               name="Carol")
+    assert "matched 1 unnamed" in out  # s2's Speaker 1; s0 has no unnamed line left
+    speakers = [[s.speaker for s in store.conversation_segments(c["id"])] for c in convs]
+    assert speakers == [["Me", "Dan"], ["Me", "Carol"], ["Eve", "Carol"]]
+
+
+def test_rename_everywhere_refuses_an_unnamed_label_as_new_name(pipeline):
+    from test_mcp import call, process_two_speakers
+
+    from convo_server.mcp_server import build_mcp
+
+    mcp = build_mcp(pipeline.store, pipeline.settings)
+    process_two_speakers(pipeline)
+    out = call(mcp, "rename_speaker_everywhere", old_name="Me", new_name="Speaker 1")
+    assert "not a name" in out
+    assert {s.speaker for s in pipeline.store.session_segments("s1")} == {"Me", "Speaker 1"}
+    assert [s["name"] for s in pipeline.store.speakers()] == ["Me"]
+
+
+def test_pyannote_fallback_labels_dont_collide():
+    from conftest import ToneEmbedder
+
+    from convo_server.diarize import PieceRef
+    from convo_server.diarize_pyannote import PyannoteDiarizer
+
+    runs = [tone(300, 4), tone(900, 4)]
+
+    def segmenter(audio):  # pyannote hears nobody in the second run
+        return [(0.0, 4.0, "A")] if audio is runs[0] else []
+
+    d = PyannoteDiarizer(ToneEmbedder(), [], segmenter=segmenter)
+    labels, unnamed = d.diarize_runs(runs, [PieceRef(0, 0, 4), PieceRef(1, 0, 4)])
+    assert [x.name for x in labels] == ["Speaker 1", "Speaker 2"]
+    assert list(unnamed) == ["Speaker 1", "Speaker 2"]
+
+
+def test_one_line_speakers_join_the_closest_speaker():
+    from convo_server.diarize import absorb_singletons
+
+    a, b = unit(1, 0, 0), unit(0, 1, 0)
+    near_a = unit(1, 0.9, 0)  # one noisy piece, closer to a (0.74) than to b (0.67)
+    far = unit(0, 0, 1)  # someone else entirely
+    embs = np.stack([a, a, b, b, near_a, far])
+    cids = [0, 0, 1, 1, 2, 3]
+    assert absorb_singletons(embs, cids, 0.0) == cids  # off
+    assert absorb_singletons(embs, cids, 0.3) == [0, 0, 1, 1, 0, 2]
+    assert absorb_singletons(embs, cids, 0.8) == cids  # not similar enough
+    assert absorb_singletons(embs[:2], [0, 1], 0.3) == [0, 1]  # nothing big to join
+
+
+# ------------------------------------------------- eval/recognition.py (pure parts)
+def _recognition():
+    import importlib.util
+    import sys
+
+    if "recognition_eval" in sys.modules:
+        return sys.modules["recognition_eval"]
+    path = Path(__file__).resolve().parents[1] / "eval" / "recognition.py"
+    spec = importlib.util.spec_from_file_location("recognition_eval", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["recognition_eval"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_active_level_ignores_pauses_and_scaling_hits_the_target():
+    rec = _recognition()
+    from conftest import silence
+
+    # a full-scale sine is -3 dBFS RMS; pauses must not pull the active level down
+    x = np.concatenate([tone(300, 2, amp=0.1), silence(3), tone(300, 2, amp=0.1)])
+    assert abs(rec.active_level_dbfs(x) - (20 * np.log10(0.1) - 3.01)) < 0.1
+    assert rec.active_level_dbfs(silence(1)) == float("-inf")
+    mask = np.zeros(x.size, bool)
+    mask[: 2 * 16000] = True
+    y = rec.scale_to_level(x, -30.0, mask)
+    assert abs(rec.active_level_dbfs(y[mask]) + 30.0) < 0.05
+    # two tracks at very different levels end up at the same level
+    a, b = rec.scale_to_level(tone(200, 2, 0.5), -26), rec.scale_to_level(tone(500, 2, 0.01), -26)
+    assert abs(rec.active_level_dbfs(a) - rec.active_level_dbfs(b)) < 0.05
+
+
+def test_fixed_device_gain_puts_the_owner_at_minus_24_and_never_clips():
+    rec = _recognition()
+    owner = tone(300, 2, amp=0.01)  # about -43 dBFS
+    out, gain_db = rec.device_gain(owner, rec.active_level_dbfs(owner))
+    assert abs(rec.active_level_dbfs(out) + 24.0) < 0.1 and 18 < gain_db < 20
+    # the same fixed gain on a much louder burst: the limiter holds it under -1 dBFS
+    loud = np.concatenate([owner, tone(300, 1, amp=0.5), owner])
+    out, _ = rec.device_gain(loud, rec.active_level_dbfs(owner))
+    assert np.max(np.abs(out)) <= 10 ** (-1 / 20) + 1e-4
+    assert abs(rec.active_level_dbfs(out[: owner.size]) + 24.0) < 0.1  # before the burst
+    assert rec.limiter(owner) is not owner and np.allclose(rec.limiter(owner), owner)
+
+
+def test_owner_and_others_wer_split():
+    pytest.importorskip("jiwer")
+    rec = _recognition()
+    turns = [(0.0, 2.0, "OWN"), (2.0, 4.0, "B"), (4.0, 6.0, "C")]
+    ref = {"OWN": [(0.1, 0.5, "Hello"), (0.8, 1.2, "there.")],
+           "B": [(2.2, 2.6, "how"), (2.9, 3.2, "are"), (3.5, 3.9, "you?"),
+                 (3.0, 3.1, "um")],  # a filler: not a word for WER
+           "C": [(4.2, 4.6, "fine")]}
+    # one hypothesis segment spans the owner and B; B's "are" is misheard as "art"
+    segs = [(0.0, 4.0, "Me", "Hello there, how art you?"), (4.1, 5.5, "Speaker 1", "fine")]
+    words = rec.assign_words(segs, turns, ref_words=ref)
+    assert words == [("OWN", "hello"), ("OWN", "there"), ("B", "how"), ("B", "art"),
+                     ("B", "you"), ("C", "fine")]
+    out = rec.split_wer(ref, words, "OWN")
+    assert out["wer_owner"] == 0 and out["owner_ref_words"] == 2
+    assert out["others_ref_words"] == 4 and out["wer_others"] == 0.25
+    # the window starts at 100 s: segments are relative to it, turns absolute
+    moved = [(a + 100, b + 100, s) for a, b, s in turns]
+    moved_ref = {k: [(a + 100, b + 100, w) for a, b, w in v] for k, v in ref.items()}
+    assert rec.assign_words(segs, moved, 100.0, moved_ref) == words
+    # an inserted word counts for the speaker talking then; a dropped one for its speaker
+    out = rec.split_wer(ref, [("OWN", "yeah"), *words[:-1]], "OWN")  # + yeah, - fine
+    assert (out["owner_errors"], out["others_errors"]) == (1, 2)
+    # someone's "okay" inside another speaker's long turn goes to whoever said it
+    long_turns = [(0.0, 6.0, "B"), (2.0, 2.6, "OWN")]
+    ref2 = {"B": [(0.2, 1.8, "so the remote"), (3.0, 5.8, "needs a big button")],
+            "OWN": [(2.0, 2.6, "okay")]}
+    w2 = rec.assign_words([(0.0, 6.0, "x", "so the remote okay needs a big button")],
+                          long_turns, ref_words=ref2)
+    assert ("OWN", "okay") in w2
+    assert rec.split_wer(ref2, w2, "OWN")["wer_owner"] == 0
+    # nothing said by the owner: no owner WER, the owner's words count as insertions
+    out = rec.split_wer({"B": ref["B"]}, words, "OWN")
+    assert out["wer_owner"] is None and out["owner_errors"] == 2
+
+
+def test_missed_speech_per_group():
+    rec = _recognition()
+    turns = [(10.0, 14.0, "OWN"), (14.0, 18.0, "B"), (18.0, 20.0, "C")]
+    segs = [(0.0, 4.0, "Me", "x"), (4.0, 6.0, "Speaker 1", "y")]  # window starts at 10
+    out = rec.missed_by_group(turns, segs, "OWN", 10.0, 20.0)
+    assert out["missed_owner"] == 0.0
+    assert abs(out["others_speech_s"] - 6.0) < 1e-9 and abs(out["missed_others"] - 4 / 6) < 1e-9
+
+
+def test_speech_masks_separate_owner_and_others():
+    rec = _recognition()
+    turns = [(0.0, 1.0, "OWN"), (0.5, 2.0, "B")]  # 0.5-1.0 is overlap
+    m = rec.speech_masks(turns, "OWN", 3 * 16000)
+    assert m["owner"].sum() == 8000 and m["others"].sum() == 16000
+    assert m["speech"].sum() == 32000 and m["solo:B"].sum() == 16000
+
+
+def test_gate_keeps_only_the_speakers_turns():
+    rec = _recognition()
+    x = np.ones(10 * 16000, np.float32)
+    y = rec.gate_to_turns(x, [(2.0, 3.0, "A"), (6.0, 7.0, "B")], "A", pad=0.25, ramp=0.02)
+    assert y[int(2.5 * 16000)] == 1.0 and y[int(1.8 * 16000)] == 1.0  # turn and pad
+    assert y[int(1.5 * 16000)] == 0.0 and y[int(6.5 * 16000)] == 0.0  # outside, B's turn
+    edge = y[int(1.75 * 16000) - 160: int(1.75 * 16000) + 160]
+    assert np.all(np.diff(edge) >= 0) and 0.4 < edge[160] < 0.6  # a ramp, not a click
+
+
+def test_sim_placement_is_deterministic_and_inside_the_room():
+    rec = _recognition()
+    mic = np.asarray(rec.SIM_MIC)
+    for d in (1.0, 2.0, 3.0):
+        owner, others = rec.place_sources(3, d)
+        owner2, others2 = rec.place_sources(3, d)
+        assert np.array_equal(owner, owner2)
+        assert all(np.array_equal(a, b) for a, b in zip(others, others2, strict=True))
+        assert abs(np.linalg.norm(owner - mic) - 0.2) < 1e-9
+        for p in others:
+            assert abs(np.linalg.norm(p - mic) - d) < 1e-6
+            assert np.all(p >= 0.3) and np.all(p <= np.asarray(rec.SIM_ROOM) - 0.3)
+        assert len({tuple(np.round(p, 6)) for p in others}) == 3  # spread, not stacked
+    other_seed = rec.place_sources(3, 2.0, seed=1)[1]
+    assert any(not np.array_equal(a, b)
+               for a, b in zip(other_seed, rec.place_sources(3, 2.0)[1], strict=True))
+    assert rec.place_sources(0, 2.0)[1] == []
+
+
+def test_opus_round_trip_keeps_length():
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg") or b"libopus" not in subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"], capture_output=True).stdout:
+        pytest.skip("ffmpeg with libopus not installed")
+    rec = _recognition()
+    rng = np.random.default_rng(0)
+    x = (tone(440, 1.5, 0.2) + 0.01 * rng.standard_normal(24000)).astype(np.float32)
+    y = rec.opus_roundtrip(x, 16)
+    assert y.dtype == np.float32 and y.size == x.size and np.all(np.isfinite(y))
+    # still the same signal (aligned, no level change worth mentioning)
+    assert np.corrcoef(x[1600:-1600], y[1600:-1600])[0, 1] > 0.9
+    assert abs(rec.active_level_dbfs(y) - rec.active_level_dbfs(x)) < 1.5

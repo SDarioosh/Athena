@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -177,6 +178,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
 
 _PLACEHOLDER_SPEAKER = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
 
+# Session kinds (sessions.kind). A voice note's conversation also gets conversations.kind
+# NOTE; ordinary conversations get the kind the summary triage picks.
+CONVERSATION = "conversation"
+NOTE = "note"
+SESSION_KINDS = (CONVERSATION, NOTE)
+
 
 class DuplicateChunk(Exception):
     pass
@@ -227,6 +234,10 @@ class Store:
             self._add_column("facts", "status", "TEXT NOT NULL DEFAULT 'current'")
             self._add_column("facts", "superseded_by", "INTEGER")
             self._conn.execute("PRAGMA user_version = 4")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 5:
+            # voice notes: a session is a conversation recording or a voice note
+            self._add_column("sessions", "kind", f"TEXT NOT NULL DEFAULT '{CONVERSATION}'")
+            self._conn.execute("PRAGMA user_version = 5")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -272,11 +283,13 @@ class Store:
         audio_path: str | None,
         speech: list[tuple[float, float]],
         now: float | None = None,
+        kind: str = CONVERSATION,
     ) -> dict[str, Any]:
         """Record a chunk and update the session's silence bookkeeping.
 
         Returns the updated session row. Raises DuplicateChunk on a repeated
-        (session, sequence) so device retries are idempotent.
+        (session, sequence) so device retries are idempotent, and ValueError if the
+        session belongs to another device or is of another ``kind``.
         """
         now = time.time() if now is None else now
         end = started_at + duration
@@ -286,11 +299,14 @@ class Store:
             if sess is None:
                 c.execute(
                     "INSERT INTO sessions (id, device, started_at, last_chunk_at, last_speech_at,"
-                    " received_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    (session_id, device, started_at, end, last_speech, now),
+                    " received_at, kind) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (session_id, device, started_at, end, last_speech, now, kind),
                 )
             elif sess["device"] != device:
                 raise ValueError("session_id already belongs to another device")
+            elif sess["kind"] != kind:
+                raise ValueError(f"session {session_id} is a {sess['kind']} session, "
+                                 f"not {kind}")
             try:
                 c.execute(
                     "INSERT INTO chunks (session_id, sequence, started_at, duration, codec,"
@@ -412,26 +428,42 @@ class Store:
     # ----------------------------------------------------------- conversations
     def overlapping_conversations(self, device: str, start: float, end: float,
                                   gap: float) -> list[dict[str, Any]]:
-        """Conversations on ``device`` within ``gap`` seconds of [start, end]."""
+        """Conversations on ``device`` within ``gap`` seconds of [start, end].
+
+        Voice notes are left out: they are never joined with anything.
+        """
         return self._q(
             "SELECT * FROM conversations WHERE device = ? AND ended_at >= ? AND started_at <= ?"
-            " ORDER BY started_at", (device, start - gap, end + gap))
+            " AND kind IS NOT ? ORDER BY started_at", (device, start - gap, end + gap, NOTE))
+
+    def session_conversations(self, session_id: str) -> list[str]:
+        """Ids of the conversations holding segments of ``session_id``, oldest first."""
+        return [r["conversation_id"] for r in self._q(
+            "SELECT conversation_id, MIN(started_at) AS first FROM segments"
+            " WHERE session_id = ? AND conversation_id IS NOT NULL"
+            " GROUP BY conversation_id ORDER BY first", (session_id,))]
 
     def save_conversation(self, conv_id: str | None, device: str,
-                          segment_ids: list[int], absorb: Iterable[str] = ()) -> str:
-        """Create/extend a conversation from segments; ``absorb`` ids are merged into it."""
+                          segment_ids: list[int], absorb: Iterable[str] = (),
+                          kind: str | None = None) -> str:
+        """Create/extend a conversation from segments; ``absorb`` ids are merged into it.
+
+        ``kind`` is set on a new conversation (voice notes: NOTE); an existing one keeps
+        its kind.
+        """
         conv_id = conv_id or uuid.uuid4().hex
         now = time.time()
         with self.tx() as c:
             c.execute(
-                "INSERT INTO conversations (id, device, started_at, ended_at, updated_at)"
-                " VALUES (?, ?, 0, 0, ?) ON CONFLICT(id) DO UPDATE SET status = 'pending',"
-                " updated_at = excluded.updated_at", (conv_id, device, now))
+                "INSERT INTO conversations (id, device, started_at, ended_at, updated_at, kind)"
+                " VALUES (?, ?, 0, 0, ?, ?) ON CONFLICT(id) DO UPDATE SET status = 'pending',"
+                " updated_at = excluded.updated_at", (conv_id, device, now, kind))
             for other in absorb:
                 if other == conv_id:
                     continue
                 c.execute("UPDATE segments SET conversation_id = ? WHERE conversation_id = ?",
                           (conv_id, other))
+                _move_knowledge(c, other, conv_id)
                 _delete_conversation(c, other)
             c.executemany("UPDATE segments SET conversation_id = ? WHERE id = ?",
                           [(conv_id, i) for i in segment_ids])
@@ -445,7 +477,9 @@ class Store:
     def save_summary(self, conv_id: str, summary: dict[str, Any]) -> list[int]:
         """Store structured LLM output and refresh the FTS index for the conversation.
 
-        Returns the ids of the new facts (for ``link_facts``).
+        A re-summary (e.g. after a speaker was renamed) keeps what is known about the
+        old items: action-item status, fact links and other conversations' sources.
+        Returns the ids of the new facts that still need ``link_facts``.
         """
         conv = self.get_conversation(conv_id)
         if conv is None:
@@ -459,6 +493,7 @@ class Store:
                 (summary["title"], summary["summary"], json.dumps(summary["key_points"]),
                  json.dumps(summary["topics"]), json.dumps(summary["people"]),
                  summary.get("kind"), time.time(), conv_id))
+            before = _knowledge(c, conv_id)
             self._clear_knowledge(c, conv_id)
             for item in summary["action_items"]:
                 cur = c.execute(
@@ -469,14 +504,9 @@ class Store:
                 c.execute("INSERT INTO search_fts VALUES ('action_item', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id, item["text"]))
             for fact in summary["facts"]:
-                cur = c.execute(
-                    "INSERT INTO facts (conversation_id, subject, fact, source_at)"
-                    " VALUES (?, ?, ?, ?)",
-                    (conv_id, fact.get("subject"), fact["fact"], fact.get("source_at")))
-                fact_ids.append(int(cur.lastrowid or 0))
-                c.execute("INSERT INTO search_fts VALUES ('fact', ?, ?, ?)",
-                          (str(cur.lastrowid), conv_id,
-                           f"{fact.get('subject') or ''}: {fact['fact']}"))
+                fact_ids.append(_insert_fact(c, conv_id, fact.get("subject"), fact["fact"],
+                                             fact.get("source_at")))
+            fact_ids = _carry_over(c, conv_id, before, fact_ids)
             c.executemany("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
                           [(conv_id, p) for p in summary["people"]])
             body = "\n".join([summary["title"], summary["summary"], *summary["key_points"],
@@ -498,7 +528,9 @@ class Store:
                 " summary = NULL, key_points = '[]', topics = '[]', people = '[]', kind = ?,"
                 " discard_reason = ?, updated_at = ? WHERE id = ?",
                 (kind, reason, time.time(), conv_id))
+            before = _knowledge(c, conv_id)
             self._clear_knowledge(c, conv_id)
+            _carry_over(c, conv_id, before, [])
             self._index_transcript(c, conv_id)
 
     def _clear_knowledge(self, c: sqlite3.Connection, conv_id: str) -> None:
@@ -600,7 +632,8 @@ class Store:
         Without a query, lines come back in chronological order.
         """
         cols = ("s.id, s.conversation_id, s.started_at, s.ended_at, s.speaker, s.is_owner,"
-                " s.text, c.title AS conversation_title, c.started_at AS conversation_at")
+                " s.text, c.title AS conversation_title, c.started_at AS conversation_at,"
+                " c.kind AS conversation_kind")
         where = ["s.conversation_id IS NOT NULL"]
         params: list[Any] = []
         if speaker:
@@ -792,9 +825,17 @@ class Store:
         return row
 
     def list_conversations(self, *, since: float | None = None, until: float | None = None,
-                           person: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+                           person: str | None = None, kind: str | None = None,
+                           limit: int = 50) -> list[dict[str, Any]]:
+        """Newest first. ``kind``: NOTE = only voice notes, CONVERSATION = everything else."""
         sql = "SELECT * FROM conversations WHERE 1=1"
         params: list[Any] = []
+        if kind == NOTE:
+            sql += " AND kind = ?"
+            params.append(NOTE)
+        elif kind == CONVERSATION:
+            sql += " AND kind IS NOT ?"
+            params.append(NOTE)
         if since is not None:
             sql += " AND ended_at >= ?"
             params.append(since)
@@ -825,7 +866,8 @@ class Store:
             " ORDER BY updated_at, started_at", (before,))]
 
     def list_action_items(self, status: str | None = "open") -> list[dict[str, Any]]:
-        sql = ("SELECT a.*, c.title AS conversation_title, c.started_at AS conversation_at"
+        sql = ("SELECT a.*, c.title AS conversation_title, c.started_at AS conversation_at,"
+               " c.kind AS conversation_kind"
                " FROM action_items a JOIN conversations c ON c.id = a.conversation_id")
         params: tuple[Any, ...] = ()
         if status:
@@ -978,8 +1020,30 @@ def _prune_candidates(c: sqlite3.Connection, sessions: Iterable[str]) -> None:
 
 
 def _delete_conversation(c: sqlite3.Connection, conv_id: str) -> None:
+    # its facts go with it (cascade): facts they had replaced become current again
+    c.execute("UPDATE facts SET status = 'current', superseded_by = NULL"
+              " WHERE superseded_by IN (SELECT id FROM facts WHERE conversation_id = ?)",
+              (conv_id,))
     c.execute("DELETE FROM search_fts WHERE conversation_id = ?", (conv_id,))
     c.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+
+
+def _move_knowledge(c: sqlite3.Connection, src: str, dst: str) -> None:
+    """Give conversation ``src``'s action items, facts and links to ``dst`` (``src`` is
+    being merged into it), so the merged conversation's re-summary can carry them over
+    (closed action items stay closed, facts keep their links)."""
+    for table in ("action_items", "facts", "embeddings"):
+        c.execute(f"UPDATE {table} SET conversation_id = ? WHERE conversation_id = ?",
+                  (dst, src))
+    c.execute("UPDATE OR IGNORE fact_sources SET conversation_id = ? WHERE conversation_id = ?",
+              (dst, src))
+    # a fact can't be "said again" in the conversation that now owns it
+    c.execute("DELETE FROM fact_sources WHERE conversation_id = ? AND fact_id IN"
+              " (SELECT id FROM facts WHERE conversation_id = ?)", (dst, dst))
+    c.execute("INSERT OR IGNORE INTO conversation_people SELECT ?, name"
+              " FROM conversation_people WHERE conversation_id = ?", (dst, src))
+    c.execute("UPDATE search_fts SET conversation_id = ? WHERE conversation_id = ?"
+              " AND kind IN ('fact', 'action_item')", (dst, src))
 
 
 def _segment(r: dict[str, Any]) -> Segment:
@@ -987,6 +1051,117 @@ def _segment(r: dict[str, Any]) -> Segment:
                    speaker=r["speaker"], is_owner=bool(r["is_owner"]), id=r["id"],
                    session_id=r["session_id"], device=r["device"],
                    conversation_id=r["conversation_id"])
+
+
+# ------------------------------------------------------------ re-summary carry-over
+# A re-summary replaces a conversation's action items and facts. An old and a new item
+# are the same when the text is the same, or when they come from the same transcript line
+# (source_at within _SAME_LINE seconds) and read alike ("Speaker 1 is vegetarian" ->
+# "Alice is vegetarian" after a rename).
+_SAME_LINE = 1.0
+_ALIKE = 0.6
+
+
+def _norm(text: str | None) -> str:
+    return " ".join(re.sub(r"[^\w ]+", " ", (text or "").lower()).split())
+
+
+def _same(text_a: str | None, at_a: float | None, text_b: str | None,
+          at_b: float | None) -> bool:
+    a, b = _norm(text_a), _norm(text_b)
+    if a and a == b:
+        return True
+    return (at_a is not None and at_b is not None and abs(at_a - at_b) <= _SAME_LINE
+            and SequenceMatcher(None, a, b).ratio() >= _ALIKE)
+
+
+def _insert_fact(c: sqlite3.Connection, conv_id: str, subject: str | None, fact: str,
+                 source_at: float | None) -> int:
+    cur = c.execute("INSERT INTO facts (conversation_id, subject, fact, source_at)"
+                    " VALUES (?, ?, ?, ?)", (conv_id, subject, fact, source_at))
+    c.execute("INSERT INTO search_fts VALUES ('fact', ?, ?, ?)",
+              (str(cur.lastrowid), conv_id, f"{subject or ''}: {fact}"))
+    return int(cur.lastrowid or 0)
+
+
+def _knowledge(c: sqlite3.Connection, conv_id: str) -> dict[str, Any]:
+    """What a re-summary must not lose: closed action items and the facts' links."""
+    facts = [dict(r) for r in c.execute(
+        "SELECT id, subject, fact, source_at, status, superseded_by FROM facts"
+        " WHERE conversation_id = ? ORDER BY id", (conv_id,))]
+    for f in facts:
+        f["sources"] = [dict(r) for r in c.execute(
+            "SELECT s.conversation_id, s.source_at FROM fact_sources s JOIN conversations v"
+            " ON v.id = s.conversation_id WHERE s.fact_id = ? ORDER BY v.started_at",
+            (f["id"],))]
+        f["replaced"] = [r["id"] for r in c.execute(
+            "SELECT id FROM facts WHERE superseded_by = ?", (f["id"],))]
+    return {
+        "items": [dict(r) for r in c.execute(
+            "SELECT text, source_at, status FROM action_items WHERE conversation_id = ?"
+            " AND status != 'open'", (conv_id,))],
+        "facts": facts,
+        # facts of other conversations that this one said again ("same" links)
+        "said_again": [dict(r) for r in c.execute(
+            "SELECT s.fact_id, s.source_at, f.fact FROM fact_sources s JOIN facts f"
+            " ON f.id = s.fact_id WHERE s.conversation_id = ?", (conv_id,))],
+    }
+
+
+def _carry_over(c: sqlite3.Connection, conv_id: str, before: dict[str, Any],
+                fact_ids: list[int]) -> list[int]:
+    """Re-apply ``before`` (from ``_knowledge``) to the new items; returns the new fact
+    ids that are still unlinked."""
+    items = [dict(r) for r in c.execute(
+        "SELECT id, text, source_at FROM action_items WHERE conversation_id = ?", (conv_id,))]
+    used: set[int] = set()
+    for old in before["items"]:
+        hit = next((i for i in items if i["id"] not in used
+                    and _same(i["text"], i["source_at"], old["text"], old["source_at"])), None)
+        if hit:
+            used.add(hit["id"])
+            c.execute("UPDATE action_items SET status = ? WHERE id = ?",
+                      (old["status"], hit["id"]))
+
+    new = {r["id"]: dict(r) for r in c.execute(
+        "SELECT id, subject, fact, source_at FROM facts WHERE id IN"
+        f" ({','.join('?' * len(fact_ids))})", fact_ids)} if fact_ids else {}
+    fresh = [i for i in fact_ids if i in new]
+
+    def match(fact: str, source_at: float | None) -> int | None:
+        exact = next((i for i in fresh if _norm(new[i]["fact"]) == _norm(fact)), None)
+        return exact or next((i for i in fresh if _same(new[i]["fact"], new[i]["source_at"],
+                                                         fact, source_at)), None)
+
+    for old in before["facts"]:
+        target = match(old["fact"], old["source_at"])
+        sources = old["sources"]
+        if target is not None:
+            fresh.remove(target)
+        elif sources:  # said elsewhere too: keep it, owned by the first other source
+            first, sources = sources[0], sources[1:]
+            target = _insert_fact(c, first["conversation_id"], old["subject"], old["fact"],
+                                  first["source_at"])
+        else:
+            continue
+        if old["status"] == "superseded" and old["superseded_by"] and c.execute(
+                "SELECT 1 FROM facts WHERE id = ?", (old["superseded_by"],)).fetchone():
+            c.execute("UPDATE facts SET status = 'superseded', superseded_by = ? WHERE id = ?",
+                      (old["superseded_by"], target))
+        c.executemany("INSERT OR IGNORE INTO fact_sources VALUES (?, ?, ?)",
+                      [(target, s["conversation_id"], s["source_at"]) for s in sources])
+        if old["replaced"]:
+            c.execute("UPDATE facts SET status = 'superseded', superseded_by = ? WHERE id IN"
+                      f" ({','.join('?' * len(old['replaced']))})", (target, *old["replaced"]))
+    for said in before["said_again"]:
+        hit = match(said["fact"], said["source_at"])
+        if hit is not None:  # the same statement again: stays a source, not a new fact
+            fresh.remove(hit)
+            c.execute("INSERT OR IGNORE INTO fact_sources VALUES (?, ?, ?)",
+                      (said["fact_id"], conv_id, new[hit]["source_at"]))
+            c.execute("DELETE FROM search_fts WHERE kind = 'fact' AND ref_id = ?", (str(hit),))
+            c.execute("DELETE FROM facts WHERE id = ?", (hit,))
+    return fresh
 
 
 def _fts_query(text: str) -> str:

@@ -2,6 +2,7 @@ package org.barvis.sound.relay.relay
 
 import kotlinx.coroutines.runBlocking
 import org.barvis.sound.relay.protocol.Command
+import org.barvis.sound.relay.protocol.WatchGatt
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -54,13 +55,25 @@ class DrainSessionTest {
         assertEquals(listOf(0L, b.chunkId, c.chunkId), lists)
     }
 
+    @Test fun noteChunksUploadWithKindNote() {
+        watch.add(s1, 0)
+        watch.add(s1, 1, last = true)
+        watch.add(s2, 0, note = true)
+        watch.add(s2, 1, note = true, last = true)
+        assertEquals(DrainOutcome.Done(uploaded = 4, skipped = 0), run())
+        assertTrue(watch.chunks.isEmpty())
+        val kinds = server.uploads.associate { "${it.sessionId}/${it.sequence}" to it.kind }
+        assertEquals(mapOf("$s1/0" to null, "$s1/1" to null, "$s2/0" to "note", "$s2/1" to "note"), kinds)
+        assertEquals(listOf(s1, s2), server.ends)
+    }
+
     @Test fun uploadsMatchWatchFilesAndFramesFitMtu() {
         val e = watch.add(s1, 0, size = 60_000)
         val data = watch.dataOf(e.chunkId)
         run()
         assertArrayEquals(data, server.uploads.single().audio)
-        assertTrue(watch.dataFrameSizes.all { it <= 517 - 3 })
-        assertEquals((60_000 + 504) / 505, watch.dataFrameSizes.size) // 505-byte payloads at MTU 517
+        assertTrue(watch.dataFrameSizes.all { it <= WatchGatt.MAX_NOTIFICATION })
+        assertEquals((60_000 + 502) / 503, watch.dataFrameSizes.size) // 503-byte payloads at MTU 517
     }
 
     @Test fun duplicateCountsAsOk() {
@@ -169,7 +182,7 @@ class DrainSessionTest {
         assertEquals(DrainOutcome.Done(1, 0), run())
         val reads = watch.commands.filterIsInstance<Command.Read>()
         assertEquals(0L, reads[0].offset)
-        assertEquals(5050L, reads[1].offset) // 10 full 505-byte frames arrived before the drop
+        assertEquals(5030L, reads[1].offset) // 10 full 503-byte frames arrived before the drop
         assertArrayEquals(original, server.uploads.single().audio)
     }
 
@@ -215,7 +228,7 @@ class DrainSessionTest {
         assertTrue(server.uploads.isEmpty())
         watch.reconnect()
         assertEquals(DrainOutcome.Done(1, 0), run())
-        assertEquals(2020L, watch.commands.filterIsInstance<Command.Read>().last().offset)
+        assertEquals(2012L, watch.commands.filterIsInstance<Command.Read>().last().offset) // 4 x 503
         assertArrayEquals(original, server.uploads.single().audio)
     }
 
@@ -227,7 +240,7 @@ class DrainSessionTest {
         watch.chunks.getValue(e.chunkId).fixableOnTime = true // converted on the next TIME
         watch.reconnect()
         assertEquals(DrainOutcome.Done(1, 0), run())
-        assertEquals(1010L, watch.commands.filterIsInstance<Command.Read>().last().offset)
+        assertEquals(1006L, watch.commands.filterIsInstance<Command.Read>().last().offset) // 2 x 503
         assertEquals(now - 600_000 + 1000, server.uploads.single().timestampMs)
     }
 
