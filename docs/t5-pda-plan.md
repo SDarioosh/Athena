@@ -484,7 +484,8 @@ conversations (`actions`) move into the conversation's detail screen (§5).
   "updated_at", "items": [{"text", "done"}], "content"}]}`: the token owner's notes that
   aren't archived, without calendar-reminder notes, pinned first, then the most recently
   updated (the order the website uses). `items` is `[]` for a plain note, `content` is
-  `null` for a checklist. A hub without this option answers text, and a token without
+  `null` for a checklist. Notes of type `checklist`, `todo` (what the hub's Module Action
+  Items task files) and `goal` all count as checklists (SDarioosh/Barvis#36). A hub without this option answers text, and a token without
   `todos:read` gets 403: both mean "no todos" (the feed leaves `todos` out and the phone
   says why), not a failed feed.
 - **Feed `todos`:** only `type: checklist` notes with at least one item, in the hub's order,
