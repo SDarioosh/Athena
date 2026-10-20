@@ -247,7 +247,10 @@ these points where the text above left a choice. The firmware and the phone foll
   the relay's state file.
 - **Blob ids:** a feed's `blob_id` is its `version`. A detail's `blob_id` is the `fetch`
   action's `action_id`.
-- **`PUT_DATA`** carries MTU − 8 bytes (420 is assumed if the OS doesn't report the MTU).
+- **`PUT_DATA`** carries min(MTU − 3, 512) − 5 bytes, so a frame is never longer than the
+  512-byte limit on an attribute value. Android refuses longer writes, and BlueZ and
+  Windows may too. That is 507 bytes at MTU 517 and 412 at MTU 420. If the OS doesn't
+  report the MTU, 420 is assumed. The T5 accepts frames of up to 512 bytes.
   On `ERROR bad_crc` at `PUT_END` the relay sends the blob again, 3 times in all.
 - **Stay connected:** the relay waits for `status` notifications and also reads `status`
   every 30 s. It refreshes the feed every 5 min, and sends `BYE` once bit4 (user active)

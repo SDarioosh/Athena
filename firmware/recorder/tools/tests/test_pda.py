@@ -59,7 +59,8 @@ def test_command_bytes() -> None:
     assert q.encode_ob_list(5, 16) == b"\x20\x05\x00\x00\x00\x10\x00"
     assert q.encode_ob_ack(9, 1) == b"\x21\x09\x00\x00\x00\x01"
     assert q.encode_bye() == b"\x05"
-    assert q.put_payload_size(517) == 509
+    assert q.put_payload_size(517) == 507  # 512-byte frames, not MTU - 3 = 514
+    assert q.put_payload_size(420) == 412
 
 
 def test_responses_round_trip_and_bytes() -> None:
@@ -310,6 +311,15 @@ def test_put_chunks_fit_the_mtu(api_server) -> None:
     assert offsets == list(range(0, len(t5.feed), 412))
     begin = next(c for c in t5.commands if c[0] == q.OP_PUT_BEGIN)
     assert int.from_bytes(begin[12:16], "little") == zlib.crc32(t5.feed)
+
+
+def test_put_frames_at_mtu_517_stay_within_512(api_server) -> None:
+    t5 = FakeT5(mtu=517)  # what Android negotiates; the fake refuses writes over 512
+    rep = run(sync_for(api_server), t5)
+    assert rep.outcome == s.DONE, rep.message
+    datas = [c for c in t5.commands if c[0] == q.OP_PUT_DATA]
+    assert len(datas) > 1 and max(len(c) for c in datas) == 512
+    assert b"".join(c[5:] for c in datas) == t5.feed
 
 
 def test_unchanged_feed_is_not_pushed_again(api_server, tmp_path) -> None:

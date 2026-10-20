@@ -50,6 +50,7 @@ DATA_UUID = "d0230004" + _BASE
 
 MIN_MTU = 420  # §3.3: one OB_ENTRY (16 + 400 bytes) fits one notification
 PUT_DATA_HEADER = 5  # opcode + offset
+MAX_ATTR_VALUE = 512  # longest attribute value / write (Core spec; Android enforces it)
 MAX_ACTION_JSON = 400
 MAX_BLOB = 256 * 1024
 
@@ -129,8 +130,9 @@ def encode_bye() -> bytes:
 
 
 def put_payload_size(mtu: int) -> int:
-    """Bytes of blob per PUT_DATA write: MTU - 3 (ATT header) - 5 (opcode, offset)."""
-    return mtu - 3 - PUT_DATA_HEADER
+    """Bytes of blob per PUT_DATA write: the frame is at most MTU - 3 (ATT header) and at
+    most 512 (an attribute value's limit), minus 5 (opcode, offset). 507 at MTU 517."""
+    return min(mtu - 3, MAX_ATTR_VALUE) - PUT_DATA_HEADER
 
 
 # ------------------------------------------------------------------ responses

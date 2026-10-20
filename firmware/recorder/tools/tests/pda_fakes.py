@@ -95,7 +95,7 @@ class FakeT5:
 
     async def write(self, command: bytes) -> None:
         self._check()
-        if len(command) > self.mtu - 3:
+        if len(command) > min(self.mtu - 3, q.MAX_ATTR_VALUE):  # the stack refuses it
             raise LinkLost(f"write of {len(command)} B with MTU {self.mtu}")
         self.commands.append(bytes(command))
         op = command[0] if command else 0
