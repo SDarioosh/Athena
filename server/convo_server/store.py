@@ -296,6 +296,10 @@ class Store:
                 "UPDATE action_items SET created_at = (SELECT started_at FROM conversations"
                 " WHERE id = action_items.conversation_id) WHERE created_at IS NULL")
             self._conn.execute("PRAGMA user_version = 6")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 7:
+            # the to-do list the user named for an item ("add milk to my shopping list")
+            self._add_column("action_items", "list_name", "TEXT")
+            self._conn.execute("PRAGMA user_version = 7")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -558,17 +562,19 @@ class Store:
                 row = {"id": None, "status": "open", "created_at": now,
                        "kind": item.get("kind") or "task", "due_date": item.get("due_date"),
                        "due_time": item.get("due_time"),
-                       "time_unclear": int(bool(item.get("time_unclear"))), "edited": 0}
+                       "time_unclear": int(bool(item.get("time_unclear"))), "edited": 0,
+                       "list_name": item.get("list_name")}
                 row.update(_same_item(before["items"], item))
                 cur = c.execute(
                     "INSERT INTO action_items (id, conversation_id, text, owner, due, due_date,"
                     " source_at, status, kind, due_time, duration_minutes, location,"
-                    " time_unclear, created_at, edited)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " time_unclear, created_at, edited, list_name)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (row["id"], conv_id, item["text"], item.get("owner"), item.get("due"),
                      row["due_date"], item.get("source_at"), row["status"], row["kind"],
                      row["due_time"], item.get("duration_minutes"), item.get("location"),
-                     row["time_unclear"], row["created_at"], row["edited"]))
+                     row["time_unclear"], row["created_at"], row["edited"],
+                     row["list_name"]))
                 c.execute("INSERT INTO search_fts VALUES ('action_item', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id, item["text"]))
             for fact in summary["facts"]:
@@ -956,11 +962,13 @@ class Store:
 
     def update_action_item(self, item_id: int, *, status: str | None = None,
                            kind: str | None = None, due_date: str | None = UNSET,
-                           due_time: str | None = UNSET) -> dict[str, Any] | None:
-        """Change an item's status, kind, due date or time of day (``None`` clears a
-        date or time, ``UNSET`` leaves it). Raises ``ValueError`` for bad values; returns
-        the updated item, or None if there is none with that id. A changed kind, date or
-        time survives re-summaries; setting the time also clears ``time_unclear``."""
+                           due_time: str | None = UNSET,
+                           list_name: str | None = UNSET) -> dict[str, Any] | None:
+        """Change an item's status, kind, due date, time of day or to-do list (``None``
+        clears a date, time or list, ``UNSET`` leaves it). Raises ``ValueError`` for bad
+        values; returns the updated item, or None if there is none with that id. A changed
+        kind, date, time or list survives re-summaries; setting the time also clears
+        ``time_unclear``."""
         sets: dict[str, Any] = {}
         if status is not None:
             if status not in ITEM_STATUSES:
@@ -981,8 +989,16 @@ class Store:
                     raise ValueError("due_time must be HH:MM, 24 h (or 'none' to clear it)")
             sets["due_time"] = due_time
             sets["time_unclear"] = 0
+        if list_name is not UNSET:
+            if list_name is not None:
+                list_name = clean_list_name(list_name)
+                if list_name is None:
+                    raise ValueError("list_name must be a short list name like 'shopping' "
+                                     "(or 'none' to clear it)")
+            sets["list_name"] = list_name
         if not sets:
-            raise ValueError("nothing to change: give status, kind, due_date or due_time")
+            raise ValueError("nothing to change: give status, kind, due_date, due_time or "
+                             "list_name")
         if sets.keys() - {"status"}:
             sets["edited"] = 1
         with self.tx() as c:
@@ -1185,12 +1201,30 @@ def _same(text_a: str | None, at_a: float | None, text_b: str | None,
             and SequenceMatcher(None, a, b).ratio() >= _ALIKE)
 
 
+_LIST_NOISE = re.compile(r"^(?:my|the|our|a)\s+|\s+(?:to-?do\s+|to\s+do\s+)?list$",
+                         re.IGNORECASE)
+
+
+def clean_list_name(value: str | None) -> str | None:
+    """A list name as the user said it, without "my", "the" and a trailing "list"
+    ("my Shopping list" -> "Shopping"); None when nothing is left or it's too long."""
+    name = re.sub(r"\s+", " ", (value or "").strip().strip(".\"'"))
+    for _ in range(2):
+        name = _LIST_NOISE.sub("", name).strip()
+    if not name or len(name) > 40 or name.lower() in {"to-do", "todo", "to do", "list"}:
+        return None
+    return name
+
+
 def _same_item(before: list[dict[str, Any]], item: dict[str, Any]) -> dict[str, Any]:
     """What a re-summarized action item keeps from the matching old one (and takes it
     out of ``before``): its id (the hub files items by id), status, when it was first
-    stored, and the kind, date and time if the user changed them."""
-    # closed or edited ones first: they are what the user would lose
-    old = next((o for o in sorted(before, key=lambda o: (o["status"] == "open",
+    stored, and the kind, date, time and list if the user changed them."""
+    # the same text first (a similar item said nearby must not take its row); then
+    # closed or edited ones: they are what the user would lose
+    text = _norm(item["text"])
+    old = next((o for o in sorted(before, key=lambda o: (_norm(o["text"]) != text,
+                                                         o["status"] == "open",
                                                          not o["edited"], o["id"]))
                 if _same(item["text"], item.get("source_at"), o["text"], o["source_at"])),
                None)
@@ -1201,7 +1235,7 @@ def _same_item(before: list[dict[str, Any]], item: dict[str, Any]) -> dict[str, 
             "created_at": old["created_at"] or time.time()}
     if old["edited"]:
         keep.update({k: old[k] for k in ("kind", "due_date", "due_time", "time_unclear",
-                                         "edited")})
+                                         "list_name", "edited")})
     return keep
 
 
@@ -1229,7 +1263,8 @@ def _knowledge(c: sqlite3.Connection, conv_id: str) -> dict[str, Any]:
     return {
         "items": [dict(r) for r in c.execute(
             "SELECT id, text, source_at, status, created_at, kind, due_date, due_time,"
-            " time_unclear, edited FROM action_items WHERE conversation_id = ? ORDER BY id",
+            " time_unclear, list_name, edited FROM action_items WHERE conversation_id = ?"
+            " ORDER BY id",
             (conv_id,))],
         "facts": facts,
         # facts of other conversations that this one said again ("same" links)

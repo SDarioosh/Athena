@@ -200,7 +200,7 @@ whisper stays the default.
 Read API: `/v1/conversations`, `/v1/conversations/{id}`, `/v1/conversations/{id}/transcript`
 (`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items`, `/v1/digests/{date}`,
 `/v1/sessions`, `/v1/speakers`; `PATCH /v1/action-items/{id}` takes any of `status`,
-`kind`, `due_date`, `due_time` (`null` clears a date or time). Conversations carry a
+`kind`, `due_date`, `due_time`, `list_name` (`null` clears a date, time or list). Conversations carry a
 signed `link`, and action items and facts a `source_url`, of the form `<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`: an HTML
 transcript page that opens in a phone browser without the bearer token and jumps to that
 moment. Rotating `CONVO_INGEST_TOKEN` revokes all links.
@@ -216,7 +216,7 @@ source of truth, so the frontend can be swapped. Tools:
 | `search_conversations(query, person, since, until)` | conversations by topic / person / date |
 | `get_conversation(id)`, `get_transcript(id, start_seconds, end_seconds)` | details |
 | `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs (the hub files voice-note items into its calendar and to-dos from it) |
-| `update_action_item(item_id, status, kind, due_date, due_time)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears) or time (`HH:MM`, `none` clears); every argument but `item_id` is optional |
+| `update_action_item(item_id, status, kind, due_date, due_time, list_name)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears), time (`HH:MM`, `none` clears) or to-do list (`shopping`, `none` clears); every argument but `item_id` is optional |
 | `list_facts(subject, query)`, `get_daily_digest(date)`, `list_people()` | memory |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
 | `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists) |
@@ -286,6 +286,10 @@ small local model does better on narrow questions):
    morning with `time_unclear` set (it could be the evening); "in the evening",
    "tonight" decide. A time that can't be read leaves `due_time` empty with
    `time_unclear`. A time without a date is today (tomorrow if it had already passed).
+   `list_name`: the to-do list the user named ("add milk to my shopping list" → text
+   "Milk", list `shopping`), without "my"/"the"/"list". If the model leaves the phrase
+   in an "Add …"/"Put …" text, code takes the list from it and drops it from the text.
+   Odysseus adds the item to its to-do list with that name (or creates it).
 4. **Facts**, then a **linking** call against related known facts (same subject or
    matching words): a repeat becomes another source of the known fact; a changed value
    replaces the older one (by conversation time, so re-summarizing an old conversation
@@ -294,8 +298,9 @@ small local model does better on narrow questions):
    with "said again" and "replaces:" lines that link every source transcript.
 
 A re-summary (e.g. after a speaker is renamed) keeps what was known about the old items:
-the id, status and creation time of action items (and the kind, date and time if the user
-changed them with `update_action_item`), the other sources of a fact and which facts it
+the id, status and creation time of action items (and the kind, date, time and list if
+the user changed them with `update_action_item`; an item with the same text is matched
+before a similar one said nearby), the other sources of a fact and which facts it
 replaced. Stable ids matter: Odysseus files voice-note items by id.
 
 ## Recognition eval
