@@ -1205,13 +1205,17 @@ _LIST_NOISE = re.compile(r"^(?:my|the|our|a)\s+|\s+(?:to-?do\s+|to\s+do\s+)?list
                          re.IGNORECASE)
 
 
+# the general to-do list ("put it on my to-do list") is no named list
+_NO_LIST = {"to-do", "todo", "to do", "to-dos", "todos", "list"}
+
+
 def clean_list_name(value: str | None) -> str | None:
     """A list name as the user said it, without "my", "the" and a trailing "list"
     ("my Shopping list" -> "Shopping"); None when nothing is left or it's too long."""
     name = re.sub(r"\s+", " ", (value or "").strip().strip(".\"'"))
     for _ in range(2):
         name = _LIST_NOISE.sub("", name).strip()
-    if not name or len(name) > 40 or name.lower() in {"to-do", "todo", "to do", "list"}:
+    if not name or len(name) > 40 or name.lower() in _NO_LIST:
         return None
     return name
 
