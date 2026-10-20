@@ -204,7 +204,7 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
                 enroll_voice(store, diarizer.embedder, spk, np.concatenate(parts),
                              is_owner=(i == 0))
                 enrolled.append(spk)
-        pipeline = Pipeline(settings, store, make_vad(settings.vad_backend),
+        pipeline = Pipeline(settings, store, make_vad(settings.vad_backend, settings),
                             build_transcriber(settings), diarizer)
         sid = f"eval-{meeting}"
         t = time.time()
