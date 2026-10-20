@@ -446,6 +446,29 @@ Each action is one JSON object of 400 bytes at most, with `"t"` saying the type:
   phone dedupes on `action_id`: it keeps the event id it created for each recent
   `action_id`, so a re-sent action after a lost ack doesn't create a second event.
 
+### 4.3 Details (`kind` 2)
+
+`{"v": 1, "ref": "transcript:c_…", "title": "…", "segments": [{"o": 12.5, "s": "Anna", "me": false, "x": "…"}]}`.
+Long transcripts are paged (`@from-to`, e.g. 10 minutes per page). The T5 asks for the next
+page when the reader reaches the end.
+
+The PC relay's formats (v1):
+
+- **`transcript:<id>`**: `{"v": 1, "ref", "title", "from", "to", "next", "segments": […]}`.
+  - Without a range it sends the first page, 0–600 s.
+  - A page holds the segments with `from ≤ o < to`.
+  - `next` is the ref of the following page (`transcript:<id>@600-1200`), or `null` at the
+    end.
+- **`conv:<id>`**: `{"v": 1, "ref", "title", "at", "people", "summary", "points",
+  "actions": [{"id", "text", "status", "due"}]}`.
+
+- The firmware reads details as the PC relay's §4.3 defines them: `conv:` details with
+  `at`, `people`, `summary`, `points`, `actions`; transcript pages with `from`, `to`,
+  `segments` and `next` (the next page's ref, `null` on the last). The first page it asks
+  for is `transcript:<id>@0-600`; "Next part" asks for `next`.
+- It also reads the feed's `templates` (the "+" picker; Call, Meeting, Reminder when there
+  are none). An empty string in an optional field (`"owner": ""`) reads as missing.
+
 ### 4.4 Odysseus checklists (`todos`, added 2026-10-20)
 
 The T5's Tasks tab shows the owner's own to-dos: the checklists in Odysseus notes, the
@@ -486,29 +509,6 @@ conversations (`actions`) move into the conversation's detail screen (§5).
   shows it at once (struck through, or not); a second tap before the relay has listed the
   action deletes it, after that it queues the reverse. Nothing else is editable on the T5
   (no adding or renaming items, no plain notes).
-
-### 4.3 Details (`kind` 2)
-
-`{"v": 1, "ref": "transcript:c_…", "title": "…", "segments": [{"o": 12.5, "s": "Anna", "me": false, "x": "…"}]}`.
-Long transcripts are paged (`@from-to`, e.g. 10 minutes per page). The T5 asks for the next
-page when the reader reaches the end.
-
-The PC relay's formats (v1):
-
-- **`transcript:<id>`**: `{"v": 1, "ref", "title", "from", "to", "next", "segments": […]}`.
-  - Without a range it sends the first page, 0–600 s.
-  - A page holds the segments with `from ≤ o < to`.
-  - `next` is the ref of the following page (`transcript:<id>@600-1200`), or `null` at the
-    end.
-- **`conv:<id>`**: `{"v": 1, "ref", "title", "at", "people", "summary", "points",
-  "actions": [{"id", "text", "status", "due"}]}`.
-
-- The firmware reads details as the PC relay's §4.3 defines them: `conv:` details with
-  `at`, `people`, `summary`, `points`, `actions`; transcript pages with `from`, `to`,
-  `segments` and `next` (the next page's ref, `null` on the last). The first page it asks
-  for is `transcript:<id>@0-600`; "Next part" asks for `next`.
-- It also reads the feed's `templates` (the "+" picker; Call, Meeting, Reminder when there
-  are none). An empty string in an optional field (`"owner": ""`) reads as missing.
 
 ## 5. Screens
 
