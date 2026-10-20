@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (round 16: speaker recognition and focused summaries measured and fixed)_
+_Last updated: 2026-10-20 (round 17: T-Watch Ultra round-15 firmware tested on the owner's watch, fixes)_
 
 ## Status
 
@@ -240,6 +240,54 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   `barvis-sound*` service names and `BARVIS_SOUND_*` vars, the Android app ID
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
   vendor string, the `barvis_relay` package, and all `convo` identifiers.
+
+## Done in round 17: T-Watch Ultra buttons, notes and recovery tested on the watch
+
+Branch `feature/twatch-hw-verify`. On the owner's watch over USB from a Mac (ESP-IDF 5.5.1,
+`/dev/cu.usbmodem101`), driven by the new `tools/wcon.py` (one console command per call,
+`--boot`, `--listen`). Every test chunk (real room audio) was deleted with `queue drop`
+right after its sizes, flags and timings were read; none was uploaded.
+
+**Verified on the watch**
+- Buttons: BOOT single (status), fast double (mute 2 buzzes / unmute 1 long buzz, owner can
+  tell them apart), slow double = two singles, BOOT hold 1 s = sync window; PWR short
+  starts/stops a session; PWR hold 1 s starts a note (reg 0x27 reads back 1000 ms); a hold of
+  ~6 s powers the watch off, also on USB (it then needs a PWR press to come back).
+- Voice notes: NOTE on every chunk, `LAST NOTE` on the last; the 5-min cap gives 10 x 30 s
+  chunks and ends "5 min limit"; a note during a conversation ends it with LAST, records the
+  note, and a new conversation starts by itself; mute mid-note ends it and nothing resumes.
+- Recovery: a restart in the middle of a chunk (console `reboot`, the card is left as by a
+  power cut) recovered it at boot (`recovered 1`), cut back to 14.993 s with LAST; the
+  previous chunk intact. A real battery pull wasn't done (a PWR hold first starts a note).
+- Encoder: 10.4-11.9 ms avg per 20 ms frame (about 53 % of a core at 80 MHz), max 15 ms
+  while recording alone, up to 46-68 ms while the screen comes on and a relay syncs (the DMA
+  buffer absorbs it; no gap seen).
+- Heap (new `heap:` line in `status`): 291 KB internal free before BLE, 197 KB after (BLE
+  ~94 KB), largest block 92 KB; lowest during sessions 80 KB; 153 KB after many sessions,
+  steady (no leak). PSRAM 8186 KB free, unused so far.
+
+**Fixed**
+- **A card write error ended the recording.** An sdspi `0x108` at a chunk boundary ended a
+  note after 30 s, and happened again in a conversation. Now the chunk is cut back to its
+  last page without LAST, and the session goes on with a new chunk after 100/300/1000 ms of
+  mic frames that are read and counted (later chunks keep correct start times); it ends
+  after 4 failures in a row. `cq_abandon()` takes a `last` flag (host test added). Tested
+  with `sd failwrite <n>` (new test hook) and by a real error that it recovered.
+- **`queue drop`** read the hex id that `queue` lists as octal or decimal; now hex.
+- **PWR hold during a note** did nothing; either PWR gesture now ends a note (owner).
+- **Extra PWR short presses**: after a real press, the PMU reported more short presses
+  (real key edges) 0.4-2 s later, which once restarted a stopped session. Probably the key
+  under a resting finger (the buzz?); a resting finger alone held it long enough to power
+  off. A short press within 1.5 s of the previous one is now ignored, which catches most of
+  them. Owner: not an issue in use, left at that.
+- Host tests build on macOS (`reboot()` clashed with `<unistd.h>`); `/build-host/` ignored.
+
+**Seen, not fixed**
+- A bonded relay (`8c:a3:ec:...`) connected twice during the tests: once it sent BYE
+  without reading, once it read ~111 KB, then the link dropped with 983 notification send
+  retries ("no buffers for 5000 ms"). Nothing was acked.
+- SD `0x108` errors keep showing up at 4 MHz SPI (round 14: reads after an ACK; now
+  writes). Cause unknown; recovery handles it.
 
 ## Done in round 16: PRs #24 and #25 measured, fixed and improved
 
@@ -486,9 +534,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
    large-v3-turbo, optional pyannote on the GPU) and SDarioosh/barvis-sound#38 (re-summarize a copy of
    the real DB, bakeoff on the test instance with qwen3.5-35b), then a real-device check:
    name a speaker once, see the name in the next recording.
-- **Owner: voice notes and new buttons** (round 15, branch `feature/voice-notes`): flash,
-  run the "Needs the real watch" list above, then drain with `ble_relay.py --once` and check
-  the note arrives as kind `note` with a title and summary.
+- **Owner: voice notes end to end**: buttons and notes are verified on the watch (round 17);
+  still to do: drain a note with `ble_relay.py --once` and check it arrives as kind `note`
+  with a title and summary.
 0. **Owner: T-Watch Ultra upload path test** (round 12 PR, Server verification): `--list`
    from the Windows PC works, and so does `--once` into the server (round 14). Still to do:
    the Android app; report the BLE transfer time (PC: ~2 s per 53 KB chunk incl. upload). Encoder:

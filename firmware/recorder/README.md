@@ -74,6 +74,8 @@ records everything between start and stop.
 - USB console (`help`): `status`, `batt`, `rails`, `exp`, `time`, `session [start|stop]`,
   `note [start|stop]`, `queue [drop <id>]`, `ble [pair|forget]`, `sync`, `rec [s]`, `stop`, `level [s]`,
   `gain [dB]`, `eq [on|off]`, `ls [q]`, `get <file>`, `mute`, `screen`, `sd`, `reboot`.
+  `status` also prints the free heap. `queue drop <id>` takes the hex id that `queue` lists.
+  `sd failwrite <n>` makes the next n chunk writes fail (to test the recovery below).
 
 ## Upload path (BLE)
 
@@ -94,6 +96,10 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 16 kbps VBR, complexity 1) -> 30 s Ogg
   start times are contiguous; pages are written and fsynced every second, so a power cut
   loses at most ~1 s, and the chunk being written is recovered at the next boot. Details:
   protocol §2.
+- **Card errors**: a failed write (the card sometimes answers `0x108`) costs at most the
+  open page (~1 s): the chunk is cut back to its last page and the session goes on with a
+  new chunk after 100/300/1000 ms of skipped (but counted) mic frames; it ends only after 4
+  failures in a row. `status` and the end-of-session log count them.
 - **Queue**: `queue` lists it (id, session, sequence, start, length, size, flags);
   `queue drop <id>` deletes one without uploading. `ls q` / `get q/<file>` and
   `tools/pull.py --queue` copy chunks over USB for debugging without BLE (they stay
@@ -171,6 +177,11 @@ should report a 16 MB flash; the PSRAM line in the boot log should say quad mode
 
 Exit the monitor with `Ctrl-]`. Log output and the `recorder>` console share the port.
 
+Without a monitor (scripts, agents): `tools/wcon.py --port <port> status` sends one command
+and prints the answer; `--boot` resets the watch and prints the boot log; `--listen 60`
+prints the log for a minute and follows the watch through a power-off. It opens the port
+without resetting the watch (RTS is lowered before DTR). Only one program can hold the port.
+
 ## Host tests
 
 The pure parts (WAV header, calendar/ISO-8601, PCF85063A BCD codec, 5x7 font and text
@@ -216,6 +227,7 @@ firmware/recorder/
 │   └── idf_component.yml
 ├── test/                     # host tests (plain CMake + ctest)
 ├── tools/pull.py             # copy recordings (or --queue chunks) off the card over USB
+├── tools/wcon.py             # one console command per call, --boot log, --listen (scripts)
 └── tools/ble_relay.py        # PC relay: drain the watch over BLE, upload (barvis_relay/, tests/)
 ```
 
@@ -246,7 +258,11 @@ The BLE upload path has not run on hardware at all yet: Opus encode time and CPU
 `fsync` once a second (SD power and wear), the advertising and connection current, and
 the runtime heap after BLE starts. The PR's Server verification section has the steps.
 
-The button layout of 2026-10-19 and voice notes are not tested on the watch yet: the
-double-click timing (~0.3 s), the PWR 1 s long press via PMU register 0x27, that a hold of
-~6 s still powers the watch off, and a voice note end to end (NOTE flag on every chunk,
-5-min cap, the conversation ending and resuming around it, `kind=note` on the server).
+Verified on the owner's watch on 2026-10-20 (PROGRESS.md round 17): the button layout
+(double-click timing, PWR 1 s hold, the ~6 s power-off hold, also on USB), voice notes (NOTE
+on every chunk, the 5-min cap, a conversation ending and resuming around a note, mute
+mid-note), recovery of a chunk cut off by a restart, recovery from SD write errors, the
+encoder time (10.4-11.9 ms avg per 20 ms frame) and the heap after BLE starts (197 KB
+internal free). Still open: a note through the server (`kind=note`), a real battery pull
+during recording, and the cause of the SD `0x108` errors and of extra PWR short presses
+(ignored within 1.5 s of the previous one).
