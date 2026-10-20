@@ -18,7 +18,7 @@ extern "C" {
 
 #define OGG_OPUS_PAGE_PACKETS 50     /* packets per audio page: 1 s of 20 ms frames */
 #define OGG_OPUS_MAX_PACKET 1275     /* largest Opus packet (RFC 6716 §3.4) */
-#define OGG_OPUS_MAX_BODY 8192       /* packet bytes per page; a full page is ~2 KB at 16 kbps */
+#define OGG_OPUS_MAX_BODY 8192       /* packet bytes per page; a full page is ~3 KB at 24 kbps */
 #define OGG_OPUS_MAX_COMMENTS 4
 #define OGG_OPUS_VENDOR "barvis-sound recorder"
 

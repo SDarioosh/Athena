@@ -310,7 +310,7 @@ class DrainSession(
     companion object {
         const val MAX_REREADS = 3
 
-        /** Sanity cap for the buffer hint; a 30 s chunk is ~60 KB. */
+        /** Sanity cap for the buffer hint; a 30 s chunk is ~90 KB. */
         private const val MAX_CHUNK_BYTES = 4L * 1024 * 1024
     }
 }

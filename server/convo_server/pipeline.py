@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from . import audio as audio_mod
+from .clips import plan_windows, tail_words
 from .config import Settings
 from .conversations import split_on_gaps
 from .diarize import Diarizer, PieceRef, load_voices
@@ -37,7 +38,6 @@ log = logging.getLogger(__name__)
 
 _SAFE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 CONTIGUOUS_TOLERANCE = 1.5  # seconds between chunk end and next chunk start
-REGION_PAD = 0.25  # seconds of context around each speech region
 REGION_MERGE_GAP = 2.0
 # ASR gain (CONVO_ASR_AGC_MAX_GAIN) only touches clips whose peak is at or below this
 # fraction of full scale: Omi measured more errors when already-loud audio was gained.
@@ -227,20 +227,32 @@ class Pipeline:
         prompt = self.whisper_prompt()
         runs: list[np.ndarray] = []
         pieces: list[tuple[float, float, str, PieceRef]] = []
+        cfg = self.settings
+        context = ""
         for run_start, run_audio, run_speech in self._runs(chunks):
             runs.append(run_audio)
             regions = merge_spans(run_speech, REGION_MERGE_GAP)
-            for r in regions:
-                a = max(0.0, r.start - REGION_PAD)
-                b = min(run_audio.size / audio_mod.SAMPLE_RATE, r.end + REGION_PAD)
-                clip = run_audio[int(a * audio_mod.SAMPLE_RATE): int(b * audio_mod.SAMPLE_RATE)]
-                # The diarizer keeps the ungained run audio; only whisper hears the gain.
-                clip, _ = audio_mod.bounded_gain(clip, max_gain=self.settings.asr_agc_max_gain,
+            windows = plan_windows(regions, run_audio.size / audio_mod.SAMPLE_RATE,
+                                   pad=cfg.whisper_pad_seconds,
+                                   max_seconds=cfg.whisper_window_seconds,
+                                   max_gap=cfg.whisper_window_gap_seconds)
+            for w in windows:
+                # The diarizer keeps the ungained run audio; only the transcriber hears
+                # the gain (CONVO_ASR_AGC_MAX_GAIN).
+                clip, _ = audio_mod.bounded_gain(w.extract(run_audio),
+                                                 max_gain=cfg.asr_agc_max_gain,
                                                  deadband=ASR_AGC_DEADBAND)
-                for p in self.transcriber.transcribe(clip, prompt):
-                    s, e = a + p.start, a + max(p.end, p.start)
+                got = self.transcriber.transcribe(
+                    clip, " ".join(x for x in (prompt, context) if x))
+                for p in (q for piece in got for q in w.split(piece)):
+                    s = w.to_run(p.start)
+                    e = max(s, w.to_run(max(p.end, p.start), end=True))
+                    s, e = w.clamp(s, e)
                     pieces.append((run_start + s, run_start + e, p.text,
                                    PieceRef(len(runs) - 1, s, e)))
+                if cfg.whisper_context_words > 0 and got:
+                    context = tail_words(" ".join([context] + [p.text for p in got]),
+                                         cfg.whisper_context_words)
         pieces.sort(key=lambda p: p[0])
         labels = None
         owner_name = (self.store.owner_name() or self.settings.owner_name) if note else ""

@@ -33,9 +33,11 @@ class Settings(BaseSettings):
 
     # --- pipeline ---
     vad_backend: str = "silero"  # "silero" (production) or "energy" (tests only)
-    # Silero speech threshold and padding around each span (Silero's default is 30 ms;
-    # Omi uses 300 ms pre-roll). Ignored by the energy backend.
+    # Silero speech threshold, the silence that ends a speech span, and padding around
+    # each span (Silero's default is 30 ms; Omi uses 300 ms pre-roll). Ignored by the
+    # energy backend.
     vad_threshold: float = 0.5
+    vad_min_silence_ms: int = 500
     vad_speech_pad_ms: int = 30
     # Bounded peak gain on a COPY of each chunk before VAD scores it, so quiet far-field
     # speakers aren't dropped as silence (1 = off). Stored audio is unchanged.
@@ -71,6 +73,34 @@ class Settings(BaseSettings):
     whisper_prompt_names: bool = True
     # Temperature step for whisper's fallback when a decode looks wrong (0 = no fallback).
     whisper_temperature_inc: float = 0.2
+    # Drop text whisper invents on noise ("Thank you." on a cough) and cut repetition
+    # loops (transcribe.HallucinationFilter; README "Recognition eval").
+    whisper_drop_hallucinations: bool = True
+    # A segment that is only a stock phrase is dropped below this mean token log-prob.
+    whisper_drop_phrase_logprob: float = -0.7
+    # Words, phrases or segments repeated more than this many times in a row are cut.
+    whisper_max_repeats: int = 4
+    # How speech is cut into clips for whisper (convo_server/clips.py). VAD regions are
+    # padded by whisper_pad_seconds and packed into clips of up to whisper_window_seconds;
+    # silence between regions inside a clip is shortened to whisper_window_gap_seconds.
+    # whisper_window_seconds=0 sends every region alone.
+    whisper_window_seconds: float = 28.0
+    whisper_pad_seconds: float = 0.25
+    whisper_window_gap_seconds: float = 1.0
+    # Last N words of the previous clip's text, added to the prompt after the vocabulary
+    # (0 = off).
+    whisper_context_words: int = 0
+    # Decoding, sent with every request (whisper.cpp names; README "Recognition eval").
+    whisper_beam_size: int = -1  # > 1 = beam search with this many beams, else greedy
+    whisper_best_of: int = 2  # candidates at temperature > 0 (the fallback)
+    whisper_no_speech_thold: float = 0.6
+    whisper_logprob_thold: float = -1.0
+    whisper_entropy_thold: float = 2.4
+    # Suppress non-speech tokens ([LAUGHTER], music notes, "(muffled speaking)"); fewer
+    # dropped words on far-field audio in the recognition eval.
+    whisper_suppress_non_speech: bool = True
+    # Keep the prompt for every 30 s window of a long clip, not just the first one.
+    whisper_carry_initial_prompt: bool = False
 
     # llama-server (OpenAI-compatible)
     llm_base_url: str = "http://127.0.0.1:8080/v1"

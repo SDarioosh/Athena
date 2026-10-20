@@ -77,6 +77,26 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   a 12-word vocabulary list in `CONVO_WHISPER_PROMPT` broke whisper's timestamps (lines
   stretched over 30 s: false alarm 8% → 58%, wrong names 2% → 6%). Leave it empty
   unless the eval shows it helps with your vocabulary.
+  In the transcription-quality eval a 26-name list was neutral, but a descriptive
+  vocabulary sentence raised WER by 5.7 points and a punctuation-style sentence by 1.6
+  (whisper skipped speech after them): keep it to a short list of words.
+- Text whisper invents is dropped: on a short clip of noise (a cough, a rustle the VAD
+  took for speech) large-v3-turbo often answers "Thank you.". A segment that is only such
+  a stock phrase is dropped when whisper was unsure of it (mean token log-probability
+  below `CONVO_WHISPER_DROP_PHRASE_LOGPROB`, -0.7), so a real "thank you" stays. Subtitle
+  credits and lines with no words go too, and repetition loops are cut to
+  `CONVO_WHISPER_MAX_REPEATS` (4). `CONVO_WHISPER_DROP_HALLUCINATIONS=false` turns it off.
+- Speech goes to whisper in clips of up to `CONVO_WHISPER_WINDOW_SECONDS` (28): the VAD
+  regions of a run, padded by `CONVO_WHISPER_PAD_SECONDS` (0.25), are packed in order
+  and the silence between them is shortened to `CONVO_WHISPER_WINDOW_GAP_SECONDS` (1.0).
+  Timestamps are mapped back to the recording; a whisper segment that spans a cut is
+  split by its token times. `CONVO_WHISPER_WINDOW_SECONDS=0` sends every region alone
+  (the behaviour before). `CONVO_WHISPER_CONTEXT_WORDS` (0 = off) adds the end of the
+  previous clip's text to the prompt; it made the eval worse.
+- Decoding settings go with every whisper request (whisper-server form fields, the same
+  flags for whisper-cli): `CONVO_WHISPER_BEAM_SIZE`, `_BEST_OF`, `_SUPPRESS_NON_SPEECH`,
+  `_NO_SPEECH_THOLD`, `_LOGPROB_THOLD`, `_ENTROPY_THOLD`, `_CARRY_INITIAL_PROMPT`,
+  `_TEMPERATURE_INC`. They override whatever whisper-server was started with.
 
 ## Deploy: one command, runs in the background
 
@@ -162,6 +182,20 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 "duplicate": bool, "speech_seconds", "trailing_silence_seconds", "session_seconds"}`.
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
+
+VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD`, `CONVO_VAD_MIN_SILENCE_MS` and
+`CONVO_VAD_SPEECH_PAD_MS` tune it. A far-field or wrist recording can be 20-30 dB quieter
+than a close mic, and Silero then misses some of its speech, so whisper never gets it.
+`CONVO_VAD_AGC_MAX_GAIN` (1 = off, the default) lets Silero score a copy of each chunk
+gained toward a `CONVO_VAD_AGC_TARGET` (0.8) peak, at most that many times; the stored
+audio is unchanged. `CONVO_ASR_AGC_MAX_GAIN` (1 = off) does the same for each clip sent to
+the transcriber, only when the clip is quiet; the diarizer always gets the ungained audio.
+Both are off until the server eval decides (`docs/omi-audio-quality.md` §7: it helped on
+very quiet input, but hurt speaker naming at the watch's level).
+
+`CONVO_TRANSCRIBER=parakeet` swaps whisper for NVIDIA Parakeet TDT 0.6B v3 (int8, via
+sherpa-onnx on CPU, extra `parakeet`, `CONVO_PARAKEET_MODEL_DIR`); see `.env.example`.
+whisper stays the default.
 
 Read API: `/v1/conversations`, `/v1/conversations/{id}`, `/v1/conversations/{id}/transcript`
 (`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items`, `/v1/digests/{date}`,
@@ -262,6 +296,32 @@ CONVO_WHISPER_SERVER_URL=http://127.0.0.1:8178 .venv/bin/python eval/recognition
     --label server-ecapa --enroll 2
 .venv/bin/python eval/recognition.py compare server-ecapa server-pyannote
 ```
+
+`--audio array` uses the far-field table mic instead of the headset mix (`--mic
+Array1-01` still works), `--audio sim --distance N` simulates a room with the others N m
+away, `--opus-kbps KBPS` (or `--opus`) round-trips the stream through Opus like the
+recorders, and `--level DBFS` sets the input level before encoding (the T-Watch's 30 dB
+mic gain puts speech near -24 dBFS). `--set field=value` overrides any setting. More in
+the script's docstring and `docs/omi-audio-quality.md` §7.
+
+Measured 2026-10-20 in the cloud sandbox (large-v3-turbo on CPU, `--diarizer none`, 3
+meetings x 300 s, ~2,100 words). "Before" turns the transcription changes of that round
+off. These numbers include a VAD gain that was on by default then; it is now off by
+default (`--set vad_agc_max_gain=4` turns the current one on), so the "after" column needs
+a rerun on the server:
+`--set whisper_window_seconds=0 whisper_drop_hallucinations=false
+whisper_suppress_non_speech=false`.
+
+| condition | before | after |
+|---|---|---|
+| far-field, T-Watch level (`--mic Array1-01 --level -24 --opus 16`) | 39.8 % | 38.9 % |
+| the same at 24 kbps (`--opus 24`, the new firmware default) | | 34.4 % |
+| far-field, raw level (`--mic Array1-01 --opus 16`) | 50.2 % | 40.5 % |
+| headset mix, WAV | 23.7 % | 23.5 % |
+
+Most remaining errors are deletions where people talk over each other: whisper writes one
+voice. large-v3-turbo-q5_0 scored the same as large-v3-turbo (f16) with less than half
+the memory; large-v3-q5_0 was no better.
 
 ## Checks
 

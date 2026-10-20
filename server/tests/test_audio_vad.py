@@ -9,7 +9,7 @@ from conftest import silence, tone, wav
 
 from convo_server import audio
 from convo_server.config import Settings
-from convo_server.vad import EnergyVAD, GainedVAD, Span, make_vad, merge_spans
+from convo_server.vad import EnergyVAD, GainedVAD, Span, level_dbfs, make_vad, merge_spans
 
 
 def test_pcm16_roundtrip():
@@ -141,3 +141,31 @@ def test_make_vad_settings_default_is_off(tmp_path):
                   vad_agc_target=0.7)
     vad = make_vad("energy", on)
     assert isinstance(vad, GainedVAD) and vad.max_gain == 8.0 and vad.target == 0.7
+
+
+def test_level_dbfs_measures_loud_part():
+    x = np.concatenate([silence(9), tone(200, 1)])  # 10% tone, RMS 0.3 / sqrt(2)
+    assert abs(level_dbfs(x) - 20 * np.log10(0.3 / np.sqrt(2))) < 1.0
+    assert level_dbfs(silence(1)) <= -100
+
+
+def test_make_vad_wires_silero_settings(tmp_path, monkeypatch):
+    from convo_server import vad as vad_mod
+
+    class FakeSilero:
+        def __init__(self, **kw) -> None:
+            self.kw = kw
+
+        def detect(self, audio: np.ndarray) -> list[Span]:
+            return []
+
+    monkeypatch.setattr(vad_mod, "SileroVAD", FakeSilero)
+    s = Settings(ingest_token="x" * 16, data_dir=tmp_path, _env_file=None,
+                 vad_threshold=0.35, vad_min_silence_ms=800, vad_speech_pad_ms=100)
+    off = make_vad("silero", s)
+    assert isinstance(off, FakeSilero)
+    assert off.kw == {"threshold": 0.35, "min_silence_ms": 800, "speech_pad_ms": 100}
+    on = make_vad("silero", s.model_copy(update={"vad_agc_max_gain": 4.0}))
+    assert isinstance(on, GainedVAD) and isinstance(on.inner, FakeSilero)
+    with pytest.raises(ValueError):
+        make_vad("nope", s)
