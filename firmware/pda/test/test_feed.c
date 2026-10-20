@@ -112,6 +112,8 @@ static void test_fixture(void)
     CHECK(feed.events[2].where == NULL);
     CHECK_EQ(feed.events[0].end - feed.events[0].start, 15 * 60);
     CHECK_EQ(feed.events[4].end, feed.events[4].start);
+    CHECK_EQ(feed.n_templates, 4);
+    CHECK(strcmp(feed.templates[0], "Call") == 0);
     feed_free(&feed);
 }
 
@@ -121,7 +123,8 @@ static void test_tolerance(void)
     const char *js =
         "{\"v\":1,\"version\":5,\"extra\":{\"x\":[1,2]},"
         "\"conversations\":[{\"title\":\"no id\"},{\"id\":\"c1\",\"title\":\"ok\",\"new\":1},7],"
-        "\"actions\":[{\"id\":\"42\",\"text\":\"string id\"},{\"id\":3,\"text\":\"ok\",\"due\":\"bad\"}],"
+        "\"actions\":[{\"id\":\"42\",\"text\":\"string id\"},{\"id\":3,\"text\":\"ok\",\"due\":\"bad\","
+        "\"owner\":\"\"}],"
         "\"calendar\":[{\"title\":\"no start\"},{\"title\":\"t\",\"start\":\"2026-10-20T10:00:00Z\"}]}";
     CHECK_EQ(feed_parse(js, strlen(js), &feed), 0);
     CHECK_EQ(feed.version, 5u);
@@ -130,6 +133,7 @@ static void test_tolerance(void)
     CHECK_EQ(feed.conv[0].at, 0);
     CHECK_EQ(feed.n_actions, 1);
     CHECK_EQ(feed.actions[0].due_day, FEED_NO_DAY);
+    CHECK(feed.actions[0].owner == NULL);
     CHECK_EQ(feed.n_events, 1);
     feed_free(&feed);
 
@@ -162,7 +166,8 @@ static void test_details(void)
     CHECK(strcmp(d->seg[0].s, "Alice") == 0 && !d->seg[0].me);
     CHECK(d->seg[1].me);
     CHECK(d->seg[4].o == 32.0);
-    CHECK(!d->more);
+    CHECK(d->from == 0 && d->to == 600);
+    CHECK(d->next == NULL);
     char ref[96];
     CHECK(detail_peek_ref(js, len, ref, sizeof(ref)));
     CHECK(strcmp(ref, d->ref) == 0);
@@ -175,9 +180,19 @@ static void test_details(void)
     CHECK(d->summary != NULL);
     CHECK_EQ(d->n_points, 3);
     CHECK_EQ(d->n_seg, 0);
+    CHECK_EQ(d->n_people, 1);
+    CHECK_EQ(d->at, 1791990000);
+    CHECK_EQ(d->n_actions, 1);
+    CHECK(d->actions[0].id == 17 && strcmp(d->actions[0].status, "open") == 0);
+    CHECK(d->actions[0].due == NULL); /* "" reads as missing */
     detail_free(d);
     free(js);
 
+    const char *paged = "{\"v\":1,\"ref\":\"transcript:c@0-600\",\"from\":0,\"to\":600,"
+                        "\"next\":\"transcript:c@600-1200\",\"segments\":[]}";
+    CHECK_EQ(detail_parse(paged, strlen(paged), d), 0);
+    CHECK(d->next && strcmp(d->next, "transcript:c@600-1200") == 0);
+    detail_free(d);
     const char *noref = "{\"v\":1,\"title\":\"x\"}";
     CHECK_EQ(detail_parse(noref, strlen(noref), d), FEED_E_FIELD);
     free(d);

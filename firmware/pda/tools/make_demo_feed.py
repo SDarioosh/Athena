@@ -33,11 +33,11 @@ FEED = {
         "text": (
             "A quiet Monday. Maria confirmed the dinner for Mom’s 70th at Casa Lupo — "
             "twelve guests, 7 p.m. on 8 November — and asked you to pick up Aunt Rosa from "
-            "the station. The client demo is on Thursday; Ben is worried about database load."
+            "the station. The client demo is on Friday; Ben is worried about database load."
         ),
         "highlights": [
             "Dentist follow-up tomorrow at 09:00 (crown on the lower left molar)",
-            "Client demo moved to Thursday 23 Oct",
+            "Client demo moved to Friday 23 Oct",
             "Lease renewal due 31 Oct: rent goes from €1,450 to €1,520",
             "Alice moves to Berlin on 12 January; you take over the vendor contracts",
         ],
@@ -128,14 +128,20 @@ FEED = {
         {"id": "ev_demo_6", "title": "Lease renewal reminder", "start": "2026-10-26",
          "all_day": True},
     ],
+    # Event titles for the "+" picker, configured in the phone app.
+    "templates": ["Call", "Meeting", "Reminder", "Focus time"],
 }
 
 DETAIL_CONV = {
     "v": 1,
     "ref": "conv:c_demo_alice_1on1",
     "title": "1:1 with Alice: Berlin move and vendor contracts",
+    "at": "2026-10-14T15:00:00Z",
+    "people": ["Alice"],
     "summary": FEED["conversations"][1]["summary"],
     "points": FEED["conversations"][1]["points"],
+    "actions": [{"id": 17, "text": "Take over Alice’s vendor contracts", "owner": "Me",
+                 "due": "", "status": "open"}],
 }
 
 # The same lines as seed_demo.py's "alice-1on1", ~8 s apart.
@@ -151,7 +157,9 @@ DETAIL_TRANSCRIPT = {
     "v": 1,
     "ref": "transcript:c_demo_alice_1on1@0-600",
     "title": "1:1 with Alice: Berlin move and vendor contracts",
-    "more": False,
+    "from": 0,
+    "to": 600,
+    "next": None,
     "segments": [
         {"o": 8.0 * i, "s": s, "me": s == "Me", "x": x} for i, (s, x) in enumerate(ALICE_LINES)
     ],

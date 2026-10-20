@@ -1,56 +1,97 @@
-/* odysseus-sound PDA on the LilyGO T5 E-Paper Pro (docs/t5-pda-plan.md). Bring-up build. */
+/* odysseus-sound PDA on the LilyGO T5 E-Paper Pro (docs/t5-pda-plan.md).
+ *
+ * Boot: board (I2C, buttons, RTC), the e-paper (epdiy), the stored feed and outbox from
+ * LittleFS, touch, BLE (the glance protocol, advertising as odysseus-pda), the screens and
+ * the USB console. The phone (or the PC relay) pushes the feed and drains the outbox over
+ * BLE; the T5 never talks to a server and holds no tokens.
+ *
+ * Buttons: BOOT short = back / Today, BOOT long = open the 2-minute pairing window,
+ * side button = clean refresh. No Wi-Fi: never initialised, not linked. */
 #include <stdio.h>
+#include <sys/time.h>
 
+#include "ble_pda.h"
 #include "esp_log.h"
-#include "fonts.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
+#include "pda_app.h"
 #include "pda_console.h"
 #include "pda_epd.h"
 #include "t5_board.h"
 #include "touch_gt911.h"
+#include "ui_pda.h"
 
 static const char *TAG = "app";
+
+static esp_timer_handle_t s_tick;
 
 static void on_button(t5_button_t b, t5_press_t p, void *ctx)
 {
     (void)ctx;
     ESP_LOGI(TAG, "button %s %s", b == T5_BUTTON_BOOT ? "boot" : "side",
              p == T5_PRESS_SHORT ? "short" : "long");
+    const pda_ev_t ev = {.type = PDA_EV_BUTTON, .arg = ((int)b << 1) | (p == T5_PRESS_LONG)};
+    pda_app_post(&ev);
 }
 
 static void on_touch(const gesture_t *g, void *ctx)
 {
     (void)ctx;
-    (void)g;
+    const pda_ev_t ev = {.type = PDA_EV_GESTURE, .gesture = (uint8_t)g->kind, .x = (int16_t)g->x,
+                         .y = (int16_t)g->y};
+    pda_app_post(&ev);
 }
 
-void pda_draw_test_screen(void)
+static void ble_state(ble_pda_state_t *st)
 {
-    uint8_t *fb = pda_epd_fb();
-    pda_epd_clear_fb();
-    int x = 40, y = 80;
-    epd_write_default(&FONT_BIG, "odysseus-sound PDA", &x, &y, fb);
-    x = 40;
-    y = 140;
-    epd_write_default(&FONT_TEXT, "Bring-up: Latin-1 äöü ß é ñ — “quotes” … • ½ °C", &x, &y, fb);
-    for (int i = 0; i < 16; i++) {
-        epd_fill_rect((EpdRect){.x = 40 + i * 55, .y = 200, .width = 50, .height = 80},
-                      (uint8_t)(i * 17), fb);
+    t5_battery_t b;
+    static t5_battery_t cached = {.percent = -1};
+    static int64_t cached_at = -60000;
+    const int64_t now = esp_timer_get_time() / 1000;
+    if (now - cached_at > 30000 && t5_battery_read(&b) == ESP_OK) {
+        cached = b;
+        cached_at = now;
     }
-    epd_draw_rect((EpdRect){.x = 0, .y = 0, .width = PDA_EPD_W, .height = PDA_EPD_H}, 0, fb);
-    /* Touch targets for the coordinate check: 1 top left .. 4 bottom left, clockwise. */
-    static const int cx[4] = {60, PDA_EPD_W - 60, PDA_EPD_W - 60, 60};
-    static const int cy[4] = {320, 320, PDA_EPD_H - 40, PDA_EPD_H - 40};
-    for (int i = 0; i < 4; i++) {
-        epd_fill_circle(cx[i], cy[i], 22, EPD_BLACK, fb);
-        char n[2] = {(char)('1' + i), 0};
-        int tx = cx[i] - 7, ty = cy[i] + 10;
-        EpdFontProperties p = epd_font_properties_default();
-        p.fg_color = 0xF;
-        p.bg_color = 0x0;
-        epd_write_string(&FONT_TEXT, n, &tx, &ty, fb, &p);
+    st->feed_version = pda_app_feed_version();
+    st->outbox = pda_app_outbox_waiting();
+    st->time_valid = pda_app_time_valid();
+    st->user_active = pda_app_user_active();
+    st->battery_pct = (int8_t)(cached.present ? cached.percent : -1);
+    st->charging = cached.charging;
+    st->usb = cached.vbus;
+}
+
+static void on_passkey(int32_t code)
+{
+    const pda_ev_t ev = {.type = PDA_EV_PASSKEY, .arg = code};
+    pda_app_post(&ev);
+}
+
+static void on_link(bool up)
+{
+    pda_app_note_link(up);
+    const pda_ev_t ev = {.type = PDA_EV_LINK, .arg = up};
+    pda_app_post(&ev);
+}
+
+/* The minute clock: fire at the next minute boundary, then re-arm. */
+static void arm_tick(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    const int64_t us = (60 - tv.tv_sec % 60) * 1000000LL - tv.tv_usec + 50000;
+    esp_timer_stop(s_tick);
+    esp_timer_start_once(s_tick, (uint64_t)(us > 0 ? us : 60000000));
+}
+
+static void on_tick(void *arg)
+{
+    (void)arg;
+    if (pda_app_time_valid()) {
+        const pda_ev_t ev = {.type = PDA_EV_TICK};
+        pda_app_post(&ev);
     }
-    pda_epd_update(PDA_EPD_FULL);
+    arm_tick();
 }
 
 void app_main(void)
@@ -62,12 +103,26 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(t5_board_init());
     ESP_ERROR_CHECK(pda_epd_init(t5_board_i2c()));
+    ESP_ERROR_CHECK(pda_app_init());
     if (touch_init(t5_board_i2c(), on_touch, NULL) != ESP_OK) {
-        ESP_LOGE(TAG, "touch unavailable");
+        ESP_LOGE(TAG, "touch unavailable: the console's tap/screen commands still work");
     }
     t5_board_start_buttons(on_button, NULL);
-    pda_draw_test_screen();
+
+    static const ble_pda_hooks_t hooks = {
+        .fw_version = PDA_FW_VERSION,
+        .get_state = ble_state,
+        .on_passkey = on_passkey,
+        .on_link = on_link,
+    };
+    err = ble_pda_init(pda_app_store(), NULL, &hooks);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "BLE: %s", esp_err_to_name(err));
+    }
+    ESP_ERROR_CHECK(ui_pda_start());
+
+    const esp_timer_create_args_t t = {.callback = on_tick, .name = "clock"};
+    esp_timer_create(&t, &s_tick);
+    arm_tick();
     pda_console_start();
 }
-
-void pda_console_register_app(void) {}

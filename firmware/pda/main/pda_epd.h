@@ -57,6 +57,8 @@ void pda_epd_clear_fb(void);
 pda_epd_kind_t pda_epd_update(pda_epd_kind_t kind);
 /* Partial update of one area only (pending marks, a tapped row). */
 pda_epd_kind_t pda_epd_update_area(EpdRect area);
+/* A small partial update that doesn't count towards the clean budget (the minute clock). */
+void pda_epd_update_light(EpdRect area);
 
 void pda_epd_get_stats(pda_epd_stats_t *out);
 

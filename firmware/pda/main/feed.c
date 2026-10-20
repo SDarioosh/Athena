@@ -25,9 +25,14 @@ static const char *str(ctx_t *c, int i)
     return s;
 }
 
+/* Missing, not a string, or "": NULL. */
 static const char *get_str(ctx_t *c, int obj, const char *key)
 {
-    return str(c, json_get(&c->d, obj, key));
+    const int i = json_get(&c->d, obj, key);
+    if (json_str_len(&c->d, i) <= 0) {
+        return NULL;
+    }
+    return str(c, i);
 }
 
 static int str_list(ctx_t *c, int obj, const char *key, const char **out, int max)
@@ -199,6 +204,7 @@ int feed_parse(const char *json, size_t len, feed_t *f)
     parse_conversations(&c, f);
     parse_actions(&c, f);
     parse_calendar(&c, f);
+    f->n_templates = str_list(&c, 0, "templates", f->templates, FEED_MAX_TEMPLATES);
     free(toks);
     f->arena = c.arena;
     feed_sort_actions(f);
@@ -265,8 +271,28 @@ int detail_parse(const char *json, size_t len, detail_t *d)
     }
     d->title = get_str(&c, 0, "title");
     d->summary = get_str(&c, 0, "summary");
+    get_time(&c, 0, "at", &d->at, NULL);
+    d->n_people = str_list(&c, 0, "people", d->people, FEED_MAX_PEOPLE);
     d->n_points = str_list(&c, 0, "points", d->points, FEED_MAX_POINTS);
-    json_bool(&c.d, json_get(&c.d, 0, "more"), &d->more);
+    json_num(&c.d, json_get(&c.d, 0, "from"), &d->from);
+    json_num(&c.d, json_get(&c.d, 0, "to"), &d->to);
+    d->next = get_str(&c, 0, "next"); /* null or missing: last page */
+    const int acts = json_get(&c.d, 0, "actions");
+    for (int o = json_first(&c.d, acts); o >= 0 && d->n_actions < DETAIL_MAX_ACTIONS;
+         o = json_next(&c.d, acts, o)) {
+        detail_action_t *a = &d->actions[d->n_actions];
+        *a = (detail_action_t){0};
+        if (c.d.t[o].type != JSON_OBJ || !json_int(&c.d, json_get(&c.d, o, "id"), &a->id)) {
+            continue;
+        }
+        a->text = get_str(&c, o, "text");
+        if (!a->text) {
+            continue;
+        }
+        a->status = get_str(&c, o, "status");
+        a->due = get_str(&c, o, "due");
+        d->n_actions++;
+    }
     const int arr = json_get(&c.d, 0, "segments");
     for (int o = json_first(&c.d, arr); o >= 0 && d->n_seg < DETAIL_MAX_SEGMENTS;
          o = json_next(&c.d, arr, o)) {

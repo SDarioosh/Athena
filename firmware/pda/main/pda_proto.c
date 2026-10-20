@@ -128,11 +128,9 @@ size_t pda_encode_error(uint8_t cmd, uint8_t code, uint32_t arg, uint8_t out[PDA
     return PDA_PROTO_ERROR_LEN;
 }
 
-size_t pda_encode_adv_mfg(uint8_t flags, uint8_t out[PDA_ADV_MFG_LEN])
+uint8_t pda_adv_flags(uint16_t outbox_waiting)
 {
-    put_u16(out, PDA_ADV_COMPANY);
-    out[2] = flags;
-    return PDA_ADV_MFG_LEN;
+    return outbox_waiting > 0 ? PDA_ADV_OUTBOX : 0;
 }
 
 /* ---- parsing ---- */

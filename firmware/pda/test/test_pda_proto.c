@@ -179,8 +179,8 @@ static void test_encoders(void)
     CHECK_EQ(pda_encode_error(0x12, PDA_E_BAD_CRC, 0xDEADBEEF, b), 8);
     static const uint8_t want_err[8] = {0xEE, 0x12, 8, 0, 0xEF, 0xBE, 0xAD, 0xDE};
     CHECK(memcmp(b, want_err, 8) == 0);
-    CHECK_EQ(pda_encode_adv_mfg(PDA_ADV_OUTBOX, b), 3);
-    CHECK(b[0] == 0xFF && b[1] == 0xFF && b[2] == 1);
+    CHECK_EQ(pda_adv_flags(0), 0);
+    CHECK_EQ(pda_adv_flags(3), PDA_ADV_OUTBOX);
 
     uint8_t big[PDA_PROTO_FRAME_MAX];
     pda_ob_entry_t e = {.action_id = 0x2A, .created_ms = 0x0102030405060708ull, .len = 2};

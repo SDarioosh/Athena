@@ -59,13 +59,13 @@ void pda_epd_clear_fb(void)
     epd_hl_set_all_white(&s_hl);
 }
 
-static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area)
+static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area, bool count)
 {
     if (!s_ready) {
         return kind;
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (kind != PDA_EPD_CLEAN && s_stats.since_clean >= PDA_EPD_PARTIAL_LIMIT) {
+    if (count && kind != PDA_EPD_CLEAN && s_stats.since_clean >= PDA_EPD_PARTIAL_LIMIT) {
         kind = PDA_EPD_CLEAN; /* ghosting budget used up */
         area = NULL;
     }
@@ -98,7 +98,11 @@ static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area)
     }
     s_stats.count[kind]++;
     s_stats.last_ms[kind] = ms;
-    s_stats.since_clean = kind == PDA_EPD_CLEAN ? 0 : s_stats.since_clean + 1;
+    if (kind == PDA_EPD_CLEAN) {
+        s_stats.since_clean = 0;
+    } else if (count) {
+        s_stats.since_clean++;
+    }
     xSemaphoreGive(s_lock);
     if (e != EPD_DRAW_SUCCESS) {
         ESP_LOGW(TAG, "update error 0x%x", (unsigned)e);
@@ -109,12 +113,17 @@ static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area)
 
 pda_epd_kind_t pda_epd_update(pda_epd_kind_t kind)
 {
-    return run_update(kind, NULL);
+    return run_update(kind, NULL, true);
 }
 
 pda_epd_kind_t pda_epd_update_area(EpdRect area)
 {
-    return run_update(PDA_EPD_PARTIAL, &area);
+    return run_update(PDA_EPD_PARTIAL, &area, true);
+}
+
+void pda_epd_update_light(EpdRect area)
+{
+    run_update(PDA_EPD_PARTIAL, &area, false);
 }
 
 void pda_epd_get_stats(pda_epd_stats_t *out)

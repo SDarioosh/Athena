@@ -85,12 +85,9 @@ extern "C" {
 #define PDA_STATUS_WINDOW 0x08
 #define PDA_STATUS_ACTIVE 0x10
 
-/* Scan response manufacturer data (plan §3.4 step 6): company id 0xFFFF (Bluetooth SIG
- * "no company, testing"), then one flags byte. */
-#define PDA_ADV_COMPANY 0xFFFF
+/* Scan response (plan §3.5): 128-bit Service Data for the service UUID with one flags
+ * byte, sent while the outbox has entries. */
 #define PDA_ADV_OUTBOX 0x01
-#define PDA_ADV_WINDOW 0x02
-#define PDA_ADV_MFG_LEN 3
 
 typedef struct {
     uint8_t flags;       /* PDA_STATUS_* */
@@ -135,8 +132,9 @@ size_t pda_encode_ob_entry(const pda_ob_entry_t *e, uint8_t *out);
 size_t pda_encode_ob_end(uint16_t count, uint32_t remaining, uint8_t out[PDA_PROTO_OB_END_LEN]);
 size_t pda_encode_ob_acked(uint8_t result, uint32_t action_id, uint8_t out[PDA_PROTO_OB_ACKED_LEN]);
 size_t pda_encode_error(uint8_t cmd, uint8_t code, uint32_t arg, uint8_t out[PDA_PROTO_ERROR_LEN]);
-/* Scan response manufacturer data: company id (LE) + flags. */
-size_t pda_encode_adv_mfg(uint8_t flags, uint8_t out[PDA_ADV_MFG_LEN]);
+/* The scan response's service data flags byte, or 0: no service data in the scan
+ * response (it carries the complete name then; §3.5, 31-byte limit). */
+uint8_t pda_adv_flags(uint16_t outbox_waiting);
 
 /* Parse one ctrl write. 0 and *out filled, or BAD_LENGTH / UNKNOWN_CMD / BAD_TIME. */
 int pda_parse_cmd(const uint8_t *buf, size_t len, pda_cmd_t *out);

@@ -1,7 +1,8 @@
 /* The feed (kind 1, docs/t5-pda-plan.md §4.1) and detail blobs (kind 2, §4.3), parsed
  * into fixed-size structs. Pure C; host-tested (test/test_feed.c).
  *
- * Strings are unescaped into one arena owned by the struct (feed_free / detail_free).
+ * Strings are unescaped into one arena owned by the struct (feed_free / detail_free). An
+ * empty string in an optional field ("owner": "") reads as missing (NULL).
  * Unknown keys are ignored, so the phone can add fields without a firmware change. Items
  * missing a required field are skipped, not fatal; a wrong "v" or broken JSON is. */
 #pragma once
@@ -20,6 +21,8 @@ extern "C" {
 #define FEED_MAX_HIGHLIGHTS 8
 #define FEED_MAX_POINTS 8
 #define FEED_MAX_PEOPLE 8
+#define FEED_MAX_TEMPLATES 12
+#define DETAIL_MAX_ACTIONS 16
 #define FEED_NO_DAY INT32_MIN
 #define DETAIL_MAX_SEGMENTS 200
 
@@ -65,6 +68,8 @@ typedef struct {
     int n_actions;
     feed_event_t events[FEED_MAX_EVENTS];
     int n_events;
+    const char *templates[FEED_MAX_TEMPLATES]; /* event titles for the "+" picker */
+    int n_templates;
     char *arena;
 } feed_t;
 
@@ -76,12 +81,25 @@ typedef struct {
 } detail_seg_t;
 
 typedef struct {
+    int64_t id;
+    const char *text, *status, *due; /* status, due may be NULL */
+} detail_action_t;
+
+/* conv:<id> details carry the conversation (at, people, summary, points, actions);
+ * transcript pages carry from/to (seconds), segments and next (the next page's ref). */
+typedef struct {
     const char *ref, *title, *summary; /* summary may be NULL */
+    int64_t at;
+    const char *people[FEED_MAX_PEOPLE];
+    int n_people;
     const char *points[FEED_MAX_POINTS];
     int n_points;
+    detail_action_t actions[DETAIL_MAX_ACTIONS];
+    int n_actions;
+    double from, to;
     detail_seg_t seg[DETAIL_MAX_SEGMENTS];
     int n_seg;
-    bool more; /* a transcript page with more after it (§4.3 paging) */
+    const char *next; /* NULL on the last page */
     char *arena;
 } detail_t;
 

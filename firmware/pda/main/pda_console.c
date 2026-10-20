@@ -16,8 +16,7 @@
 #include "pda_epd.h"
 #include "t5_board.h"
 #include "touch_gt911.h"
-
-void pda_draw_test_screen(void); /* app_main.c */
+#include "pda_app.h"
 
 static int cmd_i2c(int argc, char **argv)
 {
@@ -101,7 +100,8 @@ static int cmd_epd(int argc, char **argv)
         pda_epd_clear_fb();
         epd_fill_rect(sq, EPD_DARK, fb);
         bench_one(PDA_EPD_FULL, NULL, "new screen (mostly white)");
-        pda_draw_test_screen();
+        const pda_ev_t ev = {.type = PDA_EV_REDRAW};
+        pda_app_post(&ev); /* the UI draws its screen again */
         print_epd_stats();
         return 0;
     }

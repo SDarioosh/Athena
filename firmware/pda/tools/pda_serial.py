@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import re
 import struct
 import sys
 import time
@@ -47,15 +48,10 @@ def read_for(s: serial.Serial, seconds: float, until: bytes | None = None) -> by
 
 
 def run_cmd(s: serial.Serial, line: str, wait: float = 2.0, until: bytes = b"pda> ") -> str:
+    """Send one command; return its output once the next prompt shows (or after `wait` s)."""
     s.reset_input_buffer()
     s.write(line.encode() + b"\r\n")
-    data = read_for(s, wait, until=None)
-    text = data.decode("utf-8", "replace")
-    # Wait for the prompt that follows the command's output.
-    t_end = time.monotonic() + wait
-    while until.decode() not in text.split(line, 1)[-1] and time.monotonic() < t_end:
-        text += read_for(s, 0.2).decode("utf-8", "replace")
-    return text
+    return read_for(s, wait, until=until).decode("utf-8", "replace")
 
 
 def cmd_log(a) -> int:
@@ -109,23 +105,31 @@ def png_gray4(path: str, w: int, h: int, fb: bytes) -> None:
     open(path, "wb").write(png)
 
 
+B64_LINE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
+
+
 def cmd_fb(a) -> int:
-    with open_port(a.port) as s:
-        read_for(s, 0.3)
-        s.reset_input_buffer()
-        s.write(b"fb\r\n")
-        raw = read_for(s, 30, until=b"FB END")
-    text = raw.decode("ascii", "replace")
-    head, _, rest = text.partition("FB BEGIN ")
-    w, h, crc = rest.split("\n", 1)[0].split()
-    body = rest.split("\n", 1)[1].split("FB END", 1)[0]
-    fb = b"".join(base64.b64decode(line.strip()) for line in body.splitlines() if line.strip())
-    if zlib.crc32(fb) & 0xFFFFFFFF != int(crc, 16):
-        print("framebuffer CRC mismatch", file=sys.stderr)
-        return 1
-    png_gray4(a.out, int(w), int(h), fb)
-    print(f"wrote {a.out} ({w}x{h})")
-    return 0
+    for attempt in range(3):
+        with open_port(a.port) as s:
+            read_for(s, 0.3)
+            s.reset_input_buffer()
+            s.write(b"fb\r\n")
+            raw = read_for(s, 30, until=b"FB END")
+        text = raw.decode("ascii", "replace")
+        _, _, rest = text.partition("FB BEGIN ")
+        if not rest:
+            continue
+        w, h, crc = rest.split("\n", 1)[0].split()
+        body = rest.split("\n", 1)[1].split("FB END", 1)[0]
+        # Log lines from other tasks can land between the data lines: skip them.
+        lines = [x.strip() for x in body.splitlines() if B64_LINE.match(x.strip())]
+        fb = b"".join(base64.b64decode(x) for x in lines)
+        if zlib.crc32(fb) & 0xFFFFFFFF == int(crc, 16):
+            png_gray4(a.out, int(w), int(h), fb)
+            print(f"wrote {a.out} ({w}x{h})")
+            return 0
+        print(f"framebuffer CRC mismatch (attempt {attempt + 1})", file=sys.stderr)
+    return 1
 
 
 def main() -> int:
