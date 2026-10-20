@@ -895,6 +895,8 @@ Still open:
   Wi-Fi at home, transcript QR, auto-blank, languages). New: should the phone send a POSIX
   time zone (`tz_posix`) in the feed, so times after a DST change are right? And how does
   the real panel look to you (contrast, VCOM 1560 mV, ghosting after a day)?
+- Android app: `docs/android-app-plan.md` (Odysseus WebView shell + the relay in one app).
+  Owner decisions in its §10: repo layout, app ID/label, how native, tokens, distribution.
 - Odysseus fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.
 - The remaining XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, extra parts, microSD). They wait until XIAO work
