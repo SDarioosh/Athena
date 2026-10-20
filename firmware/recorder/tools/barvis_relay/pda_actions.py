@@ -51,7 +51,11 @@ class InvalidAction(Exception):
     """An outbox entry that doesn't parse or doesn't follow §4.2."""
 
 
-class CalendarNotConfigured(Exception):
+class NotConfigured(Exception):
+    """Odysseus (calendar or todos) isn't set up for this relay; the action waits."""
+
+
+class CalendarNotConfigured(NotConfigured):
     """No calendar is set up on this relay; calendar actions wait in the outbox."""
 
 
@@ -92,7 +96,15 @@ class DigestRefresh:
     date: str
 
 
-Action = ItemStatus | CalAdd | CalDelete | Fetch | DigestRefresh
+@dataclass(frozen=True)
+class TodoToggle:
+    note: str
+    i: int
+    text: str  # the item's first 80 characters, to find it if the indexes shifted
+    done: bool
+
+
+Action = ItemStatus | CalAdd | CalDelete | Fetch | DigestRefresh | TodoToggle
 
 _FIELDS: dict[str, tuple[set[str], set[str]]] = {  # t -> (required, optional)
     "item_status": ({"id", "status"}, set()),
@@ -100,6 +112,7 @@ _FIELDS: dict[str, tuple[set[str], set[str]]] = {  # t -> (required, optional)
     "cal_delete": ({"id"}, set()),
     "fetch": ({"ref"}, set()),
     "digest_refresh": ({"date"}, set()),
+    "todo_toggle": ({"note", "i", "text", "done"}, set()),
 }
 
 
@@ -162,6 +175,14 @@ def parse_action(raw: bytes) -> Action:
         return CalDelete(_str(obj["id"], "id", 200))
     if t == "digest_refresh":
         return DigestRefresh(_date(obj["date"], "date"))
+    if t == "todo_toggle":
+        i = obj["i"]
+        if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < 10_000:
+            raise InvalidAction("i must be an integer >= 0")
+        if not isinstance(obj["done"], bool):
+            raise InvalidAction("done must be true or false")
+        return TodoToggle(_str(obj["note"], "note", 64), i, _str(obj["text"], "text", 80),
+                          obj["done"])
     if t == "fetch":
         ref = obj["ref"]
         m = _REF.match(ref) if isinstance(ref, str) else None
@@ -256,10 +277,16 @@ class CalendarMemory:
 
 class ActionRunner:
     def __init__(self, api: ServerApi, calendar: Calendar | None = None,
-                 memory: CalendarMemory | None = None) -> None:
+                 memory: CalendarMemory | None = None, todos: Any = None) -> None:
         self.api = api
         self.calendar = calendar or NoCalendar()
         self.memory = memory or CalendarMemory()
+        self.todos = todos  # pda_todos.Todos, or None (not configured)
+        self._notes: list[dict[str, Any]] | None = None
+
+    def begin_sync(self) -> None:
+        """Forget the notes read for todo_toggle: they're read once per sync (§4.4)."""
+        self._notes = None
 
     def run(self, action_id: int, raw: bytes) -> Outcome:
         try:
@@ -268,7 +295,7 @@ class ActionRunner:
             return Outcome(1, f"invalid action: {e}")
         try:
             return self._run(action_id, raw, action)
-        except CalendarNotConfigured as e:
+        except NotConfigured as e:
             return Outcome(None, f"{e}; the action waits on the T5")
         except UploadError as e:
             if e.kind == SKIP:
@@ -286,6 +313,8 @@ class ActionRunner:
             return Outcome(0, f"digest {a.date} rebuilt")
         if isinstance(a, Fetch):
             return Outcome(0, f"fetched {a.ref}", detail=self.detail(a))
+        if isinstance(a, TodoToggle):
+            return self._todo_toggle(a)
         if isinstance(a, CalAdd):
             key = self.memory.key(action_id, raw)
             if key in self.memory.created:
@@ -301,6 +330,37 @@ class ActionRunner:
                 return Outcome(0, f"event {a.id} was already deleted")
             raise
         return Outcome(0, f"event {a.id} deleted")
+
+    # ------------------------------------------------------------ todos (§4.4)
+
+    def _todo_toggle(self, a: TodoToggle) -> Outcome:
+        if self.todos is None:
+            raise NotConfigured("todos not configured (no Odysseus)")
+        if self._notes is None:
+            notes = self.todos.notes()
+            if notes is None:
+                raise NotConfigured("Odysseus can't list todos for this token or hub")
+            self._notes = notes
+        note = next((n for n in self._notes if str(n.get("id")) == a.note), None)
+        if note is None:
+            return Outcome(1, f"note {a.note} is gone")
+        items = [it if isinstance(it, dict) else {} for it in note.get("items") or []]
+        index = match_item(items, a.i, a.text)
+        if index is None:
+            return Outcome(1, f"no single item of note {a.note} starts with {a.text!r}")
+        if bool(items[index].get("done")) == a.done:
+            return Outcome(0, f"note {a.note} item {index} already "
+                              f"{'done' if a.done else 'open'}")
+        try:
+            code = self.todos.toggle(a.note, index, a.done)
+        except UploadError as e:
+            if e.status == 403:  # the token lacks todos:write; fixable, so it waits
+                raise NotConfigured("Odysseus token can't change todos (todos:write)") from e
+            raise
+        if code != 0:
+            return Outcome(1, f"Odysseus refused the toggle (exit_code {code})")
+        items[index]["done"] = a.done  # later actions in this sync see the new state
+        return Outcome(0, f"note {a.note} item {index} -> {'done' if a.done else 'open'}")
 
     # ------------------------------------------------------------ details (§4.3)
 
@@ -336,6 +396,20 @@ class ActionRunner:
         if more:
             blob["next"] = f"transcript:{f.conv_id}@{_num(end)}-{_num(end + PAGE_SECONDS)}"
         return blob
+
+
+def _norm(text: Any) -> str:
+    return " ".join(str(text or "").split())
+
+
+def match_item(items: list[dict[str, Any]], i: int, text: str) -> int | None:
+    """§4.4: item `i` if its text starts with `text` (spaces trimmed and collapsed), else
+    the only item that does, else None."""
+    want = _norm(text)
+    if 0 <= i < len(items) and _norm(items[i].get("text")).startswith(want):
+        return i
+    hits = [k for k, it in enumerate(items) if _norm(it.get("text")).startswith(want)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _num(x: float) -> str:
