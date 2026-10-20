@@ -24,8 +24,12 @@ extern "C" {
 #define OPUS_ENC_MAX_PACKET 1275
 /* Milestone 3 picks bitrate and complexity by transcription accuracy (plan §7.4). Complexity
  * 1 over 0: better pitch analysis and noise shaping for ~10 % more CPU; 2 and up add the
- * delayed-decision quantiser for another ~30 %. */
-#define OPUS_ENC_DEFAULT_BITRATE 16000
+ * delayed-decision quantiser for another ~30 %.
+ * Bitrate 24 kbps, not 16: in the server's recognition eval (AMI far-field speech at the
+ * watch's ~-24 dBFS, complexity 1) 16 kbps lost ~7 WER points to uncompressed audio
+ * (small.en) and ~9 (large-v3-turbo); 24 kbps came within ~1.3. Bitrate costs no encoder
+ * CPU, only SD space and BLE time (a 30 s chunk ~90 KB instead of ~60 KB). */
+#define OPUS_ENC_DEFAULT_BITRATE 24000
 #define OPUS_ENC_DEFAULT_COMPLEXITY 1
 
 typedef struct opus_enc opus_enc_t;

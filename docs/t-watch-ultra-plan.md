@@ -349,7 +349,7 @@ building it, some of which change the XIAO plan's §3:
 - **Chunks go to the SD card directly**, no PSRAM queue yet; the card stays mounted while a
   session records. Milestone 2 measures what that costs; the PSRAM-first queue of §2.3 is
   still the plan if it matters.
-- **Opus**: libopus via `78/esp-opus`, 16 kbps, complexity 1, `codec=ogg` uploads.
+- **Opus**: libopus via `78/esp-opus`, 24 kbps (16 kbps measured ~7–9 WER points worse), complexity 1, `codec=ogg` uploads.
 - **`device=twatch-ultra`**, without the `-<mac4>` suffix of §5, while there is one watch.
 - **Pairing**: passkey entry with LE Secure Connections (owner decision 2026-10-19): the
   watch shows a 6-digit code on the AMOLED, the phone or PC types it. New bonds only in a
