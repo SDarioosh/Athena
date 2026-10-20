@@ -39,6 +39,30 @@ jobs:
           path: firmware/recorder
           command: idf.py -DBOARD=twatch_ultra -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_ultra" build
 
+  firmware-t5-pda:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Host tests (glance protocol, JSON/feed parsing, outbox, blob store, gestures)"
+        run: |
+          cmake -S firmware/pda/test -B build-pda-host
+          cmake --build build-pda-host
+          ctest --test-dir build-pda-host --output-on-failure
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: "PDA tools: lint"
+        run: |
+          pip install ruff
+          ruff check --config server/pyproject.toml firmware/pda/tools
+      - name: "idf.py build (ESP-IDF v5.5.2, esp32s3, T5 E-Paper Pro PDA)"
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.2
+          target: esp32s3
+          path: firmware/pda
+          command: idf.py build
+
   ble-relay-tools:
     runs-on: ubuntu-latest
     steps:

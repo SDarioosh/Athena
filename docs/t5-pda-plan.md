@@ -1,6 +1,8 @@
 # Plan: LilyGO T5 E-Paper Pro as an odysseus-sound PDA
 
-Status: **plan, nothing built.** Proposed 2026-10-20. Owner decisions are open (§11).
+Status: **firmware milestones 0–3 built** in `firmware/pda/` (2026-10-20; what is verified on
+the board is in `firmware/pda/README.md`). Relays: see their branches. Owner decisions are open
+(§11).
 
 ## Why
 
@@ -48,36 +50,52 @@ Odysseus        calendar REST (scoped token)  ───────────�
 - **On demand:** opening a transcript that isn't in the feed is also an outbox action
   (`fetch`). The phone answers with a detail blob over the same download path.
 
-## 1. Hardware facts (to confirm at bring-up)
+## 1. Hardware facts (confirmed at bring-up, 2026-10-20)
 
-From LilyGO's documentation. Check each one on the owner's board in milestone 0.
+Checked on the owner's board (LilyGO "T5 E-Paper S3 Pro", H752-01, schematic V1.0 24-12-24)
+against LilyGO's `docs/pinmap.md` and examples (github.com/Xinyuan-LilyGO/T5S3-4.7-e-paper-PRO).
 
-| Part | Use |
-|---|---|
-| ESP32-S3, 16 MB flash, 8 MB PSRAM | firmware, a 960×540 4-bit framebuffer (≈ 260 KB) in PSRAM, feed cache in flash |
-| 4.7" e-paper, 960×540, 16 grey levels, parallel bus, with its own power IC (TPS65185) | the display, driven by [epdiy](https://github.com/vroland/epdiy) |
-| GT911 capacitive touch | taps, swipes |
-| RTC (PCF8563 class) | wall clock between phone connections |
-| Charger and fuel gauge (BQ25896 / BQ27220 class) | battery %, charging state |
-| microSD slot | not used in v1 (§7) |
-| Buttons | wake, page back, full refresh |
-| Optional LoRa module on some variants | not used |
+| Part | Confirmed | Use |
+|---|---|---|
+| ESP32-S3R8 (QFN56, rev 0.2), 16 MB QIO flash, 8 MB **octal** PSRAM | esptool `flash_id`, boot log | firmware; epdiy's framebuffers (3 × 260 KB) in PSRAM; code and rodata run from PSRAM too (`CONFIG_SPIRAM_XIP_FROM_PSRAM`, §2) |
+| 4.7" ED047TC1, 960×540, 16 greys, 8-bit parallel bus; TPS65185 power IC (0x68) | drawn and timed | epdiy 2.1.3 board **`epd_board_v7`** works unchanged; VCOM 1560 mV (LilyGO's default) |
+| PCA9535 I/O expander (0x20, INT GPIO38) | read back | port 1: e-paper control (epdiy); IO1_2 the side button (epdiy makes it an output, the firmware sets it back to input); IO0_0 the LoRa/GPS rail enable, held off |
+| GT911 touch (0x5D, INT GPIO3, RST GPIO9) | taps on four corner targets | its raw frame is portrait (540 × 960): swap X/Y and flip Y for the landscape screen |
+| PCF8563 RTC (0x51, INT GPIO2), coin cell holder | kept the time over reboots | wall clock between phone connections |
+| BQ25896 charger (0x6B), BQ27220 fuel gauge (0x55) | 4.13–4.17 V, 93–99 %, USB, charging | battery %, charging state |
+| Buttons: BOOT (GPIO0), side button (PCA IO1_2, active low), RST | pressed by hand: BOOT short and long, side short | back, pairing window, clean refresh |
+| Front light (GPIO11, LED driver enable) | off | not used (daylight reading) |
+| microSD (SPI, CS 12), LoRa SX1262 and GPS on the Pro | not touched | not used (§7) |
 
-- Two ESP32-S3 native-USB devices are connected to the owner's PC (COM35 and COM36). One is
-  the T-Watch Ultra. Find out which one is the T5 before flashing anything
-  (`idf.py -p COMx monitor` on a known-good image, or match the MAC).
-- **Refresh:** a full refresh with flashing takes about 1 s; a partial refresh of a region
-  takes a few hundred ms. After many partial refreshes the panel ghosts, so it needs a full
-  refresh every N updates or on a button press. Measure both in milestone 0.
+- The I2C bus is SDA 39 / SCL 40 for every chip. The firmware creates it and hands it to
+  epdiy (`epd_init_with_config`), so there is one ESP-IDF `i2c_master` bus.
+- **The COM ports swap.** On the owner's PC the T5 was COM35 first and later COM36 (the
+  T-Watch Ultra took the other one). Identify it by MAC before every flash (`esptool
+  read_mac`, `30:ed:a0:b1:ab:cc`), never by the port number.
+- **Refresh times** (`epd bench` on the console). epdiy only drives the pixels that differ
+  from what it last drew, so the time doesn't depend on the area:
+
+  | Update | Time |
+  |---|---|
+  | partial, GL16 (no flash), any area that changed | 0.93–0.98 s |
+  | full, GC16 (flashing), a new screen | ~1.0 s |
+  | clean: one black/white flash cycle, then GC16 of every pixel | 1.57 s |
+  | nothing changed | 0.13 s |
+  | `epd_clear()` alone (epdiy's default cycles) | ~1.9 s, so the clean refresh uses one cycle |
+
+  Because only changed pixels are driven, ghosting builds up in areas that never change;
+  only the clean refresh clears it (§5).
 
 ## 2. Firmware
 
-- **The same ESP-IDF project as the recorder.** Add a new board, `boards/t5_epaper_pro/`,
-  behind the existing `board.h` layer. Also add a new app target, because the PDA records
-  no audio. The open question is a second `main` or a Kconfig switch in the shared `main/`
-  (§11 Q1).
-- **Reused as it is:** NimBLE pairing and bonding (`ble_sync`), the `ble_proto`
-  encode/decode style, `isotime`, `crc32`, and the console commands.
+- **As built (§11 Q1 default):** a separate ESP-IDF project, `firmware/pda/`. It compiles
+  `crc32.c` and `isotime.c` from `firmware/recorder/main/` unchanged and changes nothing in
+  the recorder. The recorder's `board.h` is about mics, rails and the SD card, so the T5's
+  board layer is PDA-specific and lives in the project's `main/` (`t5_pins.h`,
+  `t5_board.*`, `pda_epd.*`, `touch_gt911.*`).
+- **Reused:** the pairing and bonding rules and the NimBLE structure of the recorder's
+  `ble_sync.c` (copied into `ble_pda.c`, not shared, because the services differ), the
+  `ble_proto` encode/decode and gate style (`pda_proto.c`), `isotime`, `crc32`.
 - **New:**
   - `epd` (epdiy wrapper)
   - `touch` (GT911)
@@ -88,13 +106,27 @@ From LilyGO's documentation. Check each one on the owner's board in milestone 0.
 - **Rendering:** the T5 draws its own screens from the feed. Use one or two bitmap fonts
   (two sizes, Latin-1 plus the punctuation that summaries use) and no LVGL in v1. LVGL's
   redraw model fights e-paper refresh, and the screens are simple lists.
-- **Storage:** a LittleFS partition of about 2 MB in internal flash, holding:
-  - `feed.json` and `feed.tmp`, swapped atomically after the CRC checks out
-  - the outbox records
-  - up to 20 cached detail blobs, evicted oldest first
+- **Storage:** a LittleFS partition of 2 MB (`storage`) in internal flash, holding:
+  - `feed.json` and `feed.tmp`, swapped atomically after the CRC checks out. A PUT is
+    buffered in PSRAM and written to `feed.tmp` only at `PUT_END`, after the size and CRC
+    check, then renamed over `feed.json`.
+  - the outbox records: one file per action (`ob/<id>.act`: a header with the id, time,
+    length and CRC-32, then the JSON) and `ob/next`, the id counter. Ids are never reused; a
+    brand-new outbox starts at a random base below 2^31.
+  - up to 20 cached detail blobs (`d/<seq>-<crc32(ref)>.json`), evicted oldest first
+- **Flash writes during a refresh:** with code in flash, a LittleFS or NVS write disables
+  the cache, and epdiy's LCD interrupt then reads the framebuffer in PSRAM and crashes
+  ("Cache disabled but cached memory region accessed", seen on the board).
+  `CONFIG_SPIRAM_XIP_FROM_PSRAM` runs code and rodata from PSRAM, so flash writes don't
+  disable the cache.
+- **Fonts:** Fira Sans 12 and 20 pt (SIL OFL), epdiy's pre-converted headers: ASCII,
+  Latin-1, general punctuation, arrows. The euro sign isn't in them and is drawn as "EUR";
+  other missing characters as "?".
 - **Sleep:** with the screen idle for 60 s and no BLE link, the T5 goes into light sleep. The
   e-paper keeps the image. Touch or a button wakes it. Deep sleep with periodic wake
-  for an advertising window is milestone 5.
+  for an advertising window is milestone 5. **Not built yet:** v1 stays awake with DFS
+  (240 MHz during a refresh, 80 MHz otherwise); light sleep moves to milestone 5 with the
+  power measurements.
 
 ## 3. BLE service ("glance" protocol v1)
 
@@ -195,6 +227,58 @@ within seconds while connected.
    15 min, and also as soon as the T5 advertises with "outbox waiting" in its scan
    response.
 
+### 3.6 Details settled by the firmware (v1)
+
+`firmware/pda/main/pda_proto.c` and `ble_pda.c`; byte vectors in
+`firmware/pda/test/test_pda_proto.c`. They agree with the PC relay's §3.5 (on its branch)
+where both say something.
+
+- **Checks on every `ctrl` write**, in order: another command still running →
+  `ERROR busy`; MTU < 420 → `ERROR mtu_too_small` (arg = MTU); then the length:
+  `TIME` 14, `BYE` 1, `PUT_BEGIN` 16, `PUT_DATA` ≥ 6 (header + at least one byte),
+  `PUT_END` 1, `OB_LIST` 7, `OB_ACK` 6; anything else → `ERROR bad_length`.
+- **`TIME`:** `epoch_ms` outside 2024-01-01 … 2100-01-01 or `tz_offset_min` beyond ±840 →
+  `ERROR bad_time`. It sets the system clock, the RTC and the display offset (kept in NVS).
+- **`PUT_BEGIN`:** kind not 1 or 2 → `ERROR bad_state` (arg = kind); `total` 0 →
+  `bad_length`; over 256 KiB → `too_large` (arg = total). A `PUT_BEGIN` while a PUT is
+  open drops that PUT and starts again.
+- **`PUT_DATA`** goes in order: `offset` ≤ the bytes received so far (rewriting is fine, a
+  gap isn't). A gap → `ERROR bad_state` (arg = bytes received); past `total` →
+  `too_large` (arg = offset); no PUT open → `bad_state` (arg 0). Every `PUT_DATA` error
+  **drops the PUT**, so the following `PUT_END` answers `bad_state` (arg 0); start again
+  with `PUT_BEGIN`. The payload is copied in the write callback itself, so the write
+  response means the bytes are in.
+- **`PUT_END`:** size ≠ `total` → `ERROR bad_state` (arg = bytes received); CRC mismatch →
+  `bad_crc` (arg = the CRC the T5 computed); a feed or detail that doesn't parse (wrong
+  `v`, broken JSON, no `ref`) → `bad_state` (arg = blob_id); a flash write error →
+  `io_error` (arg = blob_id). The stored feed is untouched in every error case.
+- **`OB_LIST`:** `max` is capped at 16; `max` 0 answers only `OB_END` with
+  `remaining` = the entries after `after_id`.
+- **`OB_ACK.result`:** 0 = done; anything else = rejected for good ("couldn't sync").
+  **`OB_ACKED.result`:** 0 = removed now, 1 = it wasn't queued (already acked). Both are
+  success, as with the watch's `ACKED`.
+- **Advertising:** whenever no relay is connected (the relay reconnects every 15 min),
+  1000–1250 ms, 152.5–211.25 ms while the pairing window is open. Advertising data: flags
+  and the 128-bit service UUID.
+- **Scan response:** it holds 31 bytes. The PC relay's service data (AD `0x21`: the
+  16-byte UUID and one flags byte, bit0 = outbox not empty) takes 19 bytes and the name
+  `odysseus-pda` 14, so they don't fit together. The T5 sends the service data **only while
+  the outbox has entries**, with the shortened name (AD `0x08`) `odysseus-p`; otherwise the
+  complete name. No service data means nothing is waiting. The GAP device name is always
+  `odysseus-pda`.
+- **Idle disconnect:** 30 s without a command, or 6 min while `status` bit4 (user active:
+  a touch or button in the last 60 s) is set, so a relay can stay and refresh every 5 min.
+  After `BYE_OK` the T5 disconnects after ~1 s if the relay hasn't.
+- **`status`** is notified (at most once a second) when any of its bytes changes: the
+  outbox count, the feed version, the flags.
+- **Actions** are written exactly as in §4.2, for example
+  `{"t":"item_status","id":42,"status":"done"}`,
+  `{"t":"cal_add","title":"Call","start":"2026-10-21T09:00:00+02:00","end":"2026-10-21T09:30:00+02:00","from_item":12}`
+  (timed: local time with the display offset) or
+  `{"t":"cal_add","title":"Reminder","start":"2026-10-23","all_day":true}` (no `end`).
+  Undo before the relay has listed an action deletes it; after that, the T5 queues the
+  reverse `item_status` (`open`).
+
 ## 4. Feed, actions and details
 
 ### 4.1 Feed (`kind` 1)
@@ -250,6 +334,13 @@ Each action is one JSON object of 400 bytes at most, with `"t"` saying the type:
 Long transcripts are paged (`@from-to`, e.g. 10 minutes per page). The T5 asks for the next
 page when the reader reaches the end.
 
+- The firmware reads details as the PC relay's §4.3 defines them: `conv:` details with
+  `at`, `people`, `summary`, `points`, `actions`; transcript pages with `from`, `to`,
+  `segments` and `next` (the next page's ref, `null` on the last). The first page it asks
+  for is `transcript:<id>@0-600`; "Next part" asks for `next`.
+- It also reads the feed's `templates` (the "+" picker; Call, Meeting, Reminder when there
+  are none). An empty string in an optional field (`"owner": ""`) reads as missing.
+
 ## 5. Screens
 
 | Screen | Content | Interactions |
@@ -273,6 +364,15 @@ page when the reader reaches the end.
   - full refresh when changing screens, every 10 partial refreshes, and on the button
 - **Time:** shown in the feed's `tz`. `TIME` carries the phone's UTC offset, so the clock is
   right even before the first feed.
+  - **As built:** the T5 shows every time in the offset of the last `TIME`. It has no time
+    zone database, so it doesn't use the IANA name (shown on Status only). An event after a
+    daylight-saving change within the week is shown, and a `cal_add` for such a day is
+    made, one hour off until a `TIME` after the change. A fix for v2: the feed carries a
+    POSIX TZ string (`"tz_posix": "CET-1CEST,M3.5.0,M10.5.0/3"`) that the T5 evaluates.
+- **Refresh policy as built:** a new screen is a full (GC16) update; a change on the same
+  screen (a pending mark, a page) a partial (GL16) one; the minute clock a partial that
+  doesn't count; after 10 counted updates, and on the side button or "Clean refresh", a
+  clean refresh.
 
 ## 6. Phone app and servers
 
@@ -322,6 +422,15 @@ page when the reader reaches the end.
 | 3 | BLE up | Outbox `item_status` from the T5, through the PC relay, to the sandbox server's `PATCH`. A lost ack retries without duplicates. |
 | 4 | Phone | android-relay syncs the T5 and the watch on one phone. The feed includes the Odysseus calendar. `cal_add` from an action item appears in Odysseus and in CalDAV. |
 | 5 | Power and security | Deep sleep with a wake-up advertising window. The battery life is measured. Flash encryption is on. |
+
+**Firmware status (2026-10-20):** milestones 0–3 are built in `firmware/pda/` and checked on
+the owner's board with fictional data, through the USB console and a PC BLE test script
+(`firmware/pda/tools/pda_ble_test.py`): bring-up and refresh times (§1), all §5 screens,
+tap navigation, a feed loaded over USB and over BLE, reboot persistence, a bad CRC refused,
+the outbox drained and acked over BLE, a lost ack listed again without a duplicate. Still
+open: the PC relay's `pda` subcommand and the Android `PdaSync` against the real T5, and the
+server `PATCH` end to end (milestone 3's last step). The full list is in
+`firmware/pda/README.md`.
 
 The PC relay (`firmware/recorder/tools/barvis_relay`) gets a `pda` subcommand in milestone 2.
 That way the protocol can be tested without the phone, and in the sandbox with fictional
