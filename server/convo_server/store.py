@@ -224,6 +224,22 @@ def normalize_hhmm(value: str) -> str | None:
     return f"{int(m.group(1)):02d}:{m.group(2)}" if m else None
 
 
+@contextmanager
+def _init_lock(db_path: str) -> Iterator[None]:
+    """Exclusive file lock next to the database while its schema is set up."""
+    if db_path == ":memory:":
+        yield
+        return
+    import fcntl
+
+    with open(db_path + ".init-lock", "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def _row(r: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(r) if r is not None else None
 
@@ -236,7 +252,13 @@ class Store:
         self._conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
-        self._conn.executescript(SCHEMA)
+        # The API server and the MCP server open the same database at the same time
+        # (deploy starts both): set up and migrate one process at a time.
+        with _init_lock(self.path):
+            self._conn.executescript(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
         if self._conn.execute("PRAGMA user_version").fetchone()[0] < 2:
             # databases created before the line-level index existed
             self._conn.execute("INSERT INTO segments_fts(segments_fts) VALUES ('rebuild')")
