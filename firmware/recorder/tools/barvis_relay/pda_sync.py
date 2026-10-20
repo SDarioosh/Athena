@@ -145,6 +145,7 @@ class _Fetched:
 class PdaSync:
     def __init__(self, api: ServerApi, *, tz_name: str = "UTC",
                  calendar: Calendar | None = None, templates: list[str] | None = None,
+                 todos: Any = None,
                  state: PdaState | None = None,
                  device_key: str = "t5", stay: bool = False, list_only: bool = False,
                  clock: Callable[[], float] = time.time, timeout: float = 10.0,
@@ -156,8 +157,9 @@ class PdaSync:
         self.tz = resolve_tz(tz_name)
         self.calendar = calendar
         self.templates = templates
+        self.todos = todos
         self.state = state or PdaState(None)
-        self.runner = ActionRunner(api, calendar, self.state.calendar)
+        self.runner = ActionRunner(api, calendar, self.state.calendar, todos)
         self.device_key = device_key
         self.stay = stay
         self.list_only = list_only
@@ -293,6 +295,7 @@ class PdaSync:
     async def _outbox(self, t: Transport, report: Report) -> list[_Fetched] | None:
         """Handle every queued action. Returns the fetched details still to send, or None
         if it stopped on server trouble (nothing after that point is acked)."""
+        self.runner.begin_sync()
         fetched: list[_Fetched] = []
         after = 0
         while True:
@@ -348,7 +351,7 @@ class PdaSync:
         try:
             feed = await asyncio.to_thread(build_feed, self.api, now=now,
                                            tz_name=self.tz_name, calendar=self.calendar,
-                                           templates=self.templates)
+                                           templates=self.templates, todos=self.todos)
             data = encode_feed(feed)
         except UploadError as e:
             report.outcome = AUTH_FAILED if e.kind == AUTH else SERVER_RETRY

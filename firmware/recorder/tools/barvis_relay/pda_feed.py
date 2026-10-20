@@ -19,7 +19,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import urllib.parse
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from typing import Any, Protocol
 
@@ -41,9 +43,13 @@ POINT_MAX = 160
 TEXT_MAX = 200
 HIGHLIGHTS_MAX = 5
 BRIEFING_MAX = 1200
+TODO_NOTES_MAX = 20  # §4.4
+TODO_ITEMS_MAX = 40
+TODO_TEXT_MAX = 160
 TEMPLATES_MAX = 12  # event-title templates for the T5's "+" picker (§5)
 TEMPLATE_MAX = 40
 
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 UTC = timezone.utc  # noqa: UP017 (Python 3.10 has no datetime.UTC)
 
 
@@ -200,8 +206,34 @@ def _calendar(calendar: Any, start: datetime, end: datetime) -> list[dict[str, A
     return sorted(out, key=lambda e: e["start"] or "")
 
 
+def _todos(todos: Any) -> list[dict[str, Any]] | None:
+    """The `todos` section (§4.4), or None to leave it out (no Odysseus, or a hub/token that
+    can't list notes)."""
+    if todos is None:
+        return None
+    notes = todos.notes()
+    if notes is None:
+        return None
+    out = []
+    for n in notes:
+        if n.get("type") != "checklist" or not n.get("id"):
+            continue
+        items = [{"i": k, "text": cut(it.get("text"), TODO_TEXT_MAX), "done": bool(it.get("done"))}
+                 for k, it in enumerate((n.get("items") or [])[:TODO_ITEMS_MAX])
+                 if isinstance(it, dict)]
+        if not items:
+            continue
+        due = n.get("due_date")
+        due = due[:10] if isinstance(due, str) and _DATE.match(due[:10]) else None
+        out.append({"id": str(n["id"]), "title": cut(n.get("title"), TITLE_MAX) or None,
+                    "pinned": bool(n.get("pinned")), "due": due, "items": items})
+        if len(out) == TODO_NOTES_MAX:
+            break
+    return out
+
+
 def build_feed(api: ServerApi, *, now: float, tz_name: str, calendar: Any = None,
-               templates: list[str] | None = None) -> dict[str, Any]:
+               templates: list[str] | None = None, todos: Any = None) -> dict[str, Any]:
     """The feed dict (§4.1), not yet trimmed (see `encode_feed`). Raises UploadError."""
     tz = resolve_tz(tz_name)
     local_now = datetime.fromtimestamp(now, tz)
@@ -215,6 +247,9 @@ def build_feed(api: ServerApi, *, now: float, tz_name: str, calendar: Any = None
     feed["conversations"] = _conversations(api, now)
     feed["actions"] = _actions(api)
     feed["calendar"] = _calendar(calendar, day_start, day_start + timedelta(days=CAL_DAYS + 1))
+    checklists = _todos(todos)
+    if checklists is not None:
+        feed["todos"] = checklists
     if templates:
         feed["templates"] = _strings(templates, TEMPLATES_MAX, TEMPLATE_MAX)
     return feed
@@ -232,9 +267,10 @@ class FeedTooLarge(Exception):
 
 
 def encode_feed(feed: dict[str, Any], limit: int = FEED_MAX) -> bytes:
-    """Compact JSON of at most `limit` bytes. Trims `feed` in place if it's too big:
-    summaries are cut first, then the oldest conversations go, then (rarely needed) the
-    last action items and calendar entries."""
+    """Compact JSON of at most `limit` bytes. Trims `feed` in place if it's too big (§4.1):
+    summaries are cut first, then the oldest conversations go, then (rarely needed) done
+    checklist items, the last action items, the last unpinned checklists, the last
+    calendar entries and, last of all, the last pinned checklists."""
     raw = _dump(feed)
     if len(raw) <= limit:
         return raw
@@ -246,14 +282,41 @@ def encode_feed(feed: dict[str, Any], limit: int = FEED_MAX) -> bytes:
         steps += 1
         if convs:
             convs.pop()  # newest first, so this is the oldest
+        elif _drop_done_item(feed.get("todos") or []):
+            pass
         elif feed.get("actions"):
             feed["actions"].pop()
+        elif _drop_last(feed.get("todos") or [], lambda n: not n["pinned"]):
+            pass
         elif feed.get("calendar"):
             feed["calendar"].pop()
+        elif feed.get("todos"):
+            feed["todos"].pop()
         else:
             raise FeedTooLarge(f"feed is {len(raw)} bytes with nothing left to drop")
     log.info("feed trimmed to %d bytes (summaries cut, %d entries dropped)", len(raw), steps)
     return raw
+
+
+def _drop_done_item(todos: list[dict[str, Any]]) -> bool:
+    """Remove the last done item of the last checklist that has one (a checklist left
+    without items goes too). False if there is none."""
+    for n in reversed(todos):
+        for k in range(len(n["items"]) - 1, -1, -1):
+            if n["items"][k]["done"]:
+                del n["items"][k]
+                if not n["items"]:
+                    todos.remove(n)
+                return True
+    return False
+
+
+def _drop_last(rows: list[dict[str, Any]], which: Callable[[dict[str, Any]], bool]) -> bool:
+    for k in range(len(rows) - 1, -1, -1):
+        if which(rows[k]):
+            del rows[k]
+            return True
+    return False
 
 
 def content_hash(feed: dict[str, Any]) -> str:

@@ -385,9 +385,9 @@ The phone builds it from these sources:
  "templates": ["Call", "Meeting", "Reminder"]}
 ```
 
-- **Optional `templates`** (the Android relay only): up to 12 event titles the owner set in
-  the phone app, for the T5's "+" picker (§5). The PC relay doesn't send it; the firmware
-  must not require it and falls back to built-in titles. Readers ignore unknown keys.
+- **Optional `templates`:** up to 12 event titles for the T5's "+" picker (§5). The owner
+  sets them in the phone app, or with the PC relay's `--templates`. The firmware must not
+  require the key and falls back to built-in titles. Readers ignore unknown keys.
 - The Android relay builds the feed, actions and details exactly as the PC relay does
   (§3.5, the next bullet and §4.3). Calendar times from Odysseus are sent in UTC with `Z`
   like the conversations' `at`, and all-day events as dates.
@@ -505,6 +505,36 @@ conversations (`actions`) move into the conversation's detail screen (§5).
      success and `{"exit_code": 1, "error"}` on failure: `exit_code` 1 is result 1.
   It is idempotent: `done` is explicit, never a flip. No Odysseus configured: the action
   stays queued, like `cal_add`.
+- **Details settled by the PC relay** (the Android relay does the same):
+  - **Matching:** `text` and the item texts are trimmed and their runs of whitespace
+    collapsed to one space. Then a case-sensitive prefix match is made. The note is looked
+    up by `id` among all the notes the hub returned.
+  - **No call needed:** an item already in the wanted state (`done` *or* open) is result 0
+    without a call.
+  - **The hub answers:**
+    - an `exit_code` other than 0 is result 1;
+    - an answer without an integer `exit_code` is temporary (no ack);
+    - a 403 on the toggle (the token lacks `todos:write`) leaves the action queued and
+      doesn't stop the sync.
+  - **Hub can't list notes:** when the hub can't list notes for the token (a text answer
+    or a 403), `todo_toggle` stays queued too and the feed leaves `todos` out.
+  - **Once per sync:** the notes are read once per sync, before the first `todo_toggle`.
+    A successful toggle updates that copy, so a second action on the same item in the
+    same sync (a tap, then the reverse) is matched against the new state. The feed reads
+    the notes again afterwards.
+  - **Checks:** `i` is an integer from 0 to 9999. `note` is 1–64 characters, `text` 1–80
+    (neither may be only whitespace), and `done` is a JSON boolean.
+  - **Feed items:**
+    - only the first 40 items of a note, by index; an item that isn't a JSON object is
+      skipped, and the others keep their `i`;
+    - `due` is the first 10 characters of `due_date` if they are `YYYY-MM-DD`, else
+      `null`.
+  - **Trimming order** (§4.1):
+    1. Done items go one at a time, from the last checklist backwards. A checklist left
+       without items goes with them.
+    2. Unpinned checklists go from the end.
+    3. After the calendar entries, the pinned checklists go from the end, as a last
+       resort.
 - **On the T5:** a tap on an item queues `todo_toggle` with the opposite of its `done` and
   shows it at once (struck through, or not); a second tap before the relay has listed the
   action deletes it, after that it queues the reverse. Nothing else is editable on the T5
