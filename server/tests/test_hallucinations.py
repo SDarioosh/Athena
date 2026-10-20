@@ -116,3 +116,12 @@ def test_settings_configure_the_filter():
     assert t.hallucinations == HallucinationFilter(phrase_logprob=-0.2, max_repeats=2)
     off = build_transcriber(Settings(**base, whisper_drop_hallucinations=False))
     assert off.hallucinations is None
+
+
+def test_cut_loop_keeps_no_word_times_kept_text_does():
+    # Word times rebuild the text when a piece is split at a window cut (clips.py); a loop
+    # the filter cut must not come back that way.
+    loop = parse_verbose_json({"segments": [seg("go " * 12, 0.9)]}, ON)
+    plain = parse_verbose_json({"segments": [seg("see you at noon", 0.9)]}, ON)
+    assert loop[0].text.split().count("go") == 4 and loop[0].words == ()
+    assert [w[2] for w in plain[0].words] == [" see", " you", " at", " noon"]
