@@ -568,11 +568,12 @@ void app_main(void)
     ESP_ERROR_CHECK(ble_sync_init(&hooks));
 
     /* After a power-on one buzz: haptics work and the recorder starts unmuted. Out of
-     * standby the mute state was kept: buzz it (1 = unmuted, 2 = muted) and show the
-     * screen, so the press that woke the watch shows it is awake. */
-    board_haptic_pulse(s_muted ? 2 : 1);
+     * standby no buzz: the PWR press that woke the watch just shows the status screen,
+     * as it does when awake. */
     if (from_standby) {
         show_screen();
+    } else {
+        board_haptic_pulse(1);
     }
 
     ESP_ERROR_CHECK(console_start());

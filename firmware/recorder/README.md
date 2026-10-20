@@ -42,8 +42,8 @@ records everything between start and stop.
   flashing). After **2 minutes idle** (no session, nothing to sync and no relay connected,
   screen off, card unmounted, no USB power) it goes into **standby**: deep sleep until
   **PWR** is pressed or USB power is plugged in (`standby` on the console does it now).
-  Waking is a reboot of about a second: it buzzes the mute state (1 = recording, 2 =
-  muted; mute is kept) and shows the status screen. The waking press does nothing else.
+  Waking is a reboot of about a second that shows the status screen, like a PWR press
+  when awake (no buzz; mute is kept). The waking press does nothing else.
   BOOT doesn't wake it: GPIO0 is a strapping pin. Holding PWR ~6 s is still the hardware
   power-off.
 - **`rec [s]`** (console only): the milestone-1 test, N seconds (default 60) from the mic to

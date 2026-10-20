@@ -254,12 +254,12 @@ the button task polled every 10 ms.
   USB console dies.
 - Standby: deep sleep after 2 min idle (no session, `ble_sync_wants_relay()` false, no
   relay, screen off, card unmounted, no USB power), or `standby` on the console. Wake: PWR
-  (AXP2101 IRQ line, ext1) or USB power plugged in. Mute survives (RTC memory). The BT
+  (AXP2101 IRQ line, ext1) or USB power plugged in. Waking shows the status screen, no buzz. Mute survives (RTC memory). The BT
   crystal request is dropped before deep sleep.
 - On the owner's watch: builds, flashes, console works over USB, `standby` refuses while a
   finished session is queued ("advertising for a relay").
-- Needs the owner: drain the queue, unplug, wait 2 min (standby), press PWR (wakes, buzz,
-  screen); a BLE drain on battery (light sleep with BLE); overnight battery % idle with an
+- Needs the owner: drain the queue, unplug, wait 2 min (standby), press PWR (wakes, screen,
+  no buzz); a BLE drain on battery (light sleep with BLE); overnight battery % idle with an
   empty queue, and with a queue and no phone in range (light sleep only).
 
 ## Done in round 14: T-Watch Ultra BLE link works from a Windows PC
