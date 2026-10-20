@@ -13,11 +13,23 @@ from .llm import LLMClient, Summarizer
 from .pipeline import Pipeline
 from .search import OpenAIEmbedder
 from .store import Store
-from .transcribe import Transcriber, WhisperCliTranscriber, WhisperServerTranscriber
+from .transcribe import (
+    ParakeetTranscriber,
+    Transcriber,
+    WhisperCliTranscriber,
+    WhisperServerTranscriber,
+)
 from .vad import make_vad
 
 
 def build_transcriber(settings: Settings) -> Transcriber | None:
+    if settings.transcriber == "parakeet":
+        if not settings.parakeet_model_dir:
+            raise RuntimeError("CONVO_TRANSCRIBER=parakeet needs CONVO_PARAKEET_MODEL_DIR")
+        return ParakeetTranscriber(settings.parakeet_model_dir, settings.parakeet_threads)
+    if settings.transcriber != "whisper":
+        raise RuntimeError(f"unknown CONVO_TRANSCRIBER {settings.transcriber!r} "
+                           "(whisper or parakeet)")
     if settings.whisper_server_url:
         return WhisperServerTranscriber(settings.whisper_server_url, settings.language,
                                         temperature_inc=settings.whisper_temperature_inc)
@@ -55,7 +67,7 @@ def build_pipeline(settings: Settings) -> Pipeline:
                     settings.llm_timeout_seconds)
     embedder = (OpenAIEmbedder(settings.embed_base_url, settings.embed_model)
                 if settings.embed_base_url else None)
-    return Pipeline(settings, store, make_vad(settings.vad_backend),
+    return Pipeline(settings, store, make_vad(settings.vad_backend, settings),
                     build_transcriber(settings), build_diarizer(settings, store),
                     Summarizer(llm, settings.owner_name, timezone=settings.timezone),
                     embedder)

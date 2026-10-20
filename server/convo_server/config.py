@@ -33,11 +33,29 @@ class Settings(BaseSettings):
 
     # --- pipeline ---
     vad_backend: str = "silero"  # "silero" (production) or "energy" (tests only)
+    # Silero speech threshold and padding around each span (Silero's default is 30 ms;
+    # Omi uses 300 ms pre-roll). Ignored by the energy backend.
+    vad_threshold: float = 0.5
+    vad_speech_pad_ms: int = 30
+    # Bounded peak gain on a COPY of each chunk before VAD scores it, so quiet far-field
+    # speakers aren't dropped as silence (1 = off). Stored audio is unchanged.
+    vad_agc_max_gain: float = 1.0
+    vad_agc_target: float = 0.8
+    # Same gain on each clip sent to the transcriber, only when its peak is <= 0.4 of
+    # full scale (1 = off). The diarizer always gets the ungained audio.
+    asr_agc_max_gain: float = 1.0
     conversation_gap_seconds: float = 180.0
     keep_audio: bool = False
     language: str = "en"
     timezone: str = "UTC"  # IANA name used for daily digests, e.g. Europe/Berlin
     run_worker: bool = True  # background thread: finalize idle sessions, process, digest
+
+    # Speech-to-text model: "whisper" (whisper.cpp, below) or "parakeet" (Parakeet TDT
+    # 0.6B v3 in-process via sherpa-onnx, extra `parakeet`; being measured against whisper).
+    transcriber: str = "whisper"
+    # Unpacked sherpa-onnx export, e.g. .../sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
+    parakeet_model_dir: Path | None = None
+    parakeet_threads: int = 4
 
     # whisper.cpp: either a running `whisper-server` URL or a `whisper-cli` binary + model.
     whisper_server_url: str | None = None  # e.g. http://127.0.0.1:8178
