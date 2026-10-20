@@ -40,6 +40,7 @@
 #include "mic.h"
 #include "nvs_flash.h"
 #include "recorder.h"
+#include "reset_reason.h"
 #include "session_rec.h"
 #include "ui.h"
 
@@ -290,6 +291,7 @@ void app_print_status(void)
                s_resume_conversation ? " conversation resumes after the note" : "");
     }
     printf("screen: %s\n", ui_is_shown() ? "on" : "off");
+    printf("reset: %s, up %lld s\n", reset_reason_name(), (long long)(esp_timer_get_time() / 1000000));
     const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     printf("heap: internal %u KB free (lowest %u KB, largest block %u KB), PSRAM %u KB free\n",
            (unsigned)(heap_caps_get_free_size(caps) / 1024),
@@ -807,7 +809,8 @@ static void check_battery(void)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "odysseus-sound recorder %s", FW_VERSION);
+    ESP_LOGI(TAG, "odysseus-sound recorder %s; reset reason: %s", FW_VERSION,
+             reset_reason_name());
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -850,9 +853,9 @@ void app_main(void)
         ESP_LOGW(TAG, "chunk queue not read (%s); is the SD card in?", esp_err_to_name(err));
     }
     chunk_store_set_listener(on_queue_changed, NULL);
-    static const ble_sync_hooks_t hooks = {
-        .fw_version = FW_VERSION, .get_state = ble_get_state, .on_time = ble_on_time,
-        .on_passkey = ble_on_passkey};
+    const ble_sync_hooks_t hooks = {
+        .fw_version = FW_VERSION, .reset_reason = reset_reason_name(),
+        .get_state = ble_get_state, .on_time = ble_on_time, .on_passkey = ble_on_passkey};
     ESP_ERROR_CHECK(ble_sync_init(&hooks));
 
     /* One buzz: haptics work and the recorder starts unmuted. */

@@ -155,8 +155,9 @@ class Relay:
     async def _session(self, t: Transport, report: Report) -> None:
         info = p.Info.parse(await t.read_info())
         report.info = info
-        log.info("watch: device=%s fw=%s board=%s proto=%d",
-                 info.device, info.fw or "?", info.board or "?", info.proto)
+        log.info("watch: device=%s fw=%s board=%s proto=%d last reset=%s",
+                 info.device, info.fw or "?", info.board or "?", info.proto,
+                 info.extra.get("reset", "?"))
         if info.proto != p.PROTO_VERSION:
             report.outcome = INCOMPATIBLE
             report.message = (f"watch speaks protocol {info.proto}, this relay only "

@@ -29,6 +29,7 @@ typedef struct {
     /* `fw` in the info characteristic (§4.1), e.g. esp_app_get_description()->version.
      * NULL reads as "unknown". The string must outlive ble_sync. */
     const char *fw_version;
+    const char *reset_reason; /* `reset=` in info (protocol §4.1); NULL leaves it out */
     /* Fill the app state. Called from the NimBLE host task and the BLE task: copy flags
      * from RAM, never block. */
     void (*get_state)(ble_sync_app_state_t *out);

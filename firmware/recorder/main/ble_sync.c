@@ -166,7 +166,7 @@ static uint8_t s_status_sent[BLE_PROTO_STATUS_LEN];
 static bool s_status_sent_valid;
 static int64_t s_status_sent_ms;
 static uint8_t s_frame[BLE_PROTO_FRAME_MAX];
-static char s_info[96];
+static char s_info[128];
 static struct {
     uint32_t connections, rejected, commands, frames, acked, retries, link_lost, host_resets,
         read_retries;
@@ -1228,8 +1228,12 @@ esp_err_t ble_sync_init(const ble_sync_hooks_t *hooks)
             *p = '-';
         }
     }
-    snprintf(s_info, sizeof(s_info), "proto=%d;device=%s;fw=%s;board=%s", BLE_PROTO_VERSION,
-             device, s_hooks.fw_version ? s_hooks.fw_version : "unknown", board_name());
+    int n = snprintf(s_info, sizeof(s_info), "proto=%d;device=%s;fw=%s;board=%s",
+                     BLE_PROTO_VERSION, device,
+                     s_hooks.fw_version ? s_hooks.fw_version : "unknown", board_name());
+    if (s_hooks.reset_reason && n > 0 && (size_t)n < sizeof(s_info)) {
+        snprintf(s_info + n, sizeof(s_info) - (size_t)n, ";reset=%s", s_hooks.reset_reason);
+    }
 
     s_jobs = xQueueCreate(JOB_QUEUE_LEN, sizeof(job_t));
     if (!s_jobs) {
