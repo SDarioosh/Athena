@@ -46,9 +46,13 @@ CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
 CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
-CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+# GATT client on (and the central role Kconfig requires for it; nothing scans or connects):
+# without it NimBLE answers an incoming indication with an ATT Error Response, and Android
+# indicates Service Changed to a bonded peer on connect, which then breaks requestMtu and
+# discovery (found on the T-Watch, SDarioosh/barvis-sound#49). Windows never indicates.
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
-CONFIG_BT_NIMBLE_GATT_CLIENT=n
+CONFIG_BT_NIMBLE_GATT_CLIENT=y
 CONFIG_BT_NIMBLE_GATT_SERVER=y
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_CTRL_BLE_MAX_ACT=2

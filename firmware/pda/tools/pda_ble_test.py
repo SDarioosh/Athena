@@ -215,7 +215,7 @@ async def put_blob(
     r = await link.cmd(struct.pack("<BB2xIII", 0x10, kind, blob_id, len(data), crc), expect=True)
     if r[0] != 0x90:
         return r
-    step = mtu - 3 - 5
+    step = min(mtu - 3, 512) - 5  # 512-byte attribute cap
     t0 = time.monotonic()
     for off in range(0, len(data), step):
         if stop_after is not None and off >= stop_after:

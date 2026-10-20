@@ -138,7 +138,10 @@ uint8_t pda_adv_flags(uint16_t outbox_waiting)
 int pda_parse_cmd(const uint8_t *buf, size_t len, pda_cmd_t *out)
 {
     memset(out, 0, sizeof(*out));
-    if (len < 1) {
+    if (len < 1 || len > PDA_PROTO_ATTR_MAX) {
+        if (len > 0) {
+            out->op = buf[0];
+        }
         return PDA_E_BAD_LENGTH;
     }
     out->op = buf[0];
@@ -224,10 +227,11 @@ void pda_gate_done(pda_gate_t *gate)
 
 size_t pda_put_payload_max(uint16_t mtu)
 {
-    if (mtu > PDA_PROTO_MAX_MTU) {
-        mtu = PDA_PROTO_MAX_MTU;
+    size_t value = mtu > 3 ? (size_t)mtu - 3 : 0;
+    if (value > PDA_PROTO_ATTR_MAX) {
+        value = PDA_PROTO_ATTR_MAX;
     }
-    return mtu > 3 + PDA_PROTO_PUT_DATA_HDR_LEN ? (size_t)mtu - 3 - PDA_PROTO_PUT_DATA_HDR_LEN : 0;
+    return value > PDA_PROTO_PUT_DATA_HDR_LEN ? value - PDA_PROTO_PUT_DATA_HDR_LEN : 0;
 }
 
 void pda_put_abort(pda_put_t *put)

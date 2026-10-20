@@ -253,6 +253,15 @@ where both say something.
   **drops the PUT**, so the following `PUT_END` answers `bad_state` (arg 0); start again
   with `PUT_BEGIN`. The payload is copied in the write callback itself, so the write
   response means the bytes are in.
+- **512-byte attribute cap** (Core Vol 3 Part F 3.2.9): every notification and every write
+  is at most min(MTU − 3, 512) bytes, so the largest `PUT_DATA` payload is
+  **min(MTU − 3, 512) − 5** (507 at MTU 517, not MTU − 8 = 509; Android drops longer
+  notifications). A write longer than 512 bytes answers `ERROR bad_length`. This replaces
+  the "MTU − 8" of the PC relay's §3.5.
+- **Service Changed:** NimBLE's GATT client is compiled in (`CONFIG_BT_NIMBLE_GATT_CLIENT`,
+  with the central role Kconfig needs) so the T5 confirms the indication Android sends a
+  bonded peer on connect; without it the ATT error broke `requestMtu` and discovery on the
+  T-Watch (SDarioosh/barvis-sound#49).
 - **`PUT_END`:** size ≠ `total` → `ERROR bad_state` (arg = bytes received); CRC mismatch →
   `bad_crc` (arg = the CRC the T5 computed); a feed or detail that doesn't parse (wrong
   `v`, broken JSON, no `ref`) → `bad_state` (arg = blob_id); a flash write error →

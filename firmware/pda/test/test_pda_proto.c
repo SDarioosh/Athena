@@ -192,8 +192,15 @@ static void test_encoders(void)
     /* A 400-byte action fits one notification at MTU 420. */
     e.len = PDA_PROTO_OB_JSON_MAX;
     CHECK(pda_encode_ob_entry(&e, big) <= PDA_PROTO_MIN_MTU - 3);
-    CHECK_EQ(pda_put_payload_max(517), 509);
+    /* 512-byte attribute cap: never MTU - 3 beyond 512 */
+    CHECK_EQ(pda_put_payload_max(517), 507);
+    CHECK_EQ(pda_put_payload_max(515), 507);
+    CHECK_EQ(pda_put_payload_max(514), 506);
     CHECK_EQ(pda_put_payload_max(420), 412);
+    CHECK_EQ(pda_put_payload_max(23), 15);
+    CHECK_EQ(PDA_PROTO_FRAME_MAX, 512);
+    /* the largest OB_ENTRY fits */
+    CHECK(PDA_PROTO_OB_ENTRY_HDR_LEN + PDA_PROTO_OB_JSON_MAX <= PDA_PROTO_ATTR_MAX);
 }
 
 static void test_parse(void)
@@ -234,6 +241,18 @@ static void test_parse(void)
     CHECK_EQ(pda_parse_cmd(pb, 16, &c), 0);
     CHECK(c.kind == 1 && c.blob_id == 9 && c.total == 100 && c.crc32 == 0xCAFEBABE);
     CHECK_EQ(pda_parse_cmd(pb, 15, &c), PDA_E_BAD_LENGTH);
+
+    /* the largest write: 512 bytes; one more is bad_length */
+    static uint8_t big[PDA_PROTO_ATTR_MAX + 1];
+    memset(big, 0x55, sizeof(big));
+    big[0] = 0x11;
+    CHECK_EQ(pda_parse_cmd(big, PDA_PROTO_ATTR_MAX, &c), 0);
+    CHECK_EQ(c.data_len, PDA_PROTO_ATTR_MAX - 5);
+    CHECK_EQ(pda_parse_cmd(big, PDA_PROTO_ATTR_MAX + 1, &c), PDA_E_BAD_LENGTH);
+    pda_gate_t g = {0};
+    uint8_t err[8];
+    CHECK(!pda_gate_submit(&g, big, PDA_PROTO_ATTR_MAX + 1, 517, &c, err));
+    CHECK(err[0] == 0xEE && err[1] == 0x11 && err[2] == PDA_E_BAD_LENGTH);
 
     const uint8_t pd[8] = {0x11, 0x10, 0, 0, 0, 'a', 'b', 'c'};
     CHECK_EQ(pda_parse_cmd(pd, 8, &c), 0);
@@ -317,7 +336,7 @@ static void test_put(void)
     run(&s, &put, pb, 16);
     CHECK_EQ(n_frames, 1);
     CHECK(frames[0][0] == 0x90 && frames[0][1] == 1 && rd32(frames[0] + 4) == 77);
-    put_blob(&s, &put, blob, sizeof(blob), 509);
+    put_blob(&s, &put, blob, sizeof(blob), 507); /* the largest payload at MTU 517 */
     CHECK_EQ(n_frames, 1); /* PUT_DATA answers nothing */
     run(&s, &put, end, 1);
     CHECK_EQ(n_frames, 2);

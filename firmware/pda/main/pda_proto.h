@@ -19,8 +19,10 @@ extern "C" {
 #define PDA_PROTO_VERSION 1
 #define PDA_PROTO_MIN_MTU 420
 #define PDA_PROTO_MAX_MTU 517
-/* Largest notification / write value: ATT MTU minus the 3-byte ATT header. */
-#define PDA_PROTO_FRAME_MAX (PDA_PROTO_MAX_MTU - 3)
+/* An attribute value is at most 512 bytes (Core Vol 3 Part F 3.2.9), whatever the MTU:
+ * Android drops longer notifications. Every frame and write is min(MTU - 3, 512). */
+#define PDA_PROTO_ATTR_MAX 512
+#define PDA_PROTO_FRAME_MAX PDA_PROTO_ATTR_MAX
 #define PDA_PROTO_BLOB_MAX (256u * 1024u)
 #define PDA_PROTO_OB_JSON_MAX 400
 #define PDA_PROTO_OB_LIST_MAX 16
@@ -136,7 +138,8 @@ size_t pda_encode_error(uint8_t cmd, uint8_t code, uint32_t arg, uint8_t out[PDA
  * response (it carries the complete name then; §3.5, 31-byte limit). */
 uint8_t pda_adv_flags(uint16_t outbox_waiting);
 
-/* Parse one ctrl write. 0 and *out filled, or BAD_LENGTH / UNKNOWN_CMD / BAD_TIME. */
+/* Parse one ctrl write. 0 and *out filled, or BAD_LENGTH (also for a write longer than
+ * 512 bytes) / UNKNOWN_CMD / BAD_TIME. */
 int pda_parse_cmd(const uint8_t *buf, size_t len, pda_cmd_t *out);
 
 /* ---- one command at a time ---- */
@@ -189,7 +192,7 @@ typedef enum {
 pda_result_t pda_execute(const pda_cmd_t *cmd, pda_put_t *put, const pda_store_t *store,
                          void *store_ctx, pda_send_t send, void *send_ctx, uint8_t *frame_buf);
 
-/* Payload bytes per PUT_DATA at this MTU. */
+/* Payload bytes per PUT_DATA at this MTU: min(MTU - 3, 512) - 5. */
 size_t pda_put_payload_max(uint16_t mtu);
 
 #ifdef __cplusplus

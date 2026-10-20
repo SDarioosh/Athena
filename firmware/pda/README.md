@@ -129,6 +129,8 @@ python tools/pda_serial.py -p COM36 fb today.png
   the mapping is swap X/Y + flip Y (four corner targets); a tab tap, done and undo on an
   action item, swipes left and right; the side button (clean refresh); BOOT long (pairing
   window) and short.
+- Portrait (270°) by hand: text upright, tab taps, done + undo on the first item, opening
+  a conversation, swipes both ways land where they should.
 - All §5 screens drawn from the demo feed in landscape, then in portrait (both
   orientations), checked from framebuffer dumps; tap
   navigation, done / dismiss / undo, couldn't-sync, the event form, a queued `cal_add`, a
@@ -137,7 +139,7 @@ python tools/pda_serial.py -p COM36 fb today.png
   display offset survive.
 - BLE from a Windows PC (`tools/pda_ble_test.py`): passkey pairing through WinRT with the
   code from the console, bond kept across reboots, MTU 517, TIME, OB_LIST + OB_ACK, feed
-  PUT (4 KB in 0.8 s, 509 bytes per write), a 200 KB detail (7.3 KB/s), bad CRC refused
+  PUT (4 KB in 0.8–1.0 s, 507 bytes per write: the 512-byte attribute cap), a 200 KB detail (7.3 KB/s), bad CRC refused
   with the feed unchanged, disconnect in the middle of a PUT (discarded), a lost OB_ACK
   (the same id is listed again and acked once), BYE and disconnect, the scan response
   with and without the outbox flag.
@@ -154,6 +156,8 @@ python tools/pda_serial.py -p COM36 fb today.png
   of partial updates is untested.
 - Pairing being refused outside the window, re-pairing, and `ERROR mtu_too_small` (host
   tests only; Windows always negotiates 517).
+- The Service Changed indication from an Android phone (the GATT client is compiled in for
+  it, as on the T-Watch, SDarioosh/barvis-sound#49; Windows never sends one).
 - The sibling relays against this firmware: the PC relay's `pda` subcommand and the
   Android `PdaSync` (they were written against the same spec and a fake T5).
 - Battery life, light sleep (not implemented: the T5 stays awake with DFS; plan
