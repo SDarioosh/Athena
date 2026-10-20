@@ -1,7 +1,9 @@
 # Plan: LilyGO T5 E-Paper Pro as an odysseus-sound PDA
 
-Status: **plan.** Proposed 2026-10-20. The PC relay side (§3.5) is built and tested
-against a fake T5; the firmware and the phone side are not. Owner decisions are open (§11).
+Status: **firmware milestones 0–3 built** in `firmware/pda/` (2026-10-20; what is verified on
+the board is in `firmware/pda/README.md`). The PC relay (§3.5, `ble_relay.py pda`) and the
+phone side (`android-relay` `PdaSync`) are built and tested against fakes, not yet against
+the real T5. Owner decisions are open (§11).
 
 ## Why
 
@@ -49,36 +51,57 @@ Odysseus        calendar REST (scoped token)  ───────────�
 - **On demand:** opening a transcript that isn't in the feed is also an outbox action
   (`fetch`). The phone answers with a detail blob over the same download path.
 
-## 1. Hardware facts (to confirm at bring-up)
+## 1. Hardware facts (confirmed at bring-up, 2026-10-20)
 
-From LilyGO's documentation. Check each one on the owner's board in milestone 0.
+Checked on the owner's board (LilyGO "T5 E-Paper S3 Pro", H752-01, schematic V1.0 24-12-24)
+against LilyGO's `docs/pinmap.md` and examples (github.com/Xinyuan-LilyGO/T5S3-4.7-e-paper-PRO).
 
-| Part | Use |
-|---|---|
-| ESP32-S3, 16 MB flash, 8 MB PSRAM | firmware, a 960×540 4-bit framebuffer (≈ 260 KB) in PSRAM, feed cache in flash |
-| 4.7" e-paper, 960×540, 16 grey levels, parallel bus, with its own power IC (TPS65185) | the display, driven by [epdiy](https://github.com/vroland/epdiy) |
-| GT911 capacitive touch | taps, swipes |
-| RTC (PCF8563 class) | wall clock between phone connections |
-| Charger and fuel gauge (BQ25896 / BQ27220 class) | battery %, charging state |
-| microSD slot | not used in v1 (§7) |
-| Buttons | wake, page back, full refresh |
-| Optional LoRa module on some variants | not used |
+| Part | Confirmed | Use |
+|---|---|---|
+| ESP32-S3R8 (QFN56, rev 0.2), 16 MB QIO flash, 8 MB **octal** PSRAM | esptool `flash_id`, boot log | firmware; epdiy's framebuffers (3 × 260 KB) in PSRAM; code and rodata run from PSRAM too (`CONFIG_SPIRAM_XIP_FROM_PSRAM`, §2) |
+| 4.7" ED047TC1, 960×540, 16 greys, 8-bit parallel bus; TPS65185 power IC (0x68) | drawn and timed; the owner saw all 16 grey steps and clean text | epdiy 2.1.3 board **`epd_board_v7`** works unchanged; VCOM 1560 mV (LilyGO's default) |
+| PCA9535 I/O expander (0x20, INT GPIO38) | read back | port 1: e-paper control (epdiy); IO1_2 the side button (epdiy makes it an output, the firmware sets it back to input); IO0_0 the LoRa/GPS rail enable, held off |
+| GT911 touch (0x5D, INT GPIO3, RST GPIO9) | taps on four corner targets | its raw frame is portrait (540 × 960): swap X/Y and flip Y gives the upright landscape panel, then the screen's portrait rotation is applied |
+| PCF8563 RTC (0x51, INT GPIO2), coin cell holder | kept the time over reboots | wall clock between phone connections |
+| BQ25896 charger (0x6B), BQ27220 fuel gauge (0x55) | 4.13–4.17 V, 93–99 %, USB, charging | battery %, charging state |
+| Buttons: BOOT (GPIO0), side button (PCA IO1_2, active low), RST | pressed by hand: BOOT short and long, side short | back, pairing window, clean refresh |
+| Front light (GPIO11, LED driver enable) | off | not used (daylight reading) |
+| microSD (SPI, CS 12), LoRa SX1262 and GPS on the Pro | not touched | not used (§7) |
 
-- Two ESP32-S3 native-USB devices are connected to the owner's PC (COM35 and COM36). One is
-  the T-Watch Ultra. Find out which one is the T5 before flashing anything
-  (`idf.py -p COMx monitor` on a known-good image, or match the MAC).
-- **Refresh:** a full refresh with flashing takes about 1 s; a partial refresh of a region
-  takes a few hundred ms. After many partial refreshes the panel ghosts, so it needs a full
-  refresh every N updates or on a button press. Measure both in milestone 0.
+- **The screen is portrait (owner's choice, 2026-10-20):** a logical 540 × 960 screen on
+  the 960 × 540 panel through epdiy's rotation (drawing and partial-update areas), and
+  touches mapped the same way. Two orientations, a console (`rotate 90|270`) and Status
+  screen ("Turn 180°") setting kept in NVS: **270 (default)** is `EPD_ROT_INVERTED_PORTRAIT`,
+  the orientation LilyGO's factory firmware uses; 90 is the same turned 180°.
+- The I2C bus is SDA 39 / SCL 40 for every chip. The firmware creates it and hands it to
+  epdiy (`epd_init_with_config`), so there is one ESP-IDF `i2c_master` bus.
+- **The COM ports swap.** On the owner's PC the T5 was COM35 first and later COM36 (the
+  T-Watch Ultra took the other one). Identify it by MAC before every flash (`esptool
+  read_mac`, `30:ed:a0:b1:ab:cc`), never by the port number.
+- **Refresh times** (`epd bench` on the console). epdiy only drives the pixels that differ
+  from what it last drew, so the time doesn't depend on the area:
+
+  | Update | Time |
+  |---|---|
+  | partial, GL16 (no flash), any area that changed | 0.93–0.98 s |
+  | full, GC16 (flashing), a new screen | ~1.0 s |
+  | clean: one black/white flash cycle, then GC16 of every pixel | 1.57 s |
+  | nothing changed | 0.13 s |
+  | `epd_clear()` alone (epdiy's default cycles) | ~1.9 s, so the clean refresh uses one cycle |
+
+  Because only changed pixels are driven, ghosting builds up in areas that never change;
+  only the clean refresh clears it (§5).
 
 ## 2. Firmware
 
-- **The same ESP-IDF project as the recorder.** Add a new board, `boards/t5_epaper_pro/`,
-  behind the existing `board.h` layer. Also add a new app target, because the PDA records
-  no audio. The open question is a second `main` or a Kconfig switch in the shared `main/`
-  (§11 Q1).
-- **Reused as it is:** NimBLE pairing and bonding (`ble_sync`), the `ble_proto`
-  encode/decode style, `isotime`, `crc32`, and the console commands.
+- **As built (§11 Q1 default):** a separate ESP-IDF project, `firmware/pda/`. It compiles
+  `crc32.c` and `isotime.c` from `firmware/recorder/main/` unchanged and changes nothing in
+  the recorder. The recorder's `board.h` is about mics, rails and the SD card, so the T5's
+  board layer is PDA-specific and lives in the project's `main/` (`t5_pins.h`,
+  `t5_board.*`, `pda_epd.*`, `touch_gt911.*`).
+- **Reused:** the pairing and bonding rules and the NimBLE structure of the recorder's
+  `ble_sync.c` (copied into `ble_pda.c`, not shared, because the services differ), the
+  `ble_proto` encode/decode and gate style (`pda_proto.c`), `isotime`, `crc32`.
 - **New:**
   - `epd` (epdiy wrapper)
   - `touch` (GT911)
@@ -89,13 +112,27 @@ From LilyGO's documentation. Check each one on the owner's board in milestone 0.
 - **Rendering:** the T5 draws its own screens from the feed. Use one or two bitmap fonts
   (two sizes, Latin-1 plus the punctuation that summaries use) and no LVGL in v1. LVGL's
   redraw model fights e-paper refresh, and the screens are simple lists.
-- **Storage:** a LittleFS partition of about 2 MB in internal flash, holding:
-  - `feed.json` and `feed.tmp`, swapped atomically after the CRC checks out
-  - the outbox records
-  - up to 20 cached detail blobs, evicted oldest first
+- **Storage:** a LittleFS partition of 2 MB (`storage`) in internal flash, holding:
+  - `feed.json` and `feed.tmp`, swapped atomically after the CRC checks out. A PUT is
+    buffered in PSRAM and written to `feed.tmp` only at `PUT_END`, after the size and CRC
+    check, then renamed over `feed.json`.
+  - the outbox records: one file per action (`ob/<id>.act`: a header with the id, time,
+    length and CRC-32, then the JSON) and `ob/next`, the id counter. Ids are never reused; a
+    brand-new outbox starts at a random base below 2^31.
+  - up to 20 cached detail blobs (`d/<seq>-<crc32(ref)>.json`), evicted oldest first
+- **Flash writes during a refresh:** with code in flash, a LittleFS or NVS write disables
+  the cache, and epdiy's LCD interrupt then reads the framebuffer in PSRAM and crashes
+  ("Cache disabled but cached memory region accessed", seen on the board).
+  `CONFIG_SPIRAM_XIP_FROM_PSRAM` runs code and rodata from PSRAM, so flash writes don't
+  disable the cache.
+- **Fonts:** Fira Sans 12 and 20 pt (SIL OFL), epdiy's pre-converted headers: ASCII,
+  Latin-1, general punctuation, arrows. The euro sign isn't in them and is drawn as "EUR";
+  other missing characters as "?".
 - **Sleep:** with the screen idle for 60 s and no BLE link, the T5 goes into light sleep. The
   e-paper keeps the image. Touch or a button wakes it. Deep sleep with periodic wake
-  for an advertising window is milestone 5.
+  for an advertising window is milestone 5. **Not built yet:** v1 stays awake with DFS
+  (240 MHz during a refresh, 80 MHz otherwise); light sleep moves to milestone 5 with the
+  power measurements.
 
 ## 3. BLE service ("glance" protocol v1)
 
@@ -215,8 +252,21 @@ these points where the text above left a choice. The firmware and the phone foll
 - **Temporary failure stops the sync:** a 5xx, 408, 429 or network error on an action, or
   401/403, stops the sync at that action. Nothing after it is acked, no feed is built, the
   relay sends `BYE` and backs off. That keeps the actions in order.
-- **No calendar configured** (until §6 is confirmed): `cal_add` and `cal_delete` stay
-  queued without an ack and don't block the other actions. The feed's `calendar` is `[]`.
+- **Calendar:** the PC relay calls the Odysseus token routes of §6. It needs
+  `--odysseus-url`, a token scoped to `calendar:read` and `calendar:write` (from
+  `ODYSSEUS_TOKEN` or `--odysseus-token-file`; never on the command line), and
+  `--calendar-href`, the CalDAV calendar new events go to.
+  - Without the URL and token, no calendar is configured: `cal_add` and `cal_delete` stay
+    queued without an ack and don't block the other actions, and the feed's `calendar` is
+    `[]`.
+  - The event mapping: `uid` becomes `id`, `summary` becomes `title`, `dtstart`/`dtend`
+    become `start`/`end` (as given; all-day ends are exclusive), `location` becomes
+    `where`.
+  - A `cal_add` sends `summary` and `dtstart`, plus `dtend` when it is timed, plus
+    `all_day` and `calendar_href`.
+  - A `cal_delete` of an occurrence id (`<uid>::<occurrence>`) is result 1. The token route
+    deletes the whole series, and one tap must not remove a recurring event.
+  - Test against the Odysseus test instance (`127.0.0.1:7010`), never production.
 - **`cal_delete` of an event that is already gone** (404) is result 0, not 1: after a
   lost `OB_ACKED` the T5 sends it again, and the user must not see "couldn't sync".
 - **Strict checks** (anything else is acked with result 1):
@@ -234,15 +284,80 @@ these points where the text above left a choice. The firmware and the phone foll
   the relay's state file.
 - **Blob ids:** a feed's `blob_id` is its `version`. A detail's `blob_id` is the `fetch`
   action's `action_id`.
-- **`PUT_DATA`** carries min(MTU − 3, 512) − 5 bytes, so the whole write (5-byte header plus
-  payload) is at most 512 bytes, the BLE attribute limit (Android refuses longer writes).
-  420 is assumed if the OS doesn't report the MTU. A `data` notification is at most 512 bytes.
+- **`PUT_DATA`** carries min(MTU − 3, 512) − 5 bytes, so a frame is never longer than the
+  512-byte limit on an attribute value. Android refuses longer writes, and BlueZ and
+  Windows may too. That is 507 bytes at MTU 517 and 412 at MTU 420. If the OS doesn't
+  report the MTU, 420 is assumed. The T5 accepts frames of up to 512 bytes, and a `data`
+  notification is at most 512 bytes.
   On `ERROR bad_crc` at `PUT_END` the relay sends the blob again, 3 times in all.
 - **Stay connected:** the relay waits for `status` notifications and also reads `status`
   every 30 s. It refreshes the feed every 5 min, and sends `BYE` once bit4 (user active)
   is clear.
 - **Token:** the PC relay uses the server's `CONVO_INGEST_TOKEN`, which every `/v1` route
   accepts. It goes only in the `Authorization` header.
+
+### 3.6 Details settled by the firmware (v1)
+
+`firmware/pda/main/pda_proto.c` and `ble_pda.c`; byte vectors in
+`firmware/pda/test/test_pda_proto.c`. They agree with the PC relay's §3.5 where both say something.
+
+- **Checks on every `ctrl` write**, in order: another command still running →
+  `ERROR busy`; MTU < 420 → `ERROR mtu_too_small` (arg = MTU); then the length:
+  `TIME` 14, `BYE` 1, `PUT_BEGIN` 16, `PUT_DATA` ≥ 6 (header + at least one byte),
+  `PUT_END` 1, `OB_LIST` 7, `OB_ACK` 6; anything else → `ERROR bad_length`.
+- **`TIME`:** `epoch_ms` outside 2024-01-01 … 2100-01-01 or `tz_offset_min` beyond ±840 →
+  `ERROR bad_time`. It sets the system clock, the RTC and the display offset (kept in NVS).
+- **`PUT_BEGIN`:** kind not 1 or 2 → `ERROR bad_state` (arg = kind); `total` 0 →
+  `bad_length`; over 256 KiB → `too_large` (arg = total). A `PUT_BEGIN` while a PUT is
+  open drops that PUT and starts again.
+- **`PUT_DATA`** goes in order: `offset` ≤ the bytes received so far (rewriting is fine, a
+  gap isn't). A gap → `ERROR bad_state` (arg = bytes received); past `total` →
+  `too_large` (arg = offset); no PUT open → `bad_state` (arg 0). Every `PUT_DATA` error
+  **drops the PUT**, so the following `PUT_END` answers `bad_state` (arg 0); start again
+  with `PUT_BEGIN`. The payload is copied in the write callback itself, so the write
+  response means the bytes are in.
+- **512-byte attribute cap** (Core Vol 3 Part F 3.2.9): every notification and every write
+  is at most min(MTU − 3, 512) bytes, so the largest `PUT_DATA` payload is
+  **min(MTU − 3, 512) − 5** (507 at MTU 517, not MTU − 8 = 509; Android drops longer
+  notifications). A write longer than 512 bytes answers `ERROR bad_length`. §3.5 says the
+  same.
+- **Service Changed:** NimBLE's GATT client is compiled in (`CONFIG_BT_NIMBLE_GATT_CLIENT`,
+  with the central role Kconfig needs) so the T5 confirms the indication Android sends a
+  bonded peer on connect; without it the ATT error broke `requestMtu` and discovery on the
+  T-Watch (SDarioosh/barvis-sound#49).
+- **`PUT_END`:** size ≠ `total` → `ERROR bad_state` (arg = bytes received); CRC mismatch →
+  `bad_crc` (arg = the CRC the T5 computed); a feed or detail that doesn't parse (wrong
+  `v`, broken JSON, no `ref`) → `bad_state` (arg = blob_id); a flash write error →
+  `io_error` (arg = blob_id). The stored feed is untouched in every error case.
+- **`OB_LIST`:** `max` is capped at 16; `max` 0 answers only `OB_END` with
+  `remaining` = the entries after `after_id`.
+- **`OB_ACK.result`:** 0 = done; anything else = rejected for good ("couldn't sync").
+  **`OB_ACKED.result`:** 0 = removed now, 1 = it wasn't queued (already acked). Both are
+  success, as with the watch's `ACKED`.
+- **Advertising:** whenever no relay is connected (the relay reconnects every 15 min),
+  1000–1250 ms, 152.5–211.25 ms while the pairing window is open. Advertising data: flags
+  and the 128-bit service UUID.
+- **Scan response:** it holds 31 bytes. The PC relay's service data (AD `0x21`: the
+  16-byte UUID and one flags byte, bit0 = outbox not empty) takes 19 bytes and the name
+  `odysseus-pda` 14, so they don't fit together. The T5 sends the service data **only while
+  the outbox has entries**, with the shortened name (AD `0x08`) `odysseus-p`; otherwise the
+  complete name. No service data means nothing is waiting. The GAP device name is always
+  `odysseus-pda`.
+- **Idle disconnect:** the T5 drops a relay after **60 s with neither a `ctrl` write nor a
+  `status` read**. Both count as activity, so the PC relay's `status` read every 30 s and
+  android-relay's `TIME` every 20 s keep a link up while `status` bit4 (user active: a
+  touch or button in the last 60 s) asks them to stay. A relay that stays connected must
+  do one of the two at least every 60 s (every 30 s leaves margin). After `BYE_OK` the T5
+  disconnects after ~1 s if the relay hasn't.
+- **`status`** is notified (at most once a second) when any of its bytes changes: the
+  outbox count, the feed version, the flags.
+- **Actions** are written exactly as in §4.2, for example
+  `{"t":"item_status","id":42,"status":"done"}`,
+  `{"t":"cal_add","title":"Call","start":"2026-10-21T09:00:00+02:00","end":"2026-10-21T09:30:00+02:00","from_item":12}`
+  (timed: local time with the display offset) or
+  `{"t":"cal_add","title":"Reminder","start":"2026-10-23","all_day":true}` (no `end`).
+  Undo before the relay has listed an action deletes it; after that, the T5 queues the
+  reverse `item_status` (`open`).
 
 ## 4. Feed, actions and details
 
@@ -256,6 +371,7 @@ The phone builds it from these sources:
 | `conversations` | `GET /v1/conversations?since=<now − 48 h>&limit=20`: id, title, start, people, summary, key points (cut to fit) |
 | `actions` | `GET /v1/action-items?status=open`: id, text, owner, `due_date`, conversation id |
 | `calendar` | Odysseus calendar REST, today to +7 days: id, title, start, end, location, all-day |
+| `todos` | Odysseus notes (§4.4): the owner's checklists, pinned first, with their items |
 
 ```json
 {"v": 1, "version": 1729411200, "generated": "2026-10-20T07:00:00Z", "tz": "Europe/Berlin",
@@ -264,6 +380,8 @@ The phone builds it from these sources:
                     "summary": "…", "points": ["…"]}],
  "actions": [{"id": 42, "text": "…", "owner": "…", "due": "2026-10-23", "conv": "c_…"}],
  "calendar": [{"id": "…", "title": "…", "start": "…", "end": "…", "where": "…", "all_day": false}],
+ "todos": [{"id": "3f2c…", "title": "Groceries", "pinned": true, "due": null,
+            "items": [{"i": 0, "text": "Milk", "done": false}, {"i": 2, "text": "Eggs", "done": false}]}],
  "templates": ["Call", "Meeting", "Reminder"]}
 ```
 
@@ -284,12 +402,19 @@ The phone builds it from these sources:
   - `actions`: the soonest `due` first, undated ones last. A missing `owner` or `due` is
     `null`.
   - `calendar`: sorted by `start`.
+  - `todos`: see §4.4.
+  - `templates` (optional): the owner's event titles for the "+" picker (§5), e.g.
+    `["Call", "Meeting", "Reminder"]`. At most 12 of up to 40 characters. The phone takes
+    them from its settings, the PC relay from `--templates "Call,Meeting,Reminder"`. The key
+    is left out when there are none, and the T5 then uses built-in defaults.
   - Field caps in characters: title 120, summary 600, 5 points of 160, action text 200.
   - The size limit is 32,768 bytes of compact UTF-8 JSON. Over it, each summary is cut to
     240 characters, then the oldest conversations are dropped. If it is still too big
-    (hundreds of open items), the last action items go, then the last calendar entries.
+    (hundreds of open items), done checklist items go, then the last action items, then the
+  last unpinned checklists, then the last calendar entries.
   - A source that fails fails the whole build, so nothing is pushed and the T5 keeps its
-    feed. Two cases don't count as failures: a digest 404, and no calendar configured.
+    feed. These don't count as failures: a digest 404, no Odysseus configured (no `calendar`
+  entries, no `todos`), and a hub that can't list notes for this token (§4.4).
   - **Push rule:** the content hash is SHA-256 over the feed without `version` and
     `generated`. The relay pushes when this hash differs from the last one it pushed to
     this T5, or when `status.feed_version` isn't the version it pushed (the T5 was wiped,
@@ -312,6 +437,7 @@ Each action is one JSON object of 400 bytes at most, with `"t"` saying the type:
 | `cal_delete` | `id` | `DELETE /api/codex/calendar/events/{id}` (§6; v2 on the T5) |
 | `fetch` | `ref`: `conv:<id>`, `transcript:<id>`, or `transcript:<id>@<from>-<to>` | `GET /v1/conversations/{id}` or `/transcript`, then `PUT` a detail blob |
 | `digest_refresh` | `date` | `POST /v1/digests/{date}` (exists), then a new feed |
+| `todo_toggle` | `note`, `i`, `text`, `done` | Odysseus `POST /api/codex/todos` `toggle_item` (§4.4) |
 
 - The T5 shows a queued action at once (the item is struck through, the event is shown in
   grey as "pending"). The T5 doesn't change its own feed. The next feed from the phone
@@ -336,19 +462,73 @@ The PC relay's formats (v1):
 - **`conv:<id>`**: `{"v": 1, "ref", "title", "at", "people", "summary", "points",
   "actions": [{"id", "text", "status", "due"}]}`.
 
+- The firmware reads details as the PC relay's §4.3 defines them: `conv:` details with
+  `at`, `people`, `summary`, `points`, `actions`; transcript pages with `from`, `to`,
+  `segments` and `next` (the next page's ref, `null` on the last). The first page it asks
+  for is `transcript:<id>@0-600`; "Next part" asks for `next`.
+- It also reads the feed's `templates` (the "+" picker; Call, Meeting, Reminder when there
+  are none). An empty string in an optional field (`"owner": ""`) reads as missing.
+
+### 4.4 Odysseus checklists (`todos`, added 2026-10-20)
+
+The T5's Tasks tab shows the owner's own to-dos: the checklists in Odysseus notes, the
+same ones the Odysseus website shows. The action items the server suggests from
+conversations (`actions`) move into the conversation's detail screen (§5).
+
+- **Token:** the same Odysseus token as the calendar, with **Todos** (`todos:read`) and
+  **Todos write** (`todos:write`) added.
+- **Reading (hub change, SDarioosh/Barvis):** `GET /api/codex/todos?format=json` (scope
+  `todos:read`). Without `format=json` the route keeps answering with the chat-model text it
+  has today. Answer:
+  `{"notes": [{"id", "title", "type": "checklist"|"note", "label", "pinned", "due_date",
+  "updated_at", "items": [{"text", "done"}], "content"}]}`: the token owner's notes that
+  aren't archived, without calendar-reminder notes, pinned first, then the most recently
+  updated (the order the website uses). `items` is `[]` for a plain note, `content` is
+  `null` for a checklist. A hub without this option answers text, and a token without
+  `todos:read` gets 403: both mean "no todos" (the feed leaves `todos` out and the phone
+  says why), not a failed feed.
+- **Feed `todos`:** only `type: checklist` notes with at least one item, in the hub's order,
+  at most 20 notes and 40 items per note. Each item keeps its index `i` in the note's item
+  list (the hub toggles by index). `title` ≤ 120 characters (an empty title is `null`), item
+  `text` ≤ 160, `due` = `due_date` as `YYYY-MM-DD` or `null`. Done items are kept (shown
+  struck through) unless the feed is too big (§4.1).
+- **`todo_toggle`:** `{"t":"todo_toggle","note":"<note id>","i":<index>,"text":"<the item's
+  first 80 characters>","done":true|false}`. The relay:
+  1. reads the note's current items (`GET /api/codex/todos?format=json`, once per sync);
+  2. uses item `i` if its text starts with `text` (after trimming and collapsing spaces);
+     otherwise the single item in that note whose text starts with `text`; if there is
+     none or more than one, or the note is gone, it acks with result 1 ("couldn't sync":
+     the item changed on the website since the last feed);
+  3. if the item is already `done`, acks with result 0 without a call; otherwise
+     `POST /api/codex/todos` `{"action": "toggle_item", "note_id", "index", "done"}`
+     (scope `todos:write`). The hub answers HTTP 200 with `{"exit_code": 0, …}` on
+     success and `{"exit_code": 1, "error"}` on failure: `exit_code` 1 is result 1.
+  It is idempotent: `done` is explicit, never a flip. No Odysseus configured: the action
+  stays queued, like `cal_add`.
+- **On the T5:** a tap on an item queues `todo_toggle` with the opposite of its `done` and
+  shows it at once (struck through, or not); a second tap before the relay has listed the
+  action deletes it, after that it queues the reverse. Nothing else is editable on the T5
+  (no adding or renaming items, no plain notes).
+
 ## 5. Screens
+
+Portrait, 540 × 960 (§1): a two-line header (title and clock; date, battery, sync and the
+outbox count), the content, a bottom row for the screen's buttons and the pager (▲ n/m ▼),
+and a tab bar of six (Today, Brief, Cal, Tasks, Talks, Status). Lists use the full width
+with rows of two or three lines; the new-event form stacks the date, the time with ±15 min,
+a 3 × 4 grid of hour slots and the durations.
 
 | Screen | Content | Interactions |
 |---|---|---|
-| **Today** (home) | clock and date, battery, sync age; the next 3 events; the briefing's first lines; the count of open action items | tap a section to open it |
+| **Today** (home) | clock and date, battery, sync age; the next 3 events; the briefing's first lines; the count of open checklist items | tap a section to open it |
 | **Briefing** | yesterday's digest, highlights | `digest_refresh` |
 | **Calendar** | agenda, today to +7 days | tap an event for details; "+" opens the template picker |
-| **Actions** | open items, the ones due soon first | tap: done; long press: dismiss; "→ calendar" when `due` is set |
-| **Conversations** | the last 48 h, title, people, time | tap: summary and key points; "transcript" → `fetch` |
+| **Tasks** | the owner's Odysseus checklists (§4.4): a heading per note (pinned first, with its due date), its items below | tap an item: done / not done (`todo_toggle`); without Odysseus: "No checklists. Set up Odysseus in the phone app" |
+| **Conversations** | the last 48 h, title, people, time | tap: summary and key points, then that conversation's suggested action items (`actions` with this `conv`); on those: tap done, long press dismiss, "→ calendar" when `due` is set; "transcript" → `fetch` |
 | **Status** | bond, phone last seen, outbox, feed version, battery, pairing window button | |
 
 - **Adding an event without a keyboard:**
-  - From an action item: "→ calendar" fills in the title from the item and the date from
+  - From a suggested action item (in its conversation): "→ calendar" fills in the title from the item and the date from
     `due_date`. The user picks a time from a grid (morning slots, then +/− 15 min) and a
     duration (15/30/60 min, all day).
   - From scratch: pick the date and time the same way, then a title from a short list of
@@ -359,6 +539,18 @@ The PC relay's formats (v1):
   - full refresh when changing screens, every 10 partial refreshes, and on the button
 - **Time:** shown in the feed's `tz`. `TIME` carries the phone's UTC offset, so the clock is
   right even before the first feed.
+  - **As built:** the T5 shows every time in the offset of the last `TIME`. It has no time
+    zone database, so it doesn't use the IANA name (shown on Status only). An event after a
+    daylight-saving change within the week is shown, and a `cal_add` for such a day is
+    made, one hour off until a `TIME` after the change. A fix for v2: the feed carries a
+    POSIX TZ string (`"tz_posix": "CET-1CEST,M3.5.0,M10.5.0/3"`) that the T5 evaluates.
+- **Swipes as built:** on a tab screen left/right = next/previous tab, up/down = page; in a
+  detail screen right = back to the list, left = next page, then the next transcript part or
+  the next item, nothing at the end (`ui_nav.c`, host-tested).
+- **Refresh policy as built:** a new screen is a full (GC16) update; a change on the same
+  screen (a pending mark, a page) a partial (GL16) one; the minute clock a partial that
+  doesn't count; after 10 counted updates, and on the side button or "Clean refresh", a
+  clean refresh.
 
 ## 6. Phone app and servers
 
@@ -463,6 +655,15 @@ The PC relay's formats (v1):
 | 3 | BLE up | Outbox `item_status` from the T5, through the PC relay, to the sandbox server's `PATCH`. A lost ack retries without duplicates. |
 | 4 | Phone | android-relay syncs the T5 and the watch on one phone. The feed includes the Odysseus calendar. `cal_add` from an action item appears in Odysseus and in CalDAV. |
 | 5 | Power and security | Deep sleep with a wake-up advertising window. The battery life is measured. Flash encryption is on. |
+
+**Firmware status (2026-10-20):** milestones 0–3 are built in `firmware/pda/` and checked on
+the owner's board with fictional data, through the USB console and a PC BLE test script
+(`firmware/pda/tools/pda_ble_test.py`): bring-up and refresh times (§1), all §5 screens,
+tap navigation, a feed loaded over USB and over BLE, reboot persistence, a bad CRC refused,
+the outbox drained and acked over BLE, a lost ack listed again without a duplicate. Still
+open: the PC relay's `pda` subcommand and the Android `PdaSync` against the real T5, and the
+server `PATCH` end to end (milestone 3's last step). The full list is in
+`firmware/pda/README.md`.
 
 The PC relay (`firmware/recorder/tools/barvis_relay`) gets a `pda` subcommand in milestone 2.
 That way the protocol can be tested without the phone, and in the sandbox with fictional

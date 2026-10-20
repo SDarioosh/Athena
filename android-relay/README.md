@@ -91,10 +91,15 @@ odysseus-sound /v1/digests, /v1/conversations, /v1/action-items ┐
 Odysseus /api/codex/calendar/events (ody_ token, calendar scopes) ┴→ this app → BLE → T5
 ```
 
-- **One BLE job at a time.** The scan filter holds the watch's and the PDA's service UUIDs.
-  A T5 is taken when its sync is due (every *N* minutes, default 15) or at once when its
-  scan response says the outbox has entries (plan §3.5); otherwise it is ignored and the
-  watch gets the stack.
+- **One BLE job at a time.** The watch drain is unchanged. By default the T5 is synced
+  automatically: the scan filter holds both service UUIDs, and a T5 is taken when its sync
+  is due (every *N* minutes, default 15) or at once when its scan response says the outbox
+  has entries (plan §3.5); otherwise it is ignored and the watch gets the stack.
+- **Auto sync switch** (main screen, under the PDA status). Turn it off while the T5 is
+  switched off or away: the app then doesn't scan for the T5 at all, and the change takes
+  effect at once. **Sync T5 now** works either way: it scans for the T5 alone for up to
+  60 s, syncs once and goes back to the watch (with auto sync off, without the
+  stay-connected loop); if the T5 isn't found it says so.
 - **Per connection** (`PdaSync`, plan §3.4 and §3.5, the same rules as the PC relay): read
   `info` (`proto=1`), MTU ≥ 420, `TIME` with the zone's UTC offset at that moment,
   `GET /health` (on failure: `BYE`, the T5 keeps its feed, back off 1, 2, 5, 10, 15 min).
@@ -105,7 +110,7 @@ Odysseus /api/codex/calendar/events (ody_ token, calendar scopes) ┴→ this ap
   acked and no feed is built. `cal_add` is deduped per action, because the hub's create
   isn't idempotent. Then the **feed** (≤ 32 KB), sent only when its content changed or the
   T5 holds another version; then each `fetch` answer is `PUT` (blob id = the action's id)
-  and acked after `PUT_OK`. While the T5 says the user is active the app stays connected
+  and acked after `PUT_OK`. With auto sync on, while the T5 says the user is active the app stays connected
   for up to 10 min: new actions are handled within seconds, the feed is refreshed every
   5 min, and a `TIME` every 20 s keeps the link inside the T5's 30 s idle limit.
 - **Calendar.** Odysseus is optional. Without it (or with a hub that lacks the calendar
@@ -124,7 +129,7 @@ Setup:
    without an id Odysseus picks your first calendar. To find the id, open
    `<Odysseus URL>/api/calendar/calendars` in a browser that is logged in to Odysseus and
    copy the `href` of the calendar whose `source` is `caldav`. Edit the event templates (one per
-   line; the T5 offers them in its "+" picker) and the sync interval. **Test Odysseus
+   line; the T5 offers them in its "+" picker), and, for automatic sync, the interval. **Test Odysseus
    calendar** lists the next 7 days. **Save**.
 3. Open the pairing window on the T5's Status screen and let the relay find it; type the
    code shown on the T5 when Android asks.

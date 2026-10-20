@@ -46,6 +46,10 @@ outside the repository):
 
     python firmware/recorder/tools/ble_relay.py --dry-run --save ~/barvis-chunks --once
 
+The T5 E-Paper Pro PDA has its own subcommand (see pda_relay.py):
+
+    python firmware/recorder/tools/ble_relay.py pda --help
+
 Exit codes for --once/--list: 0 ok, 1 some chunks skipped, 2 retry later (server, link or
 watch error), 3 token rejected / incompatible / bad settings, 4 watch not found.
 """
@@ -312,6 +316,11 @@ async def main_async(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["pda"]:  # the T5 PDA sync (docs/t5-pda-plan.md), see pda_relay.py
+        from pda_relay import main as pda_main
+
+        return pda_main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog="See the module docstring for setup and pairing.")

@@ -8,6 +8,7 @@ import android.os.PowerManager
 import android.provider.Settings as AndroidSettings
 import android.view.View
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.TextView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
@@ -36,6 +37,8 @@ class MainActivity : Activity() {
     private lateinit var logView: TextView
     private lateinit var toggle: Button
     private lateinit var battery: Button
+    private lateinit var pdaSync: Button
+    private lateinit var pdaAuto: CheckBox
     private lateinit var permissionNote: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,6 +53,8 @@ class MainActivity : Activity() {
         logView = findViewById(R.id.log)
         toggle = findViewById(R.id.toggle)
         battery = findViewById(R.id.battery)
+        pdaSync = findViewById(R.id.pda_sync)
+        pdaAuto = findViewById(R.id.pda_auto)
         permissionNote = findViewById(R.id.permission_note)
 
         toggle.setOnClickListener { onToggle() }
@@ -57,6 +62,14 @@ class MainActivity : Activity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
         battery.setOnClickListener { askBatteryExemption() }
+        pdaSync.setOnClickListener { RelayService.syncPda(this) }
+        pdaAuto.isChecked = settings.pdaAutoSync
+        pdaAuto.setOnCheckedChangeListener { _, on ->
+            if (on == settings.pdaAutoSync) return@setOnCheckedChangeListener
+            settings.pdaAutoSync = on
+            // Takes effect at once: the running scan is restarted with or without the T5.
+            if (running(RelayState.state.value)) RelayService.pdaAutoChanged(this)
+        }
     }
 
     override fun onStart() {
@@ -148,6 +161,10 @@ class MainActivity : Activity() {
         }
         watch.text = if (w.isEmpty()) getString(R.string.no_watch_yet) else w.toString().trimEnd()
         pda.text = pdaText(s)
+        // Manual T5 sync needs the running relay (it owns the BLE stack, so it can't race the watch).
+        pdaSync.visibility = if (settings.pdaEnabled) View.VISIBLE else View.GONE
+        pdaAuto.visibility = pdaSync.visibility
+        pdaSync.isEnabled = enabled && s.phase != Phase.PDA_SYNC
 
         val last = settings.lastSyncMs
         counters.text = getString(R.string.counters, s.uploadedThisRun, settings.totalUploaded,

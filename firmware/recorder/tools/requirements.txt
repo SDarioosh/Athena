@@ -1,3 +1,6 @@
-# ble_relay.py (PC test relay for the T-Watch Ultra). The barvis_relay package itself uses
-# only the standard library. Tests: pip install pytest, then pytest firmware/recorder/tools.
+# ble_relay.py (PC test relay for the T-Watch Ultra and the T5 PDA). The barvis_relay package
+# itself uses only the standard library. Tests: pip install pytest, then pytest
+# firmware/recorder/tools.
 bleak>=0.22
+# IANA time zones for `ble_relay.py pda --tz` (Windows has no system zone database)
+tzdata; sys_platform == "win32"

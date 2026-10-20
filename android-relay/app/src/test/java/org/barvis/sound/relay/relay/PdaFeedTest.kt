@@ -167,4 +167,24 @@ class PdaFeedTest {
         s.after(PdaOutcome.Done(PdaStats()), 0)
         assertEquals(60_000L, s.after(PdaOutcome.DeviceError("x", PdaStats()), 0))
     }
+
+    @Test fun manualScheduleIsDueOnlyAfterARequest() {
+        val s = PdaSchedule({ 15 * 60_000L }, auto = { false })
+        assertFalse(s.isDue(0))
+        assertEquals(Long.MAX_VALUE, s.msUntilDue(0))
+        s.request(1000, 60_000)
+        assertTrue(s.isDue(1000))
+        assertFalse(s.requestExpired(30_000))
+        // A sync, even a failed one, ends the request and schedules nothing.
+        assertEquals(0L, s.after(PdaOutcome.LinkLost("x", PdaStats()), 2000))
+        assertFalse(s.isDue(2000))
+        assertFalse(s.isDue(10 * 60 * 60_000L))
+        assertFalse(s.requestExpired(10 * 60 * 60_000L))
+        // A request the T5 never answered expires once.
+        s.request(0, 60_000)
+        assertTrue(s.isDue(59_999))
+        assertFalse(s.isDue(60_000))
+        assertTrue(s.requestExpired(60_000))
+        assertFalse(s.requestExpired(60_001))
+    }
 }
