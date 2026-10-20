@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (round 15: T-Watch Ultra button layout and voice notes)_
+_Last updated: 2026-10-20 (round 16: transcription quality)_
 
 ## Status
 
@@ -240,6 +240,38 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
   vendor string, the `barvis_relay` package, and all `convo` identifiers.
 
+## Done in round 16: transcription quality
+
+Owner report: transcripts are often off. Branch `claude/wizardly-feynman-i86zg9` (PR #39).
+Measured in the cloud sandbox with `server/eval/recognition.py` on public AMI meeting audio
+(large-v3-turbo on CPU, 3 meetings x 300 s); only changes that measured better shipped.
+
+- **Finding**: most errors are missing words, not wrong ones. On far-field audio over half
+  were speech the VAD never sent to whisper (quiet voices); on clean audio they are mostly
+  people talking over each other (whisper writes one voice).
+- **Shipped** (server): VAD sees quiet chunks boosted to -20 dBFS (`CONVO_VAD_TARGET_DBFS`,
+  `CONVO_VAD_MAX_GAIN_DB`; stored audio unchanged); speech goes to whisper in clips of up
+  to 28 s instead of one region at a time (`CONVO_WHISPER_WINDOW_SECONDS`, 0 = old way);
+  `suppress_non_speech` on and all decoding settings configurable (`CONVO_WHISPER_BEAM_SIZE`
+  etc.); invented "Thank you."/"Bye." lines whisper was unsure of, subtitle credits and
+  repetition loops are dropped (`CONVO_WHISPER_DROP_HALLUCINATIONS`); one retry when
+  whisper-server drops a kept-alive connection.
+- **Shipped** (firmware): T-Watch Opus default 24 kbps instead of 16 (complexity 1 stays).
+  At the watch's level, 16 kbps cost ~7-9 WER points against uncompressed audio; 24 kbps
+  ~1.3. Chunks grow from ~60 to ~90 KB. Not on hardware yet.
+- **Turbo WER, before -> after**: far-field at T-Watch level, 16 kbps 39.8 -> 38.9 %
+  (34.4 % at 24 kbps); far-field raw level 50.2 -> 40.5 %; headset mix 23.7 -> 23.5 %.
+  About 35 % less whisper time (fewer requests).
+- **Tried, didn't help**: beam search (slower, no better), Silero threshold changes, wider
+  padding, carrying the previous clip's text into the prompt (worse), a descriptive
+  vocabulary prompt (+5.7 points; keep `CONVO_WHISPER_PROMPT` a short word list), denoising
+  (much worse), high-pass/dynamic normalization, boosting the clip sent to whisper (helps
+  small.en only), large-v3-q5_0 (no better than turbo, slower).
+- **Model**: large-v3-turbo-q5_0 scored the same as turbo f16 with ~0.8 GB instead of
+  ~1.9 GB; the recommended model next to the 9B LLM.
+- **Known**: whisper sometimes repeats a sentence a few seconds later inside a 28 s clip;
+  a filter for that removed more real speech than invented text, so none was added.
+
 ## Done in round 15: new T-Watch Ultra buttons and voice notes
 
 Branch `feature/voice-notes`, not on hardware yet. Owner decision 2026-10-19 after the first
@@ -429,6 +461,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 ## Next
 
+- **Owner: transcription quality** (round 16, PR #39 Server verification): the AMI eval on
+  the GPU before/after, switch whisper to large-v3-turbo-q5_0, then the 24 kbps firmware on
+  the watch (encode time per frame, drain time, a fictional-speech recording).
 - **Owner: voice notes and new buttons** (round 15, branch `feature/voice-notes`): flash,
   run the "Needs the real watch" list above, then drain with `ble_relay.py --once` and check
   the note arrives as kind `note` with a title and summary.
@@ -463,9 +498,9 @@ Still open:
 - Voice notes: is ending the conversation session and resuming it after a note right, or
   should a note be refused while a conversation records? Should notes get their own place
   in the daily digest?
-- T-Watch upload path: is Opus complexity 1 at 16 kbps good enough for whisper on your
-  recordings (milestone 3 decides; 12/16/24 kbps comparison)? (Pairing: answered, a
-  6-digit passkey on the watch screen.)
+- T-Watch upload path: 16 kbps was not good enough in the eval (round 16); 24 kbps is
+  the new default. Confirm on your recordings that it beats 16 kbps and that encode time
+  and drain time are fine. (Pairing: answered, a 6-digit passkey on the watch screen.)
 - T-Watch Ultra: everything under "Needs the real watch" above. Also: does the battery
   take a 4.2 V charge target (set conservatively; LilyGoLib asks the chip for 4.288 V)?
 - Odysseus fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.

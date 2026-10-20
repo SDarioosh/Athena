@@ -69,7 +69,10 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   match for the owner (within `CONVO_OWNER_HINT_MARGIN`, 0.10, below the match
   threshold) is labelled as the owner. `CONVO_OWNER_HINT_MARGIN=0` turns it off.
 - whisper gets a prompt: `CONVO_WHISPER_PROMPT` (names, places, jargon) plus the names
-  of known speakers, so they are spelled right.
+  of known speakers, so they are spelled right. Keep it to a short list of words: in the
+  recognition eval a 26-name list was neutral, but a descriptive vocabulary sentence
+  raised WER by 5.7 points and a punctuation-style sentence by 1.6 (whisper skipped
+  speech after them).
 - Text whisper invents is dropped: on a short clip of noise (a cough, a rustle the VAD
   took for speech) large-v3-turbo often answers "Thank you.". A segment that is only such
   a stock phrase is dropped when whisper was unsure of it (mean token log-probability
@@ -83,10 +86,6 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   split by its token times. `CONVO_WHISPER_WINDOW_SECONDS=0` sends every region alone
   (the behaviour before). `CONVO_WHISPER_CONTEXT_WORDS` (0 = off) adds the end of the
   previous clip's text to the prompt; it made the eval worse.
-  of known speakers, so they are spelled right. Keep it to a short list of words: in the
-  recognition eval a 26-name list was neutral, but a descriptive vocabulary sentence
-  raised WER by 5.7 points and a punctuation-style sentence by 1.6 (whisper skipped
-  speech after them).
 - Decoding settings go with every whisper request (whisper-server form fields, the same
   flags for whisper-cli): `CONVO_WHISPER_BEAM_SIZE`, `_BEST_OF`, `_SUPPRESS_NON_SPEECH`,
   `_NO_SPEECH_THOLD`, `_LOGPROB_THOLD`, `_ENTROPY_THOLD`, `_CARRY_INITIAL_PROMPT`,
@@ -264,6 +263,27 @@ CONVO_WHISPER_SERVER_URL=http://127.0.0.1:8178 .venv/bin/python eval/recognition
     --label server-ecapa --enroll 2
 .venv/bin/python eval/recognition.py compare server-ecapa server-pyannote
 ```
+
+`--mic Array1-01` uses the far-field room mic instead of the headset mix, `--opus KBPS`
+sends chunks as Ogg/Opus like the recorders, and `--level DBFS` sets the input level
+before encoding (the T-Watch's 30 dB mic gain puts speech near -24 dBFS). `--set
+field=value` overrides any setting.
+
+Measured 2026-10-20 in the cloud sandbox (large-v3-turbo on CPU, `--diarizer none`, 3
+meetings x 300 s, ~2,100 words). "Before" turns the transcription changes of that round
+off: `--set whisper_window_seconds=0 vad_max_gain_db=0 whisper_drop_hallucinations=false
+whisper_suppress_non_speech=false`.
+
+| condition | before | after |
+|---|---|---|
+| far-field, T-Watch level (`--mic Array1-01 --level -24 --opus 16`) | 39.8 % | 38.9 % |
+| the same at 24 kbps (`--opus 24`, the new firmware default) | | 34.4 % |
+| far-field, raw level (`--mic Array1-01 --opus 16`) | 50.2 % | 40.5 % |
+| headset mix, WAV | 23.7 % | 23.5 % |
+
+Most remaining errors are deletions where people talk over each other: whisper writes one
+voice. large-v3-turbo-q5_0 scored the same as large-v3-turbo (f16) with less than half
+the memory; large-v3-q5_0 was no better.
 
 ## Checks
 
