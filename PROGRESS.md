@@ -31,6 +31,7 @@ _Last updated: 2026-10-19 (renamed to odysseus-sound in prose; round 14: T-Watch
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
 | 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **running on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, buttons, haptics and recording work (mic timeout fix; stop early with BOOT+PWR again, `stop` or mute). Mic: raw level was nearly inaudible and muffled; now high-pass + T-Watch EQ (+9 dB 1.6 kHz, -6 dB 3.6 kHz) + 30 dB gain + limiter, speech ~-24 dBFS, owner says it sounds best; `gain`/`eq` on the console. Recordings copy off over USB (`tools/pull.py`). SD_DET confirmed (P12 LOW with card, HIGH without; expander question §2.1 answered); RTC set, files get dated names. Still to check: one recording of fictional speech through `smoke_upload.py` on the server (owner). **Round 12: BLE upload path built, not yet on hardware**: BOOT+PWR records an Opus session (libopus, 16 kbps) as 30 s Ogg/Opus chunks into a queue on the SD card that survives reboots; NimBLE GATT service drains it (protocol `docs/twatch-ble-protocol.md`); `tools/ble_relay.py` is the PC relay; Wi-Fi still not linked. Needs the owner: flash, record, drain with the PC relay and the phone (PR Server verification). Then milestone 2 (power baseline), milestone 3 (gain/EQ/bitrate by transcription) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` §11, `docs/twatch-ble-protocol.md` |
 | 11c | Android relay app (T-Watch → BLE → phone → server) | **built, unit-tested (67 tests), not yet on a phone**: foreground service, scan/bond/drain per the protocol, uploads with the bearer token over LAN/Tailscale, acks only after the server's ok, backoff; settings (URL, token in Keystore) and status screen; no Google services, no analytics. CI builds the APK | `android-relay/` |
+| 11d | T5 E-Paper Pro PDA (briefing, conversations, action items, calendar over BLE via the phone) | **phone side built, unit-tested, not on hardware**: Odysseus calendar REST verified (plan §6); `android-relay` syncs the T5 next to the watch (glance protocol, feed, outbox, `cal_add` to Odysseus). Firmware and PC relay `pda` in sibling branches | `docs/t5-pda-plan.md`, `android-relay/` |
 | 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; the hub's `fork_deploy.sh deploy` runs it first | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, hub `docs/fork/deploy.md` |
 | 10 | End-to-end with real devices | not started | — |
 
@@ -240,6 +241,25 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
   vendor string, the `barvis_relay` package, and all `convo` identifiers.
 
+## Done on 2026-10-20: T5 PDA, phone side
+
+- **Odysseus calendar REST checked** in the hub (read only, `SDarioosh/Barvis@5cc32c5`),
+  written into `docs/t5-pda-plan.md` §6: `GET/POST /api/codex/calendar/events` and
+  `DELETE …/{uid}`, `ody_` tokens scoped `calendar:read,calendar:write`, Bearer header only.
+  CalDAV write-back happens only into a CalDAV calendar, so the relay sends its id. Create
+  isn't idempotent. Proposed hub changes (not made): a codex list-calendars route, an
+  idempotency key on create, occurrence delete.
+- **android-relay** now runs a `PdaSync` job next to the watch drain: glance protocol
+  codec, scan for both UUIDs (the PDA's only while due), outbox first (ack only after the
+  server, never on a temporary failure, `cal_add` deduped), then the feed (≤ 32 KB, sent
+  only when changed), then `fetch` details, and stay connected while the T5 is in use.
+  Settings: Odysseus URL and its own encrypted token, calendar id, templates, interval;
+  a PDA line on the main screen. The watch path is unchanged (`GattClient` takes the
+  watch profile by default). 112 JVM tests pass, lint is clean.
+- **Needs a real phone and T5** (after the firmware): the list in `android-relay/README.md`
+  "Not verified on hardware", mainly the two-device scan, the feed `PUT` time, Android's
+  `PATCH`, and `cal_add` reaching CalDAV.
+
 ## Done in round 14: T-Watch Ultra BLE link works from a Windows PC
 
 On the owner's watch (ESP-IDF 5.5.5, COM35) with the bonded Windows desktop:
@@ -417,8 +437,10 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
    power baseline says go.
 9. XIAO pendant, after the T-Watch Ultra: a second `boards/` directory on the same firmware.
 10. T5 E-Paper Pro PDA (`docs/t5-pda-plan.md`, planned 2026-10-20): briefing, conversations,
-    action items and the Odysseus calendar over BLE via the phone. First: confirm the hub's
-    calendar REST and scoped tokens (plan §6), then milestone 0 bring-up.
+    action items and the Odysseus calendar over BLE via the phone. Hub calendar REST
+    confirmed and the phone side built (2026-10-20); next: milestone 0 bring-up, then the
+    firmware, then milestone 4 on the phone. Owner: create an Odysseus token with only the
+    calendar scopes, and find the CalDAV calendar's id for the relay settings.
 
 ## Open questions for you
 

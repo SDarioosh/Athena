@@ -79,6 +79,56 @@ If the phone was paired while the watch's sync window was closed, the watch drop
 but Android keeps it, and connections then fail with an authentication error. Remove
 `barvis-tw` in Android's Bluetooth settings, open the sync window and start again.
 
+## T5 E-Paper PDA (optional)
+
+The same app also syncs a LilyGO T5 E-Paper Pro used as a pocket PDA
+([docs/t5-pda-plan.md](../docs/t5-pda-plan.md), "glance" protocol §3). The T5 holds no
+token: the phone builds a compact feed and sends it over BLE, and carries the T5's taps back
+to the servers.
+
+```
+odysseus-sound /v1/digests, /v1/conversations, /v1/action-items ┐
+Odysseus /api/codex/calendar/events (ody_ token, calendar scopes) ┴→ this app → BLE → T5
+```
+
+- **One BLE job at a time.** The scan filter holds the watch's service UUID and, while a
+  PDA sync is due (every *N* minutes, default 15), the PDA's too. Whichever device shows up
+  is served; the other waits for the next scan.
+- **Per connection** (`PdaSync`, plan §3.4): read `info` (`proto=1`), MTU ≥ 420, `TIME`
+  with the phone's UTC offset, `GET /health` (on failure: `BYE`, the T5 keeps its feed,
+  back off 1, 2, 5, 10, 15 min). Then the **outbox**: each action is checked (type and
+  fields, 400 bytes at most; anything else is acked with result 1 and never forwarded),
+  sent to the server, and acked only after the answer: result 0 on 2xx, 1 on a final 4xx,
+  no ack on 5xx or a network error. `cal_add` is deduped per action, because the hub's
+  create isn't idempotent. Then the **feed** (≤ 32 KB; summaries are cut first, then the
+  oldest conversations), sent only when its content changed or the T5 lost it; then the
+  `fetch` answers as detail blobs (transcripts in 10-minute pages). While the T5 says the
+  user is active the app stays connected for up to 10 min: new actions are handled within
+  seconds, the feed is refreshed every 5 min, and a `TIME` every 20 s keeps the link
+  inside the T5's 30 s idle limit.
+- **Calendar.** Odysseus is optional. Without it the feed has no `calendar` section and
+  `cal_add` stays queued on the T5 ("not supported" in the status line), never guessed.
+  If Odysseus can't be reached, the last calendar is reused.
+
+Setup:
+
+1. In Odysseus (Settings → API tokens), create a token with only **Calendar read** and
+   **Calendar write**. Copy the `ody_…` value; it is shown once.
+2. In the relay's **Settings → PDA**: turn the sync on, enter the Odysseus URL (the same
+   Tailscale host as the server, port 7000 on the owner's install, for example
+   `http://myserver.<tailnet>.ts.net:7000`), the token, and the **calendar id** of your
+   CalDAV calendar. Events go back to CalDAV only when they land in a CalDAV calendar;
+   without an id Odysseus picks your first calendar. To find the id, open
+   `<Odysseus URL>/api/calendar/calendars` in a browser that is logged in to Odysseus and
+   copy the `href` of the calendar whose `source` is `caldav`. Edit the event templates (one per
+   line; the T5 offers them in its "+" picker) and the sync interval. **Test Odysseus
+   calendar** lists the next 7 days. **Save**.
+3. Open the pairing window on the T5's Status screen and let the relay find it; type the
+   code shown on the T5 when Android asks.
+
+The main screen shows a **PDA** section: the T5's firmware, battery and outbox, and one
+line on the last sync (actions handled or waiting, feed sent or unchanged, calendar notes).
+
 ## Permissions and why
 
 | Permission | Why |
@@ -101,7 +151,11 @@ but Android keeps it, and connections then fail with an authentication error. Re
   again, never logged. `allowBackup="false"` and the data-extraction rules exclude
   everything from cloud backup and device transfer.
 - Logs (logcat and the in-app event list) contain chunk ids, sizes, session ids and server
-  answers, never the token or audio.
+  answers, never the token or audio. PDA logs hold action ids and types, feed sizes and
+  versions, never summaries, titles or event names.
+- The Odysseus token is a second token, encrypted the same way. Give it only the calendar
+  scopes. The app remembers the last calendar section and the `cal_add` dedupe table
+  (30 days) in private, non-backed-up storage.
 - Cleartext `http://` is allowed because Tailscale and LAN addresses can't be listed by
   range in Android's network security config. Settings shows a warning when an `http://`
   URL isn't RFC 1918, Tailscale (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), `*.ts.net`,
@@ -111,13 +165,19 @@ but Android keeps it, and connections then fail with an authentication error. Re
 
 ```
 app/src/main/java/org/barvis/sound/relay/
-  protocol/   pure Kotlin: GATT UUIDs, command/response/entry/status/info codec (§3–§5)
+  protocol/   pure Kotlin: GATT UUIDs, command/response/entry/status/info codec (§3–§5);
+              Glance.kt: the T5 PDA's glance protocol (t5-pda-plan §3)
   relay/      pure Kotlin: DrainSession (§6) over WatchLink + Uploader, Backoff, ScanThrottle,
-              PartialReads (resume), TIME_UNSET anchors, timestamps
-  net/        HttpUploader (HttpURLConnection, error classes §6.5), ServerUrl (http warning)
-  ble/        Android BLE glue: GattClient (one GATT op at a time), BleWatchLink, Scanner, Bonding
-  service/    RelayService (foreground loop), RelayState, Permissions, BootReceiver
-  store/      Settings (SharedPreferences), TokenCipher (Keystore AES-GCM)
+              PartialReads (resume), TIME_UNSET anchors, timestamps;
+              PdaSync (plan §3.4) over PdaLink + ConvoApi + CalendarApi, FeedBuilder (§4.1),
+              DetailBuilder (§4.3), PdaAction (§4.2 validation), PdaSchedule
+  net/        HttpUploader (HttpURLConnection, error classes §6.5), ServerUrl (http warning);
+              Json (small reader/writer), PdaHttp: ConvoHttpApi, OdysseusCalendarClient
+  ble/        Android BLE glue: GattClient (one GATT op at a time, watch or PDA profile),
+              BleWatchLink, BlePdaLink, Scanner (one or both service UUIDs), Bonding
+  service/    RelayService (foreground loop), PdaConnector (the PDA job), RelayState,
+              Permissions, BootReceiver
+  store/      Settings (SharedPreferences), TokenCipher (Keystore AES-GCM), PdaPrefs
   ui/         MainActivity (status + log), SettingsActivity
 ```
 
@@ -126,6 +186,14 @@ watch (real CRC-32s, MTU-sized `DATA` frames, `LIST` paging, idempotent `ACK`, t
 rule, injected CRC errors, disconnects and SD errors) with a fake server for the drain
 rules; and the real `HttpUploader` against a JDK `HttpServer` on localhost (multipart
 fields, bearer header, error classes, no redirects, token never in logs).
+
+For the PDA: glance protocol vectors; a fake T5 (outbox with paging, `PUT` with CRC and
+size checks, MTU-sized frames, injected bad CRCs, a lost `OB_ACKED`, `status`
+notifications for the "user is active" loop) with a fake odysseus-sound API (fictional
+data) and a fake Odysseus calendar; feed shape, cutting and hashing; transcript paging;
+action validation; and the HTTP clients against a fake transport (paths, bodies, bearer
+header, "not supported" for a hub without the codex routes) plus the real transport
+against a JDK `HttpServer`.
 
 ## Not verified on hardware
 
@@ -141,3 +209,21 @@ real phone and watch:
 - The 30 s watch idle timeout during the first pairing prompt (if it hits, the next
   connection carries on, already bonded).
 - Start on boot (Android 14/15 foreground-service rules for `connectedDevice`).
+
+The T5 PDA side is unit-tested only; no T5 firmware speaks the glance protocol yet. To
+check with a real phone and T5 (plan milestone 4):
+
+- Watch and T5 bonded to one phone: both found by the two-UUID scan, served one at a
+  time, the watch drained between PDA syncs while the T5 isn't due.
+- Pairing with the T5's on-screen code; `info`, MTU ≥ 420 (Android asks for 517), `TIME`
+  offset shown right on the T5.
+- `PUT` of a ~30 KB feed at MTU 517 (time), the feed redrawn and surviving a reboot.
+- `PATCH /v1/action-items/{id}` from Android's `HttpURLConnection` (the JDK's has no
+  PATCH, so tests can't cover the real call).
+- `cal_add` from an action item: the event appears in Odysseus and on the CalDAV server
+  (with the calendar id set); a lost `OB_ACKED` (walk out of range right after the tap)
+  doesn't create a second event.
+- The stay-connected loop: outbox replies within seconds while the T5 is awake, `BYE`
+  when it sleeps, and the 30 s idle limit never hit.
+- The "outbox waiting" hint in the T5's scan response (plan §3.4 step 6) isn't used yet:
+  the relay syncs on its interval.

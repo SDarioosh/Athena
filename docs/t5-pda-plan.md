@@ -214,8 +214,21 @@ The phone builds it from these sources:
  "conversations": [{"id": "c_…", "title": "…", "at": "…", "people": ["…"],
                     "summary": "…", "points": ["…"]}],
  "actions": [{"id": 42, "text": "…", "owner": "…", "due": "2026-10-23", "conv": "c_…"}],
- "calendar": [{"id": "…", "title": "…", "start": "…", "end": "…", "where": "…", "all_day": false}]}
+ "calendar": [{"id": "…", "title": "…", "start": "…", "end": "…", "where": "…", "all_day": false}],
+ "templates": ["Call", "Meeting", "Reminder"]}
 ```
+
+- As built in `android-relay` (2026-10-20): times are ISO-8601 with the offset of `tz`
+  (`2026-10-21T10:00:00+02:00`); all-day events and `due` are plain dates; an empty
+  string stands for a missing `owner`, `due` or `where`. `briefing` is today's digest, or
+  yesterday's if today has none, and is left out if neither exists. `calendar` is left out
+  when Odysseus isn't set up. `templates` are the owner's event titles for the "+"
+  picker (§5), at most 12.
+- `cal_add` times: an ISO time with an offset, or a local time without one (the phone adds
+  its offset); all-day takes `YYYY-MM-DD`, and an `end` date is exclusive.
+- Detail blobs: `conv:<id>` gives `title`, `at`, `people`, `summary`, `points` and
+  `actions` (`id`, `text`, `owner`, `due`, `status`). A transcript page adds `from`, `to`
+  and, if more follows, `next` (the ref of the next page). A page is at most 48 KB.
 
 - Keep it under 32 KB. If it is too big, the phone cuts summaries first, then drops the oldest
   conversations.
