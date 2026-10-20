@@ -17,6 +17,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -48,6 +51,7 @@ import org.barvis.sound.relay.store.Settings
 import org.barvis.sound.relay.ui.MainActivity
 import java.text.DateFormat
 import java.util.Date
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Foreground service (type connectedDevice) that runs the relay loop:
@@ -62,6 +66,8 @@ class RelayService : Service() {
     private val log = RelayState.logger
     private val partials = PartialReads()
     private val pda by lazy { PdaConnector(this, settings) }
+    /** "Sync T5 now" was tapped: cut the running scan short so the next one looks for the T5. */
+    private val pdaWake = Channel<Unit>(Channel.CONFLATED)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -98,6 +104,11 @@ class RelayService : Service() {
             loop = scope.launch { runLoop() }
             scope.launch { RelayState.state.collectLatest { updateNotification(it) } }
         }
+        if (intent?.action == ACTION_PDA_SYNC && settings.pdaEnabled) {
+            pda.schedule.request(System.currentTimeMillis(), PDA_REQUEST_WINDOW_MS)
+            RelayState.update { it.copy(pdaLine = "Looking for the T5…") }
+            pdaWake.trySend(Unit)
+        }
         return START_STICKY
     }
 
@@ -114,6 +125,23 @@ class RelayService : Service() {
     }
 
     // ------------------------------------------------------------------ the loop
+
+    /** Runs [scan], or returns null as soon as "Sync T5 now" is tapped. */
+    private suspend fun scanUnlessWoken(scan: suspend () -> Scanner.Hit?): Scanner.Hit? = coroutineScope {
+        val job = async { scan() }
+        val wake = launch {
+            pdaWake.receive()
+            job.cancel()
+        }
+        try {
+            job.await()
+        } catch (e: CancellationException) {
+            if (!isActive) throw e // the service is stopping
+            null
+        } finally {
+            wake.cancel()
+        }
+    }
 
     private suspend fun runLoop() {
         val backoff = Backoff()
@@ -138,18 +166,35 @@ class RelayService : Service() {
             }
 
             setPhase(Phase.SCANNING, "")
-            // A T5 is taken when its sync is due, or at once when its scan response says the
-            // outbox has entries (t5-pda-plan §3.4 step 6, §3.5); otherwise it is ignored.
             val now = System.currentTimeMillis()
+            if (pda.schedule.requestExpired(now)) {
+                RelayState.update {
+                    it.copy(pdaLine = "T5 not found. Is it nearby and awake (tap its screen)? Then tap Sync T5 now again")
+                }
+            }
+            // Manual mode (default): the T5 is looked for only after "Sync T5 now", and then
+            // alone, until the request expires. Automatic mode: it is taken when its sync is
+            // due, or at once when its scan response says the outbox has entries (t5-pda-plan
+            // §3.4 step 6, §3.5); otherwise it is ignored.
             val pdaOn = settings.pdaEnabled
+            val auto = pda.schedule.isAuto
             val pdaDue = pdaOn && pda.schedule.isDue(now)
-            val services = if (pdaOn) listOf(WatchGatt.SERVICE, PdaGatt.SERVICE) else listOf(WatchGatt.SERVICE)
-            val window = if (pdaOn && !pdaDue) {
-                pda.schedule.msUntilDue(now).coerceIn(5_000L, SCAN_WINDOW_MS)
-            } else SCAN_WINDOW_MS
+            val services = when {
+                !pdaOn -> listOf(WatchGatt.SERVICE)
+                !auto && pdaDue -> listOf(PdaGatt.SERVICE)
+                !auto -> listOf(WatchGatt.SERVICE)
+                else -> listOf(WatchGatt.SERVICE, PdaGatt.SERVICE)
+            }
+            val window = when {
+                pdaOn && !auto && pdaDue -> PDA_REQUEST_WINDOW_MS
+                pdaOn && auto && !pdaDue -> pda.schedule.msUntilDue(now).coerceIn(5_000L, SCAN_WINDOW_MS)
+                else -> SCAN_WINDOW_MS
+            }
             val hit = try {
-                Scanner(adapter, throttle, log).scanFor(window, services) { h ->
-                    h.service != PdaGatt.SERVICE || pdaDue || PdaGatt.outboxWaiting(h.serviceData)
+                scanUnlessWoken {
+                    Scanner(adapter, throttle, log).scanFor(window, services) { h ->
+                        h.service != PdaGatt.SERVICE || pdaDue || (auto && PdaGatt.outboxWaiting(h.serviceData))
+                    }
                 }
             } catch (e: Scanner.ScanFailed) {
                 log.log(Level.WARN, e.message ?: "scan failed")
@@ -350,6 +395,10 @@ class RelayService : Service() {
         private const val NOTIFY_ID = 1
         private const val NOTIFY_ERROR = 2
         private const val ACTION_STOP = "org.barvis.sound.relay.STOP"
+        private const val ACTION_PDA_SYNC = "org.barvis.sound.relay.PDA_SYNC"
+
+        /** How long "Sync T5 now" looks for the T5 before giving up. */
+        private const val PDA_REQUEST_WINDOW_MS = 60_000L
 
         /** One scan runs at most this long, then it is restarted (Android may degrade long scans). */
         private const val SCAN_WINDOW_MS = 10 * 60_000L
@@ -358,6 +407,11 @@ class RelayService : Service() {
 
         fun start(context: Context) {
             context.startForegroundService(Intent(context, RelayService::class.java))
+        }
+
+        /** "Sync T5 now": look for the T5 and sync it once (the relay must be running). */
+        fun syncPda(context: Context) {
+            context.startForegroundService(Intent(context, RelayService::class.java).setAction(ACTION_PDA_SYNC))
         }
 
         fun stop(context: Context) {

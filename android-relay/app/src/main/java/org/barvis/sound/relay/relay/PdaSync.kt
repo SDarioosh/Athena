@@ -73,7 +73,7 @@ class PdaSync(
     private val log: RelayLog = RelayLog.NONE,
     private val listener: PdaListener = object : PdaListener {},
     private val receiveTimeoutMs: Long = 10_000,
-    /** How long to stay connected while the user is active (then `BYE` so the watch gets a turn). */
+    /** How long to stay connected while the user is active (then `BYE` so the watch gets a turn); 0 = never. */
     private val maxStayMs: Long = 10 * 60_000L,
     private val feedRefreshMs: Long = 5 * 60_000L,
     /** The T5, like the watch, drops a link that sent no command for 30 s. */
@@ -139,7 +139,7 @@ class PdaSync(
         syncOnce(forceFeed = false)
 
         // Step 6: stay while the user is looking at the T5.
-        if (status?.userActive == true) stay()
+        if (status?.userActive == true && maxStayMs > 0) stay()
 
         bye()
         val s = stats()

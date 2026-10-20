@@ -180,6 +180,12 @@
             android:inputType="textMultiLine|textCapSentences"
             android:minHeight="96dp" />
 
+        <CheckBox
+            android:id="@+id/pda_auto"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/pda_auto" />
+
         <TextView
             style="@style/Heading"
             android:labelFor="@id/pda_interval"

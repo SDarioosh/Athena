@@ -36,6 +36,7 @@ class MainActivity : Activity() {
     private lateinit var logView: TextView
     private lateinit var toggle: Button
     private lateinit var battery: Button
+    private lateinit var pdaSync: Button
     private lateinit var permissionNote: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,6 +51,7 @@ class MainActivity : Activity() {
         logView = findViewById(R.id.log)
         toggle = findViewById(R.id.toggle)
         battery = findViewById(R.id.battery)
+        pdaSync = findViewById(R.id.pda_sync)
         permissionNote = findViewById(R.id.permission_note)
 
         toggle.setOnClickListener { onToggle() }
@@ -57,6 +59,7 @@ class MainActivity : Activity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
         battery.setOnClickListener { askBatteryExemption() }
+        pdaSync.setOnClickListener { RelayService.syncPda(this) }
     }
 
     override fun onStart() {
@@ -148,6 +151,9 @@ class MainActivity : Activity() {
         }
         watch.text = if (w.isEmpty()) getString(R.string.no_watch_yet) else w.toString().trimEnd()
         pda.text = pdaText(s)
+        // Manual T5 sync needs the running relay (it owns the BLE stack, so it can't race the watch).
+        pdaSync.visibility = if (settings.pdaEnabled) View.VISIBLE else View.GONE
+        pdaSync.isEnabled = enabled && s.phase != Phase.PDA_SYNC
 
         val last = settings.lastSyncMs
         counters.text = getString(R.string.counters, s.uploadedThisRun, settings.totalUploaded,

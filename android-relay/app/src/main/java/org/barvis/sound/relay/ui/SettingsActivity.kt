@@ -67,6 +67,7 @@ class SettingsActivity : Activity() {
     // ------------------------------------------------------------------ T5 PDA
 
     private lateinit var pdaEnabled: CheckBox
+    private lateinit var pdaAuto: CheckBox
     private lateinit var odyUrl: EditText
     private lateinit var odyToken: EditText
     private lateinit var odyTokenState: TextView
@@ -78,6 +79,7 @@ class SettingsActivity : Activity() {
 
     private fun initPda() {
         pdaEnabled = findViewById(R.id.pda_enabled)
+        pdaAuto = findViewById(R.id.pda_auto)
         odyUrl = findViewById(R.id.odysseus_url)
         odyToken = findViewById(R.id.odysseus_token)
         odyTokenState = findViewById(R.id.odysseus_token_state)
@@ -88,6 +90,7 @@ class SettingsActivity : Activity() {
         odyResult = findViewById(R.id.odysseus_result)
 
         pdaEnabled.isChecked = settings.pdaEnabled
+        pdaAuto.isChecked = settings.pdaAutoSync
         odyUrl.setText(settings.odysseusUrl)
         odyCalendar.setText(settings.odysseusCalendarId)
         templates.setText(settings.eventTemplates.joinToString("\n"))
@@ -121,6 +124,7 @@ class SettingsActivity : Activity() {
         val t = odyToken.text.toString().trim()
         if (t.isNotEmpty() && !t.startsWith("ody_")) return getString(R.string.odysseus_token_shape)
         settings.pdaEnabled = pdaEnabled.isChecked
+        settings.pdaAutoSync = pdaAuto.isChecked
         settings.odysseusUrl = base
         if (t.isNotEmpty()) settings.setOdysseusToken(t)
         odyToken.text.clear()

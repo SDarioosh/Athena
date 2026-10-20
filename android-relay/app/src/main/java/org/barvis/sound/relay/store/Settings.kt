@@ -74,7 +74,12 @@ class Settings(context: Context) {
         get() = (prefs.getString(KEY_TEMPLATES, null) ?: DEFAULT_TEMPLATES).lines().map { it.trim() }.filter { it.isNotEmpty() }
         set(v) = prefs.edit().putString(KEY_TEMPLATES, v.joinToString("\n")).apply()
 
-    /** Minutes between PDA syncs while it isn't in use (§3.4 step 6). */
+    /** Sync the T5 on its own (every [pdaSyncMinutes]); off = only with "Sync T5 now". */
+    var pdaAutoSync: Boolean
+        get() = prefs.getBoolean(KEY_PDA_AUTO, false)
+        set(v) = prefs.edit().putBoolean(KEY_PDA_AUTO, v).apply()
+
+    /** Minutes between automatic PDA syncs while it isn't in use (§3.4 step 6). */
     var pdaSyncMinutes: Int
         get() = prefs.getInt(KEY_PDA_INTERVAL, 15)
         set(v) = prefs.edit().putInt(KEY_PDA_INTERVAL, v.coerceIn(MIN_PDA_MINUTES, MAX_PDA_MINUTES)).apply()
@@ -116,6 +121,7 @@ class Settings(context: Context) {
         private const val KEY_ODY_CAL = "odysseus_calendar_id"
         private const val KEY_TEMPLATES = "pda_templates"
         private const val KEY_PDA_INTERVAL = "pda_sync_minutes"
+        private const val KEY_PDA_AUTO = "pda_auto_sync"
         private const val KEY_PDA_LAST = "pda_last_sync_ms"
         const val DEFAULT_TEMPLATES = "Call\nMeeting\nReminder\nFollow-up"
         const val MIN_PDA_MINUTES = 5

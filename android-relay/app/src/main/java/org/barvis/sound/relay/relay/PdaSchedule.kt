@@ -4,22 +4,53 @@ package org.barvis.sound.relay.relay
  * When the next PDA sync is due (docs/t5-pda-plan.md §3.4 steps 3 and 6). The PDA's service
  * UUID is only in the scan filter while a sync is due, so a T5 that advertises all the time
  * doesn't keep the BLE stack from the watch.
+ *
+ * Two modes, chosen by [auto]:
+ * - **manual** (the app's default): a sync is due only after [request] ("Sync T5 now"), until
+ *   it runs or the request expires. Nothing is retried on its own.
+ * - **automatic**: due every [intervalMs], with backoff after failures, and at once after
+ *   [request].
  */
 class PdaSchedule(
     private val intervalMs: () -> Long,
+    private val auto: () -> Boolean = { true },
     private val backoff: Backoff = Backoff(),
     private val linkRetryMs: Long = 60_000,
 ) {
-    /** Due at once after the relay starts. */
+    /** Automatic mode: due at once after the relay starts. */
     var nextAtMs = 0L
         private set
 
-    fun isDue(nowMs: Long) = nowMs >= nextAtMs
+    /** A manual request is pending until this time (0 = none). */
+    private var requestedUntilMs = 0L
 
-    fun msUntilDue(nowMs: Long) = maxOf(0L, nextAtMs - nowMs)
+    val isAuto: Boolean get() = auto()
 
-    /** Records how a sync ended; returns the delay until the next one. */
+    fun isDue(nowMs: Long) = nowMs < requestedUntilMs || (auto() && nowMs >= nextAtMs)
+
+    fun msUntilDue(nowMs: Long): Long = when {
+        isDue(nowMs) -> 0L
+        auto() -> nextAtMs - nowMs
+        else -> Long.MAX_VALUE
+    }
+
+    /** "Sync T5 now": due until the T5 is found or [windowMs] has passed. */
+    fun request(nowMs: Long, windowMs: Long) {
+        requestedUntilMs = nowMs + windowMs
+        backoff.reset()
+    }
+
+    /** True once when a request expired without a sync (the T5 wasn't found); clears it. */
+    fun requestExpired(nowMs: Long): Boolean {
+        if (requestedUntilMs == 0L || nowMs < requestedUntilMs) return false
+        requestedUntilMs = 0L
+        return true
+    }
+
+    /** Records how a sync ended; returns the delay until the next automatic one (0 in manual mode). */
     fun after(outcome: PdaOutcome, nowMs: Long): Long {
+        requestedUntilMs = 0L
+        if (!auto()) return 0L
         val d = when (outcome) {
             is PdaOutcome.Done -> {
                 backoff.reset()
@@ -33,7 +64,7 @@ class PdaSchedule(
         return d
     }
 
-    /** E.g. the settings changed: sync again at the next sighting. */
+    /** E.g. the settings changed: sync again at the next sighting (automatic mode). */
     fun dueNow() {
         nextAtMs = 0
         backoff.reset()

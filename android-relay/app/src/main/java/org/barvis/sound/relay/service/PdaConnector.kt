@@ -35,7 +35,7 @@ import java.util.Date
 @SuppressLint("MissingPermission")
 class PdaConnector(private val context: Context, private val settings: Settings) {
     private val log = RelayState.logger
-    val schedule = PdaSchedule({ settings.pdaSyncMinutes * 60_000L })
+    val schedule = PdaSchedule({ settings.pdaSyncMinutes * 60_000L }, { settings.pdaAutoSync })
 
     /** One sync with [device]; returns how long the relay loop should pause afterwards. */
     suspend fun sync(device: BluetoothDevice, serverBase: String): Long {
@@ -43,19 +43,20 @@ class PdaConnector(private val context: Context, private val settings: Settings)
         val outcome = connectAndSync(device, serverBase)
         val now = System.currentTimeMillis()
         val next = schedule.after(outcome, now)
+        fun retry(text: String) = if (schedule.isAuto) ". Retry in $text" else ". Tap Sync T5 now to try again"
         val line = when (outcome) {
             is PdaOutcome.Done -> {
                 settings.lastPdaSyncMs = now
                 "Synced ${fmt(now)}" + summary(outcome.stats)
             }
-            is PdaOutcome.ServerUnavailable -> "Server not reachable: ${outcome.detail}. Retry in ${next / 60_000} min"
+            is PdaOutcome.ServerUnavailable -> "Server not reachable: ${outcome.detail}" + retry("${next / 60_000} min")
             is PdaOutcome.AuthRejected -> {
                 // The same token as the watch's: the relay loop stops and asks for Settings.
                 settings.tokenRejected = true
                 "Token rejected (HTTP ${outcome.code})"
             }
-            is PdaOutcome.DeviceError -> "PDA problem: ${outcome.detail}. Retry in ${next / 60_000} min"
-            is PdaOutcome.LinkLost -> "Connection lost: ${outcome.detail}. Retry in ${next / 1000} s"
+            is PdaOutcome.DeviceError -> "PDA problem: ${outcome.detail}" + retry("${next / 60_000} min")
+            is PdaOutcome.LinkLost -> "Connection lost: ${outcome.detail}" + retry("${next / 1000} s")
         }
         val err = if (outcome is PdaOutcome.Done) null else "PDA: $line"
         RelayState.update { s -> s.copy(pdaLine = line, lastError = err ?: s.lastError) }
@@ -103,6 +104,8 @@ class PdaConnector(private val context: Context, private val settings: Settings)
                 templates = settings.eventTemplates,
                 log = log,
                 listener = listener,
+                // Manual sync: one pass and BYE, so the watch gets the BLE stack back at once.
+                maxStayMs = if (settings.pdaAutoSync) 10 * 60_000L else 0L,
             )
             return sync.run().also { client.highPriority(false) }
         } catch (e: GattStatusException) {
