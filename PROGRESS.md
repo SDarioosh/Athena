@@ -282,6 +282,29 @@ right after its sizes, flags and timings were read; none was uploaded.
   them. Owner: not an issue in use, left at that.
 - Host tests build on macOS (`reboot()` clashed with `<unistd.h>`); `/build-host/` ignored.
 
+**Reliability (step 2), all tested on the watch**
+- **Low battery**: `board_battery_limits()` in `board.h` (T-Watch: low at <= 5 % or < 3.5 V,
+  recording allowed again at >= 10 % or on USB); `main/battery_guard.c` (pure, host-tested)
+  needs 2 low readings in a row, checked every 15 s. When low: whatever records ends
+  cleanly (LAST), 3 buzzes, "BATTERY LOW", sessions/notes/WAV refused (3 buzzes, "CHARGE
+  ME"); `status` and the status screen say so. `batt sim <percent> [mV]` / `batt sim off`
+  fakes it (USB unplugged). Not yet seen with a really empty battery.
+- **Reset reason**: boot log, `status` (`reset: ..., up N s`) and BLE `info` `reset=<name>`
+  (protocol §4.1, additive in `proto=1`; the PC relay shows it in `--list`, the Android app
+  on its status screen; Android build not run here, no SDK on the Mac: CI).
+- **Core dump**: 128 KB `coredump` partition after the app (NVS and bonds kept; bonds
+  survived the reflash). Console `coredump` (task, PC, backtrace), `coredump get`, `coredump
+  erase`, `crash yes`; `tools/pull.py --coredump` saves it, `idf.py coredump-info -c` decodes
+  it (decoded to `cmd_crash` on the test). Its own logs off. Costs ~6 KB internal RAM (191 KB
+  free after BLE).
+- **Task watchdog**: it only printed warnings before (`CONFIG_ESP_TASK_WDT_PANIC` off). Now
+  the session and BLE tasks are subscribed and a 10 s hang restarts the watch with a core
+  dump and `reset=task_wdt`; a conversation that was recording starts again after the boot
+  (not a note, not after a power cut or brownout). `crash wdt` tested it: restart after
+  ~10 s, the cut chunk recovered with LAST, a new session started. 70 s of recording and
+  chunk closes: no false trigger. Not yet tested during a BLE drain.
+- `pull.py` reset the watch when opening the port on macOS (same fix as `wcon.py`).
+
 **Seen, not fixed**
 - A bonded relay (`8c:a3:ec:...`) connected twice during the tests: once it sent BYE
   without reading, once it read ~111 KB, then the link dropped with 983 notification send

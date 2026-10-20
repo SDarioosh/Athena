@@ -76,6 +76,7 @@ records everything between start and stop.
   `gain [dB]`, `eq [on|off]`, `ls [q]`, `get <file>`, `mute`, `screen`, `sd`, `reboot`.
   `status` also prints the free heap. `queue drop <id>` takes the hex id that `queue` lists.
   `sd failwrite <n>` makes the next n chunk writes fail (to test the recovery below).
+  `batt sim`, `coredump [get|erase]` and `crash yes|wdt`: see below.
 
 ## Upload path (BLE)
 
@@ -96,6 +97,16 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 16 kbps VBR, complexity 1) -> 30 s Ogg
   start times are contiguous; pages are written and fsynced every second, so a power cut
   loses at most ~1 s, and the chunk being written is recovered at the next boot. Details:
   protocol §2.
+- **Low battery**: below the board's limit (T-Watch: 5 % or 3.5 V, two readings 15 s
+  apart) the recording ends cleanly, the watch buzzes 3 times and shows BATTERY LOW, and
+  refuses new recordings until 10 % or USB. `batt sim <percent> [mV]` / `batt sim off`
+  fakes the battery for testing.
+- **Crashes and hangs**: `status` and BLE `info` show the last reset reason (`reset=`). A
+  crash saves a core dump to flash: `coredump` shows where, `tools/pull.py --coredump`
+  copies it, `idf.py coredump-info -c <file>` decodes it, `coredump erase` clears it. The
+  session and BLE tasks are on the task watchdog: a 10 s hang restarts the watch, and a
+  conversation that was recording starts again after the boot. `crash yes` / `crash wdt`
+  test it.
 - **Card errors**: a failed write (the card sometimes answers `0x108`) costs at most the
   open page (~1 s): the chunk is cut back to its last page and the session goes on with a
   new chunk after 100/300/1000 ms of skipped (but counted) mic frames; it ends only after 4
