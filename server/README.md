@@ -217,10 +217,16 @@ Each conversation gets several small `json_schema` calls instead of one big one 
 small local model does better on narrow questions):
 
 1. **Triage**: discard a TV, radio or podcast playing, noise, gibberish or no real
-   conversation (kept when in doubt; under 3 words is discarded without a call), and pick
-   the kind: meeting, call, appointment, casual, other. A discarded conversation keeps
+   conversation (kept when in doubt), and pick the kind: meeting, call, appointment,
+   casual, other. A discarded conversation keeps
    its transcript (still searchable; `POST /v1/conversations/{id}/summarize` retries) but
    gets no summary, action items or facts, and stays out of digests.
+   Plain junk is discarded first, without a model call, by fixed rules
+   (`convo_server/relevance_rules.py`): under 3 words (`too_short`), only filler words
+   such as "okay", "mm", "yeah" (`filler`), or a microphone check such as "testing, one,
+   two" (`mic_check`). These rules only discard: anything with one content word, a name,
+   a number, "yes"/"no", or words in another language goes to the model. No rule keeps a
+   conversation without the model, because the model is what spots a TV playing.
 2. **Notes** (title, summary, key points, people, topics) with a template per kind, e.g.
    decisions and owners for meetings, instructions and the next date for appointments.
 3. **Action items** (promises, requests, appointments), each written as a task, with

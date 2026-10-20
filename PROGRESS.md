@@ -338,6 +338,18 @@ right after its sizes, flags and timings were read; none was uploaded.
 - SD `0x108` errors keep showing up at 4 MHz SPI (round 14: reads after an ACK; now
   writes). Cause unknown; recovery handles it.
 
+## Done on 2026-10-20: junk discarded without a model call
+
+Fixed rules now run before the triage call (`server/convo_server/relevance_rules.py`).
+A conversation of only filler words ("okay, mm, yeah") is discarded as `filler`, and a
+microphone check ("testing, one, two, is this on?") as `mic_check`, without asking the
+model. The rules only discard; everything else still goes to triage. Idea taken from
+Omi's backend (`utils/conversations/relevance_rules.py`), without its "keep anything over
+100 words" rule, which would let long TV through.
+
+Next (owner's call, not started): mark a voice as TV/media ("Speaker 2 is the TV") so
+recurring TV voices are left out of summaries. Needs a new MCP write tool and a hub PR.
+
 ## Done on 2026-10-20: bug hunt
 
 Eight bugs were reproduced and fixed here, and three in the hub. Each one has a
