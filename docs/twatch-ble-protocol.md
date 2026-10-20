@@ -64,8 +64,8 @@ mic → Opus encoder → 30 s Ogg/Opus chunk on the SD card (queue)
   with the console `session stop`, when the card is full, or with a reboot.
 - A **voice note** is a session of its own, started with a PWR hold of ~1 s (or the
   console `note start`). It has a new `session_id`, sequences from 0 and 30 s chunks as
-  usual, and **every chunk of it carries the `NOTE` flag** (§4.3). It ends with a PWR
-  press, mute, `note stop`, or by itself after 5 min (10 chunks); its last chunk has
+  usual, and **every chunk of it carries the `NOTE` flag** (§4.3). It ends with a PWR press or hold,
+  mute, `note stop`, or by itself after 5 min (10 chunks); its last chunk has
   `LAST`. If a conversation session is recording when a note starts, the watch ends that
   session first (its last chunk gets `LAST`), records the note, and then starts a new
   conversation session (unless muted meanwhile). The two never record at once, so a

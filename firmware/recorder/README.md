@@ -30,12 +30,12 @@ records everything between start and stop.
   | BOOT double-click (or `mute`) | Toggle mute. 2 buzzes = muted, 1 long buzz = unmuted. Mute ends whatever is recording |
   | BOOT hold ~1 s (or `sync` / `ble pair`) | Opens the **BLE sync window** for 2 minutes: the watch advertises and a new phone or PC may pair. Outside the window only already-paired relays get in |
   | PWR short press (or `session start` / `session stop`) | Starts or stops a **recording session** (1 buzz start, 2 buzzes stop; 3 buzzes if it ended on its own: card full or an error). The mic is encoded to Opus and written as 30 s Ogg/Opus chunks to `/sdcard/q/` (the upload queue). During a voice note, it stops the note |
-  | PWR hold ~1 s (or `note start` / `note stop`) | Starts a **voice note**. The AXP2101 long-press time is set to 1 s (register 0x27 bits[5:4]); the power-off hold (~6 s) is left as shipped |
+  | PWR hold ~1 s (or `note start` / `note stop`) | Starts a **voice note**, or ends the one recording (as a PWR press does). The AXP2101 long-press time is set to 1 s (register 0x27 bits[5:4]); the power-off hold (~6 s) is left as shipped |
   | PWR hold ~6 s | Hardware power-off (AXP2101) |
 
 - **Voice notes**: a note is its own short session. Every chunk carries the `NOTE` flag
   (protocol §4.3), which is kept in the chunk's `.met` record, so it survives reboots and
-  reaches the relay. A note stops on a PWR press, `note stop`, mute, or by itself after 5
+  reaches the relay. A note stops on a PWR press or a PWR hold, `note stop`, mute, or by itself after 5
   min (10 chunks). If a conversation session is recording, it ends cleanly first (its last
   chunk gets `LAST`), the note records, and then a new conversation session starts by
   itself (not if muted meanwhile).

@@ -10,7 +10,7 @@
  *     whatever is recording.
  *   BOOT held ~1 s: open the 2-minute BLE sync window (advertise now, accept a new phone).
  *   PWR press: start / stop a conversation recording session (1 buzz start, 2 buzzes stop);
- *     while a voice note records, PWR stops the note instead.
+ *     while a voice note records, PWR (a press or a hold) stops the note instead.
  *   PWR held ~1 s (AXP2101 PKEY_LONG): start a voice note, its own session of kind NOTE,
  *     max 5 min. During a conversation the conversation session ends first and a new one
  *     starts after the note. While muted, recording is refused (2 buzzes).
@@ -423,7 +423,7 @@ static void begin_note(void)
         }
         return;
     }
-    ESP_LOGI(TAG, "voice note started (1 buzz; max %d s, PWR stops it)", SESSION_REC_NOTE_MAX_S);
+    ESP_LOGI(TAG, "voice note started (1 buzz; max %d s, PWR press or hold stops it)", SESSION_REC_NOTE_MAX_S);
     board_haptic_pulse(1);
     show_note(0, true);
     ble_sync_kick();
@@ -499,6 +499,17 @@ static void pwr_short(void)
         stop_conversation("PWR");
     } else {
         start_conversation(false);
+    }
+}
+
+/* PWR hold ~1 s: start a voice note, or end the one recording (owner, 2026-10-20: either
+ * PWR gesture ends a note). */
+static void pwr_long(void)
+{
+    if (s_note_pending || note_running()) {
+        stop_note("PWR hold");
+    } else {
+        start_note();
     }
 }
 
@@ -579,6 +590,8 @@ static void handle(const app_event_t *ev)
         pwr_short();
         break;
     case APP_EV_PWR_LONG:
+        pwr_long();
+        break;
     case APP_EV_NOTE_START:
         start_note();
         break;

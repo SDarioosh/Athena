@@ -373,7 +373,7 @@ static int cmd_session(int argc, char **argv)
     return 0;
 }
 
-/* `note [start|stop]`: a voice note (same as holding PWR ~1 s; a PWR press stops it). */
+/* `note [start|stop]`: a voice note (same as holding PWR ~1 s; a PWR press or hold stops it). */
 static int cmd_note(int argc, char **argv)
 {
     if (argc >= 2 && strcmp(argv[1], "start") == 0) {
