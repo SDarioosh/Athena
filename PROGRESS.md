@@ -248,9 +248,11 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   content hash changed, `fetch` detail blobs with 10-minute transcript pages, staying
   connected while the user is active), strict checks on every action, and the 0/1/no-ack
   results.
-- The calendar is behind a `Calendar` protocol. For now that is a stub that says "not
-  configured", so calendar actions wait on the T5; the Odysseus calendar REST isn't
-  confirmed yet.
+- The calendar is behind a `Calendar` protocol. `OdysseusCalendar` uses the hub's token
+  routes (`/api/codex/calendar/events`, confirmed in plan §6 by the Android session), with
+  `--odysseus-url`, `--odysseus-token-file` and `--calendar-href`. Without them it is a
+  "not configured" stub, and calendar actions wait on the T5. It is tested against a fake
+  Odysseus only. The optional feed key `templates` comes from `--templates`.
 - Where the plan left a choice, the answer is now in plan §3.5, §4.1 and §4.3.
 - Tests: `tools/tests/test_pda.py` (fake T5 GATT peer, fake server: lost ack, bad CRC,
   paging, MTU, stay mode) and `server/tests/test_pda_feed.py` (the real API, seeded
@@ -439,7 +441,7 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
     action items and the Odysseus calendar over BLE via the phone. First: confirm the hub's
     calendar REST and scoped tokens (plan §6), then milestone 0 bring-up. The PC relay side
     (`ble_relay.py pda`) is built; next it runs against the T5 firmware (milestones 2–3),
-    and it needs a real `Calendar` once the hub's endpoints are confirmed.
+    and the Odysseus calendar against the test instance (127.0.0.1:7010) with a scoped token.
 
 ## Open questions for you
 

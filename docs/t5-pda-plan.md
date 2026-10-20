@@ -215,8 +215,21 @@ these points where the text above left a choice. The firmware and the phone foll
 - **Temporary failure stops the sync:** a 5xx, 408, 429 or network error on an action, or
   401/403, stops the sync at that action. Nothing after it is acked, no feed is built, the
   relay sends `BYE` and backs off. That keeps the actions in order.
-- **No calendar configured** (until §6 is confirmed): `cal_add` and `cal_delete` stay
-  queued without an ack and don't block the other actions. The feed's `calendar` is `[]`.
+- **Calendar:** the PC relay calls the Odysseus token routes of §6. It needs
+  `--odysseus-url`, a token scoped to `calendar:read` and `calendar:write` (from
+  `ODYSSEUS_TOKEN` or `--odysseus-token-file`; never on the command line), and
+  `--calendar-href`, the CalDAV calendar new events go to.
+  - Without the URL and token, no calendar is configured: `cal_add` and `cal_delete` stay
+    queued without an ack and don't block the other actions, and the feed's `calendar` is
+    `[]`.
+  - The event mapping: `uid` becomes `id`, `summary` becomes `title`, `dtstart`/`dtend`
+    become `start`/`end` (as given; all-day ends are exclusive), `location` becomes
+    `where`.
+  - A `cal_add` sends `summary` and `dtstart`, plus `dtend` when it is timed, plus
+    `all_day` and `calendar_href`.
+  - A `cal_delete` of an occurrence id (`<uid>::<occurrence>`) is result 1. The token route
+    deletes the whole series, and one tap must not remove a recurring event.
+  - Test against the Odysseus test instance (`127.0.0.1:7010`), never production.
 - **`cal_delete` of an event that is already gone** (404) is result 0, not 1: after a
   lost `OB_ACKED` the T5 sends it again, and the user must not see "couldn't sync".
 - **Strict checks** (anything else is acked with result 1):
@@ -274,6 +287,10 @@ The phone builds it from these sources:
   - `actions`: the soonest `due` first, undated ones last. A missing `owner` or `due` is
     `null`.
   - `calendar`: sorted by `start`.
+  - `templates` (optional): the owner's event titles for the "+" picker (§5), e.g.
+    `["Call", "Meeting", "Reminder"]`. At most 12 of up to 40 characters. The phone takes
+    them from its settings, the PC relay from `--templates "Call,Meeting,Reminder"`. The key
+    is left out when there are none, and the T5 then uses built-in defaults.
   - Field caps in characters: title 120, summary 600, 5 points of 160, action text 200.
   - The size limit is 32,768 bytes of compact UTF-8 JSON. Over it, each summary is cut to
     240 characters, then the oldest conversations are dropped. If it is still too big

@@ -41,6 +41,8 @@ POINT_MAX = 160
 TEXT_MAX = 200
 HIGHLIGHTS_MAX = 5
 BRIEFING_MAX = 1200
+TEMPLATES_MAX = 12  # event-title templates for the T5's "+" picker (§5)
+TEMPLATE_MAX = 40
 
 UTC = timezone.utc  # noqa: UP017 (Python 3.10 has no datetime.UTC)
 
@@ -198,8 +200,8 @@ def _calendar(calendar: Any, start: datetime, end: datetime) -> list[dict[str, A
     return sorted(out, key=lambda e: e["start"] or "")
 
 
-def build_feed(api: ServerApi, *, now: float, tz_name: str,
-               calendar: Any = None) -> dict[str, Any]:
+def build_feed(api: ServerApi, *, now: float, tz_name: str, calendar: Any = None,
+               templates: list[str] | None = None) -> dict[str, Any]:
     """The feed dict (§4.1), not yet trimmed (see `encode_feed`). Raises UploadError."""
     tz = resolve_tz(tz_name)
     local_now = datetime.fromtimestamp(now, tz)
@@ -213,6 +215,8 @@ def build_feed(api: ServerApi, *, now: float, tz_name: str,
     feed["conversations"] = _conversations(api, now)
     feed["actions"] = _actions(api)
     feed["calendar"] = _calendar(calendar, day_start, day_start + timedelta(days=CAL_DAYS + 1))
+    if templates:
+        feed["templates"] = _strings(templates, TEMPLATES_MAX, TEMPLATE_MAX)
     return feed
 
 

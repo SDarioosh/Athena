@@ -148,8 +148,11 @@ export BARVIS_TZ=Europe/Berlin           # the feed's time zone and the T5 clock
 - Without `--once`, the relay stays connected while the T5's screen is awake. It handles
   outbox entries within seconds and refreshes the feed every 5 min.
 - Otherwise it reconnects every 15 min, or sooner when the T5 advertises "outbox waiting".
-- Calendar actions stay queued on the T5 until the Odysseus calendar client exists
-  (plan §6).
+- Calendar: `--odysseus-url http://127.0.0.1:7010` (the Odysseus test instance) with a
+  `calendar:read`/`calendar:write` token in `ODYSSEUS_TOKEN` or `--odysseus-token-file`, and
+  `--calendar-href <CalDAV calendar id>`. Without them, calendar actions stay queued on the
+  T5 and the feed has no events.
+- `--templates "Call,Meeting,Reminder"`: event titles for the T5's "+" picker.
 - Exit codes: 0 ok, 1 some actions still waiting, 2 retry later, 3 token rejected,
   incompatible or bad settings, 4 T5 not found.
 - The code is in `tools/pda_relay.py` and `tools/barvis_relay/pda_*.py`. The tests are in

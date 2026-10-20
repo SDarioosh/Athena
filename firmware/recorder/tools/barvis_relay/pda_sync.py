@@ -144,7 +144,8 @@ class _Fetched:
 
 class PdaSync:
     def __init__(self, api: ServerApi, *, tz_name: str = "UTC",
-                 calendar: Calendar | None = None, state: PdaState | None = None,
+                 calendar: Calendar | None = None, templates: list[str] | None = None,
+                 state: PdaState | None = None,
                  device_key: str = "t5", stay: bool = False, list_only: bool = False,
                  clock: Callable[[], float] = time.time, timeout: float = 10.0,
                  feed_refresh: float = FEED_REFRESH_SECONDS,
@@ -154,6 +155,7 @@ class PdaSync:
         self.tz_name = tz_name
         self.tz = resolve_tz(tz_name)
         self.calendar = calendar
+        self.templates = templates
         self.state = state or PdaState(None)
         self.runner = ActionRunner(api, calendar, self.state.calendar)
         self.device_key = device_key
@@ -345,7 +347,8 @@ class PdaSync:
         now = self.clock()
         try:
             feed = await asyncio.to_thread(build_feed, self.api, now=now,
-                                           tz_name=self.tz_name, calendar=self.calendar)
+                                           tz_name=self.tz_name, calendar=self.calendar,
+                                           templates=self.templates)
             data = encode_feed(feed)
         except UploadError as e:
             report.outcome = AUTH_FAILED if e.kind == AUTH else SERVER_RETRY

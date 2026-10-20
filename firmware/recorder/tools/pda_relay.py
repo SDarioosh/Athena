@@ -22,17 +22,12 @@ Look at the T5 without changing anything:
 Sync once and exit (exit code 0 = everything delivered):
 
     export BARVIS_SERVER=http://<server>:8000 CONVO_INGEST_TOKEN=... BARVIS_TZ=Europe/Berlin
-    python firmware/recorder/tools/ble_relay.py pda --once
+    export ODYSSEUS_URL=http://127.0.0.1:7010 ODYSSEUS_TOKEN=ody_...   # or --odysseus-token-file
+    python firmware/recorder/tools/ble_relay.py pda --once --calendar-href <calendar id> \\
+        --templates "Call,Meeting,Reminder"
 
-Keep running: stay connected while the T5's screen is awake (outbox within seconds, feed
-every 5 min), otherwise reconnect every 15 min or as soon as the T5 advertises "outbox
-waiting":
-
-    python firmware/recorder/tools/ble_relay.py pda
-
-The calendar (cal_add / cal_delete and the feed's calendar section) waits for the Odysseus
-calendar REST client (docs/t5-pda-plan.md §6): until then calendar actions stay queued on
-the T5 and the feed's calendar is empty.
+Without --odysseus-url and the token, calendar actions stay queued on the T5 and the feed's
+calendar is empty.
 
 Exit codes for --once/--list: 0 ok, 1 some actions still waiting, 2 retry later (server,
 link or T5 error), 3 token rejected / incompatible / bad settings, 4 T5 not found.
@@ -53,6 +48,7 @@ from barvis_relay import pda_protocol as q
 from barvis_relay import pda_sync as s
 from barvis_relay.anchors import default_state_dir
 from barvis_relay.pda_actions import NoCalendar
+from barvis_relay.pda_calendar import OdysseusCalendar
 from barvis_relay.pda_feed import HttpApi, resolve_tz
 from barvis_relay.protocol import iso_ms
 
@@ -224,6 +220,33 @@ def exit_code(report: s.Report) -> int:
     return 1 if report.waiting else 0
 
 
+def make_calendar(args: argparse.Namespace):
+    """OdysseusCalendar if a URL and token are set, NoCalendar if neither, None (error) if
+    only one is."""
+    from ble_relay import read_token
+
+    url = args.odysseus_url or os.environ.get("ODYSSEUS_URL")
+    if args.odysseus_token_file is not None:
+        token = read_token(args.odysseus_token_file)
+    else:
+        token = os.environ.get("ODYSSEUS_TOKEN", "").strip() or None
+    if not url and not token:
+        return NoCalendar()
+    if not url or not token:
+        log.error("the calendar needs both --odysseus-url (or ODYSSEUS_URL) and the token in "
+                  "ODYSSEUS_TOKEN or --odysseus-token-file")
+        return None
+    if not args.calendar_href:
+        log.warning("no --calendar-href: Odysseus puts new events in the owner's first "
+                    "calendar, which may not be the CalDAV one")
+    try:
+        return OdysseusCalendar(url, token, calendar_href=args.calendar_href,
+                                timeout=args.http_timeout)
+    except ValueError as e:
+        log.error("--odysseus-url: %s", e)
+        return None
+
+
 async def main_async(args: argparse.Namespace) -> int:
     from ble_relay import read_token
 
@@ -241,10 +264,14 @@ async def main_async(args: argparse.Namespace) -> int:
     except ValueError as e:
         log.error("%s", e)
         return 3
+    calendar = make_calendar(args)
+    if calendar is None:
+        return 3
+    templates = [x.strip() for x in (args.templates or "").split(",") if x.strip()]
     state_dir = args.state_dir.expanduser() if args.state_dir else default_state_dir()
     state = s.PdaState(None if args.list else state_dir / "pda.json")
     once = args.once or args.list
-    sync = s.PdaSync(api, tz_name=tz_name, calendar=NoCalendar(), state=state,
+    sync = s.PdaSync(api, tz_name=tz_name, calendar=calendar, templates=templates, state=state,
                      stay=not once, list_only=args.list)
     backoff = s.Backoff()
     next_due = 0.0
@@ -319,6 +346,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="show info, status and the outbox; change nothing")
     ap.add_argument("--tz", help="IANA time zone for the feed and the T5 clock "
                                  "(default: $BARVIS_TZ or UTC)")
+    ap.add_argument("--odysseus-url", help="Odysseus base URL for the calendar "
+                                           "(default: $ODYSSEUS_URL; none = no calendar)")
+    ap.add_argument("--odysseus-token-file", type=Path,
+                    help="file holding the calendar-scoped Odysseus token "
+                         "(default: $ODYSSEUS_TOKEN)")
+    ap.add_argument("--calendar-href", help="Odysseus calendar id that new events go to")
+    ap.add_argument("--templates", help="comma-separated event titles for the T5's \"+\" "
+                                        "picker, e.g. \"Call,Meeting,Reminder\"")
     ap.add_argument("--scan-timeout", type=float, default=30.0, help="seconds per scan")
     ap.add_argument("--http-timeout", type=float, default=25.0,
                     help="seconds per server request")
