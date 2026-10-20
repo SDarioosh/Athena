@@ -12,9 +12,11 @@
 #include "button_gesture.h"
 #include "display.h"
 #include "driver/gpio.h"
+#include "driver/rtc_io.h"
 #include "drv2605.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_sleep.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -34,13 +36,19 @@ static void *s_button_ctx;
 static TaskHandle_t s_button_task;
 static bool s_have_pmu, s_have_expander, s_have_rtc, s_have_haptic;
 
-#define BUTTON_POLL_MS 10
+#define BUTTON_POLL_MS 10 /* only while a gesture is pending or the PMU IRQ line is low */
 #define PWR_LONG_PRESS_MS 1000 /* PKEY_LONG IRQ time (AXP2101 reg 0x27 bits[5:4]) */
 /* A PWR short press within this time of the previous one is ignored. On the owner's watch a
  * press that started a session was followed 0.5-1 s later by one or two more short presses
  * with real key edges (the start buzz shaking the key under the finger); console starts never
  * did it. Every short press, ignored or not, restarts the window. */
 #define PWR_SHORT_GUARD_MS 1000
+
+/* The PMU interrupts the app handles while awake. */
+#define PMU_IRQ_MASK (AXP_IRQ_PKEY_SHORT | AXP_IRQ_PKEY_LONG | AXP_IRQ_VBUS_INSERT | \
+                      AXP_IRQ_VBUS_REMOVE | AXP_IRQ_CHG_START | AXP_IRQ_CHG_DONE)
+/* The ones that end standby: a PWR press, or USB power plugged in. */
+#define PMU_WAKE_MASK (AXP_IRQ_PKEY_SHORT | AXP_IRQ_PKEY_LONG | AXP_IRQ_VBUS_INSERT)
 
 /* AXP2101 fuel-gauge battery model for the T-Watch Ultra's 1100 mAh cell.
  * Copied from LilyGoLib src/LilyGoWatchUltra.cpp (BATTER_PARAMS), MIT License,
@@ -146,8 +154,7 @@ static esp_err_t pmu_init(void)
     ESP_LOGI(TAG, "PWR key: long press %d ms (%s), power-off hold %d ms, power-on %d ms", long_ms,
              esp_err_to_name(kerr), off_ms, on_ms);
 
-    axp2101_irq_enable(AXP_IRQ_PKEY_SHORT | AXP_IRQ_PKEY_LONG | AXP_IRQ_VBUS_INSERT |
-                       AXP_IRQ_VBUS_REMOVE | AXP_IRQ_CHG_START | AXP_IRQ_CHG_DONE);
+    axp2101_irq_enable(PMU_IRQ_MASK);
     uint32_t pending;
     axp2101_irq_read_clear(&pending);
     return ESP_OK;
@@ -182,6 +189,29 @@ void board_log_power(void)
     ESP_LOGI(TAG, "  charge current %d mA (limit %d mA)", axp2101_get_charge_current_ma(),
              BOARD_CHARGE_CURRENT_MA);
     axp2101_log_registers();
+}
+
+esp_err_t board_standby_prepare(void)
+{
+    ESP_RETURN_ON_FALSE(s_have_pmu, ESP_ERR_NOT_SUPPORTED, TAG, "no pmu");
+    /* Only the PMU's IRQ line wakes the chip: a PWR press or USB power. Not BOOT: GPIO0 is
+     * a strapping pin, and held low through the wake reset it could start the ROM
+     * downloader instead of the firmware. */
+    ESP_RETURN_ON_ERROR(axp2101_irq_enable(PMU_WAKE_MASK), TAG, "irq mask");
+    uint32_t pending = 0;
+    axp2101_irq_read_clear(&pending);
+    if (gpio_get_level(PIN_PMU_IRQ) == 0) {
+        axp2101_irq_enable(PMU_IRQ_MASK);
+        ESP_LOGW(TAG, "standby: PMU IRQ line still low");
+        return ESP_ERR_INVALID_STATE;
+    }
+    /* Haptics, display and SD rails are already off; touch stays in reset (XL9555 keeps its
+     * outputs, it is on DC1). Keep the IRQ line pulled up through deep sleep. */
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO); /* the light-sleep buttons */
+    rtc_gpio_pullup_en(PIN_PMU_IRQ);
+    rtc_gpio_pulldown_dis(PIN_PMU_IRQ);
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+    return esp_sleep_enable_ext1_wakeup_io(1ULL << PIN_PMU_IRQ, ESP_EXT1_WAKEUP_ANY_LOW);
 }
 
 esp_err_t board_battery_read(board_battery_t *out)
@@ -281,9 +311,11 @@ esp_err_t board_rtc_set(int64_t epoch)
 
 /* -------------------------------------------------------- buttons/haptic ---- */
 
-static void IRAM_ATTR pmu_isr(void *arg)
+/* Both lines are level-low interrupts (and light-sleep wake sources). The ISR masks its
+ * pin and wakes the task, which polls until the line is high again and unmasks it. */
+static void IRAM_ATTR line_isr(void *arg)
 {
-    (void)arg;
+    gpio_intr_disable((gpio_num_t)(intptr_t)arg);
     BaseType_t woken = pdFALSE;
     if (s_button_task) {
         vTaskNotifyGiveFromISR(s_button_task, &woken);
@@ -346,10 +378,15 @@ static void button_task(void *arg)
     button_gesture_init(&boot);
     TickType_t last = xTaskGetTickCount();
     for (;;) {
-        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(BUTTON_POLL_MS)) > 0) {
-            handle_pmu_irq();
+        /* Idle (no BOOT gesture pending, IRQ line high): unmask both lines and block, so the
+         * chip can light sleep until one goes low. Otherwise poll. */
+        const bool busy = !button_gesture_idle(&boot) || gpio_get_level(PIN_BOOT_BUTTON) == 0 ||
+                          gpio_get_level(PIN_PMU_IRQ) == 0;
+        if (!busy) {
+            gpio_intr_enable(PIN_BOOT_BUTTON);
+            gpio_intr_enable(PIN_PMU_IRQ);
         }
-        /* Also poll: a level-low IRQ line with a missed edge would otherwise stick. */
+        ulTaskNotifyTake(pdTRUE, busy ? pdMS_TO_TICKS(BUTTON_POLL_MS) : portMAX_DELAY);
         if (gpio_get_level(PIN_PMU_IRQ) == 0) {
             handle_pmu_irq();
         }
@@ -378,26 +415,31 @@ static void button_task(void *arg)
 
 static esp_err_t buttons_init(void)
 {
-    const gpio_config_t boot = {
-        .pin_bit_mask = 1ULL << PIN_BOOT_BUTTON,
+    /* gpio_config() also takes the PMU line back from RTC IO after a standby wake. */
+    const gpio_config_t lines = {
+        .pin_bit_mask = (1ULL << PIN_BOOT_BUTTON) | (1ULL << PIN_PMU_IRQ),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
+        .intr_type = GPIO_INTR_LOW_LEVEL,
     };
-    ESP_RETURN_ON_ERROR(gpio_config(&boot), TAG, "boot gpio");
-    const gpio_config_t irq = {
-        .pin_bit_mask = 1ULL << PIN_PMU_IRQ,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .intr_type = GPIO_INTR_NEGEDGE,
-    };
-    ESP_RETURN_ON_ERROR(gpio_config(&irq), TAG, "irq gpio");
-    ESP_RETURN_ON_FALSE(xTaskCreate(button_task, "buttons", 4096, NULL, 6, &s_button_task) == pdPASS,
-                        ESP_ERR_NO_MEM, TAG, "task");
+    ESP_RETURN_ON_ERROR(gpio_config(&lines), TAG, "button gpios");
+    /* Masked until the task has started and finds the lines high. */
+    gpio_intr_disable(PIN_BOOT_BUTTON);
+    gpio_intr_disable(PIN_PMU_IRQ);
+    ESP_RETURN_ON_ERROR(gpio_wakeup_enable(PIN_BOOT_BUTTON, GPIO_INTR_LOW_LEVEL), TAG, "boot wake");
+    ESP_RETURN_ON_ERROR(gpio_wakeup_enable(PIN_PMU_IRQ, GPIO_INTR_LOW_LEVEL), TAG, "irq wake");
+    ESP_RETURN_ON_ERROR(esp_sleep_enable_gpio_wakeup(), TAG, "gpio wake");
     esp_err_t err = gpio_install_isr_service(0);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         return err;
     }
-    return gpio_isr_handler_add(PIN_PMU_IRQ, pmu_isr, NULL);
+    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(PIN_BOOT_BUTTON, line_isr,
+                                             (void *)(intptr_t)PIN_BOOT_BUTTON), TAG, "boot isr");
+    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(PIN_PMU_IRQ, line_isr, (void *)(intptr_t)PIN_PMU_IRQ),
+                        TAG, "irq isr");
+    ESP_RETURN_ON_FALSE(xTaskCreate(button_task, "buttons", 4096, NULL, 6, &s_button_task) == pdPASS,
+                        ESP_ERR_NO_MEM, TAG, "task");
+    return ESP_OK;
 }
 
 void board_buttons_set_callback(board_button_cb_t cb, void *ctx)

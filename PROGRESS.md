@@ -31,7 +31,7 @@ _Last updated: 2026-10-20 (round 17: T-Watch Ultra on the owner's watch, bug hun
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
 | 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **running on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, buttons, haptics and recording work (mic timeout fix; stop early with BOOT+PWR again, `stop` or mute). Mic: raw level was nearly inaudible and muffled; now high-pass + T-Watch EQ (+9 dB 1.6 kHz, -6 dB 3.6 kHz) + 30 dB gain + limiter, speech ~-24 dBFS, owner says it sounds best; `gain`/`eq` on the console. Recordings copy off over USB (`tools/pull.py`). SD_DET confirmed (P12 LOW with card, HIGH without; expander question §2.1 answered); RTC set, files get dated names. Still to check: one recording of fictional speech through `smoke_upload.py` on the server (owner). **Round 12: BLE upload path built, not yet on hardware**: BOOT+PWR records an Opus session (libopus, 16 kbps) as 30 s Ogg/Opus chunks into a queue on the SD card that survives reboots; NimBLE GATT service drains it (protocol `docs/twatch-ble-protocol.md`); `tools/ble_relay.py` is the PC relay; Wi-Fi still not linked. Needs the owner: flash, record, drain with the PC relay and the phone (PR Server verification). Then milestone 2 (power baseline), milestone 3 (gain/EQ/bitrate by transcription) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` §11, `docs/twatch-ble-protocol.md` |
 | 11c | Android relay app (T-Watch → BLE → phone → server) | **built, unit-tested (67 tests), not yet on a phone**: foreground service, scan/bond/drain per the protocol, uploads with the bearer token over LAN/Tailscale, acks only after the server's ok, backoff; settings (URL, token in Keystore) and status screen; no Google services, no analytics. CI builds the APK | `android-relay/` |
-| 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; the hub's `fork_deploy.sh deploy` runs it first | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, hub `docs/fork/deploy.md` |
+| 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; the hub's `fork_deploy.sh deploy` runs it first, and it then updates Odysseus itself (`BARVIS_SOUND_ODYSSEUS_DIR`, found from the running container by default), so either command updates both | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, hub `docs/fork/deploy.md` |
 | 13 | Speaker recognition (PR #24) and focused summaries (PR #25): measured in the sandbox, bugs fixed, two improvements | PRs open, **owner: Server verification** | SDarioosh/barvis-sound#31 (recognition), SDarioosh/barvis-sound#38 (insights) |
 | 10 | End-to-end with real devices | not started | — |
 
@@ -516,6 +516,57 @@ a note alone (`queue` shows NOTE on every chunk, LAST on the last; 5-min cap end
 "5 MIN MAX"); a note during a conversation (conversation gets LAST, note separate, new
 conversation resumes; mute mid-note doesn't resume); message screen text size; a drain
 shows flag 0x05 on the note's last chunk and the server makes a `note` conversation.
+
+## Done on 2026-10-20: Android relay drains the T-Watch (frame cap, GATT client)
+
+The Android relay skipped every chunk ("DATA offset N, expected 0"); after that was fixed it
+couldn't get past the MTU exchange. Two bugs, both in the firmware:
+
+- **514-byte notifications.** At ATT MTU 517 a DATA frame was 514 bytes; the Core spec caps
+  an attribute value at 512 and Android drops longer notifications, so only each chunk's
+  short last frame arrived (the skipped offsets were all multiples of 505). Frames are now
+  min(MTU - 3, 512) bytes (503-byte payload); the PC relay, the Android tests' fake watch and
+  protocol §7.2 match.
+- **No GATT client in NimBLE.** With `CONFIG_BT_NIMBLE_GATT_CLIENT=n` NimBLE has no handler
+  for an incoming indication or notification and answers it with an ATT Error Response
+  (0x06). Android's own GATT server indicates Service Changed to the bonded watch at
+  connect, and the phone took the error as the answer to its pending request: MTU status 6,
+  read status 133, "incorrect discovery opcode 001d". Windows never indicates, so the PC
+  relay worked. The GATT client (and the central role it depends on in Kconfig) is now on.
+- Android relay: clears Android's GATT cache before discovery (`BluetoothGatt.refresh()` by
+  reflection), so a firmware update that moves handles can't leave it on stale ones.
+- On the owner's Galaxy Z Fold2 (Android 17) with the T-Watch on this firmware: one
+  connection, MTU 517, 6 chunks (324 KB, 670 frames) uploaded and acked, 0 links lost.
+- Diagnosis tools: `adb logcat -b all` shows the stack's GATT state; the `dumpsys
+  bluetooth_manager` BTSNOOP summary has HCI events only, not ATT.
+
+## Done on 2026-10-20: T-Watch Ultra idle power (light sleep and standby)
+
+The owner's watch lost 30 % (about 330 mAh) overnight while idle: about 35-40 mA, an
+ESP32-S3 that never sleeps. Light sleep was off, the BT controller would have blocked it
+anyway (main-crystal sleep clock without `BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP`), and
+the button task polled every 10 ms.
+
+- Automatic light sleep: `light_sleep_enable`, the BT crystal option, buttons on level-low
+  interrupts that also wake the chip (no polling while idle; the BOOT gesture machine
+  says when nothing is pending, `button_gesture_idle()`), main loop wakes only for events
+  and the 15 s battery guard, battery/power logs and standby check. The screen holds a no-light-sleep lock
+  while on; a USB host holds one too (`USJ_NO_AUTO_LS_ON_CONNECTION=y`). Without that the
+  USB console dies.
+- Standby: deep sleep after 2 min idle (no session, `ble_sync_wants_relay()` false, no
+  relay, screen off, card unmounted, no USB power), or `standby` on the console. Wake: PWR
+  (AXP2101 IRQ line, ext1) or USB power plugged in. Waking shows the status screen, no
+  buzz; the waking PWR press does not start a recording. Mute survives (RTC memory). The
+  power log is flushed to the card first, and the BT crystal request is dropped before
+  deep sleep.
+- First flash was built from a stale local branch (without rounds 15-17: buttons, voice
+  notes, battery guard, power log); the owner's watch couldn't record with it. Merged main
+  and re-flashed.
+- On the owner's watch: builds, flashes, console works over USB, `standby` refuses while a
+  finished session is queued ("advertising for a relay").
+- Needs the owner: drain the queue, unplug, wait 2 min (standby), press PWR (wakes, screen,
+  no buzz); a BLE drain on battery (light sleep with BLE); overnight battery % idle with an
+  empty queue, and with a queue and no phone in range (light sleep only).
 
 ## Done in round 14: T-Watch Ultra BLE link works from a Windows PC
 

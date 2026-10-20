@@ -48,6 +48,10 @@ void button_gesture_init(button_gesture_t *g);
  * at most one event per call. */
 button_gesture_event_t button_gesture_update(button_gesture_t *g, bool down, uint32_t elapsed_ms);
 
+/* Released (raw and debounced) with no gesture pending: the caller may stop polling until
+ * the button goes down again. */
+bool button_gesture_idle(const button_gesture_t *g);
+
 const char *button_gesture_name(button_gesture_event_t ev);
 
 #ifdef __cplusplus

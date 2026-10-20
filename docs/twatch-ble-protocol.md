@@ -398,8 +398,12 @@ seconds of the phone being in range.
   when both sides support them; the watch sets them as controller defaults, so it sends no
   per-connection request at connect time (one raced Windows' encryption start and the
   controller stopped answering).
-- **MTU**: the watch supports up to 517; at 517 a `DATA` frame carries 505 bytes, so a
-  90 KB chunk is ~180 notifications.
+- **MTU**: the watch supports up to 517. A notification is at most **512 bytes**, whatever
+  the MTU: the Core spec caps an attribute value at 512 (Vol 3 Part F §3.2.9), and Android
+  silently drops longer notifications (a 514-byte frame at MTU 517 never arrives; only each
+  chunk's short last frame did). So a `DATA` frame carries min(MTU - 3, 512) - 9 bytes,
+  503 at MTU >= 515, and a 90 KB chunk (24 kbps) is ~180 notifications. Relays treat a
+  longer notification as a protocol error.
 - The watch disconnects a relay that sent no command for **30 s**, so a stuck relay can't
   keep the radio busy. Relays use an HTTP timeout below that (25 s). If an upload still
   takes longer, the link drops before the `ACK`; that is safe: the next connection
