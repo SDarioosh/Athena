@@ -29,6 +29,13 @@ static const char *TAG = "session";
 #define FRAME_MS 20
 #define MIC_TIMEOUT_MS 500
 #define MIC_MAX_EMPTY_READS 20 /* ~10 s without audio: the mic is gone */
+/* A card write error (sdspi 0x107/0x108, seen on the owner's watch) costs the open chunk's
+ * unwritten page (<= ~1 s); the session goes on with a new chunk after a pause that grows
+ * with each failure in a row (the card's trouble passed within 300 ms in round 14). The mic
+ * keeps being read and counted during the pause, so the session's clock stays right. It
+ * ends after WRITE_MAX_FAILURES failures in a row. */
+#define WRITE_MAX_FAILURES 4
+static const uint16_t WRITE_RETRY_SKIP_FRAMES[WRITE_MAX_FAILURES - 1] = {5, 15, 50};
 
 typedef struct {
     opus_enc_t *enc;
@@ -47,6 +54,7 @@ typedef struct {
     uint32_t chunk_id;
     uint32_t prev_chunk_id; /* last closed chunk of this session, 0 if none */
     uint32_t chunk_packets;
+    uint32_t skip_frames;  /* frames to read and drop before retrying the card */
     esp_err_t write_err;   /* set by the Ogg write callback */
     uint64_t enc_total_us;
     int16_t frame[OPUS_ENC_FRAME_SAMPLES];
@@ -144,21 +152,32 @@ static esp_err_t open_chunk(session_t *s)
     return ESP_OK;
 }
 
+/* The open chunk was recovered (kept_id != 0) or deleted after a write error. */
+static void after_abandon(session_t *s, uint32_t kept_id)
+{
+    opus_enc_reset(s->enc); /* the next chunk is a new stream */
+    if (kept_id) {
+        s->prev_chunk_id = kept_id;
+        s->sequence++;
+        STATE_UPDATE(s_state.chunks_written++);
+    }
+}
+
 /* The chunk can't be finished normally: keep what is on the card (cut back to the last
- * complete page, with LAST), or give LAST to the previous chunk if nothing is left. */
-static void abandon_chunk(session_t *s)
+ * complete page). `last`: the session ends here, so the kept chunk gets LAST, or the previous
+ * chunk does if nothing was kept. Otherwise the session goes on: the next chunk follows the
+ * kept one (a gap of the lost page) or takes over its sequence number. */
+static void abandon_chunk(session_t *s, bool last)
 {
     if (!s->chunk_open) {
         return;
     }
     s->chunk_open = false;
     uint32_t kept = 0;
-    const esp_err_t err = chunk_store_abandon(&kept);
+    const esp_err_t err = chunk_store_abandon(last, &kept);
     ESP_LOGW(TAG, "chunk %08" PRIx32 " abandoned: %s (%s)", s->chunk_id,
              kept ? "kept up to its last page" : "nothing to keep", esp_err_to_name(err));
-    if (kept) {
-        STATE_UPDATE(s_state.chunks_written++);
-    }
+    after_abandon(s, kept);
 }
 
 /* Close the open chunk. `next` is the frame after the chunk's last one: the next chunk's
@@ -177,14 +196,16 @@ static esp_err_t close_chunk(session_t *s, const int16_t *next, bool last)
         err = s->write_err != ESP_OK ? s->write_err : ESP_FAIL;
     }
     if (err != ESP_OK) {
-        abandon_chunk(s);
+        abandon_chunk(s, last);
         return err;
     }
     s->chunk_open = false;
     const uint32_t duration_ms = s->chunk_packets * FRAME_MS;
     err = chunk_store_end(duration_ms, last);
     if (err != ESP_OK) {
+        /* The queue recovered it from the card like abandon_chunk() does. */
         ESP_LOGE(TAG, "close chunk %08" PRIx32 ": %s", s->chunk_id, esp_err_to_name(err));
+        after_abandon(s, chunk_store_get(s->chunk_id, NULL) ? s->chunk_id : 0);
         return err;
     }
     opus_enc_reset(s->enc);
@@ -263,6 +284,23 @@ static esp_err_t encode_frame(session_t *s)
     return ESP_OK;
 }
 
+/* After a write error with the chunk abandoned: true if the session should go on with a new
+ * chunk, false once WRITE_MAX_FAILURES attempts in a row have failed. */
+static bool write_failed(session_t *s, esp_err_t err, int *failures)
+{
+    if (++*failures >= WRITE_MAX_FAILURES) {
+        ESP_LOGE(TAG, "card write failed %d times in a row (%s): ending", *failures,
+                 esp_err_to_name(err));
+        return false;
+    }
+    STATE_UPDATE(s_state.write_retries++);
+    s->skip_frames = WRITE_RETRY_SKIP_FRAMES[*failures - 1];
+    ESP_LOGW(TAG, "card write failed (%s): a new chunk (seq %" PRIu32 ") in %" PRIu32 " ms",
+             esp_err_to_name(err), s->sequence, s->skip_frames * FRAME_MS);
+    s->write_err = ESP_OK;
+    return true;
+}
+
 static esp_err_t run(session_t *s, session_rec_end_t *why)
 {
     *why = SESSION_END_REQUEST;
@@ -276,6 +314,7 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
              s->session_hex, s->time_unset ? " without a valid clock (TIME_UNSET)" : "");
 
     esp_err_t err = ESP_OK;
+    int failures = 0; /* card write errors in a row */
     if (card_full()) {
         *why = SESSION_END_CARD_FULL;
     }
@@ -292,12 +331,22 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
         if (err != ESP_OK) {
             break;
         }
+        if (s->skip_frames) {
+            s->skip_frames--; /* pause after a card error: drop the frame, keep the clock */
+            s->packets++;
+            continue;
+        }
         /* Lazy rotation: a full chunk is closed only now that its successor has audio, so
          * the chunk open at the end of a session always has audio and gets LAST. */
         if (s->chunk_open && s->chunk_packets >= SESSION_REC_CHUNK_PACKETS) {
             const bool full = card_full();
             err = close_chunk(s, s->frame, full);
-            if (err != ESP_OK) {
+            if (err == ESP_OK) {
+                failures = 0;
+            } else if (!full && write_failed(s, err, &failures)) {
+                s->packets++; /* the frame is lost, but the clock goes on */
+                continue;
+            } else {
                 break;
             }
             if (full) {
@@ -307,18 +356,22 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
         }
         if (!s->chunk_open) {
             err = open_chunk(s);
-            if (err != ESP_OK && s->chunk_open) {
-                abandon_chunk(s); /* the queue moves LAST back if nothing was kept */
-            } else if (err != ESP_OK && s->prev_chunk_id) {
-                chunk_store_set_last(s->prev_chunk_id); /* broke off between two chunks */
-            }
             if (err != ESP_OK) {
+                abandon_chunk(s, false); /* a header that half reached the card */
+                if (write_failed(s, err, &failures)) {
+                    s->packets++; /* the frame is lost, but the clock goes on */
+                    continue;
+                }
                 break;
             }
         }
         err = encode_frame(s);
         if (err != ESP_OK) {
-            abandon_chunk(s);
+            abandon_chunk(s, false);
+            if (write_failed(s, err, &failures)) {
+                s->packets++; /* the frame is lost, but the clock goes on */
+                continue;
+            }
             break;
         }
         if (s->packets % (1000 / FRAME_MS) == 0) {
@@ -340,6 +393,9 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
     }
     if (err != ESP_OK) {
         *why = SESSION_END_ERROR;
+        if (!s->chunk_open && s->prev_chunk_id) {
+            chunk_store_set_last(s->prev_chunk_id); /* broke off between two chunks */
+        }
     }
     return err;
 }
@@ -399,9 +455,10 @@ static void session_task(void *arg)
     static const char *const WHY[] = {"stopped", "card full", "error", "at its length limit"};
     ESP_LOGI(TAG,
              "%s %s %s after %" PRIu32 " s, %" PRIu32 " chunk(s) (%s); encode avg %" PRIu32
-             " us, max %" PRIu32 " us per 20 ms frame; stack never used %" PRIu32 " bytes",
+             " us, max %" PRIu32 " us per 20 ms frame; stack never used %" PRIu32
+             " bytes; card write errors recovered %" PRIu32,
              st.kind == SESSION_KIND_NOTE ? "note" : "session", st.session_hex, WHY[why], st.elapsed_s, st.chunks_written, esp_err_to_name(err),
-             st.enc_avg_us, st.enc_max_us, st.stack_free_min);
+             st.enc_avg_us, st.enc_max_us, st.stack_free_min, st.write_retries);
     if (s) {
         opus_enc_destroy(s->enc);
     }

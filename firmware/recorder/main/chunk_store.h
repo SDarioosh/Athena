@@ -98,12 +98,14 @@ esp_err_t chunk_store_begin(const chunk_store_new_t *c, uint32_t *chunk_id);
 esp_err_t chunk_store_append(const void *data, size_t len);
 /* Flush what was appended to the card (fsync), so a power cut keeps it. */
 esp_err_t chunk_store_sync(void);
+/* Test hook (console `sd failwrite <n>`): the next n appends fail as a card error would. */
+void chunk_store_fail_writes(int n);
 /* Close the open chunk; it becomes listable. last = the session ends with it. */
 esp_err_t chunk_store_end(uint32_t duration_ms, bool last);
 /* The open chunk can't be finished (write error): keep what the card holds up to the last
  * complete Ogg page, as a closed chunk with LAST; without audio, delete it and give LAST to
  * the session's previous chunk. *kept_id = 0 if it was deleted. */
-esp_err_t chunk_store_abandon(uint32_t *kept_id);
+esp_err_t chunk_store_abandon(bool last, uint32_t *kept_id);
 /* Give a closed chunk LAST (the session ended before its next chunk could start). */
 esp_err_t chunk_store_set_last(uint32_t chunk_id);
 /* Free space on the card. Needs chunk_store_media_open(). */

@@ -389,18 +389,19 @@ static int cmd_note(int argc, char **argv)
     return 0;
 }
 
-/* `queue [drop <id>]`: chunks waiting for the phone; drop deletes one without uploading. */
+/* `queue [drop <id>]`: chunks waiting for the phone; drop deletes one without uploading.
+ * The id is hex, as `queue` lists it (00000022 or 22; a 0x prefix is fine too). */
 static int cmd_queue(int argc, char **argv)
 {
     if (argc >= 3 && strcmp(argv[1], "drop") == 0) {
         char *end;
-        const unsigned long id = strtoul(argv[2], &end, 0);
+        const unsigned long id = strtoul(argv[2], &end, 16);
         if (*end || id == 0 || id > UINT32_MAX) {
-            printf("usage: queue drop <chunk id>\n");
+            printf("usage: queue drop <chunk id, hex as listed>\n");
             return 1;
         }
         const esp_err_t err = chunk_store_drop((uint32_t)id);
-        printf("drop %lu: %s\n", id, esp_err_to_name(err));
+        printf("drop %08lx: %s\n", id, esp_err_to_name(err));
         return err == ESP_OK ? 0 : 1;
     }
     if (argc >= 2) {
@@ -433,8 +434,12 @@ static int cmd_ble(int argc, char **argv)
 
 static int cmd_sd(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
+    if (argc == 3 && strcmp(argv[1], "failwrite") == 0) {
+        const int n = atoi(argv[2]);
+        chunk_store_fail_writes(n);
+        printf("the next %d chunk write(s) will fail (test)\n", n);
+        return 0;
+    }
     printf("card detect: %s\n", board_storage_card_present() ? "card in" : "no card");
     recorder_state_t rs;
     recorder_get_state(&rs);
@@ -487,7 +492,7 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "sync", .help = "Open the BLE sync window for 2 min (= BOOT long press)", .func = cmd_sync},
     {.command = "ls", .help = "List the files on the SD card; `ls q` the chunk queue", .func = cmd_ls},
     {.command = "get", .help = "Send a card file (or q/<chunk>) over USB as base64 (tools/pull.py saves it)", .func = cmd_get},
-    {.command = "sd", .help = "Power, mount and report the SD card, then power it off", .func = cmd_sd},
+    {.command = "sd", .help = "Power, mount and report the SD card, then power it off; `sd failwrite <n>` makes the next n chunk writes fail (test)", .func = cmd_sd},
     {.command = "reboot", .help = "Restart", .func = cmd_reboot},
 };
 

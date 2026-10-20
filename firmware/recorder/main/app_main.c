@@ -228,11 +228,12 @@ void app_print_status(void)
     session_rec_get_state(&ss);
     if (ss.session_hex[0]) {
         printf("%s %s: %s, chunk %" PRIu32 ", %" PRIu32 " s, %" PRIu32 " chunks closed%s; "
-               "encoder %" PRIu32 " us avg / %" PRIu32 " us max per 20 ms frame; last: %s\n",
+               "encoder %" PRIu32 " us avg / %" PRIu32 " us max per 20 ms frame; "
+               "card write errors recovered %" PRIu32 "; last: %s\n",
                ss.kind == SESSION_KIND_NOTE ? "note" : "session", ss.session_hex,
                ss.running ? "running" : "ended", ss.sequence, ss.elapsed_s,
                ss.chunks_written, ss.time_unset ? ", TIME UNSET" : "", ss.enc_avg_us,
-               ss.enc_max_us, esp_err_to_name(ss.last_err));
+               ss.enc_max_us, ss.write_retries, esp_err_to_name(ss.last_err));
     }
     chunk_store_stats_t q;
     chunk_store_stats(&q);
@@ -246,6 +247,12 @@ void app_print_status(void)
                s_resume_conversation ? " conversation resumes after the note" : "");
     }
     printf("screen: %s\n", ui_is_shown() ? "on" : "off");
+    const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    printf("heap: internal %u KB free (lowest %u KB, largest block %u KB), PSRAM %u KB free\n",
+           (unsigned)(heap_caps_get_free_size(caps) / 1024),
+           (unsigned)(heap_caps_get_minimum_free_size(caps) / 1024),
+           (unsigned)(heap_caps_get_largest_free_block(caps) / 1024),
+           (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 }
 
 /* ---- screen: status (BOOT press), a short message after every action, the live note ---- */

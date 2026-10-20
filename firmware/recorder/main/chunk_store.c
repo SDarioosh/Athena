@@ -388,10 +388,25 @@ esp_err_t chunk_store_begin(const chunk_store_new_t *c, uint32_t *chunk_id)
     return err;
 }
 
+static int s_fail_writes; /* test hook: chunk_store_fail_writes() */
+
+void chunk_store_fail_writes(int n)
+{
+    lock();
+    s_fail_writes = n;
+    unlock();
+}
+
 esp_err_t chunk_store_append(const void *data, size_t len)
 {
     lock();
-    const esp_err_t err = to_esp(cq_append(&s_q, data, len));
+    esp_err_t err;
+    if (s_fail_writes > 0) {
+        s_fail_writes--;
+        err = ESP_ERR_INVALID_RESPONSE; /* what sdspi returns on a garbled reply (0x108) */
+    } else {
+        err = to_esp(cq_append(&s_q, data, len));
+    }
     unlock();
     return err;
 }
@@ -413,10 +428,10 @@ esp_err_t chunk_store_end(uint32_t duration_ms, bool last)
     return err;
 }
 
-esp_err_t chunk_store_abandon(uint32_t *kept_id)
+esp_err_t chunk_store_abandon(bool last, uint32_t *kept_id)
 {
     lock();
-    const esp_err_t err = to_esp(cq_abandon(&s_q, kept_id));
+    const esp_err_t err = to_esp(cq_abandon(&s_q, last, kept_id));
     unlock();
     notify();
     return err;

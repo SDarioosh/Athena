@@ -88,6 +88,7 @@ static void poke(uint32_t id, const char *ext, long off, uint8_t xor_mask)
 
 static const uint8_t SESSION_A[8] = {0x3f, 0x9a, 0x0c, 0x11, 0xd2, 0xe4, 0xb5, 0x07};
 static const uint8_t SESSION_B[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+static const uint8_t SESSION_C[8] = {9, 9, 9, 9, 9, 9, 9, 9};
 
 /* ---- writing a chunk the way the recorder does ---- */
 
@@ -361,19 +362,33 @@ static void test_abandon_and_set_last(void)
     const uint32_t a1 = begin(&q, SESSION_A, 1, 0, 0, 7, 0);
     packets(&q, 60);
     uint32_t kept = 0;
-    CHECK_EQ(cq_abandon(&q, &kept), CQ_OK);
+    CHECK_EQ(cq_abandon(&q, true, &kept), CQ_OK);
     CHECK_EQ(kept, a1);
     cq_info_t c;
     CHECK(cq_get(&q, a1, &c) && c.flags == CQ_FLAG_LAST && c.bytes == file_size(a1, "opus"));
     CHECK(!cq_current(&q, NULL));
-    CHECK_EQ(cq_abandon(&q, &kept), CQ_ERR_STATE);
+    CHECK_EQ(cq_abandon(&q, true, &kept), CQ_ERR_STATE);
 
     /* Without audio: deleted, LAST moves back. */
     const uint32_t b0 = add_chunk(&q, SESSION_B, 0, 1500, false);
     begin(&q, SESSION_B, 1, 0, 0, 7, 0);
-    CHECK_EQ(cq_abandon(&q, &kept), CQ_OK);
+    CHECK_EQ(cq_abandon(&q, true, &kept), CQ_OK);
     CHECK_EQ(kept, 0);
     CHECK(cq_get(&q, b0, &c) && c.flags == CQ_FLAG_LAST);
+
+    /* The session goes on (last = false): kept without LAST, or deleted without moving
+     * LAST back. */
+    const uint32_t c0 = add_chunk(&q, SESSION_C, 0, 1500, false);
+    const uint32_t c1 = begin(&q, SESSION_C, 1, 0, 0, 7, 0);
+    packets(&q, 60);
+    CHECK_EQ(cq_abandon(&q, false, &kept), CQ_OK);
+    CHECK_EQ(kept, c1);
+    CHECK(cq_get(&q, c1, &c) && c.flags == 0 && c.state == CQ_STATE_CLOSED);
+    begin(&q, SESSION_C, 2, 0, 0, 7, 0);
+    CHECK_EQ(cq_abandon(&q, false, &kept), CQ_OK);
+    CHECK_EQ(kept, 0);
+    CHECK(cq_get(&q, c1, &c) && c.flags == 0);
+    CHECK(cq_get(&q, c0, &c) && c.flags == 0);
 
     CHECK_EQ(cq_set_last(&q, a0), CQ_OK);
     CHECK(cq_get(&q, a0, &c) && c.flags == CQ_FLAG_LAST);
