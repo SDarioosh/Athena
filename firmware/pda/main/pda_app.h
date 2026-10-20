@@ -35,6 +35,7 @@ typedef enum {
     PDA_EV_TICK,     /* minute tick */
     PDA_EV_REDRAW,   /* console: redraw the current screen; arg 1 = clean refresh */
     PDA_EV_SCREEN,   /* console: go to screen arg */
+    PDA_EV_OPEN,     /* console: open the transcript ref given to ui_pda_open() */
 } pda_ev_type_t;
 
 typedef struct {

@@ -31,6 +31,10 @@
 
 static const char *TAG = "ui";
 
+/* console `open`: the ref to show, handed to the UI task */
+static portMUX_TYPE s_open_lock = portMUX_INITIALIZER_UNLOCKED;
+static char s_open_ref[PDA_REF_MAX];
+
 #define W PDA_SCR_W
 #define H PDA_SCR_H
 #define HEADER_H 100
@@ -867,7 +871,9 @@ static void draw_transcript(void)
             const int sec = (int)s->o;
             snprintf(line, sizeof(line), "%02d:%02d  %s: %s", sec / 60, sec % 60,
                      s->me ? "Me" : (s->s ? s->s : "?"), s->x);
-            pw_para(&pw, TEXT, line, s->me ? GFX_ME : GFX_INK, 0);
+            /* Every line in full black: the owner's lines were grey (GFX_ME), and a real
+             * conversation is mostly the owner, so the page looked dim. "Me:" marks them. */
+            pw_para(&pw, TEXT, line, GFX_INK, 0);
         }
         if (d->n_seg == 0) {
             pw_para(&pw, TEXT, "No speech in this part.", GFX_FAINT, 0);
@@ -1495,6 +1501,15 @@ static void ui_task(void *arg)
             ui.screen_changed = true;
             refresh(ev.arg ? PDA_EPD_CLEAN : PDA_EPD_FULL);
             break;
+        case PDA_EV_OPEN: {
+            char ref[PDA_REF_MAX];
+            taskENTER_CRITICAL(&s_open_lock);
+            snprintf(ref, sizeof(ref), "%s", s_open_ref);
+            taskEXIT_CRITICAL(&s_open_lock);
+            open_transcript(ref);
+            refresh(PDA_EPD_PARTIAL);
+            break;
+        }
         case PDA_EV_SCREEN:
             if (ev.arg >= 0 && ev.arg < UI_SCREEN_COUNT) {
                 if (ev.arg == UI_CONV_DETAIL || ev.arg == UI_EVENT) {
@@ -1508,6 +1523,15 @@ static void ui_task(void *arg)
             break;
         }
     }
+}
+
+void ui_pda_open(const char *ref)
+{
+    taskENTER_CRITICAL(&s_open_lock);
+    snprintf(s_open_ref, sizeof(s_open_ref), "%s", ref);
+    taskEXIT_CRITICAL(&s_open_lock);
+    const pda_ev_t ev = {.type = PDA_EV_OPEN};
+    pda_app_post(&ev);
 }
 
 esp_err_t ui_pda_start(void)
