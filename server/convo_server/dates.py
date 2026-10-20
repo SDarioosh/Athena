@@ -94,3 +94,117 @@ def resolve_due(phrase: str | None, today: date) -> date | None:
             ahead = 7
         return today + timedelta(days=ahead)
     return None
+
+
+# ---------------------------------------------------------------------- times
+_HOUR_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+               "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
+_MINUTE_WORDS = {"oh five": 5, "o five": 5, "ten": 10, "fifteen": 15, "twenty": 20,
+                 "twenty five": 25, "thirty": 30, "thirty five": 35, "forty": 40,
+                 "forty five": 45, "fifty": 50, "fifty five": 55}
+_HOUR_RE = r"(" + "|".join(_HOUR_WORDS) + r"|\d{1,2})"
+_MIN_RE = r"(" + "|".join(sorted(_MINUTE_WORDS, key=len, reverse=True)) + r"|\d{2})"
+# "at 5 people" / "at one point" are not times
+_NOT_A_TIME = re.compile(r"\s*(point|of|percent|people|persons|minutes?|mins?|hours?|days?|"
+                         r"weeks?|months?|years?|times|items|things|euros?|dollars?|bucks)\b")
+
+
+def _hour(token: str) -> int:
+    return _HOUR_WORDS.get(token) or int(token)
+
+
+def _minute(token: str) -> int:
+    return _MINUTE_WORDS[token] if token in _MINUTE_WORDS else int(token)
+
+
+_BARE_HOURS = [  # (pattern, whole phrase must match)
+    (rf"\b{_HOUR_RE}(?: {_MIN_RE})? ?o'? ?clock\b", False),
+    (rf"\b{_HOUR_RE}(?: {_MIN_RE})? (?:in the |at |this )?"
+     r"(?:morning|afternoon|evening|night|tonight)\b", False),
+    (rf"(?:\b(?:at|by|around|until|till)|@) ?{_HOUR_RE}(?: {_MIN_RE})?\b(?![-/:.]?\d)", False),
+    (rf" {_HOUR_RE}(?: {_MIN_RE})? ", True),
+]
+
+
+def _bare_hour(p: str) -> re.Match[str] | None:
+    """An hour (and minutes) said without am/pm: "10 o'clock", "8 in the evening",
+    "at 5" (not "at 5 people"), or the whole phrase "5"."""
+    for pattern, whole in _BARE_HOURS:
+        m = re.fullmatch(pattern, p) if whole else re.search(pattern, p)
+        if m and not _NOT_A_TIME.match(p[m.end():]):
+            return m
+    return None
+
+
+def resolve_time(phrase: str | None) -> tuple[str | None, bool]:
+    """The time of day a phrase names, as ("HH:MM" 24 h, unclear).
+
+    "12 pm"/"noon" -> 12:00, "3:30 pm" -> 15:30, "half past two" -> 14:30, "midnight" ->
+    00:00, "17:00" -> 17:00. A bare hour without am/pm: 12 -> 12:00, 1-6 -> afternoon,
+    7-11 -> morning but ``unclear`` (could be the evening); "in the evening", "tonight",
+    "in the morning" decide. A time that can't be (e.g. "13 pm") gives (None, True).
+    No time in the phrase at all gives (None, False).
+    """
+    if not phrase:
+        return None, False
+    p = " " + phrase.lower().replace("-", " ").replace("’", "'") + " "
+    p = re.sub(r"\ba\.\s?m\.?", "am", p)
+    p = re.sub(r"\bp\.\s?m\.?", "pm", p)
+    p = re.sub(r"\s+", " ", p)
+    if re.search(r"\b(noon|midday)\b", p):
+        return "12:00", False
+    if re.search(r"\bmidnight\b", p):
+        return "00:00", False
+
+    meridiem = r"\s*(am|pm)\b"
+    hour: int | None = None
+    minute = 0
+    stated: str | None = None  # "am" / "pm" when said
+    bare = False  # an hour said without am/pm (or a word like "evening")
+    zero_padded = False
+    if m := re.search(rf"\b(half|quarter) past {_HOUR_RE}\b(?:{meridiem})?", p):
+        hour, minute = _hour(m.group(2)), 30 if m.group(1) == "half" else 15
+        stated, bare = m.group(3), m.group(3) is None
+    elif m := re.search(rf"\bquarter to {_HOUR_RE}\b(?:{meridiem})?", p):
+        hour, minute = (_hour(m.group(1)) - 1) or 12, 45
+        stated, bare = m.group(2), m.group(2) is None
+    elif m := re.search(r"\b(\d{1,2})[:.](\d{2})\b(?:" + meridiem + ")?", p):
+        if ":" not in m.group(0) and m.group(3) is None:  # "3.30" alone may be a price
+            m = None
+        else:
+            hour, minute, stated = int(m.group(1)), int(m.group(2)), m.group(3)
+            zero_padded = m.group(1).startswith("0")
+            bare = stated is None and 1 <= hour <= 12 and not zero_padded
+    if hour is None:
+        if m := re.search(rf"\b{_HOUR_RE}(?: {_MIN_RE})?{meridiem}", p):
+            hour, stated = _hour(m.group(1)), m.group(3)
+            minute = _minute(m.group(2)) if m.group(2) else 0
+        elif m := _bare_hour(p):
+            hour = _hour(m.group(1))
+            minute = _minute(m.group(2)) if m.group(2) else 0
+            bare = 1 <= hour <= 12
+    if hour is None:
+        # "this afternoon", "later": a time was meant but none given
+        return None, False
+    if minute > 59 or hour > 23:
+        return None, True
+    unclear = False
+    if stated:
+        if not 1 <= hour <= 12:
+            return None, True
+        hour = hour % 12 + (12 if stated == "pm" else 0)
+    elif bare:
+        part = re.search(r"\b(morning|afternoon|evening|tonight|night)\b", p)
+        if part and part.group(1) == "morning":
+            hour %= 12
+        elif part and (part.group(1) != "night" or hour >= 6):
+            hour = hour % 12 + 12
+        elif part:  # "2 at night"
+            hour %= 12
+        elif hour == 12:
+            pass
+        elif hour <= 6:
+            hour += 12
+        else:  # 7-11: morning, but could be the evening
+            unclear = True
+    return f"{hour:02d}:{minute:02d}", unclear

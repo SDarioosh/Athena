@@ -39,6 +39,7 @@ from .llm import LLMError
 from .pipeline import Pipeline, Worker
 from .search import search
 from .speakers import relabel_matches
+from .store import UNSET
 
 log = logging.getLogger(__name__)
 MAX_CHUNK_BYTES = 25 * 1024 * 1024
@@ -79,6 +80,9 @@ def _conv_out(c: dict[str, Any], settings: Settings) -> dict[str, Any]:
             item["source_at"] = iso(src)
             if src is not None:
                 item["source_url"] = transcript_link(settings, c["id"], src - c["started_at"])
+    for item in out.get("action_items", []):
+        item["created_at"] = iso(item.get("created_at"))
+        item["time_unclear"] = bool(item.get("time_unclear"))
     return out
 
 
@@ -106,7 +110,11 @@ class EnrollJson(BaseModel):
 
 
 class ActionItemPatch(BaseModel):
-    status: str
+    """Every field optional; ``null`` for due_date / due_time clears it."""
+    status: str | None = None
+    kind: str | None = None
+    due_date: str | None = None
+    due_time: str | None = None
 
 
 REJECTED_KEEP = 20  # undecodable uploads kept for debugging, newest first
@@ -293,13 +301,22 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         rows = store.list_action_items(None if status == "all" else status)
         for r in rows:
             r["source_at"], r["conversation_at"] = iso(r["source_at"]), iso(r["conversation_at"])
+            r["created_at"] = iso(r.get("created_at"))
+            r["time_unclear"] = bool(r.get("time_unclear"))
+            r["timezone"] = settings.timezone
         return {"action_items": rows}
 
     @v1.patch("/action-items/{item_id}")
     def patch_action_item(item_id: int, body: ActionItemPatch) -> dict[str, Any]:
-        if body.status not in {"open", "done", "dismissed"}:
-            raise HTTPException(400, "status must be open, done or dismissed")
-        if not store.set_action_item_status(item_id, body.status):
+        given = body.model_fields_set
+        try:
+            item = store.update_action_item(
+                item_id, status=body.status, kind=body.kind,
+                due_date=body.due_date if "due_date" in given else UNSET,
+                due_time=body.due_time if "due_time" in given else UNSET)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        if item is None:
             raise HTTPException(404, "action item not found")
         return {"ok": True}
 
