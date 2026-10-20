@@ -58,6 +58,15 @@ def test_parse_when():
         parse_when("last tuesday", tz)
 
 
+def test_fts_query_keeps_topic_words():
+    from convo_server.store import _fts_query
+
+    assert _fts_query("the one talking about AI glasses") == '"AI" OR "glasses"'
+    assert _fts_query("The conversation about the") == '"The" OR "conversation" OR "about" OR "the"'
+    assert _fts_query("lease?!") == '"lease"'
+    assert _fts_query("  ") == ""
+
+
 def test_lists_tools(mcp):
     from mcp import Client
 
@@ -167,6 +176,10 @@ def test_conversation_tools(pipeline, mcp):
     assert conv_id in found
     assert call(mcp, "search_conversations", query="vegetarian",
                 since="2030-01-01").startswith("No conversations")
+
+    # a conversation described in a sentence: only the topic words are searched
+    assert conv_id in call(mcp, "search_conversations",
+                           query="the one where we talked about vegetarian food")
 
     items = call(mcp, "list_action_items")
     item_id = int(re.search(r"#(\d+)", items).group(1))

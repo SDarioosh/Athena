@@ -33,6 +33,15 @@ know ("What is Jonas allergic to?") are answered from these recordings too: sear
 to. Ground every claim in tool results and include the link given with it. Dates are in the \
 user's timezone; pass dates as YYYY-MM-DD.
 
+Finding a conversation: when the user points at a conversation by its topic ("the one \
+about AI glasses", "when we talked about the lease"), call search_conversations once with \
+just the topic words (query="AI glasses"); it matches titles and summaries as well as what \
+was said. Its results already show each conversation's title and summary: pick the match \
+from them and answer with its link. Call get_conversation only for key points, action items \
+or facts, and get_transcript only for exact wording the summary doesn't have. If nothing \
+matches, try other words for the topic once, then search_transcripts. Don't call a tool \
+again with the same arguments: you already have that result.
+
 Naming speakers: when the user says who an unnamed speaker was ("Speaker 2 was Jenn", \
 "Speaker 1 and Speaker 3 were both Sam"), that is a request to save the name, not a claim \
 to check. Find the conversation (search_conversations by date), call name_speaker once for \
@@ -133,9 +142,11 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     def search_conversations(query: Text = "", person: Person = "", since: Since = "",
                              until: Until = "", kind: RecKind = "", limit: int = 10) -> str:
         """Find conversations and voice notes by topic words, a person who spoke or was
-        mentioned, and/or a date range, newest first. For the user's voice notes (memos,
-        notes to self) set kind="note". Returns titles, summaries and links; use
-        get_conversation for details."""
+        mentioned, and/or a date range (best match first with a query, else newest first).
+        The first step for "the conversation about X": pass only the topic words; titles
+        and summaries are searched as well as what was said. For the user's voice notes
+        (memos, notes to self) set kind="note". Returns titles, summaries and links, often
+        enough to answer; use get_conversation for details."""
         a, b = window(since, until)
         limit = max(1, min(limit, 50))
         try:
@@ -186,10 +197,12 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     @mcp.tool(annotations=ro)
     def get_transcript(conversation_id: ConvId, start_seconds: float = 0,
                        end_seconds: float = -1, max_lines: int = 100) -> str:
-        """Transcript lines of a conversation. start/end are seconds from its start
-        (end -1 = to the end). Each line starts with its #number (for reassign_line) and
-        its [seconds from the start]. To show a transcript, give its link and a short
-        summary; don't copy the lines into your answer."""
+        """Transcript lines of a conversation, for exact wording. To find a conversation or
+        say what it was about, use search_conversations / get_conversation instead.
+        start/end are seconds from its start (end -1 = to the end). Each line starts with
+        its #number (for reassign_line) and its [seconds from the start]. To show a
+        transcript, give its link and a short summary; don't copy the lines into your
+        answer."""
         c = store.get_conversation(conversation_id)
         if c is None:
             return f"No conversation {conversation_id!r}."
