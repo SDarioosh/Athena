@@ -13,6 +13,7 @@
 #include "audio_stats.h"
 #include "ble_sync.h"
 #include "board.h"
+#include "chunk_queue.h"
 #include "chunk_store.h"
 #include "esp_check.h"
 #include "esp_console.h"
@@ -533,19 +534,17 @@ static int cmd_note(int argc, char **argv)
     return 0;
 }
 
-/* `queue [drop <id>]`: chunks waiting for the phone; drop deletes one without uploading.
- * The id is hex, as `queue` lists it (00000022 or 22; a 0x prefix is fine too). */
+/* `queue [drop <id>]`: chunks waiting for the phone; drop deletes one without uploading. */
 static int cmd_queue(int argc, char **argv)
 {
     if (argc >= 3 && strcmp(argv[1], "drop") == 0) {
-        char *end;
-        const unsigned long id = strtoul(argv[2], &end, 16);
-        if (*end || id == 0 || id > UINT32_MAX) {
-            printf("usage: queue drop <chunk id, hex as listed>\n");
+        uint32_t id;
+        if (!cq_parse_id(argv[2], &id)) {
+            printf("usage: queue drop <chunk id> (decimal as `queue` shows it, or 0x<hex>)\n");
             return 1;
         }
-        const esp_err_t err = chunk_store_drop((uint32_t)id);
-        printf("drop %08lx: %s\n", id, esp_err_to_name(err));
+        const esp_err_t err = chunk_store_drop(id);
+        printf("drop %" PRIu32 ": %s\n", id, esp_err_to_name(err));
         return err == ESP_OK ? 0 : 1;
     }
     if (argc >= 2) {

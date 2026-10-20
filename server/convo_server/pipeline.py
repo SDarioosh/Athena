@@ -100,6 +100,10 @@ class Pipeline:
         if not data:
             raise ValueError("empty audio")
         pcm = audio_mod.decode(data, codec, sample_rate)
+        if codec == "pcm16" and sample_rate != audio_mod.SAMPLE_RATE:
+            # Raw PCM carries no rate, and processing decodes the stored file as 16 kHz:
+            # store it at 16 kHz.
+            data = audio_mod.float_to_pcm16(pcm)
         duration = audio_mod.duration_seconds(pcm)
         spans = self.vad.detect(pcm)
         speech = [(round(s.start, 3), round(s.end, 3)) for s in spans]
@@ -409,17 +413,20 @@ class Pipeline:
         day = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=tz)
         return day.timestamp(), (day + timedelta(days=1)).timestamp()
 
-    def make_digest(self, date: str) -> dict[str, Any] | None:
-        if self.summarizer is None:
-            raise RuntimeError("no LLM configured")
+    def digest_conversations(self, date: str) -> list[dict[str, Any]]:
+        """The summarized conversations that started on ``date`` (local day), in order."""
         start, end = self.day_bounds(date)
         convs = [self.store.get_conversation(c["id"]) for c in
                  self.store.list_conversations(since=start, until=end, limit=500)]
-        convs = [c for c in convs if c and c["status"] == "summarized"
-                 and start <= c["started_at"] < end]
+        return sorted((c for c in convs if c and c["status"] == "summarized"
+                       and start <= c["started_at"] < end), key=lambda c: c["started_at"])
+
+    def make_digest(self, date: str) -> dict[str, Any] | None:
+        if self.summarizer is None:
+            raise RuntimeError("no LLM configured")
+        convs = self.digest_conversations(date)
         if not convs:
             return None
-        convs.sort(key=lambda c: c["started_at"])
         digest = self.summarizer.digest(date, convs)
         self.store.put_digest(date, digest)
         return digest
@@ -458,11 +465,16 @@ class Worker(threading.Thread):
         except Exception:
             log.exception("worker iteration failed")
 
-    def _maybe_digest(self) -> None:  # pragma: no cover
+    def _maybe_digest(self) -> None:
+        """Write yesterday's digest, and write it again when the conversations of that day
+        changed (a relay uploaded a recording late, conversations were merged)."""
         p = self.pipeline
-        if p.summarizer is None:
+        if p.summarizer is None or p.store.sessions_with_status("ended"):
             return
         tz = ZoneInfo(p.settings.timezone)
         yesterday = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
-        if p.store.get_digest(yesterday) is None and not p.store.sessions_with_status("ended"):
-            p.make_digest(yesterday)
+        digest = p.store.get_digest(yesterday)
+        if digest is not None and set(digest.get("conversation_ids", [])) == {
+                c["id"] for c in p.digest_conversations(yesterday)}:
+            return
+        p.make_digest(yesterday)

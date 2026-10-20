@@ -570,6 +570,33 @@ static void test_torn_records(void)
     cq_deinit(&q);
 }
 
+/* `queue drop <id>`: strtoul(base 0) read the zero-padded hex ids `queue` printed as octal,
+ * so "00000010" (chunk 16) dropped chunk 8. Decimal or 0x-hex only, never a leading 0. */
+static void test_parse_id(void)
+{
+    uint32_t id = 0;
+    CHECK(cq_parse_id("16", &id));
+    CHECK_EQ(id, 16);
+    CHECK(cq_parse_id("0x10", &id));
+    CHECK_EQ(id, 16);
+    CHECK(cq_parse_id("0X1a", &id));
+    CHECK_EQ(id, 26);
+    CHECK(cq_parse_id("4294967295", &id));
+    CHECK_EQ(id, UINT32_MAX);
+    id = 7;
+    CHECK(!cq_parse_id("00000010", &id)); /* not octal 8, not decimal 10: refused */
+    CHECK(!cq_parse_id("00000017", &id));
+    CHECK(!cq_parse_id("0", &id));
+    CHECK(!cq_parse_id("0x", &id));
+    CHECK(!cq_parse_id("0x0", &id));
+    CHECK(!cq_parse_id("", &id));
+    CHECK(!cq_parse_id("1a", &id));
+    CHECK(!cq_parse_id("-1", &id));
+    CHECK(!cq_parse_id("4294967296", &id));
+    CHECK(!cq_parse_id("0x100000000", &id));
+    CHECK_EQ(id, 7); /* untouched on failure */
+}
+
 int main(void)
 {
     const char *tmp = getenv("TEST_TMPDIR");
@@ -579,6 +606,7 @@ int main(void)
     mkdir(parent, 0777);
 
     test_record();
+    test_parse_id();
     test_basic();
     test_recover_with_audio();
     test_recover_without_audio();

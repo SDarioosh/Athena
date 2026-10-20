@@ -152,6 +152,12 @@ int cq_fix_time(chunk_queue_t *q, uint32_t boot_id, int64_t now_epoch_ms, int64_
 
 void cq_stats(const chunk_queue_t *q, cq_stats_t *out);
 
+/* A chunk id typed on the console (`queue drop <id>`): decimal, as `queue`, the relays and
+ * the BLE log print it, or hex with a 0x prefix. A leading 0 without 0x is refused: strtoul
+ * base 0 would read "00000010" (a zero-padded hex file name) as octal 8, another chunk.
+ * Returns false for 0, junk, or more than 32 bits. */
+bool cq_parse_id(const char *s, uint32_t *id);
+
 /* "3f9a0c11d2e4b507" form of a session id; out needs 17 bytes. */
 void cq_session_hex(const uint8_t id[8], char out[17]);
 

@@ -74,7 +74,7 @@ records everything between start and stop.
 - USB console (`help`): `status`, `batt`, `rails`, `exp`, `time`, `session [start|stop]`,
   `note [start|stop]`, `queue [drop <id>]`, `ble [pair|forget]`, `sync`, `rec [s]`, `stop`, `level [s]`,
   `gain [dB]`, `eq [on|off]`, `ls [q]`, `get <file>`, `mute`, `screen`, `sd`, `reboot`.
-  `status` also prints the free heap. `queue drop <id>` takes the hex id that `queue` lists.
+  `status` also prints the free heap and the last reset reason.
   `sd failwrite <n>` makes the next n chunk writes fail (to test the recovery below).
   `batt sim`, `coredump [get|erase]` and `crash yes|wdt`: see below.
 

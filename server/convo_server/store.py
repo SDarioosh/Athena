@@ -463,6 +463,7 @@ class Store:
                     continue
                 c.execute("UPDATE segments SET conversation_id = ? WHERE conversation_id = ?",
                           (conv_id, other))
+                _move_knowledge(c, other, conv_id)
                 _delete_conversation(c, other)
             c.executemany("UPDATE segments SET conversation_id = ? WHERE id = ?",
                           [(conv_id, i) for i in segment_ids])
@@ -1011,8 +1012,30 @@ def _prune_candidates(c: sqlite3.Connection, sessions: Iterable[str]) -> None:
 
 
 def _delete_conversation(c: sqlite3.Connection, conv_id: str) -> None:
+    # its facts go with it (cascade): facts they had replaced become current again
+    c.execute("UPDATE facts SET status = 'current', superseded_by = NULL"
+              " WHERE superseded_by IN (SELECT id FROM facts WHERE conversation_id = ?)",
+              (conv_id,))
     c.execute("DELETE FROM search_fts WHERE conversation_id = ?", (conv_id,))
     c.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+
+
+def _move_knowledge(c: sqlite3.Connection, src: str, dst: str) -> None:
+    """Give conversation ``src``'s action items, facts and links to ``dst`` (``src`` is
+    being merged into it), so the merged conversation's re-summary can carry them over
+    (closed action items stay closed, facts keep their links)."""
+    for table in ("action_items", "facts", "embeddings"):
+        c.execute(f"UPDATE {table} SET conversation_id = ? WHERE conversation_id = ?",
+                  (dst, src))
+    c.execute("UPDATE OR IGNORE fact_sources SET conversation_id = ? WHERE conversation_id = ?",
+              (dst, src))
+    # a fact can't be "said again" in the conversation that now owns it
+    c.execute("DELETE FROM fact_sources WHERE conversation_id = ? AND fact_id IN"
+              " (SELECT id FROM facts WHERE conversation_id = ?)", (dst, dst))
+    c.execute("INSERT OR IGNORE INTO conversation_people SELECT ?, name"
+              " FROM conversation_people WHERE conversation_id = ?", (dst, src))
+    c.execute("UPDATE search_fts SET conversation_id = ? WHERE conversation_id = ?"
+              " AND kind IN ('fact', 'action_item')", (dst, src))
 
 
 def _segment(r: dict[str, Any]) -> Segment:

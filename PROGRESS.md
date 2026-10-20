@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-20 (round 17: T-Watch Ultra round-15 firmware tested on the owner's watch, fixes)_
+_Last updated: 2026-10-20 (round 17: T-Watch Ultra tested on the owner's watch, reliability, power log; bug hunt)_
 
 ## Status
 
@@ -273,7 +273,8 @@ right after its sizes, flags and timings were read; none was uploaded.
   mic frames that are read and counted (later chunks keep correct start times); it ends
   after 4 failures in a row. `cq_abandon()` takes a `last` flag (host test added). Tested
   with `sd failwrite <n>` (new test hook) and by a real error that it recovered.
-- **`queue drop`** read the hex id that `queue` lists as octal or decimal; now hex.
+- **`queue drop`** read the zero-padded ids that `queue` lists as octal. Fixed here too, but
+  the bug hunt's fix on `main` (ids listed in decimal, `cq_parse_id`) won the merge.
 - **PWR hold during a note** did nothing; either PWR gesture now ends a note (owner).
 - **Extra PWR short presses**: after a real press, the PMU reported more short presses
   (real key edges) 0.4-2 s later, which once restarted a stopped session. Probably the key
@@ -336,6 +337,23 @@ right after its sizes, flags and timings were read; none was uploaded.
   retries ("no buffers for 5000 ms"). Nothing was acked.
 - SD `0x108` errors keep showing up at 4 MHz SPI (round 14: reads after an ACK; now
   writes). Cause unknown; recovery handles it.
+
+## Done on 2026-10-20: bug hunt
+
+Eight bugs were reproduced and fixed here, and three in the hub. Each one has a
+regression test. Details are in `docs/bug-hunt-2026-10.md`.
+- **Server:** `pcm16` at other sample rates; a merge lost closed action items; facts
+  stayed hidden after a deletion; the digest wasn't redone for late uploads; a `nan`
+  timestamp gave a 500; speaker clustering was O(n⁴).
+- **Firmware:** `queue drop` read zero-padded ids as octal and could drop the wrong
+  chunk.
+- **PC relay:** crashed on a broken HTTP answer.
+
+Still needs the owner:
+- ~~`idf.py build` and `queue` / `queue drop` on the watch~~: done 2026-10-20 in round 17
+  (merged build; `queue` lists decimal ids, `queue drop 98` dropped chunk 98).
+- The found-not-fixed items in that doc (late-chunk diarization, the BYE/backoff
+  conflict) need a decision.
 
 ## Done in round 16: PRs #24 and #25 measured, fixed and improved
 

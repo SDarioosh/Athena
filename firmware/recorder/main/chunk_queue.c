@@ -97,6 +97,45 @@ void cq_session_hex(const uint8_t id[8], char out[17])
     out[16] = '\0';
 }
 
+bool cq_parse_id(const char *s, uint32_t *id)
+{
+    if (!s || !*s) {
+        return false;
+    }
+    int base = 10;
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        base = 16;
+        s += 2;
+    } else if (s[0] == '0') {
+        return false; /* octal for strtoul, hex in a file name: ambiguous */
+    }
+    uint64_t v = 0;
+    if (!*s) {
+        return false;
+    }
+    for (; *s; s++) {
+        int d;
+        if (*s >= '0' && *s <= '9') {
+            d = *s - '0';
+        } else if (base == 16 && *s >= 'a' && *s <= 'f') {
+            d = *s - 'a' + 10;
+        } else if (base == 16 && *s >= 'A' && *s <= 'F') {
+            d = *s - 'A' + 10;
+        } else {
+            return false;
+        }
+        v = v * (uint64_t)base + (uint64_t)d;
+        if (v > UINT32_MAX) {
+            return false;
+        }
+    }
+    if (v == 0) {
+        return false;
+    }
+    *id = (uint32_t)v;
+    return true;
+}
+
 /* ---- files ---- */
 
 static void path_of(const chunk_queue_t *q, uint32_t id, const char *ext, char *out, size_t len)
