@@ -6,14 +6,19 @@
  * XIAO ESP32-S3 Sense pendant will implement a subset (no display, no rails) and return
  * ESP_ERR_NOT_SUPPORTED for what it lacks.
  *
- * Later milestones add to this file rather than reaching into board code: a low-battery
- * threshold hook, a "phone sync" status for the screen, light-sleep enter/exit.
+ * Later milestones add to this file rather than reaching into board code: a "phone sync"
+ * status for the screen.
+ *
+ * Sleep: light sleep is automatic (esp_pm), so board_init() must arm its buttons as GPIO
+ * wake sources and nothing in the board layer may poll while idle. Standby (deep sleep)
+ * goes through board_standby_prepare().
  */
 #pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "battery_guard.h"
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -45,9 +50,13 @@ typedef enum {
     BOARD_BUTTON_BOOT, /* GPIO button */
 } board_button_t;
 
+/* GPIO buttons report SHORT (a single press, after the double-press window has passed),
+ * DOUBLE and LONG (while still held), see button_gesture.h. The PMIC button reports SHORT
+ * and LONG only (the PMIC's own long-press time, ~1 s). */
 typedef enum {
     BOARD_PRESS_SHORT,
     BOARD_PRESS_LONG,
+    BOARD_PRESS_DOUBLE,
 } board_press_t;
 
 /* Called from the board's button task, never from an ISR. Keep it short: post an event. */
@@ -87,6 +96,14 @@ void board_log_power(void);
 void board_log_expander(void);
 
 esp_err_t board_battery_read(board_battery_t *out);
+/* When the battery counts as too low to record (main/battery_guard.c applies them). */
+void board_battery_limits(bg_limits_t *out);
+
+/* Standby: arm the board's deep-sleep wake sources (its power button, USB power) and leave
+ * its chips in their lowest state. The caller then calls esp_deep_sleep_start(); waking is
+ * a reset with a wakeup cause other than ESP_SLEEP_WAKEUP_UNDEFINED. Fails, leaving the
+ * board as it was, if a wake source is already active (the chip would wake at once). */
+esp_err_t board_standby_prepare(void);
 
 /* ---- wall-clock time (UTC epoch seconds) ---- */
 /* *valid is false if the RTC lost power since it was last set. */
@@ -95,11 +112,12 @@ esp_err_t board_rtc_set(int64_t epoch);
 
 /* ---- buttons and haptics ---- */
 void board_buttons_set_callback(board_button_cb_t cb, void *ctx);
-/* Live level of a button, for combinations. Only GPIO buttons can answer; the PWR
- * button reports false. */
+/* Live level of a button. Only GPIO buttons can answer; the PWR button reports false. */
 bool board_button_is_down(board_button_t button);
-/* `count` short buzzes (1 = recording, 2 = muted). Blocks for the duration. */
+/* `count` short buzzes (1 = started, 2 = stopped or muted). Blocks for the duration. */
 esp_err_t board_haptic_pulse(int count);
+/* One long buzz (~0.5 s; unmuted). Blocks for the duration. */
+esp_err_t board_haptic_long(void);
 
 /* ---- microphone ---- */
 board_mic_pins_t board_mic_pins(void);

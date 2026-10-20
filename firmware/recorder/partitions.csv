@@ -3,3 +3,5 @@
 nvs,        data, nvs,     0x9000,   0x6000,
 phy_init,   data, phy,     0xf000,   0x1000,
 factory,    app,  factory, 0x10000,  4M,
+# ELF core dump of the last crash (console `coredump`). Task stacks and TCBs, no heap.
+coredump,   data, coredump, 0x410000, 128K,

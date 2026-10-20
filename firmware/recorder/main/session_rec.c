@@ -10,6 +10,7 @@
 #include "chunk_store.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
+#include "esp_task_wdt.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -29,6 +30,13 @@ static const char *TAG = "session";
 #define FRAME_MS 20
 #define MIC_TIMEOUT_MS 500
 #define MIC_MAX_EMPTY_READS 20 /* ~10 s without audio: the mic is gone */
+/* A card write error (sdspi 0x107/0x108, seen on the owner's watch) costs the open chunk's
+ * unwritten page (<= ~1 s); the session goes on with a new chunk after a pause that grows
+ * with each failure in a row (the card's trouble passed within 300 ms in round 14). The mic
+ * keeps being read and counted during the pause, so the session's clock stays right. It
+ * ends after WRITE_MAX_FAILURES failures in a row. */
+#define WRITE_MAX_FAILURES 4
+static const uint16_t WRITE_RETRY_SKIP_FRAMES[WRITE_MAX_FAILURES - 1] = {5, 15, 50};
 
 typedef struct {
     opus_enc_t *enc;
@@ -36,6 +44,8 @@ typedef struct {
     uint16_t pre_skip;
     uint8_t session_id[8];
     char session_hex[17];
+    session_rec_kind_t kind;
+    uint64_t max_packets;  /* 0 = no limit (conversation) */
     bool time_unset;
     int64_t start_ms;      /* session start, epoch ms (valid unless time_unset) */
     int64_t mono0_ms;      /* esp_timer ms at the session start */
@@ -45,6 +55,7 @@ typedef struct {
     uint32_t chunk_id;
     uint32_t prev_chunk_id; /* last closed chunk of this session, 0 if none */
     uint32_t chunk_packets;
+    uint32_t skip_frames;  /* frames to read and drop before retrying the card */
     esp_err_t write_err;   /* set by the Ogg write callback */
     uint64_t enc_total_us;
     int16_t frame[OPUS_ENC_FRAME_SAMPLES];
@@ -54,6 +65,7 @@ typedef struct {
 static session_rec_state_t s_state;
 static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool s_stop;
+static session_rec_kind_t s_kind; /* of the session being started */
 static session_rec_done_cb_t s_done;
 static session_rec_tick_cb_t s_tick;
 static void *s_ctx;
@@ -113,7 +125,8 @@ static esp_err_t open_chunk(session_t *s)
     chunk_store_new_t c = {
         .sequence = s->sequence,
         .start_ms = s->time_unset ? offset_ms : (uint64_t)s->start_ms + offset_ms,
-        .flags = s->time_unset ? CHUNK_FLAG_TIME_UNSET : 0,
+        .flags = (uint8_t)((s->time_unset ? CHUNK_FLAG_TIME_UNSET : 0) |
+                           (s->kind == SESSION_KIND_NOTE ? CHUNK_FLAG_NOTE : 0)),
         .mono_ms = (uint64_t)s->mono0_ms + offset_ms,
     };
     memcpy(c.session_id, s->session_id, sizeof(c.session_id));
@@ -140,21 +153,32 @@ static esp_err_t open_chunk(session_t *s)
     return ESP_OK;
 }
 
+/* The open chunk was recovered (kept_id != 0) or deleted after a write error. */
+static void after_abandon(session_t *s, uint32_t kept_id)
+{
+    opus_enc_reset(s->enc); /* the next chunk is a new stream */
+    if (kept_id) {
+        s->prev_chunk_id = kept_id;
+        s->sequence++;
+        STATE_UPDATE(s_state.chunks_written++);
+    }
+}
+
 /* The chunk can't be finished normally: keep what is on the card (cut back to the last
- * complete page, with LAST), or give LAST to the previous chunk if nothing is left. */
-static void abandon_chunk(session_t *s)
+ * complete page). `last`: the session ends here, so the kept chunk gets LAST, or the previous
+ * chunk does if nothing was kept. Otherwise the session goes on: the next chunk follows the
+ * kept one (a gap of the lost page) or takes over its sequence number. */
+static void abandon_chunk(session_t *s, bool last)
 {
     if (!s->chunk_open) {
         return;
     }
     s->chunk_open = false;
     uint32_t kept = 0;
-    const esp_err_t err = chunk_store_abandon(&kept);
+    const esp_err_t err = chunk_store_abandon(last, &kept);
     ESP_LOGW(TAG, "chunk %08" PRIx32 " abandoned: %s (%s)", s->chunk_id,
              kept ? "kept up to its last page" : "nothing to keep", esp_err_to_name(err));
-    if (kept) {
-        STATE_UPDATE(s_state.chunks_written++);
-    }
+    after_abandon(s, kept);
 }
 
 /* Close the open chunk. `next` is the frame after the chunk's last one: the next chunk's
@@ -173,14 +197,16 @@ static esp_err_t close_chunk(session_t *s, const int16_t *next, bool last)
         err = s->write_err != ESP_OK ? s->write_err : ESP_FAIL;
     }
     if (err != ESP_OK) {
-        abandon_chunk(s);
+        abandon_chunk(s, last);
         return err;
     }
     s->chunk_open = false;
     const uint32_t duration_ms = s->chunk_packets * FRAME_MS;
     err = chunk_store_end(duration_ms, last);
     if (err != ESP_OK) {
+        /* The queue recovered it from the card like abandon_chunk() does. */
         ESP_LOGE(TAG, "close chunk %08" PRIx32 ": %s", s->chunk_id, esp_err_to_name(err));
+        after_abandon(s, chunk_store_get(s->chunk_id, NULL) ? s->chunk_id : 0);
         return err;
     }
     opus_enc_reset(s->enc);
@@ -221,6 +247,7 @@ static esp_err_t read_frame(session_t *s)
         if (s_stop) {
             return ESP_ERR_INVALID_STATE;
         }
+        esp_task_wdt_reset(); /* a mic read waits at most MIC_TIMEOUT_MS */
         size_t got = 0;
         const esp_err_t r = mic_read(s->frame + have, OPUS_ENC_FRAME_SAMPLES - have, &got,
                                      MIC_TIMEOUT_MS);
@@ -259,23 +286,50 @@ static esp_err_t encode_frame(session_t *s)
     return ESP_OK;
 }
 
+/* After a write error with the chunk abandoned: true if the session should go on with a new
+ * chunk, false once WRITE_MAX_FAILURES attempts in a row have failed. */
+static bool write_failed(session_t *s, esp_err_t err, int *failures)
+{
+    if (++*failures >= WRITE_MAX_FAILURES) {
+        ESP_LOGE(TAG, "card write failed %d times in a row (%s): ending", *failures,
+                 esp_err_to_name(err));
+        return false;
+    }
+    STATE_UPDATE(s_state.write_retries++);
+    s->skip_frames = WRITE_RETRY_SKIP_FRAMES[*failures - 1];
+    ESP_LOGW(TAG, "card write failed (%s): a new chunk (seq %" PRIu32 ") in %" PRIu32 " ms",
+             esp_err_to_name(err), s->sequence, s->skip_frames * FRAME_MS);
+    s->write_err = ESP_OK;
+    return true;
+}
+
 static esp_err_t run(session_t *s, session_rec_end_t *why)
 {
     *why = SESSION_END_REQUEST;
     ESP_RETURN_ON_ERROR(mic_start(), TAG, "mic");
+    /* Task watchdog (CONFIG_ESP_TASK_WDT_TIMEOUT_S): fed once per frame and per mic read. If
+     * the loop hangs (a card or mic driver that never returns), the watch restarts with a
+     * core dump and reset=task_wdt, and the app starts a new session after the boot. */
+    esp_task_wdt_add(NULL);
     s->mono0_ms = mono_ms();
     int64_t epoch;
     s->time_unset = !clock_epoch_ms(&epoch);
     s->start_ms = s->time_unset ? 0 : epoch;
     STATE_UPDATE(s_state.time_unset = s->time_unset);
-    ESP_LOGI(TAG, "session %s started%s", s->session_hex,
-             s->time_unset ? " without a valid clock (TIME_UNSET)" : "");
+    ESP_LOGI(TAG, "%s %s started%s", s->kind == SESSION_KIND_NOTE ? "note" : "session",
+             s->session_hex, s->time_unset ? " without a valid clock (TIME_UNSET)" : "");
 
     esp_err_t err = ESP_OK;
+    int failures = 0; /* card write errors in a row */
     if (card_full()) {
         *why = SESSION_END_CARD_FULL;
     }
     while (*why == SESSION_END_REQUEST) {
+        esp_task_wdt_reset();
+        if (s->max_packets && s->packets >= s->max_packets) {
+            *why = SESSION_END_MAX; /* the open chunk is closed with LAST below */
+            break;
+        }
         err = read_frame(s);
         if (err == ESP_ERR_INVALID_STATE) {
             err = ESP_OK; /* stop requested */
@@ -284,12 +338,22 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
         if (err != ESP_OK) {
             break;
         }
+        if (s->skip_frames) {
+            s->skip_frames--; /* pause after a card error: drop the frame, keep the clock */
+            s->packets++;
+            continue;
+        }
         /* Lazy rotation: a full chunk is closed only now that its successor has audio, so
          * the chunk open at the end of a session always has audio and gets LAST. */
         if (s->chunk_open && s->chunk_packets >= SESSION_REC_CHUNK_PACKETS) {
             const bool full = card_full();
             err = close_chunk(s, s->frame, full);
-            if (err != ESP_OK) {
+            if (err == ESP_OK) {
+                failures = 0;
+            } else if (!full && write_failed(s, err, &failures)) {
+                s->packets++; /* the frame is lost, but the clock goes on */
+                continue;
+            } else {
                 break;
             }
             if (full) {
@@ -299,18 +363,22 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
         }
         if (!s->chunk_open) {
             err = open_chunk(s);
-            if (err != ESP_OK && s->chunk_open) {
-                abandon_chunk(s); /* the queue moves LAST back if nothing was kept */
-            } else if (err != ESP_OK && s->prev_chunk_id) {
-                chunk_store_set_last(s->prev_chunk_id); /* broke off between two chunks */
-            }
             if (err != ESP_OK) {
+                abandon_chunk(s, false); /* a header that half reached the card */
+                if (write_failed(s, err, &failures)) {
+                    s->packets++; /* the frame is lost, but the clock goes on */
+                    continue;
+                }
                 break;
             }
         }
         err = encode_frame(s);
         if (err != ESP_OK) {
-            abandon_chunk(s);
+            abandon_chunk(s, false);
+            if (write_failed(s, err, &failures)) {
+                s->packets++; /* the frame is lost, but the clock goes on */
+                continue;
+            }
             break;
         }
         if (s->packets % (1000 / FRAME_MS) == 0) {
@@ -332,7 +400,11 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
     }
     if (err != ESP_OK) {
         *why = SESSION_END_ERROR;
+        if (!s->chunk_open && s->prev_chunk_id) {
+            chunk_store_set_last(s->prev_chunk_id); /* broke off between two chunks */
+        }
     }
+    esp_task_wdt_delete(NULL);
     return err;
 }
 
@@ -347,6 +419,10 @@ static void session_task(void *arg)
     bool media = false;
     if (err == ESP_OK) {
         s->ogg = ogg;
+        s->kind = s_kind;
+        s->max_packets = s_kind == SESSION_KIND_NOTE
+                             ? (uint64_t)SESSION_REC_NOTE_MAX_S * (1000 / FRAME_MS)
+                             : 0;
         esp_fill_random(s->session_id, sizeof(s->session_id));
         cq_session_hex(s->session_id, s->session_hex);
         STATE_UPDATE(memcpy(s_state.session_hex, s->session_hex, sizeof(s_state.session_hex)));
@@ -384,12 +460,13 @@ static void session_task(void *arg)
         s_state.last_end = why;
         st = s_state;
     });
-    static const char *const WHY[] = {"stopped", "card full", "error"};
+    static const char *const WHY[] = {"stopped", "card full", "error", "at its length limit"};
     ESP_LOGI(TAG,
-             "session %s %s after %" PRIu32 " s, %" PRIu32 " chunk(s) (%s); encode avg %" PRIu32
-             " us, max %" PRIu32 " us per 20 ms frame; stack never used %" PRIu32 " bytes",
-             st.session_hex, WHY[why], st.elapsed_s, st.chunks_written, esp_err_to_name(err),
-             st.enc_avg_us, st.enc_max_us, st.stack_free_min);
+             "%s %s %s after %" PRIu32 " s, %" PRIu32 " chunk(s) (%s); encode avg %" PRIu32
+             " us, max %" PRIu32 " us per 20 ms frame; stack never used %" PRIu32
+             " bytes; card write errors recovered %" PRIu32,
+             st.kind == SESSION_KIND_NOTE ? "note" : "session", st.session_hex, WHY[why], st.elapsed_s, st.chunks_written, esp_err_to_name(err),
+             st.enc_avg_us, st.enc_max_us, st.stack_free_min, st.write_retries);
     if (s) {
         opus_enc_destroy(s->enc);
     }
@@ -402,7 +479,8 @@ static void session_task(void *arg)
     vTaskDelete(NULL);
 }
 
-esp_err_t session_rec_start(session_rec_done_cb_t done, session_rec_tick_cb_t tick, void *ctx)
+esp_err_t session_rec_start(session_rec_kind_t kind, session_rec_done_cb_t done,
+                            session_rec_tick_cb_t tick, void *ctx)
 {
     bool busy = false;
     STATE_UPDATE({
@@ -410,12 +488,14 @@ esp_err_t session_rec_start(session_rec_done_cb_t done, session_rec_tick_cb_t ti
         if (!busy) {
             memset(&s_state, 0, sizeof(s_state));
             s_state.running = true;
+            s_state.kind = kind;
         }
     });
     ESP_RETURN_ON_FALSE(!busy, ESP_ERR_INVALID_STATE, TAG, "a session is running");
     s_done = done;
     s_tick = tick;
     s_ctx = ctx;
+    s_kind = kind;
     s_stop = false;
     if (xTaskCreate(session_task, "session", TASK_STACK_BYTES, NULL, TASK_PRIORITY, NULL) != pdPASS) {
         STATE_UPDATE(s_state.running = false);

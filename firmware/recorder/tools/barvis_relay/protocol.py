@@ -22,6 +22,9 @@ DATA_UUID = "f8060004" + _BASE
 
 MIN_MTU = 64
 DATA_HEADER = 9  # opcode + chunk_id + offset
+# The Core spec caps an attribute value at 512 bytes; Android drops longer notifications.
+# The watch sends min(ATT MTU - 3, 512) at most, so a DATA frame carries <= 503 bytes.
+MAX_NOTIFICATION = 512
 
 # Commands
 OP_LIST = 0x01
@@ -61,6 +64,7 @@ COMMAND_NAMES = {OP_LIST: "LIST", OP_READ: "READ", OP_ACK: "ACK", OP_TIME: "TIME
 # ENTRY flags (§4.3)
 FLAG_LAST = 0x01
 FLAG_TIME_UNSET = 0x02
+FLAG_NOTE = 0x04  # the chunk belongs to a voice note
 
 # status flags (§4.2)
 ST_RECORDING = 0x01
@@ -125,6 +129,10 @@ class Entry:
     @property
     def time_unset(self) -> bool:
         return bool(self.flags & FLAG_TIME_UNSET)
+
+    @property
+    def note(self) -> bool:
+        return bool(self.flags & FLAG_NOTE)
 
     @property
     def session_hex(self) -> str:
@@ -270,9 +278,16 @@ _DECODERS: dict[int, type] = {
 }
 
 
+def data_payload_max(mtu: int) -> int:
+    """DATA payload bytes per frame at this ATT MTU (§7.2)."""
+    return min(mtu - 3, MAX_NOTIFICATION) - DATA_HEADER
+
+
 def decode_response(b: bytes) -> Response:
     if not b:
         raise ProtocolError("empty notification")
+    if len(b) > MAX_NOTIFICATION:
+        raise ProtocolError(f"{len(b)}-byte notification, the limit is {MAX_NOTIFICATION}")
     cls = _DECODERS.get(b[0])
     if cls is None:
         raise ProtocolError(f"unknown response opcode 0x{b[0]:02x}")

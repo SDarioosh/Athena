@@ -22,21 +22,40 @@ records everything between start and stop.
   (`boards/twatch_ultra/board/pins.h` has both readings and the schematic's answer).
 - Reads the PCF85063A RTC into the system clock at boot; `time <ISO-8601>` on the USB
   console sets both.
-- **PWR short press**: status screen for ~5 s (recording/muted, battery %, voltage, time,
-  SD), then the display rail goes off again.
-- **BOOT short press**: toggle mute. 1 buzz = recording, 2 buzzes = muted.
-- **BOOT held + PWR short press**, or `session start`: starts a **recording session**
-  (1 buzz). The mic is encoded to Opus and written as 30 s Ogg/Opus chunks to
-  `/sdcard/q/` (the upload queue). The same combination again, `session stop`, or mute
-  ends it (1 buzz; 3 buzzes if it ended on its own: card full or an error). Releasing BOOT
-  after the combination doesn't count as a BOOT press.
-- **BOOT long press (1 s)**, or `sync` / `ble pair`: opens the **BLE sync window** for 2
-  minutes (1 buzz): the watch advertises and a new phone or PC may pair. Outside the window
-  only already-paired relays get in.
+- **Buttons** (owner's layout of 2026-10-19, plan §3):
+
+  | Action | Does |
+  |---|---|
+  | BOOT press | Status screen for a few seconds (recording/muted, battery %, voltage, time, SD), then the display rail goes off again. Waits ~0.3 s first to rule out a double-click |
+  | BOOT double-click (or `mute`) | Toggle mute. 2 buzzes = muted, 1 long buzz = unmuted. Mute ends whatever is recording |
+  | BOOT hold ~1 s (or `sync` / `ble pair`) | Opens the **BLE sync window** for 2 minutes: the watch advertises and a new phone or PC may pair. Outside the window only already-paired relays get in |
+  | PWR short press (or `session start` / `session stop`) | Starts or stops a **recording session** (1 buzz start, 2 buzzes stop; 3 buzzes if it ended on its own: card full or an error). The mic is encoded to Opus and written as 30 s Ogg/Opus chunks to `/sdcard/q/` (the upload queue). During a voice note, it stops the note |
+  | PWR hold ~1 s (or `note start` / `note stop`) | Starts a **voice note**, or ends the one recording (as a PWR press does). The AXP2101 long-press time is set to 1 s (register 0x27 bits[5:4]); the power-off hold (~6 s) is left as shipped |
+  | PWR hold ~6 s | Hardware power-off (AXP2101) |
+
+- **Voice notes**: a note is its own short session. Every chunk carries the `NOTE` flag
+  (protocol §4.3), which is kept in the chunk's `.met` record, so it survives reboots and
+  reaches the relay. A note stops on a PWR press or a PWR hold, `note stop`, mute, or by itself after 5
+  min (10 chunks). If a conversation session is recording, it ends cleanly first (its last
+  chunk gets `LAST`), the note records, and then a new conversation session starts by
+  itself (not if muted meanwhile).
+- **Screen messages**: every button action lights the screen for a few seconds with what
+  happened: "Recording", "Stopped", "Note 0:12", "Note saved", "Muted", "Unmuted",
+  "Sync open".
 - **Uploads**: the watch advertises only when something is waiting (a finished session, or
   10 min of audio from a running one, or anything queued after an hour without a sync).
   The relay connects, sets the watch's clock, pulls each chunk, uploads it to the server,
   and only then tells the watch to delete it (protocol §1, §6).
+- **Power**: the chip light-sleeps whenever it has nothing to do; BLE advertising and
+  syncing keep working, and it stays awake while a USB host is attached (console,
+  flashing). After **2 minutes idle** (no session, nothing to sync and no relay connected,
+  screen off, card unmounted, no USB power) it goes into **standby**: deep sleep until
+  **PWR** is pressed or USB power is plugged in (`standby` on the console does it now).
+  Waking is a reboot of about a second that shows the status screen (no buzz; mute is
+  kept). The waking press does nothing else: it doesn't start a recording. The power log is
+  written to the card before standby (its RAM ring doesn't survive deep sleep).
+  BOOT doesn't wake it: GPIO0 is a strapping pin. Holding PWR ~6 s is still the hardware
+  power-off.
 - **`rec [s]`** (console only): the milestone-1 test, N seconds (default 60) from the mic to
   `/sdcard/rec_<UTC time>.wav`. The log line `recorder: level at ...` gives the file's RMS,
   peak, DC offset, clipped samples and how often the limiter acted. `stop` or mute ends it
@@ -63,13 +82,16 @@ records everything between start and stop.
   python firmware/recorder/tools/pull.py --port COM35 --out ~/barvis-recordings
   ```
 - USB console (`help`): `status`, `batt`, `rails`, `exp`, `time`, `session [start|stop]`,
-  `queue [drop <id>]`, `ble [pair|forget]`, `sync`, `rec [s]`, `stop`, `level [s]`,
+  `note [start|stop]`, `queue [drop <id>]`, `ble [pair|forget]`, `sync`, `rec [s]`, `stop`, `level [s]`,
   `gain [dB]`, `eq [on|off]`, `ls [q]`, `get <file>`, `mute`, `screen`, `sd`, `reboot`.
+  `status` also prints the free heap and the last reset reason.
+  `sd failwrite <n>` makes the next n chunk writes fail (to test the recovery below).
+  `batt sim`, `coredump [get|erase]` and `crash yes|wdt`: see below.
 
 ## Upload path (BLE)
 
 ```
-mic -> Opus (libopus, 16 kHz mono, 20 ms, 16 kbps VBR, complexity 1) -> 30 s Ogg/Opus chunks
+mic -> Opus (libopus, 16 kHz mono, 20 ms, 24 kbps VBR, complexity 1) -> 30 s Ogg/Opus chunks
     -> /sdcard/q (survives reboots) -> BLE (NimBLE GATT) -> relay -> POST /v1/ingest/chunk
 ```
 
@@ -85,6 +107,25 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 16 kbps VBR, complexity 1) -> 30 s Ogg
   start times are contiguous; pages are written and fsynced every second, so a power cut
   loses at most ~1 s, and the chunk being written is recovered at the next boot. Details:
   protocol §2.
+- **Low battery**: below the board's limit (T-Watch: 5 % or 3.5 V, two readings 15 s
+  apart) the recording ends cleanly, the watch buzzes 3 times and shows BATTERY LOW, and
+  refuses new recordings until 10 % or USB. `batt sim <percent> [mV]` / `batt sim off`
+  fakes the battery for testing.
+- **Crashes and hangs**: `status` and BLE `info` show the last reset reason (`reset=`). A
+  crash saves a core dump to flash: `coredump` shows where, `tools/pull.py --coredump`
+  copies it, `idf.py coredump-info -c <file>` decodes it, `coredump erase` clears it. The
+  session and BLE tasks are on the task watchdog: a 10 s hang restarts the watch, and a
+  conversation that was recording starts again after the boot. `crash yes` / `crash wdt`
+  test it.
+- **Power log**: `power` shows the battery, what the watch is doing, the CPU clock and the
+  drain rate; every 5 min (`power log <min>|off`) a sample goes to `/sdcard/power.csv`
+  (written hourly, never while recording or syncing). `power locks` shows what keeps the
+  CPU awake. Light sleep isn't used: while recording the I2S driver holds the APB clock,
+  and BLE on the main crystal blocks it at all times (PROGRESS.md round 17).
+- **Card errors**: a failed write (the card sometimes answers `0x108`) costs at most the
+  open page (~1 s): the chunk is cut back to its last page and the session goes on with a
+  new chunk after 100/300/1000 ms of skipped (but counted) mic frames; it ends only after 4
+  failures in a row. `status` and the end-of-session log count them.
 - **Queue**: `queue` lists it (id, session, sequence, start, length, size, flags);
   `queue drop <id>` deletes one without uploading. `ls q` / `get q/<file>` and
   `tools/pull.py --queue` copy chunks over USB for debugging without BLE (they stay
@@ -106,7 +147,7 @@ and a Bluetooth adapter. The token comes from `CONVO_INGEST_TOKEN` or `--token-f
 python3 -m venv ~/.venvs/barvis-relay
 ~/.venvs/barvis-relay/bin/pip install -r firmware/recorder/tools/requirements.txt
 
-# first time: open the sync window on the watch (BOOT long press); when the PC pairs, the
+# first time: open the sync window on the watch (BOOT hold ~1 s); when the PC pairs, the
 # watch shows a 6-digit code.
 # bleak can't type it, so pair through the OS and type the code:
 #   Linux:   bluetoothctl -> agent on -> default-agent -> scan on -> pair <address>
@@ -160,7 +201,17 @@ power-cycle) to leave download mode; the USB serial port re-enumerates.
 Confirm the memory layout on the first flash (`esptool.py --port /dev/ttyACM0 flash_id`
 should report a 16 MB flash; the PSRAM line in the boot log should say quad mode, 8 MB).
 
-Exit the monitor with `Ctrl-]`. Log output and the `recorder>` console share the port.
+Exit the monitor with `Ctrl-]`.
+
+On Windows a reset through the USB port's RTS line (`idf.py monitor`, a plain serial
+script) may land in the ROM downloader (`boot:0x23 DOWNLOAD`). `esptool.py -p COMx
+--after watchdog_reset read_mac` boots the firmware; then attach with
+`idf.py monitor --no-reset`. Log output and the `recorder>` console share the port.
+
+Without a monitor (scripts, agents): `tools/wcon.py --port <port> status` sends one command
+and prints the answer; `--boot` resets the watch and prints the boot log; `--listen 60`
+prints the log for a minute and follows the watch through a power-off. It opens the port
+without resetting the watch (RTS is lowered before DTR). Only one program can hold the port.
 
 ## Host tests
 
@@ -207,6 +258,7 @@ firmware/recorder/
 │   └── idf_component.yml
 ├── test/                     # host tests (plain CMake + ctest)
 ├── tools/pull.py             # copy recordings (or --queue chunks) off the card over USB
+├── tools/wcon.py             # one console command per call, --boot log, --listen (scripts)
 └── tools/ble_relay.py        # PC relay: drain the watch over BLE, upload (barvis_relay/, tests/)
 ```
 
@@ -236,3 +288,12 @@ The BLE upload path has not run on hardware at all yet: Opus encode time and CPU
 80 MHz, BLE throughput, pairing with Android and BlueZ, power-cut recovery on a real card,
 `fsync` once a second (SD power and wear), the advertising and connection current, and
 the runtime heap after BLE starts. The PR's Server verification section has the steps.
+
+Verified on the owner's watch on 2026-10-20 (PROGRESS.md round 17): the button layout
+(double-click timing, PWR 1 s hold, the ~6 s power-off hold, also on USB), voice notes (NOTE
+on every chunk, the 5-min cap, a conversation ending and resuming around a note, mute
+mid-note), recovery of a chunk cut off by a restart, recovery from SD write errors, the
+encoder time (10.4-11.9 ms avg per 20 ms frame) and the heap after BLE starts (197 KB
+internal free). Still open: a note through the server (`kind=note`), a real battery pull
+during recording, and the cause of the SD `0x108` errors and of extra PWR short presses
+(ignored within 1 s of the previous one).

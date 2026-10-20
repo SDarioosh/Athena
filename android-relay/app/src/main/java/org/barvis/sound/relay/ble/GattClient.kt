@@ -135,8 +135,22 @@ class GattClient(
 
     suspend fun requestMtu(mtu: Int): Int = op(Kind.MTU, 5_000) { it.requestMtu(mtu) } as Int
 
+    /** Discovers the watch's services afresh. Android otherwise reuses the database it cached
+     *  for a bonded device ("Using cached database without robust caching"), and the watch has
+     *  no database hash to tell it that a firmware update moved the handles. */
     suspend fun discoverServices() {
+        gatt?.let { refreshCache(it) }
         op(Kind.DISCOVER, 15_000) { it.discoverServices() }
+    }
+
+    /** BluetoothGatt.refresh() is hidden API (greylisted, still callable); best effort. */
+    private fun refreshCache(g: BluetoothGatt) {
+        try {
+            val ok = g.javaClass.getMethod("refresh").invoke(g) as? Boolean
+            android.util.Log.i("BarvisRelay", "gatt cache refresh: $ok")
+        } catch (e: ReflectiveOperationException) {
+            android.util.Log.w("BarvisRelay", "gatt cache refresh unavailable: $e")
+        }
     }
 
     /** 2M PHY if both sides support it (§7.2). Best effort. */

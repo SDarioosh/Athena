@@ -19,6 +19,7 @@ import base64
 import binascii
 import hmac
 import logging
+import math
 import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -51,9 +52,12 @@ def parse_ts(value: str) -> float:
     """ISO-8601 (naive = UTC) or epoch seconds/milliseconds."""
     try:
         num = float(value)
-        return num / 1000.0 if num > 1e11 else num
     except ValueError:
         pass
+    else:
+        if not math.isfinite(num):
+            raise HTTPException(400, "timestamp must be ISO-8601 or epoch seconds")
+        return num / 1000.0 if num > 1e11 else num
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as e:
@@ -85,6 +89,7 @@ class ChunkJson(BaseModel):
     timestamp: str
     codec: str = "opus"
     sample_rate: int = audio_mod.SAMPLE_RATE
+    kind: str = "conversation"  # or "note" (voice note)
     audio_b64: str = Field(max_length=MAX_CHUNK_BYTES * 4 // 3 + 4)
 
 
@@ -175,6 +180,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         timestamp: Annotated[str, Form()],
         codec: Annotated[str, Form()] = "opus",
         sample_rate: Annotated[int, Form()] = audio_mod.SAMPLE_RATE,
+        kind: Annotated[str, Form()] = "conversation",
     ) -> dict[str, Any]:
         if len(audio) > MAX_CHUNK_BYTES:
             raise HTTPException(413, "chunk too large")
@@ -182,7 +188,8 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         try:
             result = await run_in_threadpool(
                 pipeline.ingest_chunk, device=device, session_id=session_id, sequence=sequence,
-                started_at=started, codec=codec, data=audio, sample_rate=sample_rate)
+                started_at=started, codec=codec, data=audio, sample_rate=sample_rate,
+                kind=kind)
         except audio_mod.AudioDecodeError as e:
             saved = save_rejected(settings, session_id, sequence, codec, audio)
             log.warning("could not decode %d bytes (%s), saved to %s: %s",
@@ -202,7 +209,8 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
             raise HTTPException(400, "audio_b64 is not valid base64") from e
         return await ingest_chunk(audio=audio, device=body.device, session_id=body.session_id,
                                   sequence=body.sequence, timestamp=body.timestamp,
-                                  codec=body.codec, sample_rate=body.sample_rate)
+                                  codec=body.codec, sample_rate=body.sample_rate,
+                                  kind=body.kind)
 
     @v1.post("/sessions/{session_id}/end")
     def end_session(session_id: str) -> dict[str, Any]:

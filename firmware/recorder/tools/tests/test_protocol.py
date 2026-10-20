@@ -50,6 +50,21 @@ def test_entry_fields() -> None:
     assert len(e.encode()) == p.Entry.LEN
 
 
+NOTE_VECTOR = ("81 05 0000 08000000 3f9a0c11d2e4b507 00000000 60540954a1010000 34300000 "
+               "68600000 2639f4cb")
+
+
+def test_note_entry_vector() -> None:
+    e = p.Entry(8, SESSION, 0, 1792411260000, 12340, 24680, 0xCBF43926,
+                p.FLAG_LAST | p.FLAG_NOTE)
+    assert p.FLAG_NOTE == 0x04
+    assert e.encode() == h(NOTE_VECTOR)
+    got = p.decode_response(h(NOTE_VECTOR))
+    assert got == e
+    assert isinstance(got, p.Entry) and got.note and got.last and not got.time_unset
+    assert not p.decode_response(h(RESPONSES[0][1])).note
+
+
 def test_status_vector() -> None:
     raw = h("01 25 51 00 6e0f 0200 c0d40100 60ea0000 4006d66a 04030201")
     s = p.Status.decode(raw)
@@ -64,6 +79,8 @@ def test_info_parse() -> None:
     assert (i.proto, i.device, i.fw, i.board) == (1, "twatch-ultra", "0.2.0", "twatch_ultra")
     i = p.Info.parse("board=x;new=1;device=d;proto=2")  # any order, unknown keys kept aside
     assert (i.proto, i.device, i.extra) == (2, "d", {"new": "1"})
+    i = p.Info.parse("proto=1;device=twatch-ultra;fw=0.2.0;board=twatch_ultra;reset=task_wdt")
+    assert (i.proto, i.fw, i.extra) == (1, "0.2.0", {"reset": "task_wdt"})  # §4.1 reset=
     with pytest.raises(p.ProtocolError):
         p.Info.parse("device=d")
     with pytest.raises(p.ProtocolError):
@@ -79,6 +96,19 @@ def test_decode_errors_and_growth() -> None:
         p.decode_response(h("84 00 0000"))
     # §9: a field added at the end is compatible
     assert p.decode_response(h("84 01 0000 07000000 ffff")) == p.Acked(1, 7)
+    # §7.2: no notification value is longer than 512 bytes (the ATT attribute limit)
+    full = p.DataFrame(1, 0, bytes(503)).encode()
+    assert len(full) == 512 and p.decode_response(full) == p.DataFrame(1, 0, bytes(503))
+    with pytest.raises(p.ProtocolError, match="514-byte notification"):
+        p.decode_response(p.DataFrame(1, 0, bytes(505)).encode())
+
+
+def test_data_payload_max() -> None:
+    assert p.data_payload_max(64) == 52
+    assert p.data_payload_max(247) == 235
+    assert p.data_payload_max(512) == 500
+    assert p.data_payload_max(515) == 503
+    assert p.data_payload_max(517) == 503
 
 
 def test_iso_ms() -> None:

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # odysseus-sound: update the server checkout and run it in the background.
 #
-#   server/scripts/deploy.sh deploy [REF]   # update to REF (default: <remote>/main), install, restart, check
+#   server/scripts/deploy.sh deploy [REF]   # update to REF (default: <remote>/main), install, restart,
+#                                           # check, then update Odysseus (BARVIS_SOUND_ODYSSEUS_DIR)
+#   server/scripts/deploy.sh odysseus       # only update Odysseus
 #   server/scripts/deploy.sh start | stop | restart
 #   server/scripts/deploy.sh status         # services, health, checkout
 #   server/scripts/deploy.sh logs [serve|mcp|whisper]
@@ -21,6 +23,8 @@
 #   BARVIS_SOUND_EXTRAS       pip extras (default: vad,diarization; +pyannote if CONVO_DIARIZER=pyannote)
 #   BARVIS_SOUND_WHISPER_CMD  full whisper-server command line, absolute path first
 #   BARVIS_SOUND_RUNNER       systemd, background or auto (default: auto)
+#   BARVIS_SOUND_ODYSSEUS_DIR the Odysseus checkout whose scripts/fork_deploy.sh runs after a
+#                             deploy, or off (default: found from the running Odysseus container)
 set -euo pipefail
 
 SERVER_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -356,6 +360,7 @@ cmd_deploy() {
   apply_services
   if check_services; then
     log "deployed $short ($RUNNER)"
+    deploy_odysseus
     return 0
   fi
   if [ "$PREV" != "$NEW" ]; then
@@ -367,6 +372,49 @@ cmd_deploy() {
     die "deploy of $short failed and was rolled back (checkout is detached at the old commit; the next deploy returns to $BRANCH)"
   fi
   die "odysseus-sound is not healthy; see the logs above"
+}
+
+# Odysseus (the hub) after the module: its own deploy script rebuilds and restarts it.
+# BARVIS_SOUND_ODYSSEUS_DIR: the Odysseus checkout that runs production, or "off";
+# unset, it is found from the running Odysseus container's compose labels.
+called_by_odysseus() {  # started by the hub's deploy script (which deploys Odysseus itself)
+  [ -n "${FORK_DEPLOY_RUNNING:-}" ] && return 0
+  # hub scripts from before FORK_DEPLOY_RUNNING: look at the parent's command line
+  ps -o args= -p "$PPID" 2>/dev/null \
+    | grep -qE '(fork_deploy\.sh|barvis_deploy\.sh|odysseus-deploy|barvis-deploy)( |$)'
+}
+
+find_odysseus_dir() {
+  local dir docker
+  dir=$(env_value BARVIS_SOUND_ODYSSEUS_DIR "")
+  if [ -z "$dir" ]; then
+    docker=${DOCKER:-sudo docker}
+    # shellcheck disable=SC2086
+    dir=$($docker ps --filter label=com.docker.compose.service=odysseus \
+            --format '{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null \
+          | head -n 1 || true)
+  fi
+  echo "${dir/#\~/$HOME}"
+}
+
+deploy_odysseus() {
+  local dir script
+  if called_by_odysseus; then return 0; fi
+  dir=$(find_odysseus_dir)
+  if [ "$dir" = off ]; then return 0; fi
+  if [ -z "$dir" ]; then
+    log "Odysseus not updated: no running Odysseus container found; set BARVIS_SOUND_ODYSSEUS_DIR in server/.env to its checkout (or \"off\")"
+    return 0
+  fi
+  for script in "$dir/scripts/fork_deploy.sh" "$dir/scripts/barvis_deploy.sh"; do
+    [ -x "$script" ] && break
+  done
+  [ -x "$script" ] || die "no scripts/fork_deploy.sh in $dir (BARVIS_SOUND_ODYSSEUS_DIR); odysseus-sound itself is deployed"
+  log "updating Odysseus in $dir"
+  # Empty module lists: this script just deployed the module, don't run it again.
+  # Run from the checkout: the first barvis_deploy.sh only works from there.
+  (cd "$dir" && FORK_MODULES="" BARVIS_MODULES="" FORK_DEPLOY_RUNNING=1 "$script" deploy) \
+    || die "Odysseus deploy failed (see above); odysseus-sound itself is deployed"
 }
 
 cmd_status() {
@@ -384,11 +432,12 @@ cmd_status() {
 
 case "${1:-}" in
   deploy) shift; cmd_deploy "$@" ;;
+  odysseus) load_config; deploy_odysseus ;;
   start) load_config; apply_services; check_services ;;
   restart) load_config; for s in "${SERVICES[@]}"; do enabled "$s" && is_running "$s" && stop_service "$s"; done; apply_services; check_services ;;
   stop) load_config; for s in "${SERVICES[@]}"; do stop_service "$s"; done; log "stopped" ;;
   status) cmd_status ;;
   logs) load_config; show_logs "${2:-serve}" "${@:3}" ;;
   units) load_config; for s in "${SERVICES[@]}"; do enabled "$s" && { echo "### $(unit_name "$s").service"; render_unit "$s"; }; done; true ;;
-  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

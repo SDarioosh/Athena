@@ -155,8 +155,9 @@ class Relay:
     async def _session(self, t: Transport, report: Report) -> None:
         info = p.Info.parse(await t.read_info())
         report.info = info
-        log.info("watch: device=%s fw=%s board=%s proto=%d",
-                 info.device, info.fw or "?", info.board or "?", info.proto)
+        log.info("watch: device=%s fw=%s board=%s proto=%d last reset=%s",
+                 info.device, info.fw or "?", info.board or "?", info.proto,
+                 info.extra.get("reset", "?"))
         if info.proto != p.PROTO_VERSION:
             report.outcome = INCOMPATIBLE
             report.message = (f"watch speaks protocol {info.proto}, this relay only "
@@ -213,7 +214,8 @@ class Relay:
 
     async def _chunk(self, t: Transport, info: p.Info, e: p.Entry, report: Report) -> bool:
         """Read, upload, end and ack one chunk. Returns True to stop draining."""
-        name = f"chunk {e.chunk_id} ({e.session_hex}#{e.sequence}{' LAST' if e.last else ''})"
+        name = (f"chunk {e.chunk_id} ({e.session_hex}#{e.sequence}"
+                f"{' LAST' if e.last else ''}{' NOTE' if e.note else ''})")
         data = await self._read_verified(t, e, report, name)
         if data is None:
             return False
@@ -233,7 +235,8 @@ class Relay:
         try:
             answer = await asyncio.to_thread(
                 self.uploader.upload_chunk, device=info.device, session_id=e.session_hex,
-                sequence=e.sequence, timestamp=timestamp, audio=data)
+                sequence=e.sequence, timestamp=timestamp, audio=data,
+                kind="note" if e.note else None)
             report.uploaded.append(e.chunk_id)
             if answer.get("duplicate"):
                 report.duplicates.append(e.chunk_id)

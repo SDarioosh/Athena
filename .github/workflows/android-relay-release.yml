@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (relay-v<version>, e.g. relay-v0.1.0)"
+        description: "Release tag: relay-v0.1.0 (a bare 0.1.0 or v0.1.0 gets the relay-v prefix)"
         required: true
 
 permissions:
@@ -29,10 +29,17 @@ jobs:
     steps:
       - name: Check the tag name
         run: |
+          # A manual run may be given just the version (0.1.0 or v0.1.0).
+          TAG="${TAG#refs/tags/}"
+          if [[ "$TAG" =~ ^v?[0-9][0-9A-Za-z._-]*$ ]]; then
+            TAG="relay-v${TAG#v}"
+            echo "::notice::using tag $TAG"
+          fi
           if [[ ! "$TAG" =~ ^relay-v[0-9A-Za-z._-]+$ ]]; then
             echo "::error::tag must look like relay-v0.1.0, got '$TAG'"
             exit 1
           fi
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
@@ -49,10 +56,10 @@ jobs:
         id: apk
         run: |
           version=$(sed -n 's/^ *versionName = "\(.*\)"/\1/p' android-relay/app/build.gradle.kts)
-          if [ "relay-v$version" != "$TAG" ]; then
-            echo "::warning::tag $TAG doesn't match versionName $version in android-relay/app/build.gradle.kts"
+          if [ "relay-v$version" != "$RELEASE_TAG" ]; then
+            echo "::warning::tag $RELEASE_TAG doesn't match versionName $version in android-relay/app/build.gradle.kts"
           fi
-          apk="barvis-sound-relay-${TAG#relay-}-debug.apk"
+          apk="barvis-sound-relay-${RELEASE_TAG#relay-}-debug.apk"
           cp android-relay/app/build/outputs/apk/debug/app-debug.apk "$apk"
           sha256sum "$apk" > "$apk.sha256"
           echo "file=$apk" >> "$GITHUB_OUTPUT"
@@ -69,12 +76,12 @@ jobs:
           APK: ${{ steps.apk.outputs.file }}
           VERSION: ${{ steps.apk.outputs.version }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK" "$APK.sha256" --clobber
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$APK" "$APK.sha256" --clobber
           else
             notes="Android relay $VERSION (versionName), built from ${GITHUB_SHA::7}.
 
           Debug build, signed with the Android SDK's debug key: fine for sideloading on your own phone, not for a store. Install with \`adb install -r $APK\`, or open the APK on the phone. Setup: android-relay/README.md."
-            gh release create "$TAG" "$APK" "$APK.sha256" \
-              --target "$GITHUB_SHA" --title "Android relay $TAG" --notes "$notes"
+            gh release create "$RELEASE_TAG" "$APK" "$APK.sha256" \
+              --target "$GITHUB_SHA" --title "Android relay $RELEASE_TAG" --notes "$notes"
           fi

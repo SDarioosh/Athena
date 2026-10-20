@@ -29,6 +29,7 @@ typedef struct {
     /* `fw` in the info characteristic (§4.1), e.g. esp_app_get_description()->version.
      * NULL reads as "unknown". The string must outlive ble_sync. */
     const char *fw_version;
+    const char *reset_reason; /* `reset=` in info (protocol §4.1); NULL leaves it out */
     /* Fill the app state. Called from the NimBLE host task and the BLE task: copy flags
      * from RAM, never block. */
     void (*get_state)(ble_sync_app_state_t *out);
@@ -52,6 +53,11 @@ void ble_sync_open_window(void);
 bool ble_sync_window_is_open(void);
 /* A relay is connected. Safe from any task. */
 bool ble_sync_is_connected(void);
+/* The advertising rule (§7.1) wants a relay: something to sync, or the window is open.
+ * Safe from any task. */
+bool ble_sync_wants_relay(void);
+/* The radio is advertising (power log). */
+bool ble_sync_is_advertising(void);
 
 /* Something changed (chunk added/acked, recording or mute toggled, card in/out):
  * re-evaluate advertising and notify status if a relay is subscribed (at most 1/s).
