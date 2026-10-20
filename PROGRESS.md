@@ -278,7 +278,7 @@ right after its sizes, flags and timings were read; none was uploaded.
 - **Extra PWR short presses**: after a real press, the PMU reported more short presses
   (real key edges) 0.4-2 s later, which once restarted a stopped session. Probably the key
   under a resting finger (the buzz?); a resting finger alone held it long enough to power
-  off. A short press within 1.5 s of the previous one is now ignored, which catches most of
+  off. A short press within 1 s of the previous one is now ignored (1.5 s at first; 1 s at the owner's request), which catches most of
   them. Owner: not an issue in use, left at that.
 - Host tests build on macOS (`reboot()` clashed with `<unistd.h>`); `/build-host/` ignored.
 

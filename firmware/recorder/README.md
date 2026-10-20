@@ -265,4 +265,4 @@ mid-note), recovery of a chunk cut off by a restart, recovery from SD write erro
 encoder time (10.4-11.9 ms avg per 20 ms frame) and the heap after BLE starts (197 KB
 internal free). Still open: a note through the server (`kind=note`), a real battery pull
 during recording, and the cause of the SD `0x108` errors and of extra PWR short presses
-(ignored within 1.5 s of the previous one).
+(ignored within 1 s of the previous one).

@@ -40,7 +40,7 @@ static bool s_have_pmu, s_have_expander, s_have_rtc, s_have_haptic;
  * press that started a session was followed 0.5-1 s later by one or two more short presses
  * with real key edges (the start buzz shaking the key under the finger); console starts never
  * did it. Every short press, ignored or not, restarts the window. */
-#define PWR_SHORT_GUARD_MS 1500
+#define PWR_SHORT_GUARD_MS 1000
 
 /* AXP2101 fuel-gauge battery model for the T-Watch Ultra's 1100 mAh cell.
  * Copied from LilyGoLib src/LilyGoWatchUltra.cpp (BATTER_PARAMS), MIT License,
