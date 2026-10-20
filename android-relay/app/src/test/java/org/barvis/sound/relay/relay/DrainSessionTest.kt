@@ -228,7 +228,7 @@ class DrainSessionTest {
         assertTrue(server.uploads.isEmpty())
         watch.reconnect()
         assertEquals(DrainOutcome.Done(1, 0), run())
-        assertEquals(2020L, watch.commands.filterIsInstance<Command.Read>().last().offset)
+        assertEquals(2012L, watch.commands.filterIsInstance<Command.Read>().last().offset) // 4 x 503
         assertArrayEquals(original, server.uploads.single().audio)
     }
 
@@ -240,7 +240,7 @@ class DrainSessionTest {
         watch.chunks.getValue(e.chunkId).fixableOnTime = true // converted on the next TIME
         watch.reconnect()
         assertEquals(DrainOutcome.Done(1, 0), run())
-        assertEquals(1010L, watch.commands.filterIsInstance<Command.Read>().last().offset)
+        assertEquals(1006L, watch.commands.filterIsInstance<Command.Read>().last().offset) // 2 x 503
         assertEquals(now - 600_000 + 1000, server.uploads.single().timestampMs)
     }
 
