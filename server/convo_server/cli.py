@@ -54,7 +54,7 @@ def build_pipeline(settings: Settings) -> Pipeline:
                     settings.llm_timeout_seconds)
     embedder = (OpenAIEmbedder(settings.embed_base_url, settings.embed_model)
                 if settings.embed_base_url else None)
-    return Pipeline(settings, store, make_vad(settings.vad_backend),
+    return Pipeline(settings, store, make_vad(settings.vad_backend, settings),
                     build_transcriber(settings), build_diarizer(settings, store),
                     Summarizer(llm, settings.owner_name, timezone=settings.timezone),
                     embedder)

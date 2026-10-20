@@ -33,6 +33,14 @@ class Settings(BaseSettings):
 
     # --- pipeline ---
     vad_backend: str = "silero"  # "silero" (production) or "energy" (tests only)
+    # Silero speech probability threshold and the silence that ends a speech span.
+    vad_threshold: float = 0.5
+    vad_min_silence_ms: int = 500
+    vad_speech_pad_ms: int = 30  # padding Silero adds around each span
+    # Quiet chunks (far-field, wrist) are boosted before VAD only, so their loud part sits
+    # at vad_target_dbfs, by at most vad_max_gain_db (0 = off). Stored audio is unchanged.
+    vad_target_dbfs: float = -20.0
+    vad_max_gain_db: float = 30.0
     conversation_gap_seconds: float = 180.0
     keep_audio: bool = False
     language: str = "en"

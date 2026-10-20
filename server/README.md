@@ -150,6 +150,13 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
 
+VAD: Silero runs on each chunk, after a gain that raises a quiet chunk's loud part to
+`CONVO_VAD_TARGET_DBFS` (-20), by at most `CONVO_VAD_MAX_GAIN_DB` (30; 0 = off). The gain
+is for the VAD only; the stored audio and what whisper hears are unchanged. A far-field
+or wrist recording can be 20-30 dB quieter than a close mic, and Silero then misses much
+of its speech, so whisper never gets it. `CONVO_VAD_THRESHOLD`, `CONVO_VAD_MIN_SILENCE_MS`
+and `CONVO_VAD_SPEECH_PAD_MS` tune Silero itself.
+
 Read API: `/v1/conversations`, `/v1/conversations/{id}`, `/v1/conversations/{id}/transcript`
 (`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items`, `/v1/digests/{date}`,
 `/v1/sessions`, `/v1/speakers`. Conversations carry a signed `link`, and action items and
