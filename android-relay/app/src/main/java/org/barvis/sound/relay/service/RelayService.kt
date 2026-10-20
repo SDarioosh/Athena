@@ -66,7 +66,7 @@ class RelayService : Service() {
     private val log = RelayState.logger
     private val partials = PartialReads()
     private val pda by lazy { PdaConnector(this, settings) }
-    /** "Sync T5 now" was tapped: cut the running scan short so the next one looks for the T5. */
+    /** "Sync T5 now" or the auto-sync switch: cut the running scan short so the next one is set up anew. */
     private val pdaWake = Channel<Unit>(Channel.CONFLATED)
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -103,6 +103,11 @@ class RelayService : Service() {
             RelayState.update { RelaySnapshot(phase = Phase.SCANNING) }
             loop = scope.launch { runLoop() }
             scope.launch { RelayState.state.collectLatest { updateNotification(it) } }
+        }
+        if (intent?.action == ACTION_PDA_AUTO && settings.pdaEnabled) {
+            if (settings.pdaAutoSync) pda.schedule.dueNow()
+            log.log(Level.INFO, if (settings.pdaAutoSync) "T5 auto sync on" else "T5 auto sync off: not looking for it")
+            pdaWake.trySend(Unit)
         }
         if (intent?.action == ACTION_PDA_SYNC && settings.pdaEnabled) {
             pda.schedule.request(System.currentTimeMillis(), PDA_REQUEST_WINDOW_MS)
@@ -172,10 +177,10 @@ class RelayService : Service() {
                     it.copy(pdaLine = "T5 not found. Is it nearby and awake (tap its screen)? Then tap Sync T5 now again")
                 }
             }
-            // Manual mode (default): the T5 is looked for only after "Sync T5 now", and then
-            // alone, until the request expires. Automatic mode: it is taken when its sync is
-            // due, or at once when its scan response says the outbox has entries (t5-pda-plan
-            // §3.4 step 6, §3.5); otherwise it is ignored.
+            // Automatic sync (default): the T5 is taken when its sync is due, or at once when
+            // its scan response says the outbox has entries (t5-pda-plan §3.4 step 6, §3.5);
+            // otherwise it is ignored. Auto sync off (T5 off or away): the T5 isn't scanned for
+            // at all, except after "Sync T5 now", and then alone until the request expires.
             val pdaOn = settings.pdaEnabled
             val auto = pda.schedule.isAuto
             val pdaDue = pdaOn && pda.schedule.isDue(now)
@@ -396,6 +401,7 @@ class RelayService : Service() {
         private const val NOTIFY_ERROR = 2
         private const val ACTION_STOP = "org.barvis.sound.relay.STOP"
         private const val ACTION_PDA_SYNC = "org.barvis.sound.relay.PDA_SYNC"
+        private const val ACTION_PDA_AUTO = "org.barvis.sound.relay.PDA_AUTO"
 
         /** How long "Sync T5 now" looks for the T5 before giving up. */
         private const val PDA_REQUEST_WINDOW_MS = 60_000L
@@ -412,6 +418,11 @@ class RelayService : Service() {
         /** "Sync T5 now": look for the T5 and sync it once (the relay must be running). */
         fun syncPda(context: Context) {
             context.startForegroundService(Intent(context, RelayService::class.java).setAction(ACTION_PDA_SYNC))
+        }
+
+        /** The auto-sync switch changed: restart the scan so it takes effect at once. */
+        fun pdaAutoChanged(context: Context) {
+            context.startForegroundService(Intent(context, RelayService::class.java).setAction(ACTION_PDA_AUTO))
         }
 
         fun stop(context: Context) {

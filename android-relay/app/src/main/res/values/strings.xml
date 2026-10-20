@@ -48,7 +48,7 @@
     <string name="odysseus_calendar_hint">The id of your CalDAV calendar in Odysseus. Events added on the T5 are written back to CalDAV only when they go into a CalDAV calendar.</string>
     <string name="pda_templates">Event templates (one per line)</string>
     <string name="pda_interval">Minutes between automatic syncs (5 to 240)</string>
-    <string name="pda_auto">Sync the T5 automatically. Off: only with "Sync T5 now" on the main screen</string>
+    <string name="pda_auto">Sync the T5 automatically (turn off while the T5 is off or away)</string>
     <string name="pda_sync_now">Sync T5 now</string>
     <string name="test_odysseus">Test Odysseus calendar</string>
     <string name="odysseus_not_set">Enter the Odysseus URL and token first.</string>

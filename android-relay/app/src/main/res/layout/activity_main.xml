@@ -78,6 +78,13 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content" />
 
+        <CheckBox
+            android:id="@+id/pda_auto"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/pda_auto" />
+
         <Button
             android:id="@+id/pda_sync"
             android:layout_width="match_parent"

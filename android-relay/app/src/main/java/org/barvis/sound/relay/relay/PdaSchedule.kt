@@ -6,10 +6,11 @@ package org.barvis.sound.relay.relay
  * doesn't keep the BLE stack from the watch.
  *
  * Two modes, chosen by [auto]:
- * - **manual** (the app's default): a sync is due only after [request] ("Sync T5 now"), until
- *   it runs or the request expires. Nothing is retried on its own.
- * - **automatic**: due every [intervalMs], with backoff after failures, and at once after
- *   [request].
+ * - **automatic** (the app's default): due every [intervalMs], with backoff after failures,
+ *   and at once after [request].
+ * - **manual** (auto sync off, e.g. the T5 is off or away): a sync is due only after
+ *   [request] ("Sync T5 now"), until it runs or the request expires. Nothing is retried on
+ *   its own.
  */
 class PdaSchedule(
     private val intervalMs: () -> Long,

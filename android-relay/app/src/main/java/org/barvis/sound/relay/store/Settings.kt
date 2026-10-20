@@ -74,9 +74,12 @@ class Settings(context: Context) {
         get() = (prefs.getString(KEY_TEMPLATES, null) ?: DEFAULT_TEMPLATES).lines().map { it.trim() }.filter { it.isNotEmpty() }
         set(v) = prefs.edit().putString(KEY_TEMPLATES, v.joinToString("\n")).apply()
 
-    /** Sync the T5 on its own (every [pdaSyncMinutes]); off = only with "Sync T5 now". */
+    /**
+     * Sync the T5 on its own (every [pdaSyncMinutes], and when it has actions waiting). Off =
+     * the app doesn't look for the T5 at all (it's switched off or away), except for "Sync T5 now".
+     */
     var pdaAutoSync: Boolean
-        get() = prefs.getBoolean(KEY_PDA_AUTO, false)
+        get() = prefs.getBoolean(KEY_PDA_AUTO, true)
         set(v) = prefs.edit().putBoolean(KEY_PDA_AUTO, v).apply()
 
     /** Minutes between automatic PDA syncs while it isn't in use (§3.4 step 6). */
