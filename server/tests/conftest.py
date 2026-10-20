@@ -105,7 +105,10 @@ def fake_llm_transport(summary: dict | None = None, digest: dict | None = None,
 def settings(tmp_path: Path) -> Settings:
     return Settings(ingest_token=TOKEN, data_dir=tmp_path / "data", silence_stop_seconds=60,
                     max_session_seconds=600, session_idle_seconds=120, run_worker=False,
-                    vad_backend="energy")
+                    vad_backend="energy",
+                    # FakeTranscriber returns one piece per clip: one clip per region here;
+                    # packed windows are tested in test_clips.py.
+                    whisper_window_seconds=0)
 
 
 @pytest.fixture

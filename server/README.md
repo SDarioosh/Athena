@@ -70,6 +70,13 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   threshold) is labelled as the owner. `CONVO_OWNER_HINT_MARGIN=0` turns it off.
 - whisper gets a prompt: `CONVO_WHISPER_PROMPT` (names, places, jargon) plus the names
   of known speakers, so they are spelled right.
+- Speech goes to whisper in clips of up to `CONVO_WHISPER_WINDOW_SECONDS` (28): the VAD
+  regions of a run, padded by `CONVO_WHISPER_PAD_SECONDS` (0.25), are packed in order
+  and the silence between them is shortened to `CONVO_WHISPER_WINDOW_GAP_SECONDS` (1.0).
+  Timestamps are mapped back to the recording; a whisper segment that spans a cut is
+  split by its token times. `CONVO_WHISPER_WINDOW_SECONDS=0` sends every region alone
+  (the behaviour before). `CONVO_WHISPER_CONTEXT_WORDS` (0 = off) adds the end of the
+  previous clip's text to the prompt; it made the eval worse.
 
 ## Deploy: one command, runs in the background
 

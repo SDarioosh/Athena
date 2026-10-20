@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # padded by whisper_pad_seconds and packed into clips of up to whisper_window_seconds;
     # silence between regions inside a clip is shortened to whisper_window_gap_seconds.
     # whisper_window_seconds=0 sends every region alone.
-    whisper_window_seconds: float = 0.0
+    whisper_window_seconds: float = 28.0
     whisper_pad_seconds: float = 0.25
     whisper_window_gap_seconds: float = 1.0
     # Last N words of the previous clip's text, added to the prompt after the vocabulary
