@@ -71,6 +71,15 @@
 
         <TextView
             style="@style/Heading"
+            android:text="@string/pda_heading" />
+
+        <TextView
+            android:id="@+id/pda"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            style="@style/Heading"
             android:text="@string/uploads_heading" />
 
         <TextView

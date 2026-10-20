@@ -31,6 +31,7 @@ import org.barvis.sound.relay.ble.Scanner
 import org.barvis.sound.relay.net.HttpUploader
 import org.barvis.sound.relay.net.ServerUrl
 import org.barvis.sound.relay.protocol.ChunkEntry
+import org.barvis.sound.relay.protocol.PdaGatt
 import org.barvis.sound.relay.protocol.ProtocolException
 import org.barvis.sound.relay.protocol.WatchGatt
 import org.barvis.sound.relay.protocol.WatchInfo
@@ -60,6 +61,7 @@ class RelayService : Service() {
     private lateinit var settings: Settings
     private val log = RelayState.logger
     private val partials = PartialReads()
+    private val pda by lazy { PdaConnector(this, settings) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -136,14 +138,30 @@ class RelayService : Service() {
             }
 
             setPhase(Phase.SCANNING, "")
-            val device = try {
-                Scanner(adapter, throttle, log).scan(SCAN_WINDOW_MS)
+            // A T5 is taken when its sync is due, or at once when its scan response says the
+            // outbox has entries (t5-pda-plan §3.4 step 6, §3.5); otherwise it is ignored.
+            val now = System.currentTimeMillis()
+            val pdaOn = settings.pdaEnabled
+            val pdaDue = pdaOn && pda.schedule.isDue(now)
+            val services = if (pdaOn) listOf(WatchGatt.SERVICE, PdaGatt.SERVICE) else listOf(WatchGatt.SERVICE)
+            val window = if (pdaOn && !pdaDue) {
+                pda.schedule.msUntilDue(now).coerceIn(5_000L, SCAN_WINDOW_MS)
+            } else SCAN_WINDOW_MS
+            val hit = try {
+                Scanner(adapter, throttle, log).scanFor(window, services) { h ->
+                    h.service != PdaGatt.SERVICE || pdaDue || PdaGatt.outboxWaiting(h.serviceData)
+                }
             } catch (e: Scanner.ScanFailed) {
                 log.log(Level.WARN, e.message ?: "scan failed")
                 RelayState.update { it.copy(lastError = e.message) }
                 delay(30_000)
                 null
             } ?: continue
+            if (hit.service == PdaGatt.SERVICE) {
+                delay(pda.sync(hit.device, url.base))
+                continue
+            }
+            val device = hit.device
 
             val uploader = HttpUploader(url.base, { settings.token() }, log)
             val outcome = connectAndDrain(device, uploader)

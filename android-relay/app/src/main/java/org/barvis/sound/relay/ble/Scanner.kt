@@ -16,6 +16,7 @@ import org.barvis.sound.relay.relay.Clock
 import org.barvis.sound.relay.relay.Level
 import org.barvis.sound.relay.relay.RelayLog
 import org.barvis.sound.relay.relay.ScanThrottle
+import java.util.UUID
 
 /**
  * Low-power filtered scan for the watch's service UUID. Each call runs one scan for at most
@@ -31,25 +32,44 @@ class Scanner(
 ) {
     class ScanFailed(val code: Int) : Exception("BLE scan failed (code $code)")
 
-    suspend fun scan(windowMs: Long): BluetoothDevice? {
+    /**
+     * A device that advertised one of the scanned services. [serviceData] is its Service Data
+     * for that UUID (the PDA's "outbox waiting" flags byte, plan §3.5), if any.
+     */
+    class Hit(val device: BluetoothDevice, val service: UUID, val serviceData: ByteArray?)
+
+    suspend fun scan(windowMs: Long): BluetoothDevice? = scanFor(windowMs, listOf(WatchGatt.SERVICE))?.device
+
+    /**
+     * Scans for any of [services] (the watch's and the PDA's, docs/t5-pda-plan.md §3.4
+     * step 1) and returns the first device [accept] takes, with the service it advertised.
+     */
+    suspend fun scanFor(windowMs: Long, services: List<UUID>, accept: (Hit) -> Boolean = { true }): Hit? {
         val wait = throttle.delayBeforeStartMs(clock.nowMs())
         if (wait > 0) delay(wait)
         val scanner = adapter.bluetoothLeScanner ?: return null // Bluetooth turned off
-        val found = CompletableDeferred<BluetoothDevice>()
+        val found = CompletableDeferred<Hit>()
+        fun hit(r: ScanResult): Hit {
+            val advertised = r.scanRecord?.serviceUuids?.map { it.uuid }.orEmpty()
+            val service = services.firstOrNull { it in advertised } ?: services.first()
+            return Hit(r.device, service, r.scanRecord?.getServiceData(ParcelUuid(service)))
+        }
+        fun offer(r: ScanResult) {
+            val h = hit(r)
+            if (accept(h)) found.complete(h)
+        }
         val cb = object : ScanCallback() {
-            override fun onScanResult(callbackType: Int, result: ScanResult) {
-                found.complete(result.device)
-            }
+            override fun onScanResult(callbackType: Int, result: ScanResult) = offer(result)
 
             override fun onBatchScanResults(results: MutableList<ScanResult>) {
-                results.firstOrNull()?.let { found.complete(it.device) }
+                results.forEach { offer(it) }
             }
 
             override fun onScanFailed(errorCode: Int) {
                 found.completeExceptionally(ScanFailed(errorCode))
             }
         }
-        val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(WatchGatt.SERVICE)).build())
+        val filters = services.map { ScanFilter.Builder().setServiceUuid(ParcelUuid(it)).build() }
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)

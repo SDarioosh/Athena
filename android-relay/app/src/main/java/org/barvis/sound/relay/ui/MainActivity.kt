@@ -30,6 +30,7 @@ class MainActivity : Activity() {
 
     private lateinit var phase: TextView
     private lateinit var watch: TextView
+    private lateinit var pda: TextView
     private lateinit var counters: TextView
     private lateinit var lastError: TextView
     private lateinit var logView: TextView
@@ -43,6 +44,7 @@ class MainActivity : Activity() {
         settings = Settings(this)
         phase = findViewById(R.id.phase)
         watch = findViewById(R.id.watch)
+        pda = findViewById(R.id.pda)
         counters = findViewById(R.id.counters)
         lastError = findViewById(R.id.last_error)
         logView = findViewById(R.id.log)
@@ -145,11 +147,28 @@ class MainActivity : Activity() {
             if (s.statusAtMs > 0) w.append("as of ${fmt(s.statusAtMs)}")
         }
         watch.text = if (w.isEmpty()) getString(R.string.no_watch_yet) else w.toString().trimEnd()
+        pda.text = pdaText(s)
 
         val last = settings.lastSyncMs
         counters.text = getString(R.string.counters, s.uploadedThisRun, settings.totalUploaded,
             if (last > 0) fmt(last) else getString(R.string.never))
         lastError.text = s.lastError ?: getString(R.string.none)
+    }
+
+    /** One line for the T5 PDA (docs/t5-pda-plan.md), plus its battery and outbox when known. */
+    private fun pdaText(s: RelaySnapshot): String {
+        if (!settings.pdaEnabled) return getString(R.string.pda_off)
+        val lines = ArrayList<String>()
+        s.pdaInfo?.let { lines += "${it.device ?: "?"} · firmware ${it.fw ?: "?"}" }
+        s.pdaStatus?.let { st ->
+            val battery = if (st.batteryPercent >= 0) "${st.batteryPercent} %" else "unknown"
+            lines += "Battery $battery${if (st.charging) " (charging)" else ""} · outbox ${st.outboxWaiting}"
+        }
+        lines += s.pdaLine.ifEmpty {
+            val last = settings.lastPdaSyncMs
+            if (last > 0) getString(R.string.pda_last_sync, fmt(last)) else getString(R.string.pda_not_seen)
+        }
+        return lines.joinToString("\n")
     }
 
     private fun fmt(ms: Long): String = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(ms))

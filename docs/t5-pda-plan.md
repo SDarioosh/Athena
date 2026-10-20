@@ -287,7 +287,8 @@ these points where the text above left a choice. The firmware and the phone foll
 - **`PUT_DATA`** carries min(MTU − 3, 512) − 5 bytes, so a frame is never longer than the
   512-byte limit on an attribute value. Android refuses longer writes, and BlueZ and
   Windows may too. That is 507 bytes at MTU 517 and 412 at MTU 420. If the OS doesn't
-  report the MTU, 420 is assumed. The T5 accepts frames of up to 512 bytes.
+  report the MTU, 420 is assumed. The T5 accepts frames of up to 512 bytes, and a `data`
+  notification is at most 512 bytes.
   On `ERROR bad_crc` at `PUT_END` the relay sends the blob again, 3 times in all.
 - **Stay connected:** the relay waits for `status` notifications and also reads `status`
   every 30 s. It refreshes the feed every 5 min, and sends `BYE` once bit4 (user active)
@@ -377,8 +378,16 @@ The phone builds it from these sources:
  "conversations": [{"id": "c_…", "title": "…", "at": "…", "people": ["…"],
                     "summary": "…", "points": ["…"]}],
  "actions": [{"id": 42, "text": "…", "owner": "…", "due": "2026-10-23", "conv": "c_…"}],
- "calendar": [{"id": "…", "title": "…", "start": "…", "end": "…", "where": "…", "all_day": false}]}
+ "calendar": [{"id": "…", "title": "…", "start": "…", "end": "…", "where": "…", "all_day": false}],
+ "templates": ["Call", "Meeting", "Reminder"]}
 ```
+
+- **Optional `templates`** (the Android relay only): up to 12 event titles the owner set in
+  the phone app, for the T5's "+" picker (§5). The PC relay doesn't send it; the firmware
+  must not require it and falls back to built-in titles. Readers ignore unknown keys.
+- The Android relay builds the feed, actions and details exactly as the PC relay does
+  (§3.5, the next bullet and §4.3). Calendar times from Odysseus are sent in UTC with `Z`
+  like the conversations' `at`, and all-day events as dates.
 
 - Keep it under 32 KB. If it is too big, the phone cuts summaries first, then drops the oldest
   conversations.
@@ -418,8 +427,8 @@ Each action is one JSON object of 400 bytes at most, with `"t"` saying the type:
 | `t` | Fields | Phone calls |
 |---|---|---|
 | `item_status` | `id`, `status` (`done`/`dismissed`/`open`) | `PATCH /v1/action-items/{id}` (exists) |
-| `cal_add` | `title`, `start`, `end` or `all_day`, optional `from_item` | Odysseus calendar create (to confirm, §6) |
-| `cal_delete` | `id` | Odysseus calendar delete (v2) |
+| `cal_add` | `title`, `start`, `end` or `all_day`, optional `from_item` | `POST /api/codex/calendar/events` (§6) |
+| `cal_delete` | `id` | `DELETE /api/codex/calendar/events/{id}` (§6; v2 on the T5) |
 | `fetch` | `ref`: `conv:<id>`, `transcript:<id>`, or `transcript:<id>@<from>-<to>` | `GET /v1/conversations/{id}` or `/transcript`, then `PUT` a detail blob |
 | `digest_refresh` | `date` | `POST /v1/digests/{date}` (exists), then a new feed |
 
@@ -505,17 +514,72 @@ a 3 × 4 grid of hour slots and the durations.
   - a settings section: Odysseus URL and token, event templates, sync interval
 - **odysseus-sound server:** no change in v1. Optional later: `GET /v1/glance` that returns
   the four odysseus-sound sections in one call, so the phone makes 1 request instead of 4.
-- **Odysseus (hub repo):** confirm in `SDarioosh/Barvis`. Per
-  [frontend-decision.md](frontend-decision.md) §8, it has calendar REST endpoints
-  (`routes/codex_routes.py`), CalDAV write-back and scoped REST tokens. Check:
-  1. the list endpoint for a date range, and the create and delete endpoints with their
-     fields
-  2. a token scoped to calendar only (read + write), not a full admin token
-  3. that a create through REST is written back to CalDAV like a create in the UI
-  4. that the endpoints are reachable on the Tailscale address the phone already uses
+- **Odysseus (hub repo):** checked in `SDarioosh/Barvis` on 2026-10-20 (branch `barvis`,
+  commit `5cc32c5`; read only, no code run). File:line references are to that commit.
+  1. **Endpoints.** Use the token-aware `/api/codex/calendar/…` routes. They wrap the UI's
+     `/api/calendar/…` handlers. The plain `/api/calendar/*` routes reject every API token
+     with 403 "API tokens must use a scope-aware API route" (`src/auth_helpers.py:153-154`).
+     - **List:** `GET /api/codex/calendar/events?start=<ISO>&end=<ISO>[&calendar=<id or name>]`
+       (`routes/codex_routes.py:431-436` → `routes/calendar_routes.py:1276-1340`). It
+       returns `{"events": [...], "truncated"?: true}`, sorted by start, with recurring
+       events expanded into occurrences whose `uid` is `<base>::<occurrence>`. Each event
+       has `uid`, `summary`, `dtstart`, `dtend`, `all_day`, `is_utc`, `location`,
+       `description`, `calendar`, `calendar_href`, … (`_event_to_dict`,
+       `calendar_routes.py:752-799`). All-day events are `YYYY-MM-DD` with an exclusive
+       end. Timed events end in `Z` when stored as UTC; legacy rows are naive server-local
+       time. An unparseable range returns `{"events": []}`, not an error.
+     - **Create:** `POST /api/codex/calendar/events` with a JSON body matching `EventCreate`
+       (`codex_routes.py:438-450`, model `calendar_routes.py:200-210`): `summary`
+       (required), `dtstart` (required, ISO), `dtend`, `all_day`, `description`,
+       `location`, `calendar_href` (calendar id), `rrule`, `color`, `reminder_minutes`.
+       An ISO time with an offset is stored as UTC (`_parse_dt_pair`, `:469-490`); a
+       naive one is taken as server-local, so the phone always sends an offset. Without
+       `dtend` an event lasts 1 h, or 1 day if all-day. It answers
+       `{"ok": true, "uid": …, "event": {…}, "reminder": …}`, or 400 for an invalid
+       body. **Create is not idempotent**: every POST makes a new `uid`
+       (`calendar_routes.py:1361`), so the phone's dedupe by `action_id` (§4.2) is needed.
+     - **Delete:** `DELETE /api/codex/calendar/events/{uid}` (`codex_routes.py:499-504` →
+       `calendar_routes.py:1487-1530`). It returns `{"ok": true}`, and 404 if the event is
+       gone. It deletes the whole series. The codex wrapper doesn't pass `scope`, so a
+       single occurrence can't be deleted through a token.
+     - There is **no update** route and **no list-calendars** route under `/api/codex`.
+       `GET /api/calendar/calendars` (`calendar_routes.py:1253`) is cookie-only.
+  2. **Scoped token: yes.** `calendar:read` and `calendar:write` are allowed scopes
+     (`routes/api_token_routes.py:14-30`), and `calendar:write` adds `calendar:read`
+     (`:68`). An admin creates the token in Settings → API tokens (checkboxes at
+     `static/js/settings.js:4842`) or with `POST /api/tokens` and
+     `scopes=calendar:read,calendar:write` (`api_token_routes.py:115-152`). The token is
+     `ody_…`, shown once, and owned by the admin who made it. The codex calendar routes
+     check the scope and act as that owner (`codex_routes.py:85-96`, `_as_owner` `:59-82`).
+     No other surface is reachable with it.
+  3. **CalDAV write-back: yes, but only into a CalDAV calendar.** The codex create calls the
+     same handler as the UI. That handler pushes to CalDAV after the commit only when the
+     target calendar's `source == "caldav"` (`calendar_routes.py:1388,1396-1397`). A failed
+     push is logged and marked `caldav_sync_pending` (`:151-178`). The answer is still
+     `ok`, and the next `/sync` retries it (`src/caldav_sync.py:566`). Without
+     `calendar_href`, the event goes to the owner's *first* calendar row, which is
+     unordered and may be a local calendar (`_ensure_default_calendar`, `:269-281`). So the
+     phone sends the CalDAV calendar's id as `calendar_href`; the owner sets it in the
+     relay settings, because a token can't list calendars. Delete pushes too, and records a
+     tombstone (`:1515-1522`).
+  4. **How it's reached.** Only the header `Authorization: Bearer ody_…`
+     (`app.py:419-466`). There is **no `?access_token=`** form for these tokens, unlike our
+     MCP server. The app listens on `APP_BIND`:`APP_PORT` (default `127.0.0.1:7011`,
+     `app.py:1439-1442`). Production is port 7000 with `APP_BIND=0.0.0.0`
+     ([hub deploy.md:203](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/deploy.md)),
+     so the phone uses `http://<server's Tailscale name or 100.x address>:7000`, the same
+     host as odysseus-sound on another port. If the owner turned auth off
+     (`AUTH_ENABLED=false`), the middleware isn't installed (`app.py:266`), and the routes
+     run as `ODYSSEUS_FALLBACK_OWNER` whatever token is sent.
 
-  If anything is missing, the fix goes in a hub PR, not here (AGENTS.md "Where work
-  belongs").
+  Hub changes worth proposing (not needed for v1; they go in a hub PR, not here, per
+  AGENTS.md "Where work belongs"):
+  - `GET /api/codex/calendar/calendars` (`calendar:read`), so the phone can offer the
+    CalDAV calendar in a picker instead of the owner pasting its id.
+  - An idempotency key on create (for example `Idempotency-Key`, or a client `uid`), so a
+    retry after a lost answer can't create a second event even when the phone loses its
+    dedupe table.
+  - Optional: `scope=occurrence` on the codex delete, and a codex `PUT` for updates (v2).
 
 ## 7. Privacy and security
 
@@ -563,8 +627,8 @@ fictional data. It hasn't run against the T5 yet.
 
 - **Watch and PDA on one phone:** two bonded peripherals and two jobs on the Android BLE
   stack. Keep them one at a time in v1, and test both together early (milestone 4).
-- **Odysseus calendar REST** may not have the fields or the scoped token assumed here (§6).
-  It is unverified until the hub repo is checked.
+- **Odysseus calendar REST** exists with a scoped token (§6). Events written into a
+  non-CalDAV calendar are not written back, so the relay needs the CalDAV calendar id.
 - **The epdiy setup on this board** (power IC, pinout) may need work if LilyGO's examples
   use a different driver fork. That is found out in milestone 0.
 - **Ghosting and refresh time** may make lists feel slow. Fewer partial refreshes and a
