@@ -26,8 +26,11 @@ from .store import Store
 INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
 with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
 for any question about what someone said, decided, promised or mentioned, and before \
-answering from memory. Ground every claim in tool results and include the link given \
-with it. Dates are in the user's timezone; pass dates as YYYY-MM-DD.
+answering from memory. Questions about the user's plans, appointments and the people they \
+know ("What is Jonas allergic to?") are answered from these recordings too: search \
+(list_facts, search_transcripts) before saying you don't know, and search instead of offering \
+to. Ground every claim in tool results and include the link given with it. Dates are in the \
+user's timezone; pass dates as YYYY-MM-DD.
 
 Naming speakers: when the user says who an unnamed speaker was ("Speaker 2 was Jenn", \
 "Speaker 1 and Speaker 3 were both Sam"), that is a request to save the name, not a claim \
