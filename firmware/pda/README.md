@@ -143,8 +143,10 @@ python tools/pda_serial.py -p COM36 fb today.png
 
 ## Not verified yet
 
-- The panel's look was checked through framebuffer dumps; the owner's eyes on the real
-  panel (contrast, ghosting after a day of partial updates) are still to come.
+- The PDA screens' look on the real panel: the owner saw the bring-up screen (title, 16-step
+  grey ramp, touch targets) and reported no ghosting, missing text or orientation problem;
+  the PDA screens themselves were checked through framebuffer dumps. Ghosting after a day
+  of partial updates is untested.
 - Pairing being refused outside the window, re-pairing, and `ERROR mtu_too_small` (host
   tests only; Windows always negotiates 517).
 - The sibling relays against this firmware: the PC relay's `pda` subcommand and the

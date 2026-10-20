@@ -58,7 +58,7 @@ against LilyGO's `docs/pinmap.md` and examples (github.com/Xinyuan-LilyGO/T5S3-4
 | Part | Confirmed | Use |
 |---|---|---|
 | ESP32-S3R8 (QFN56, rev 0.2), 16 MB QIO flash, 8 MB **octal** PSRAM | esptool `flash_id`, boot log | firmware; epdiy's framebuffers (3 × 260 KB) in PSRAM; code and rodata run from PSRAM too (`CONFIG_SPIRAM_XIP_FROM_PSRAM`, §2) |
-| 4.7" ED047TC1, 960×540, 16 greys, 8-bit parallel bus; TPS65185 power IC (0x68) | drawn and timed | epdiy 2.1.3 board **`epd_board_v7`** works unchanged; VCOM 1560 mV (LilyGO's default) |
+| 4.7" ED047TC1, 960×540, 16 greys, 8-bit parallel bus; TPS65185 power IC (0x68) | drawn and timed; the owner saw all 16 grey steps and clean text | epdiy 2.1.3 board **`epd_board_v7`** works unchanged; VCOM 1560 mV (LilyGO's default) |
 | PCA9535 I/O expander (0x20, INT GPIO38) | read back | port 1: e-paper control (epdiy); IO1_2 the side button (epdiy makes it an output, the firmware sets it back to input); IO0_0 the LoRa/GPS rail enable, held off |
 | GT911 touch (0x5D, INT GPIO3, RST GPIO9) | taps on four corner targets | its raw frame is portrait (540 × 960): swap X/Y and flip Y for the landscape screen |
 | PCF8563 RTC (0x51, INT GPIO2), coin cell holder | kept the time over reboots | wall clock between phone connections |
