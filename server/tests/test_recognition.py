@@ -34,6 +34,7 @@ def test_whisper_server_gets_prompt_and_temperature_fallback():
     body = seen[0]
     assert b'name="prompt"\r\n\r\nJenn, Shahyah.' in body
     assert b'name="temperature_inc"\r\n\r\n0.3' in body
+    assert _fields(body)["suppress_non_speech"] == "true"  # default: measured best
     t.transcribe(tone(300, 1))
     assert b'name="prompt"' not in seen[1]
 

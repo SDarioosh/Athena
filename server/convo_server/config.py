@@ -54,7 +54,9 @@ class Settings(BaseSettings):
     whisper_no_speech_thold: float = 0.6
     whisper_logprob_thold: float = -1.0
     whisper_entropy_thold: float = 2.4
-    whisper_suppress_non_speech: bool = False
+    # Suppress non-speech tokens ([LAUGHTER], music notes, "(muffled speaking)"); fewer
+    # dropped words on far-field audio in the recognition eval.
+    whisper_suppress_non_speech: bool = True
     # Keep the prompt for every 30 s window of a long clip, not just the first one.
     whisper_carry_initial_prompt: bool = False
 

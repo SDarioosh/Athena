@@ -66,7 +66,7 @@ class DecodeOptions:
     no_speech_thold: float = 0.6
     logprob_thold: float = -1.0
     entropy_thold: float = 2.4
-    suppress_non_speech: bool = False
+    suppress_non_speech: bool = True
     carry_initial_prompt: bool = False
 
     def form_fields(self) -> dict[str, str]:
