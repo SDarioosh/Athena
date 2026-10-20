@@ -314,3 +314,34 @@ class FakeCalendar(private val timeline: Timeline = Timeline()) : CalendarApi {
         return if (events.removeIf { it.id == uid }) ApiResult.Ok(Unit) else ApiResult.Fail(ServerResult.Rejected(404, "Event not found"))
     }
 }
+
+/** Fictional Odysseus checklists (plan §4.4). */
+class FakeTodos(private val timeline: Timeline = Timeline()) : TodosApi {
+    val notes = mutableListOf(
+        TodoNote("n1", "Groceries", "checklist", true, "2026-10-24T00:00:00",
+            listOf(TodoItem("Milk", false), TodoItem("Bread", true), TodoItem("Eggs  (free range)", false))),
+        TodoNote("n2", "", "checklist", false, null, listOf(TodoItem("Call the plumber", false))),
+        TodoNote("n3", "Ideas", "note", false, null, emptyList()),
+        TodoNote("n4", "Empty list", "checklist", false, null, emptyList()),
+    )
+    var notesAnswer: ApiResult<List<TodoNote>>? = null
+    /** Answer for every toggle; null = exit_code 0 and the item changes. */
+    var toggleAnswer: ApiResult<Boolean>? = null
+    val toggles = mutableListOf<Triple<String, Int, Boolean>>()
+    var reads = 0
+
+    override suspend fun notes(): ApiResult<List<TodoNote>> {
+        reads++
+        timeline.add("odysseus:todos")
+        return notesAnswer ?: ApiResult.Ok(notes.toList())
+    }
+
+    override suspend fun toggle(noteId: String, index: Int, done: Boolean): ApiResult<Boolean> {
+        timeline.add("odysseus:toggle $noteId/$index=$done")
+        toggleAnswer?.let { return it }
+        toggles += Triple(noteId, index, done)
+        val k = notes.indexOfFirst { it.id == noteId }
+        notes[k] = notes[k].copy(items = notes[k].items.toMutableList().also { it[index] = it[index].copy(done = done) })
+        return ApiResult.Ok(true)
+    }
+}
