@@ -412,7 +412,8 @@ deploy_odysseus() {
   [ -x "$script" ] || die "no scripts/fork_deploy.sh in $dir (BARVIS_SOUND_ODYSSEUS_DIR); odysseus-sound itself is deployed"
   log "updating Odysseus in $dir"
   # Empty module lists: this script just deployed the module, don't run it again.
-  FORK_MODULES="" BARVIS_MODULES="" FORK_DEPLOY_RUNNING=1 "$script" deploy \
+  # Run from the checkout: the first barvis_deploy.sh only works from there.
+  (cd "$dir" && FORK_MODULES="" BARVIS_MODULES="" FORK_DEPLOY_RUNNING=1 "$script" deploy) \
     || die "Odysseus deploy failed (see above); odysseus-sound itself is deployed"
 }
 

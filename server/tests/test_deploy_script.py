@@ -129,3 +129,14 @@ def test_odysseus_skipped_under_a_hub_script_without_the_marker(tmp_path):
                        env={**env, "BARVIS_SOUND_ODYSSEUS_DIR": str(hub)})
     assert r.returncode == 0, r.stderr
     assert not calls.exists()
+
+
+def test_odysseus_deploy_runs_from_the_odysseus_checkout(tmp_path):
+    # the first barvis_deploy.sh needs docker-compose.yml in the working directory
+    hub, calls = fake_hub(tmp_path, "barvis_deploy.sh")
+    (hub / "scripts" / "barvis_deploy.sh").write_text(
+        f'#!/usr/bin/env bash\n[ -f docker-compose.yml ] || exit 7\npwd >> {calls}\n')
+    (hub / "docker-compose.yml").write_text("services: {}\n")
+    r = run("odysseus", BARVIS_SOUND_ODYSSEUS_DIR=str(hub))
+    assert r.returncode == 0, r.stderr
+    assert calls.read_text().strip() == str(hub)
