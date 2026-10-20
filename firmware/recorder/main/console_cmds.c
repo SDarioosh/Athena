@@ -16,6 +16,10 @@
 #include "chunk_store.h"
 #include "esp_check.h"
 #include "esp_console.h"
+#include "esp_core_dump.h"
+#include "esp_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_rom_crc.h"
 #include "esp_system.h"
@@ -307,6 +311,84 @@ static int cmd_get(int argc, char **argv)
     return ok ? 0 : 1;
 }
 
+/* `coredump [get|erase]`: the crash saved in the coredump partition. Without an argument,
+ * a summary (task, PC, cause, backtrace); `get` sends the ELF over USB in `get`'s framing
+ * (tools/pull.py --coredump saves it; decode with `idf.py coredump-info -c <file>`); `erase`
+ * deletes it. The ELF holds task stacks, which can include a few ms of mic samples: keep the
+ * file outside the repository and delete it after use. */
+static int cmd_coredump(int argc, char **argv)
+{
+    if (argc >= 2 && strcmp(argv[1], "erase") == 0) {
+        const esp_err_t err = esp_core_dump_image_erase();
+        printf("core dump erase: %s\n", esp_err_to_name(err));
+        return err == ESP_OK ? 0 : 1;
+    }
+    const esp_err_t check = esp_core_dump_image_check();
+    if (check != ESP_OK) {
+        printf("no core dump saved (%s)\n", esp_err_to_name(check));
+        return 0;
+    }
+    size_t addr = 0, size = 0;
+    if (esp_core_dump_image_get(&addr, &size) != ESP_OK) {
+        printf("core dump: can't locate it\n");
+        return 1;
+    }
+    if (argc >= 2 && strcmp(argv[1], "get") == 0) {
+        printf("@@BEGIN coredump.elf %u\n", (unsigned)size);
+        static uint8_t buf[57 * 16];
+        char line[80];
+        uint32_t crc = 0;
+        bool ok = true;
+        for (size_t off = 0; off < size; off += sizeof(buf)) {
+            const size_t n = size - off < sizeof(buf) ? size - off : sizeof(buf);
+            if (esp_flash_read(NULL, buf, addr + off, n) != ESP_OK) {
+                ok = false;
+                break;
+            }
+            crc = esp_rom_crc32_le(crc, buf, n);
+            for (size_t i = 0; i < n; i += 57) {
+                base64_line(buf + i, n - i < 57 ? n - i : 57, line);
+                printf("%s\n", line);
+            }
+        }
+        printf("@@END %08" PRIx32 "%s\n", crc, ok ? "" : " READ_ERROR");
+        return ok ? 0 : 1;
+    }
+    if (argc >= 2) {
+        printf("usage: coredump [get|erase]\n");
+        return 1;
+    }
+    static esp_core_dump_summary_t sum; /* ~400 bytes: not on the console task's stack */
+    const esp_err_t err = esp_core_dump_get_summary(&sum);
+    printf("core dump: %u bytes at 0x%x\n", (unsigned)size, (unsigned)addr);
+    if (err != ESP_OK) {
+        printf("summary: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+    printf("task: %s\nPC: 0x%08" PRIx32 "\ncause: %" PRIu32 " (Xtensa EXCCAUSE), vaddr 0x%08" PRIx32
+           "\nbacktrace:", sum.exc_task, sum.exc_pc, sum.ex_info.exc_cause,
+           sum.ex_info.exc_vaddr);
+    for (uint32_t i = 0; i < sum.exc_bt_info.depth; i++) {
+        printf(" 0x%08" PRIx32, sum.exc_bt_info.bt[i]);
+    }
+    printf("%s\n", sum.exc_bt_info.corrupted ? " (corrupted)" : "");
+    printf("decode: tools/pull.py --coredump, then idf.py coredump-info -c <file>\n");
+    return 0;
+}
+
+/* `crash yes`: crash on purpose (abort) to test the core dump and the reset reason. */
+static int cmd_crash(int argc, char **argv)
+{
+    if (argc != 2 || strcmp(argv[1], "yes") != 0) {
+        printf("usage: crash yes  (aborts; the watch saves a core dump and restarts)\n");
+        return 1;
+    }
+    printf("crashing on purpose\n");
+    fflush(stdout);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    abort();
+}
+
 /* `gain [dB]`: show or set the mic gain (saved in NVS, used from the next recording). */
 static int cmd_gain(int argc, char **argv)
 {
@@ -511,6 +593,8 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "get", .help = "Send a card file (or q/<chunk>) over USB as base64 (tools/pull.py saves it)", .func = cmd_get},
     {.command = "sd", .help = "Power, mount and report the SD card, then power it off; `sd failwrite <n>` makes the next n chunk writes fail (test)", .func = cmd_sd},
     {.command = "reboot", .help = "Restart", .func = cmd_reboot},
+    {.command = "coredump", .help = "The last crash: summary; `coredump get` sends the ELF (tools/pull.py --coredump), `coredump erase`", .func = cmd_coredump},
+    {.command = "crash", .help = "`crash yes`: crash on purpose (test the core dump)", .func = cmd_crash},
 };
 
 esp_err_t console_start(void)

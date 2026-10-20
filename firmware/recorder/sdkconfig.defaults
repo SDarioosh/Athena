@@ -72,5 +72,14 @@ CONFIG_FATFS_LFN_HEAP=y
 # Watchdog: keep the task watchdog on the main loop
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 
+# Core dump of a crash to the `coredump` partition (console `coredump`, tools/pull.py
+# --coredump; decode with `idf.py coredump-info -c <file>`). ELF: task stacks and TCBs only.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_SHA256=y
+CONFIG_ESP_COREDUMP_CHECK_BOOT=y
+# Its own debug logs: noisy on the console, and ~5 KB of DRAM.
+CONFIG_ESP_COREDUMP_LOGS=n
+
 # C library: keep printf small but with 64-bit support for the SD size
 CONFIG_NEWLIB_NANO_FORMAT=n
