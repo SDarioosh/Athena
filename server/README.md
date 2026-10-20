@@ -81,7 +81,8 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
 ## Deploy: one command, runs in the background
 
 ```bash
-server/scripts/deploy.sh deploy     # update to origin/main, install, restart, check
+server/scripts/deploy.sh deploy     # update to origin/main, install, restart, check; then Odysseus
+server/scripts/deploy.sh odysseus   # only update Odysseus
 server/scripts/deploy.sh status     # what runs and whether it answers
 server/scripts/deploy.sh logs mcp   # serve | mcp | whisper; add -f to follow
 server/scripts/deploy.sh stop       # start | restart | stop
@@ -107,12 +108,17 @@ It works from any directory and needs no sudo. `deploy`:
    session interrupted by the restart is processed again.
 4. Waits until each answers (`/health`, `/mcp`, the whisper URL). If the new commit
    doesn't come up, it checks out the previous one and restarts that.
+5. Updates Odysseus: runs `scripts/fork_deploy.sh deploy` in the Odysseus checkout, which
+   rebuilds and restarts Odysseus (without running this script again). The checkout is
+   found from the running Odysseus container (`sudo docker ps`, so it may ask for your
+   password), or set `BARVIS_SOUND_ODYSSEUS_DIR=/path/to/odysseus` in `server/.env`;
+   `off` skips this step. If no Odysseus is found, it says so and stops there.
 
 Everything is read from `server/.env` (settings: bottom of `.env.example`). Without
 systemd it starts background processes instead (pid files and logs in
 `data/run/`, `data/logs/`). It stops with an error if a port is already taken, e.g. by a
-`serve` you started by hand: stop that first. On the server, the hub's
-`scripts/fork_deploy.sh deploy` runs this script before it rebuilds Odysseus
+`serve` you started by hand: stop that first. The hub's `scripts/fork_deploy.sh deploy`
+also runs this script before it rebuilds Odysseus, so either command updates both
 ([hub docs/fork/deploy.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/deploy.md)).
 
 ## Run by hand
