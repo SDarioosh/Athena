@@ -17,6 +17,7 @@ URL, and redirects are not followed (urllib would forward the header to the new 
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import urllib.error
@@ -104,7 +105,9 @@ class Uploader:
             detail = _detail(e)
             raise UploadError(classify(e.code), f"{method} {path}: HTTP {e.code} {detail}",
                               e.code) from None
-        except (urllib.error.URLError, OSError, ValueError) as e:
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+            # HTTPException: a cut-short body (IncompleteRead) or a non-HTTP answer
+            # (BadStatusLine) is not an OSError; it must not escape Relay.run.
             reason = getattr(e, "reason", e)
             raise UploadError(RETRY, f"{method} {path}: {type(e).__name__}: {reason}") from None
         if status != 200:

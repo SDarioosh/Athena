@@ -13,6 +13,10 @@ are skipped.
 `--queue` copies the Ogg/Opus chunks waiting for the phone (`/sdcard/q`) instead of the WAV
 test recordings, for debugging without BLE. They stay queued on the watch.
 
+`--coredump` saves the last crash's core dump (console `coredump get`) as
+`coredump-<time>.elf`; decode it with `idf.py coredump-info -c <file>` in firmware/recorder.
+It holds task stacks, which can include a few ms of mic samples: delete it after use.
+
 Keep the output folder outside the repository: recordings must never be committed.
 Needs pyserial (it comes with ESP-IDF's Python environment).
 """
@@ -34,12 +38,12 @@ B64_LINE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
 
 
 def open_port(port: str) -> serial.Serial:
-    # Keep DTR/RTS low: on the ESP32-S3 USB Serial/JTAG, toggling them resets the chip.
-    s = serial.Serial(None, 115200, timeout=0.5)
-    s.port = port
-    s.dtr = False
+    # The ESP32-S3 USB Serial/JTAG resets the chip when RTS is high while DTR is low. The OS
+    # raises both on open (macOS and Linux), and lowering DTR first would reset the watch,
+    # so open as the OS sets them, then lower RTS before DTR (same as wcon.py).
+    s = serial.Serial(port, 115200, timeout=0.5)
     s.rts = False
-    s.open()
+    s.dtr = False
     return s
 
 
@@ -73,8 +77,9 @@ def list_card(s: serial.Serial, queue: bool = False) -> dict[str, int]:
     return {m.group(2): int(m.group(1)) for m in map(LS_LINE.match, lines) if m}
 
 
-def get_file(s: serial.Serial, name: str) -> bytes:
-    lines = command(s, f"get {name}", re.compile(r"^@@END|^no such file|^usage|^mount failed|^recording in progress"), 15)
+def get_file(s: serial.Serial, name: str, cmd: str | None = None) -> bytes:
+    done = re.compile(r"^@@END|^no such file|^usage|^mount failed|^recording in progress|^no core dump")
+    lines = command(s, cmd or f"get {name}", done, 15)
     begin = next((i for i, l in enumerate(lines) if l.startswith("@@BEGIN ")), None)
     if begin is None:
         raise RuntimeError(f"{name}: no @@BEGIN (device said: {' | '.join(lines[-3:])})")
@@ -99,12 +104,25 @@ def main() -> int:
     ap.add_argument("--out", required=True, type=Path, help="folder to save into (outside the repo)")
     ap.add_argument("--queue", action="store_true",
                     help="copy the queued Opus chunks (q/*.opus) instead of the WAV files")
+    ap.add_argument("--coredump", action="store_true",
+                    help="save the last crash's core dump (coredump-<time>.elf) instead")
     ap.add_argument("files", nargs="*", help="file names (default: every .wav on the card)")
     args = ap.parse_args()
 
     out: Path = args.out.expanduser()
     out.mkdir(parents=True, exist_ok=True)
     with open_port(args.port) as s:
+        if args.coredump:
+            try:
+                data = get_file(s, "coredump.elf", "coredump get")
+            except (RuntimeError, TimeoutError) as e:
+                print(f"FAIL  {e}", file=sys.stderr)
+                return 1
+            dest = out / time.strftime("coredump-%Y%m%dT%H%M%S.elf")
+            dest.write_bytes(data)
+            print(f"ok    core dump: {len(data)} bytes -> {dest}")
+            print(f"      decode: cd firmware/recorder && idf.py coredump-info -c {dest}")
+            return 0
         on_card = list_card(s, args.queue)
         ext = ".opus" if args.queue else ".wav"
         names = args.files or sorted(n for n in on_card if n.lower().endswith(ext))

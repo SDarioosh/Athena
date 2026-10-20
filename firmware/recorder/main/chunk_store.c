@@ -232,6 +232,36 @@ bool chunk_store_get(uint32_t chunk_id, chunk_info_t *out)
     return found;
 }
 
+esp_err_t chunk_store_append_file(const char *name, const char *header, const void *data,
+                                  size_t len)
+{
+    lock();
+    const char *mp = NULL;
+    esp_err_t err = board_storage_mount(&mp);
+    if (err == ESP_OK) {
+        s_media_users++;
+        char path[64];
+        snprintf(path, sizeof(path), "%s/%s", mp, name);
+        FILE *f = fopen(path, "a");
+        if (!f) {
+            err = ESP_FAIL;
+        } else {
+            if (header && ftell(f) == 0) {
+                fputs(header, f);
+            }
+            if (fwrite(data, 1, len, f) != len) {
+                err = ESP_FAIL;
+            }
+            if (fclose(f) != 0) {
+                err = ESP_FAIL;
+            }
+        }
+        unmount_locked();
+    }
+    unlock();
+    return err;
+}
+
 esp_err_t chunk_store_media_open(void)
 {
     lock();
@@ -347,12 +377,13 @@ void chunk_store_print(void)
     cq_stats(&s_q, &st);
     printf("%" PRIu32 " chunks, %" PRIu64 " bytes, %" PRIu64 " s audio, next id %" PRIu32 "\n",
            st.chunks, st.bytes, st.audio_ms / 1000, s_q.next_id);
-    printf("id        session          seq    start_ms       dur_ms  bytes   crc32    flags\n");
+    /* Ids in decimal, as the relays and the BLE log print them and `queue drop` takes them. */
+    printf("id         session          seq    start_ms       dur_ms  bytes   crc32    flags\n");
     for (size_t i = 0; i < s_q.count; i++) {
         const cq_info_t *c = &s_q.items[i];
         char hex[17];
         cq_session_hex(c->session_id, hex);
-        printf("%08" PRIx32 "  %s %-6" PRIu32 " %-14" PRIu64 " %-7" PRIu32 " %-7" PRIu32 " %08" PRIx32
+        printf("%-10" PRIu32 " %s %-6" PRIu32 " %-14" PRIu64 " %-7" PRIu32 " %-7" PRIu32 " %08" PRIx32
                " %s%s%s\n",
                c->chunk_id, hex, c->sequence, c->start_ms, c->duration_ms, c->bytes, c->crc32,
                (c->flags & CQ_FLAG_LAST) ? "LAST " : "",
@@ -361,7 +392,7 @@ void chunk_store_print(void)
     }
     cq_info_t cur;
     if (cq_current(&s_q, &cur)) {
-        printf("recording: %08" PRIx32 " (seq %" PRIu32 ", %" PRIu32 " bytes so far)\n",
+        printf("recording: %" PRIu32 " (seq %" PRIu32 ", %" PRIu32 " bytes so far)\n",
                cur.chunk_id, cur.sequence, cur.bytes);
     }
     unlock();
@@ -388,10 +419,25 @@ esp_err_t chunk_store_begin(const chunk_store_new_t *c, uint32_t *chunk_id)
     return err;
 }
 
+static int s_fail_writes; /* test hook: chunk_store_fail_writes() */
+
+void chunk_store_fail_writes(int n)
+{
+    lock();
+    s_fail_writes = n;
+    unlock();
+}
+
 esp_err_t chunk_store_append(const void *data, size_t len)
 {
     lock();
-    const esp_err_t err = to_esp(cq_append(&s_q, data, len));
+    esp_err_t err;
+    if (s_fail_writes > 0) {
+        s_fail_writes--;
+        err = ESP_ERR_INVALID_RESPONSE; /* what sdspi returns on a garbled reply (0x108) */
+    } else {
+        err = to_esp(cq_append(&s_q, data, len));
+    }
     unlock();
     return err;
 }
@@ -413,10 +459,10 @@ esp_err_t chunk_store_end(uint32_t duration_ms, bool last)
     return err;
 }
 
-esp_err_t chunk_store_abandon(uint32_t *kept_id)
+esp_err_t chunk_store_abandon(bool last, uint32_t *kept_id)
 {
     lock();
-    const esp_err_t err = to_esp(cq_abandon(&s_q, kept_id));
+    const esp_err_t err = to_esp(cq_abandon(&s_q, last, kept_id));
     unlock();
     notify();
     return err;

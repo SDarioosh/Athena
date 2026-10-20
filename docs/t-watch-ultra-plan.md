@@ -149,7 +149,7 @@ Layout chosen by the owner on 2026-10-19:
 | BOOT double-click | **Toggle mute** (mic and encoder off). 2 buzzes = muted, 1 long buzz = unmuted |
 | BOOT hold ~1 s | Open the 2-minute BLE sync/pairing window (a stand-in until a touch UI exists) |
 | PWR short press | Start / stop a conversation recording session. 1 buzz = started, 2 buzzes = stopped |
-| PWR hold ~1 s | Start a **voice note**. A PWR press stops it; it stops by itself after 5 min. The AXP2101 long-press time is set to 1 s (register 0x27 bits[5:4]) |
+| PWR hold ~1 s | Start a **voice note**. A PWR press or another ~1 s hold stops it; it stops by itself after 5 min. The AXP2101 long-press time is set to 1 s (register 0x27 bits[5:4]) |
 | PWR hold ~6 s | Hardware power-off (AXP2101 power-off time, left as shipped) |
 | Raise to wake | **Not for now** (§10): the screen stays off until a button press. The BHI260AP gesture could add it later, after power is measured |
 
@@ -160,7 +160,7 @@ Layout chosen by the owner on 2026-10-19:
 
 **Voice notes.** A voice note is a short recording the owner starts on purpose, for
 example a reminder or an idea. It is its own session: a new session ID, 30 s chunks as
-usual, each chunk flagged `NOTE` (protocol §4.3). It stops on a PWR press or after 5 min
+usual, each chunk flagged `NOTE` (protocol §4.3). It stops on a PWR press or hold, or after 5 min
 (10 chunks). If a conversation session is recording, the watch ends it cleanly first,
 records the note, and then starts a new conversation session (unless muted meanwhile). The
 mic has one owner, so notes and conversations never mix. The server's gap rule joins the
@@ -349,7 +349,7 @@ building it, some of which change the XIAO plan's §3:
 - **Chunks go to the SD card directly**, no PSRAM queue yet; the card stays mounted while a
   session records. Milestone 2 measures what that costs; the PSRAM-first queue of §2.3 is
   still the plan if it matters.
-- **Opus**: libopus via `78/esp-opus`, 24 kbps (16 kbps measured ~7–9 WER points worse), complexity 1, `codec=ogg` uploads.
+- **Opus**: libopus via `78/esp-opus`, 24 kbps (16 kbps measured ~7–9 WER points worse in the recognition eval and 4–5 points for people 2–3 m away in the far-field eval, `docs/omi-audio-quality.md` §7), complexity 1, `codec=ogg` uploads.
 - **`device=twatch-ultra`**, without the `-<mac4>` suffix of §5, while there is one watch.
 - **Pairing**: passkey entry with LE Secure Connections (owner decision 2026-10-19): the
   watch shows a 6-digit code on the AMOLED, the phone or PC types it. New bonds only in a

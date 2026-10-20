@@ -130,37 +130,73 @@ def window(audio: np.ndarray, start: float, end: float,
 
 
 def cluster(embeddings: np.ndarray, threshold: float) -> list[int]:
-    """Average-linkage agglomerative clustering; returns a cluster id per row."""
+    """Average-linkage agglomerative clustering; returns a cluster id per row.
+
+    Keeps the sum of pairwise similarities between clusters, so a merge updates one row
+    and column instead of recomputing every pair (fast enough for thousands of pieces).
+    """
     n = len(embeddings)
     if n == 0:
         return []
     x = np.stack([_normalize(e) for e in embeddings])
-    sim = x @ x.T
-    clusters: list[list[int]] = [[i] for i in range(n)]
-    while len(clusters) > 1:
-        best, pair = -2.0, (0, 0)
-        for a in range(len(clusters)):
-            for b in range(a + 1, len(clusters)):
-                s = float(sim[np.ix_(clusters[a], clusters[b])].mean())
-                if s > best:
-                    best, pair = s, (a, b)
-        if best < threshold:
+    sums = (x @ x.T).astype(np.float64)  # sums[a, b]: total similarity of a's and b's rows
+    sizes = np.ones(n)
+    active = np.ones(n, dtype=bool)
+    members: list[list[int]] = [[i] for i in range(n)]
+    upper = np.triu(np.ones((n, n), dtype=bool), k=1)
+    while active.sum() > 1:
+        idx = np.flatnonzero(active)  # a cluster sits at its first member's row
+        k = idx.size
+        mean = sums[np.ix_(idx, idx)] / np.outer(sizes[idx], sizes[idx])
+        mean[~upper[:k, :k]] = -np.inf
+        i, j = divmod(int(np.argmax(mean)), k)  # first best pair, as the pairwise loop
+        if mean[i, j] < threshold:
             break
-        a, b = pair
-        clusters[a].extend(clusters.pop(b))
+        a, b = int(idx[i]), int(idx[j])
+        sums[a, :] += sums[b, :]
+        sums[:, a] += sums[:, b]
+        sizes[a] += sizes[b]
+        active[b] = False
+        members[a].extend(members[b])
     labels = [0] * n
     # number clusters by first appearance so labels are stable/readable
-    for cid, members in enumerate(sorted(clusters, key=min)):
-        for m in members:
+    for cid, a in enumerate(np.flatnonzero(active)):
+        for m in members[a]:
             labels[m] = cid
     return labels
+
+
+def absorb_singletons(embs: np.ndarray, cids: list[int], threshold: float) -> list[int]:
+    """Move one-piece clusters into the closest cluster of several pieces when they are at
+    least ``threshold`` similar to its centroid (0 = off).
+
+    A single noisy embedding (a short or overlapped piece) often ends up alone and becomes
+    an extra "Speaker N" with one line. Cluster ids are renumbered by first appearance.
+    """
+    if threshold <= 0 or len(cids) < 3:
+        return cids
+    members: dict[int, list[int]] = {}
+    for j, c in enumerate(cids):
+        members.setdefault(c, []).append(j)
+    big = [c for c, m in members.items() if len(m) > 1]
+    if not big:
+        return cids
+    cents = np.stack([_normalize(embs[members[c]].mean(axis=0)) for c in big])
+    out = list(cids)
+    for m in members.values():
+        if len(m) == 1:
+            sims = cents @ _normalize(embs[m[0]])
+            if float(sims.max()) >= threshold:
+                out[m[0]] = big[int(np.argmax(sims))]
+    order: dict[int, int] = {}
+    return [order.setdefault(c, len(order)) for c in out]
 
 
 class Diarizer:
     def __init__(self, embedder: SpeakerEmbedder, voices: list[EnrolledVoice],
                  match_threshold: float = 0.50, cluster_threshold: float = 0.45,
                  min_seconds: float = 1.0, owner_hint_margin: float = 0.10,
-                 owner_hint_db: float = 3.0) -> None:
+                 owner_hint_db: float = 3.0, absorb_threshold: float = 0.0) -> None:
         self.embedder = embedder
         self.voices = voices
         self.match_threshold = match_threshold
@@ -171,6 +207,7 @@ class Diarizer:
         # A margin of 0 turns the hint off.
         self.owner_hint_margin = owner_hint_margin
         self.owner_hint_db = owner_hint_db
+        self.absorb_threshold = absorb_threshold
 
     def diarize_runs(self, runs: list[np.ndarray], pieces: list[PieceRef]
                      ) -> tuple[list[SpeakerLabel], dict[str, np.ndarray]]:
@@ -212,7 +249,8 @@ class Diarizer:
                 (label,), unnamed = self.name_clusters([emb])
             return [label] * len(clips), unnamed
         embs = np.stack([self.embedder.embed(clips[i]) for i in idx])
-        cids = cluster(embs, self.cluster_threshold)
+        cids = absorb_singletons(embs, cluster(embs, self.cluster_threshold),
+                                 self.absorb_threshold)
         n = max(cids) + 1
         centroids = [_normalize(embs[[j for j, c in enumerate(cids) if c == cid]].mean(axis=0))
                      for cid in range(n)]

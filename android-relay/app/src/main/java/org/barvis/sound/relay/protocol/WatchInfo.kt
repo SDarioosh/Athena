@@ -6,6 +6,8 @@ data class WatchInfo(val values: Map<String, String>) {
     val device: String? get() = values["device"]?.trim()?.takeIf { it.isNotEmpty() }
     val fw: String? get() = values["fw"]
     val board: String? get() = values["board"]
+    /** Why the watch last restarted (§4.1 `reset=`), e.g. `poweron`, `panic`, `task_wdt`. */
+    val reset: String? get() = values["reset"]
 
     companion object {
         fun parse(text: String): WatchInfo = WatchInfo(

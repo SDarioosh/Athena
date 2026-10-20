@@ -205,3 +205,52 @@ def test_mcp_marks_voice_notes(pipeline):
     assert items.count("(voice note)") == 1
     lines = call(mcp, "search_transcripts", query="words")
     assert lines.count("(voice note)") == 1
+
+
+def test_mcp_filters_voice_notes(pipeline):
+    from test_mcp import call
+
+    from convo_server.mcp_server import build_mcp
+
+    record(pipeline, "c1", T0)
+    record(pipeline, "n1", T0 + 60, "note")
+    record(pipeline, "c2", T0 + 3600)  # the newest recording is not a note
+    mcp = build_mcp(pipeline.store, pipeline.settings)
+    note = conv_of(pipeline, "n1")
+
+    notes = call(mcp, "search_conversations", kind="note", limit=1)
+    assert notes.startswith("1 voice notes")
+    assert f"(voice note) id {note['id']}" in notes
+    # small models paraphrase the value
+    assert call(mcp, "search_conversations", kind="voice_note") == call(
+        mcp, "search_conversations", kind="note")
+    others = call(mcp, "search_conversations", kind="conversation")
+    assert others.startswith("2 conversations") and "(voice note)" not in others
+    assert call(mcp, "search_conversations").startswith("3 conversations")
+    # with a query the kind still filters
+    assert "(voice note)" not in call(mcp, "search_conversations", query="trip",
+                                      kind="conversation")
+    assert "(voice note)" in call(mcp, "search_conversations", query="trip", kind="note")
+    assert "bad kind" in call(mcp, "search_conversations", kind="podcast")
+
+
+def test_store_lists_conversations_by_kind(pipeline):
+    record(pipeline, "c1", T0)
+    record(pipeline, "n1", T0 + 60, "note")
+    store = pipeline.store
+    assert [c["kind"] for c in store.list_conversations(kind="note")] == ["note"]
+    assert all(c["kind"] != "note" for c in store.list_conversations(kind="conversation"))
+    assert len(store.list_conversations()) == 2
+
+
+def test_note_due_dates_are_worked_out_in_code():
+    """A note's "by Friday" is resolved from the note's date like a conversation's."""
+    summary = {"title": "t", "summary": "s", "key_points": [], "people": [], "topics": [],
+               "facts": [], "action_items": [{"text": "Call the plumber", "due": "Friday",
+                                              "due_date": "2025-10-17", "at_seconds": 0}]}
+    llm = LLMClient("http://x/v1", "m", transport=fake_llm_transport(summary=summary))
+    # 1760000000 = Thursday 2025-10-09 08:53 UTC
+    out = Summarizer(llm, "Me").summarize([Segment(1_760_000_000, 1_760_000_003,
+                                                   "Call the plumber by Friday", "Me", True)],
+                                          kind="note")
+    assert [a["due_date"] for a in out["action_items"]] == ["2025-10-10"]

@@ -25,11 +25,13 @@ extern "C" {
 /* Milestone 3 picks bitrate and complexity by transcription accuracy (plan §7.4). Complexity
  * 1 over 0: better pitch analysis and noise shaping for ~10 % more CPU; 2 and up add the
  * delayed-decision quantiser for another ~30 %.
- * Bitrate 24 kbps, not 16: in the server's recognition eval (AMI far-field speech at the
- * watch's ~-24 dBFS, complexity 1) 16 kbps lost ~7 WER points to uncompressed audio
- * (small.en) and ~9 (large-v3-turbo); 24 kbps came within ~1.3. Bitrate costs little
- * encoder CPU (unlike complexity; check session_rec's time per frame on the watch) but
- * 50 % more SD space and BLE time (a 30 s chunk ~90 KB instead of ~60 KB). */
+ * Bitrate 24 kbps, not 16. Two server evals agree: in the recognition eval (AMI far-field
+ * speech at the watch's ~-24 dBFS, complexity 1) 16 kbps lost ~7 WER points to uncompressed
+ * audio (small.en) and ~9 (large-v3-turbo), 24 kbps came within ~1.3; in the room eval
+ * (docs/omi-audio-quality.md §7) 16 kbps cost 4-5 points for people 2-3 m away and 24 kbps
+ * matched uncompressed audio. Bitrate costs little encoder CPU (unlike complexity; check
+ * session_rec's time per frame on the watch) but 50 % more SD space and BLE time (a 30 s
+ * chunk ~90 KB instead of ~60 KB). */
 #define OPUS_ENC_DEFAULT_BITRATE 24000
 #define OPUS_ENC_DEFAULT_COMPLEXITY 1
 

@@ -33,19 +33,34 @@ class Settings(BaseSettings):
 
     # --- pipeline ---
     vad_backend: str = "silero"  # "silero" (production) or "energy" (tests only)
-    # Silero speech probability threshold and the silence that ends a speech span.
+    # Silero speech threshold, the silence that ends a speech span, and padding around
+    # each span (Silero's default is 30 ms; Omi uses 300 ms pre-roll). Ignored by the
+    # energy backend.
     vad_threshold: float = 0.5
     vad_min_silence_ms: int = 500
-    vad_speech_pad_ms: int = 30  # padding Silero adds around each span
-    # Quiet chunks (far-field, wrist) are boosted before VAD only, so their loud part sits
-    # at vad_target_dbfs, by at most vad_max_gain_db (0 = off). Stored audio is unchanged.
-    vad_target_dbfs: float = -20.0
-    vad_max_gain_db: float = 30.0
+    vad_speech_pad_ms: int = 30
+    # Bounded peak gain on a COPY of each chunk before VAD scores it, so quiet far-field
+    # speakers aren't dropped as silence (1 = off). Stored audio is unchanged.
+    vad_agc_max_gain: float = 1.0
+    vad_agc_target: float = 0.8
+    # Same gain on each clip sent to the transcriber, only when its peak is <= 0.4 of
+    # full scale (1 = off). The diarizer always gets the ungained audio.
+    asr_agc_max_gain: float = 1.0
     conversation_gap_seconds: float = 180.0
     keep_audio: bool = False
     language: str = "en"
     timezone: str = "UTC"  # IANA name used for daily digests, e.g. Europe/Berlin
     run_worker: bool = True  # background thread: finalize idle sessions, process, digest
+
+    # Speech-to-text model: "whisper" (whisper.cpp, below) or "parakeet" (Parakeet TDT
+    # 0.6B v3 in-process via sherpa-onnx, extra `parakeet`; being measured against whisper).
+    transcriber: str = "whisper"
+    # Unpacked sherpa-onnx export, e.g. .../sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
+    parakeet_model_dir: Path | None = None
+    parakeet_threads: int = 4
+    # Re-decode stretches of speech ≥ 1 s inside a chunk where Parakeet emitted no
+    # tokens, and merge the words in. Off until measured on eval/recognition.py.
+    parakeet_redecode_holes: bool = False
 
     # whisper.cpp: either a running `whisper-server` URL or a `whisper-cli` binary + model.
     whisper_server_url: str | None = None  # e.g. http://127.0.0.1:8178
@@ -54,6 +69,8 @@ class Settings(BaseSettings):
     # Words whisper should spell right (names, places, jargon), as a short sentence or a
     # comma list. Names of known speakers are added automatically.
     whisper_prompt: str = ""
+    # Add the names of known speakers to that prompt.
+    whisper_prompt_names: bool = True
     # Temperature step for whisper's fallback when a decode looks wrong (0 = no fallback).
     whisper_temperature_inc: float = 0.2
     # Drop text whisper invents on noise ("Thank you." on a cough) and cut repetition
@@ -109,6 +126,9 @@ class Settings(BaseSettings):
     pyannote_device: str = "auto"  # auto (cuda if available), cuda or cpu
     speaker_match_threshold: float = 0.50  # cosine similarity to enrolled voice
     speaker_cluster_threshold: float = 0.45  # cosine similarity to merge clusters
+    # A speaker with a single line joins the closest speaker with several lines when its
+    # voice is at least this similar (0 = off).
+    speaker_absorb_threshold: float = 0.30
     # After a speaker is named, unnamed speakers in other conversations whose voice is at
     # least this close are renamed too (stricter than the match threshold).
     speaker_relabel_threshold: float = 0.60

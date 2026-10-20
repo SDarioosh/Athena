@@ -68,11 +68,18 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   `CONVO_OWNER_HINT_DB` (3 dB) louder than everyone else whose voice is a borderline
   match for the owner (within `CONVO_OWNER_HINT_MARGIN`, 0.10, below the match
   threshold) is labelled as the owner. `CONVO_OWNER_HINT_MARGIN=0` turns it off.
-- whisper gets a prompt: `CONVO_WHISPER_PROMPT` (names, places, jargon) plus the names
-  of known speakers, so they are spelled right. Keep it to a short list of words: in the
-  recognition eval a 26-name list was neutral, but a descriptive vocabulary sentence
-  raised WER by 5.7 points and a punctuation-style sentence by 1.6 (whisper skipped
-  speech after them).
+- A speaker with a single line joins the closest speaker with several lines when the
+  voice is at least `CONVO_SPEAKER_ABSORB_THRESHOLD` (0.30) similar, instead of becoming
+  one more "Speaker N" (one noisy piece often ends up alone). 0 turns it off.
+- whisper gets a prompt: the names of known speakers (`CONVO_WHISPER_PROMPT_NAMES`,
+  default on), so they are spelled right, plus `CONVO_WHISPER_PROMPT` (empty by default).
+  Measured on AMI (`eval/recognition.py`): the names made WER and DER slightly better;
+  a 12-word vocabulary list in `CONVO_WHISPER_PROMPT` broke whisper's timestamps (lines
+  stretched over 30 s: false alarm 8% → 58%, wrong names 2% → 6%). Leave it empty
+  unless the eval shows it helps with your vocabulary.
+  In the transcription-quality eval a 26-name list was neutral, but a descriptive
+  vocabulary sentence raised WER by 5.7 points and a punctuation-style sentence by 1.6
+  (whisper skipped speech after them): keep it to a short list of words.
 - Text whisper invents is dropped: on a short clip of noise (a cough, a rustle the VAD
   took for speech) large-v3-turbo often answers "Thank you.". A segment that is only such
   a stock phrase is dropped when whisper was unsure of it (mean token log-probability
@@ -170,12 +177,19 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
 
-VAD: Silero runs on each chunk, after a gain that raises a quiet chunk's loud part to
-`CONVO_VAD_TARGET_DBFS` (-20), by at most `CONVO_VAD_MAX_GAIN_DB` (30; 0 = off). The gain
-is for the VAD only; the stored audio and what whisper hears are unchanged. A far-field
-or wrist recording can be 20-30 dB quieter than a close mic, and Silero then misses much
-of its speech, so whisper never gets it. `CONVO_VAD_THRESHOLD`, `CONVO_VAD_MIN_SILENCE_MS`
-and `CONVO_VAD_SPEECH_PAD_MS` tune Silero itself.
+VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD`, `CONVO_VAD_MIN_SILENCE_MS` and
+`CONVO_VAD_SPEECH_PAD_MS` tune it. A far-field or wrist recording can be 20-30 dB quieter
+than a close mic, and Silero then misses some of its speech, so whisper never gets it.
+`CONVO_VAD_AGC_MAX_GAIN` (1 = off, the default) lets Silero score a copy of each chunk
+gained toward a `CONVO_VAD_AGC_TARGET` (0.8) peak, at most that many times; the stored
+audio is unchanged. `CONVO_ASR_AGC_MAX_GAIN` (1 = off) does the same for each clip sent to
+the transcriber, only when the clip is quiet; the diarizer always gets the ungained audio.
+Both are off until the server eval decides (`docs/omi-audio-quality.md` §7: it helped on
+very quiet input, but hurt speaker naming at the watch's level).
+
+`CONVO_TRANSCRIBER=parakeet` swaps whisper for NVIDIA Parakeet TDT 0.6B v3 (int8, via
+sherpa-onnx on CPU, extra `parakeet`, `CONVO_PARAKEET_MODEL_DIR`); see `.env.example`.
+whisper stays the default.
 
 Read API: `/v1/conversations`, `/v1/conversations/{id}`, `/v1/conversations/{id}/transcript`
 (`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items`, `/v1/digests/{date}`,
@@ -237,19 +251,32 @@ Each conversation gets several small `json_schema` calls instead of one big one 
 small local model does better on narrow questions):
 
 1. **Triage**: discard a TV, radio or podcast playing, noise, gibberish or no real
-   conversation (kept when in doubt; under 3 words is discarded without a call), and pick
-   the kind: meeting, call, appointment, casual, other. A discarded conversation keeps
+   conversation (kept when in doubt), and pick the kind: meeting, call, appointment,
+   casual, other. A discarded conversation keeps
    its transcript (still searchable; `POST /v1/conversations/{id}/summarize` retries) but
    gets no summary, action items or facts, and stays out of digests.
+   Plain junk is discarded first, without a model call, by fixed rules
+   (`convo_server/relevance_rules.py`): under 3 words (`too_short`), only filler words
+   such as "okay", "mm", "yeah" (`filler`), or a microphone check such as "testing, one,
+   two" (`mic_check`). These rules only discard: anything with one content word, a name,
+   a number, "yes"/"no", or words in another language goes to the model. No rule keeps a
+   conversation without the model, because the model is what spots a TV playing.
 2. **Notes** (title, summary, key points, people, topics) with a template per kind, e.g.
    decisions and owners for meetings, instructions and the next date for appointments.
-3. **Action items**, with `due_date` (YYYY-MM-DD) worked out from the conversation date
-   in `CONVO_TIMEZONE` ("by Friday" said on Wednesday 2026-10-14 → 2026-10-16).
+3. **Action items** (promises, requests, appointments), each written as a task, with
+   `due_date` (YYYY-MM-DD). When the deadline names a day ("by Friday", "October
+   thirty-first", "tomorrow") the date is worked out in code (`convo_server/dates.py`)
+   from the conversation date in `CONVO_TIMEZONE` ("by Friday" said on Wednesday
+   2026-10-14 → 2026-10-16); the model's date is used only for vaguer deadlines.
 4. **Facts**, then a **linking** call against related known facts (same subject or
    matching words): a repeat becomes another source of the known fact; a changed value
    replaces the older one (by conversation time, so re-summarizing an old conversation
-   can't overwrite newer knowledge). `list_facts` shows only current facts, each with
-   "said again" and "replaces:" lines that link every source transcript.
+   can't overwrite newer knowledge). A link is ignored unless the two facts share at
+   least two words besides their subject. `list_facts` shows only current facts, each
+   with "said again" and "replaces:" lines that link every source transcript.
+
+A re-summary (e.g. after a speaker is renamed) keeps what was known about the old items:
+the status of action items, the other sources of a fact and which facts it replaced.
 
 ## Recognition eval
 
@@ -264,14 +291,19 @@ CONVO_WHISPER_SERVER_URL=http://127.0.0.1:8178 .venv/bin/python eval/recognition
 .venv/bin/python eval/recognition.py compare server-ecapa server-pyannote
 ```
 
-`--mic Array1-01` uses the far-field room mic instead of the headset mix, `--opus KBPS`
-sends chunks as Ogg/Opus like the recorders, and `--level DBFS` sets the input level
-before encoding (the T-Watch's 30 dB mic gain puts speech near -24 dBFS). `--set
-field=value` overrides any setting.
+`--audio array` uses the far-field table mic instead of the headset mix (`--mic
+Array1-01` still works), `--audio sim --distance N` simulates a room with the others N m
+away, `--opus-kbps KBPS` (or `--opus`) round-trips the stream through Opus like the
+recorders, and `--level DBFS` sets the input level before encoding (the T-Watch's 30 dB
+mic gain puts speech near -24 dBFS). `--set field=value` overrides any setting. More in
+the script's docstring and `docs/omi-audio-quality.md` §7.
 
 Measured 2026-10-20 in the cloud sandbox (large-v3-turbo on CPU, `--diarizer none`, 3
 meetings x 300 s, ~2,100 words). "Before" turns the transcription changes of that round
-off: `--set whisper_window_seconds=0 vad_max_gain_db=0 whisper_drop_hallucinations=false
+off. These numbers include a VAD gain that was on by default then; it is now off by
+default (`--set vad_agc_max_gain=4` turns the current one on), so the "after" column needs
+a rerun on the server:
+`--set whisper_window_seconds=0 whisper_drop_hallucinations=false
 whisper_suppress_non_speech=false`.
 
 | condition | before | after |

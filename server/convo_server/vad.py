@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
-from .audio import SAMPLE_RATE
+from .audio import SAMPLE_RATE, bounded_gain
 
 if TYPE_CHECKING:
     from .config import Settings
@@ -77,31 +77,6 @@ def level_dbfs(audio: np.ndarray, percentile: float = 95.0, frame_ms: int = 30) 
     return 20.0 * float(np.log10(max(rms, 1e-6)))
 
 
-class GainNormalizedVAD:
-    """Boost quiet audio before handing it to another VAD (the stored audio is untouched).
-
-    Far-field and wrist-worn recordings can be 20-30 dB quieter than a close mic, and
-    Silero then misses much of the speech. The loud part of the chunk (95th percentile of
-    frame RMS) is raised to ``target_dbfs``, by at most ``max_gain_db``; loud audio is
-    never turned down.
-    """
-
-    def __init__(self, inner: VAD, target_dbfs: float = -20.0,
-                 max_gain_db: float = 30.0) -> None:
-        self.inner = inner
-        self.target_dbfs = target_dbfs
-        self.max_gain_db = max_gain_db
-
-    def gain_db(self, audio: np.ndarray) -> float:
-        return min(self.max_gain_db, max(0.0, self.target_dbfs - level_dbfs(audio)))
-
-    def detect(self, audio: np.ndarray) -> list[Span]:
-        g = self.gain_db(audio)
-        if g > 0:
-            audio = np.clip(audio * np.float32(10 ** (g / 20)), -1.0, 1.0).astype(np.float32)
-        return self.inner.detect(audio)
-
-
 class EnergyVAD:
     """RMS threshold over 30 ms frames. Not for production use."""
 
@@ -141,17 +116,36 @@ def merge_spans(spans: list[Span], max_gap: float) -> list[Span]:
     return out
 
 
+class GainedVAD:
+    """Runs ``inner`` on a gained copy of each buffer (docs/omi-audio-quality.md §4.2).
+
+    Quiet far-field speech that Silero would score as silence is scaled toward a
+    ``target`` peak (at most ``max_gain`` times, never attenuated) before scoring. The
+    caller's array, and so the stored audio, is left as it was. Each ``detect`` call
+    (one 30 s chunk at ingest) gets its own gain.
+    """
+
+    def __init__(self, inner: VAD, max_gain: float = 4.0, target: float = 0.8) -> None:
+        self.inner = inner
+        self.max_gain = max_gain
+        self.target = target
+
+    def detect(self, audio: np.ndarray) -> list[Span]:
+        gained, _ = bounded_gain(audio, target=self.target, max_gain=self.max_gain)
+        return self.inner.detect(gained)
+
+
 def make_vad(backend: str, settings: Settings | None = None) -> VAD:
-    """Build the VAD; Silero options come from ``settings`` (CONVO_VAD_*) when given."""
+    """Build the VAD. With ``settings``, apply its Silero options and VAD gain (CONVO_VAD_*)."""
     if backend == "silero":
-        if settings is None:
-            return GainNormalizedVAD(SileroVAD())
-        vad: VAD = SileroVAD(threshold=settings.vad_threshold,
-                             min_silence_ms=settings.vad_min_silence_ms,
-                             speech_pad_ms=settings.vad_speech_pad_ms)
-        if settings.vad_max_gain_db > 0:
-            vad = GainNormalizedVAD(vad, settings.vad_target_dbfs, settings.vad_max_gain_db)
-        return vad
-    if backend == "energy":
-        return EnergyVAD()
-    raise ValueError(f"unknown VAD backend {backend!r}")
+        vad: VAD = (SileroVAD(threshold=settings.vad_threshold,
+                              min_silence_ms=settings.vad_min_silence_ms,
+                              speech_pad_ms=settings.vad_speech_pad_ms)
+                    if settings is not None else SileroVAD())
+    elif backend == "energy":
+        vad = EnergyVAD()
+    else:
+        raise ValueError(f"unknown VAD backend {backend!r}")
+    if settings is not None and settings.vad_agc_max_gain > 1.0:
+        vad = GainedVAD(vad, settings.vad_agc_max_gain, settings.vad_agc_target)
+    return vad

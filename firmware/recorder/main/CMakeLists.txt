@@ -5,5 +5,5 @@ idf_component_register(
     SRC_DIRS "."
     EXCLUDE_SRCS "button_gesture.c"
     INCLUDE_DIRS "."
-    REQUIRES board driver esp_driver_i2s esp_timer console fatfs nvs_flash esp_pm bt
+    REQUIRES board driver esp_driver_i2s esp_timer console fatfs nvs_flash esp_pm bt espcoredump spi_flash esp_partition
 )

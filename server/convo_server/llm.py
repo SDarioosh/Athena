@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from . import relevance_rules
+from .dates import resolve_due
 from .store import Segment
 
 log = logging.getLogger(__name__)
@@ -129,13 +131,16 @@ Keys: title, summary, key_points, people, topics."""
 
 ACTIONS_SYSTEM = """You list the action items of one conversation. """ + COMMON + """
 The conversation happened on {date}.
-action_items: concrete commitments or requests someone made ("I'll send it by Friday", \
-"can you pick her up?"). Not plans without a commitment, not things already done. \
-text: imperative and self-contained ("Send Alice the revised budget spreadsheet"). owner: \
-who should do it, if clear. due: the deadline as said ("Friday"); due_date: that \
-deadline as YYYY-MM-DD counted from the conversation date, or null if there is none. \
-at_seconds: the bracketed number of the line it comes from. Return an empty list if \
-there are none. Keys: action_items[{{text, owner, due, due_date, at_seconds}}]."""
+An action item is something someone promised or was asked to do after this \
+conversation: a promise ("I'll send you the slides tonight"), a request ("can you water \
+the plants while I'm away?") or an appointment to keep. List every \
+one, small ones too; leave out things already done.
+text: a task that starts with a verb and names who and what, e.g. "Send Sam the \
+slides" or "Water Lena's plants". Never copy the spoken sentence.
+owner: who should do it ("{owner}" for the user), if clear. due: the deadline in the \
+words used ("Monday", "March 3"), or null; due_date: that deadline as YYYY-MM-DD \
+counted from the conversation date, or null. at_seconds: the bracketed number of the line \
+it comes from. Keys: action_items[{{text, owner, due, due_date, at_seconds}}]."""
 
 FACTS_SYSTEM = """You pick durable facts from one conversation for the user's long-term \
 memory. """ + COMMON + """
@@ -252,7 +257,8 @@ def _strip_fences(text: str) -> str:
 class Summarizer:
     """Summaries in small focused calls (easier for a small local model than one big one).
 
-    1. triage: discard junk (TV, noise) and pick the conversation kind;
+    1. triage: discard junk (TV, noise) and pick the conversation kind; plain filler and
+       mic checks are discarded first by fixed rules (``relevance_rules``), without a call;
     2. notes: title, summary, key points, people, topics with a template for that kind;
     3. action items, with due dates resolved against the conversation date;
     4. durable facts.
@@ -284,6 +290,9 @@ class Summarizer:
             return self._summarize_note(parts, origin)
         if sum(len(s.text.split()) for s in segments) < self.min_words:
             return {"discard": True, "discard_reason": "too_short", "kind": "other"}
+        junk = relevance_rules.discard_reason([s.text for s in segments])
+        if junk:  # only filler, or a mic check: no model call
+            return {"discard": True, "discard_reason": junk, "kind": "other"}
         fmt = {"owner": self.owner}
         triage = self.llm.structured(TRIAGE_SYSTEM.format(**fmt), parts[0], Triage)
         assert isinstance(triage, Triage)
@@ -307,6 +316,7 @@ class Summarizer:
                                      facts=_unique(facts))
         out = to_storage(result, origin)
         out["kind"] = triage.kind
+        self._resolve_due_dates(out, origin)
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
         return out
@@ -329,7 +339,18 @@ class Summarizer:
         out = to_storage(ConversationSummary(**merged.model_dump(), action_items=_unique(actions),
                                              facts=_unique(facts)), origin)
         out["kind"] = "note"
+        self._resolve_due_dates(out, origin)
         return out
+
+    def _resolve_due_dates(self, out: dict[str, Any], origin: float) -> None:
+        """Work the date out in code where the phrase names a day; the model's guess only
+        for the rest (small models get weekday arithmetic wrong)."""
+        today = datetime.fromtimestamp(origin, self.tz).date()
+        for item in out["action_items"]:
+            day = resolve_due(item["due"], today) or (
+                None if item["due"] else resolve_due(item["text"], today))
+            if day is not None:
+                item["due_date"] = day.isoformat()
 
     def link_facts(self, date: str, new: list[dict[str, Any]],
                    known: list[dict[str, Any]]) -> list[FactLink]:
@@ -342,9 +363,21 @@ class Summarizer:
             "new": [{"number": i, "subject": f["subject"], "fact": f["fact"]}
                     for i, f in enumerate(new)]})
         result = self.llm.structured(LINK_SYSTEM.format(date=date), user, FactLinks)
-        ids = {k["id"] for k in known}
-        return [lk for lk in result.links  # type: ignore[attr-defined]
-                if 0 <= lk.new < len(new) and (lk.relation == "new" or lk.existing in ids)]
+        by_id = {k["id"]: k for k in known}
+        out = []
+        for lk in result.links:  # type: ignore[attr-defined]
+            if not 0 <= lk.new < len(new):
+                continue
+            if lk.relation != "new":
+                old = by_id.get(lk.existing)  # type: ignore[arg-type]
+                # a "same" link drops the new fact, an "updates" link hides the old one:
+                # only when the two are visibly about the same thing
+                if old is None or not plausible_link(new[lk.new], old):
+                    log.info("fact link rejected: %r %s %r", new[lk.new]["fact"],
+                             lk.relation, old["fact"] if old else lk.existing)
+                    continue
+            out.append(lk)
+        return out
 
     def _split(self, segments: list[Segment], origin: float) -> list[str]:
         parts: list[list[Segment]] = [[]]
@@ -372,6 +405,38 @@ class Summarizer:
         out["date"] = date
         out["conversation_ids"] = [c["id"] for c in conversations]
         return out
+
+
+_STOP_WORDS = """a an the and or but of to in on at by for with from about as is are was
+were be been being will would shall should can could may might must do does did has have had
+not no now this that these those it its it's he she they we you i me my your his her their
+our him them us who what when where which there here than then so very just also up out
+over into after before until said says say"""
+_STOP = frozenset(re.split(r"\s+", _STOP_WORDS))
+
+
+def _content_words(text: str) -> set[str]:
+    out = set()
+    for w in re.findall(r"[a-z0-9]+(?:'[a-z]+)?", (text or "").lower()):
+        w = w.removesuffix("'s")
+        if w in _STOP:
+            continue
+        for suffix in ("ing", "ed", "es", "s"):
+            if len(w) > len(suffix) + 2 and w.endswith(suffix):
+                w = w[: -len(suffix)]
+                break
+        out.add(w.rstrip("e") or w)
+    return out
+
+
+def plausible_link(new: dict[str, Any], old: dict[str, Any]) -> bool:
+    """Two facts can be "the same" or one "update" the other only if they share at
+    least two content words besides the subject they have in common (a small model
+    otherwise links e.g. "I'll send the spreadsheet" to "avoid hard food", both "Me")."""
+    shared_subject = (_content_words(new.get("subject") or "")
+                      & _content_words(old.get("subject") or ""))
+    common = (_content_words(new["fact"]) & _content_words(old["fact"])) - shared_subject
+    return len(common) >= 2
 
 
 def _unique(items: list[Any]) -> list[Any]:

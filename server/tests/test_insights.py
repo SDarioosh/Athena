@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from conftest import fake_llm_transport, silence, tone
 from test_mcp import T0, call, ingest
 
@@ -51,7 +52,8 @@ def test_bad_due_dates_are_dropped(pipeline):
                    {"text": "b", "due": "soon", "due_date": "2026-02-30", "at_seconds": 1}]}
     use_llm(pipeline, summary=summary)
     conv = pipeline.store.get_conversation(record(pipeline))
-    assert [a["due_date"] for a in conv["action_items"]] == [None, None]
+    # the model's "Friday" is no date; the code works it out from the phrase instead
+    assert [a["due_date"] for a in conv["action_items"]] == ["2025-10-10", None]
 
 
 def test_tv_is_discarded_but_transcript_kept(pipeline):
@@ -80,6 +82,30 @@ def test_too_short_is_discarded_without_a_model_call(pipeline):
     out = pipeline.summarizer.summarize([Segment(0, 1, "Okay.", "Speaker 1")])
     assert out == {"discard": True, "discard_reason": "too_short", "kind": "other"}
     assert log == []
+
+
+@pytest.mark.parametrize("text,reason", [
+    ("Okay. Yeah, yeah. Mm-hmm, sure.", "filler"),
+    ("Testing, testing, one two three.", "mic_check"),
+])
+def test_filler_and_mic_checks_are_discarded_without_a_model_call(pipeline, text, reason):
+    from convo_server.store import Segment
+
+    log: list = []
+    use_llm(pipeline, log)
+    out = pipeline.summarizer.summarize([Segment(0, 1, text, "Speaker 1")])
+    assert out == {"discard": True, "discard_reason": reason, "kind": "other"}
+    assert log == []
+
+
+def test_one_content_word_still_goes_to_triage(pipeline):
+    from convo_server.store import Segment
+
+    log: list = []
+    use_llm(pipeline, log)
+    out = pipeline.summarizer.summarize([Segment(0, 1, "Okay, yeah, call mom.", "Me", True)])
+    assert not out.get("discard")
+    assert log[0]["response_format"]["json_schema"]["name"] == "Triage"
 
 
 def fact_summary(fact):
@@ -141,3 +167,144 @@ def test_repeated_fact_becomes_one_fact_with_two_sources(pipeline):
     assert store.get_conversation(second)["facts"] == []
     out = call(build_mcp(store, pipeline.settings), "list_facts")
     assert out.count("- [") == 1 and "said again 2025-10-10" in out and out.count("/view/") == 2
+
+
+# ------------------------------------------- re-summary keeps what was known before
+# Renaming a speaker (by hand or by relabelling) re-summarizes a conversation; that
+# must not reopen closed action items or lose fact links.
+def rename_a_line(pipeline, conv_id, name="Bob"):
+    seg = pipeline.store.conversation_segments(conv_id)[1]
+    pipeline.store.reassign_segment(seg.id, name)
+    assert pipeline.summarize_pending() == 1
+
+
+def test_resummary_keeps_action_item_status(pipeline):
+    use_llm(pipeline)
+    conv_id = record(pipeline)
+    item = pipeline.store.get_conversation(conv_id)["action_items"][0]
+    pipeline.store.set_action_item_status(item["id"], "done")
+    summary = {"title": "t", "summary": "s", "key_points": [], "people": [], "topics": [],
+               "facts": [], "action_items": [  # reworded after the rename, same line
+                   {"text": "Book the flights", "due": "Friday", "at_seconds": 1},
+                   {"text": "Call the hotel", "at_seconds": 3}]}
+    use_llm(pipeline, summary=summary)
+    rename_a_line(pipeline, conv_id)
+    items = pipeline.store.get_conversation(conv_id)["action_items"]
+    assert [(a["text"], a["status"]) for a in items] == [("Book the flights", "done"),
+                                                         ("Call the hotel", "open")]
+
+
+def test_resummary_keeps_sources_of_a_repeated_fact(pipeline):
+    store = pipeline.store
+    use_llm(pipeline, summary=fact_summary("Alice moves to Berlin in January."))
+    first = record(pipeline)
+    old_id = store.get_conversation(first)["facts"][0]["id"]
+    use_llm(pipeline, summary=fact_summary("Alice is moving to Berlin in January."),
+            links=[{"new": 0, "relation": "same", "existing": old_id}])
+    second = record(pipeline, session="s2", start=T0 + 86400)
+
+    # the conversation holding the fact is re-summarized: its other source stays
+    use_llm(pipeline, summary=fact_summary("Alice moves to Berlin in January."))
+    rename_a_line(pipeline, first)
+    out = call(build_mcp(store, pipeline.settings), "list_facts")
+    assert out.count("- [") == 1 and "said again" in out and second in out
+
+    # the repeating conversation is re-summarized: still a source, not a second fact
+    use_llm(pipeline, summary=fact_summary("Alice is moving to Berlin in January."))
+    rename_a_line(pipeline, second, "Carl")
+    out = call(build_mcp(store, pipeline.settings), "list_facts")
+    assert out.count("- [") == 1 and first in out and second in out
+
+    # the holder no longer has the fact (or is discarded): the repeat keeps it
+    use_llm(pipeline, triage={"discard": True, "reason": "tv_or_media", "kind": "other"})
+    rename_a_line(pipeline, first, "Dora")
+    facts = store.list_facts()
+    assert [(f["fact"], f["conversation_id"]) for f in facts] == [
+        ("Alice moves to Berlin in January.", second)]
+
+
+def test_resummary_of_older_conversation_keeps_its_fact_replaced(pipeline):
+    store = pipeline.store
+    use_llm(pipeline, summary=fact_summary("The Q4 budget cut is fifteen percent."))
+    first = record(pipeline)
+    old_id = store.get_conversation(first)["facts"][0]["id"]
+    use_llm(pipeline, summary=fact_summary("The Q4 budget cut is ten percent."),
+            links=[{"new": 0, "relation": "updates", "existing": old_id}])
+    second = record(pipeline, session="s2", start=T0 + 86400)
+    # the model doesn't link anything this time; the old value must not come back
+    use_llm(pipeline, summary=fact_summary("The Q4 budget cut is 15 percent."), links=[])
+    rename_a_line(pipeline, first)
+    assert [f["fact"] for f in store.list_facts()] == ["The Q4 budget cut is ten percent."]
+    out = call(build_mcp(store, pipeline.settings), "list_facts")
+    assert "replaces: The Q4 budget cut is 15 percent." in out and first in out
+
+    # and re-summarizing the newer one keeps it replacing the older value
+    use_llm(pipeline, summary=fact_summary("The Q4 budget cut is now ten percent."))
+    rename_a_line(pipeline, second)
+    assert [f["fact"] for f in store.list_facts()] == ["The Q4 budget cut is now ten percent."]
+
+
+def test_failed_focused_call_keeps_the_conversation_and_is_retried(pipeline):
+    """Any of the four calls failing marks the conversation failed (transcript and the
+    previous summary kept); the retry then summarizes it. A failed fact link only leaves
+    the facts unlinked."""
+    import json
+
+    import httpx
+
+    calls: list[str] = []
+
+    def failing_on(schema):
+        ok = fake_llm_transport()
+
+        def handler(request):
+            name = json.loads(request.content)["response_format"]["json_schema"]["name"]
+            calls.append(name)
+            if name == schema:
+                return httpx.Response(500, json={"error": "model crashed"})
+            return ok.handle_request(request)
+        return httpx.MockTransport(handler)
+
+    use_llm(pipeline)
+    conv_id = record(pipeline)
+    store = pipeline.store
+    before = store.get_conversation(conv_id)
+    for schema in ("Triage", "SummaryNotes", "ActionItemList", "FactList"):
+        pipeline.summarizer.llm = LLMClient("http://llm.test/v1", "m",
+                                            transport=failing_on(schema))
+        assert not pipeline.summarize_conversation(conv_id), schema
+        conv = store.get_conversation(conv_id)
+        assert conv["status"] == "failed" and conv["title"] == before["title"], schema
+        assert [a["text"] for a in conv["action_items"]] == ["Book flights"]
+        assert store.conversation_segments(conv_id)
+    use_llm(pipeline)
+    assert pipeline.summarize_pending() == 1
+    assert store.get_conversation(conv_id)["status"] == "summarized"
+
+    # a second conversation whose fact linking fails: summary saved anyway
+    pipeline.summarizer.llm = LLMClient("http://llm.test/v1", "m",
+                                        transport=failing_on("FactLinks"))
+    other = record(pipeline, session="s2", start=T0 + 86400)
+    assert "FactLinks" in calls
+    assert store.get_conversation(other)["status"] == "summarized"
+    assert len(store.list_facts()) == 2
+
+
+def test_implausible_fact_links_are_ignored(pipeline):
+    """A small model linked "send the spreadsheet" to "avoid hard food" (both about Me):
+    the new fact was dropped as a repeat. Links need shared content words."""
+    store = pipeline.store
+    me = {"title": "t", "summary": "s", "key_points": [], "people": [], "topics": [],
+          "action_items": [], "facts": [{"subject": "Me", "at_seconds": 1,
+                                         "fact": "I will send Alice the revised spreadsheet."}]}
+    use_llm(pipeline, summary=me)
+    first = record(pipeline)
+    old_id = store.get_conversation(first)["facts"][0]["id"]
+    me["facts"][0]["fact"] = "Me should avoid hard food on the left side."
+    use_llm(pipeline, summary=me, links=[{"new": 0, "relation": "same", "existing": old_id}])
+    record(pipeline, session="s2", start=T0 + 86400)
+    assert len(store.list_facts()) == 2
+    me["facts"][0]["fact"] = "Me will create a photo album for Mom."
+    use_llm(pipeline, summary=me, links=[{"new": 0, "relation": "updates", "existing": old_id}])
+    record(pipeline, session="s3", start=T0 + 2 * 86400)
+    assert len(store.list_facts()) == 3

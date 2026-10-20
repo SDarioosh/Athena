@@ -79,6 +79,8 @@ def test_info_parse() -> None:
     assert (i.proto, i.device, i.fw, i.board) == (1, "twatch-ultra", "0.2.0", "twatch_ultra")
     i = p.Info.parse("board=x;new=1;device=d;proto=2")  # any order, unknown keys kept aside
     assert (i.proto, i.device, i.extra) == (2, "d", {"new": "1"})
+    i = p.Info.parse("proto=1;device=twatch-ultra;fw=0.2.0;board=twatch_ultra;reset=task_wdt")
+    assert (i.proto, i.fw, i.extra) == (1, "0.2.0", {"reset": "task_wdt"})  # §4.1 reset=
     with pytest.raises(p.ProtocolError):
         p.Info.parse("device=d")
     with pytest.raises(p.ProtocolError):

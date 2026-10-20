@@ -16,6 +16,7 @@ from .store import Store
 from .transcribe import (
     DecodeOptions,
     HallucinationFilter,
+    ParakeetTranscriber,
     Transcriber,
     WhisperCliTranscriber,
     WhisperServerTranscriber,
@@ -35,6 +36,14 @@ def decode_options(settings: Settings) -> DecodeOptions:
 
 
 def build_transcriber(settings: Settings) -> Transcriber | None:
+    if settings.transcriber == "parakeet":
+        if not settings.parakeet_model_dir:
+            raise RuntimeError("CONVO_TRANSCRIBER=parakeet needs CONVO_PARAKEET_MODEL_DIR")
+        return ParakeetTranscriber(settings.parakeet_model_dir, settings.parakeet_threads,
+                                   redecode_holes=settings.parakeet_redecode_holes)
+    if settings.transcriber != "whisper":
+        raise RuntimeError(f"unknown CONVO_TRANSCRIBER {settings.transcriber!r} "
+                           "(whisper or parakeet)")
     t: WhisperServerTranscriber | WhisperCliTranscriber
     if settings.whisper_server_url:
         t = WhisperServerTranscriber(settings.whisper_server_url, settings.language,
@@ -57,7 +66,8 @@ def build_diarizer(settings: Settings, store: Store) -> Diarizer | None:
     args = dict(match_threshold=settings.speaker_match_threshold,
                 cluster_threshold=settings.speaker_cluster_threshold,
                 owner_hint_margin=settings.owner_hint_margin,
-                owner_hint_db=settings.owner_hint_db)
+                owner_hint_db=settings.owner_hint_db,
+                absorb_threshold=settings.speaker_absorb_threshold)
     embedder = EcapaEmbedder(settings.model_cache)
     if settings.diarizer == "pyannote":
         from .diarize_pyannote import PyannoteDiarizer, PyannoteSegmenter
