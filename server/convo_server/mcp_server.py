@@ -45,7 +45,11 @@ list_unnamed_speakers shows voices nobody has named yet, with quotes and a guess
 Voice notes: recordings the user made for themselves (an idea, a reminder) are voice \
 notes, marked "(voice note)" after the title. When the user asks about their voice notes, \
 notes or memos, call search_conversations with kind="note" (no query needed for the \
-latest ones)."""
+latest ones).
+
+Showing a transcript: when the user asks to see or read a transcript, answer with its link \
+and a short summary of who said what; don't copy the transcript lines into your answer \
+(the link opens the full transcript). Quote only the lines the user asks about."""
 
 Text = Annotated[str, Field(description="Free-text words to look for; empty = no text filter")]
 Person = Annotated[str, Field(description="Person's name as it appears in transcripts")]
@@ -181,9 +185,11 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
 
     @mcp.tool(annotations=ro)
     def get_transcript(conversation_id: ConvId, start_seconds: float = 0,
-                       end_seconds: float = -1, max_lines: int = 200) -> str:
+                       end_seconds: float = -1, max_lines: int = 100) -> str:
         """Transcript lines of a conversation. start/end are seconds from its start
-        (end -1 = to the end). Each line starts with its #number (for reassign_line)."""
+        (end -1 = to the end). Each line starts with its #number (for reassign_line) and
+        its [seconds from the start]. To show a transcript, give its link and a short
+        summary; don't copy the lines into your answer."""
         c = store.get_conversation(conversation_id)
         if c is None:
             return f"No conversation {conversation_id!r}."
@@ -193,13 +199,16 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                 and (end_seconds < 0 or s.started_at - origin <= end_seconds)]
         more = len(segs) > max_lines
         link = transcript_link(settings, c["id"])
-        out = [f"\"{c['title'] or 'untitled'}\" {when(origin)} {link}"]
-        out += [f"#{s.id} [{int(s.started_at - origin)}s {when(s.started_at, '%H:%M:%S')}] "
-                f"{s.speaker}: {s.text}" for s in segs[:max_lines]]
+        # One time per line keeps the result short: a line's clock time is the header's
+        # start time plus its seconds.
+        out = [f"\"{c['title'] or 'untitled'}\" {when(origin, '%Y-%m-%d %H:%M:%S')} {link}"]
+        out += [f"#{s.id} [{int(s.started_at - origin)}s] {s.speaker}: {s.text}"
+                for s in segs[:max_lines]]
         if more:
             out.append(f"… {len(segs) - max_lines} more lines; call again with a later "
                        "start_seconds.")
-        out.append(f"{cite}.")
+        out.append(f"{cite}. To show the transcript, give the link above and a short "
+                   "summary; don't copy these lines into your answer.")
         return "\n".join(out)
 
     def item_link(r: dict[str, Any]) -> str:

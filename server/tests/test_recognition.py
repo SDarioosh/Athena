@@ -307,7 +307,7 @@ def test_rename_everywhere_and_reassign_line(pipeline):
                                        new_name="X")
 
     transcript = call(mcp, "get_transcript", conversation_id=conv)
-    line = int(re.search(r"#(\d+) \[\d+s [^\]]+\] Jenn:", transcript).group(1))
+    line = int(re.search(r"#(\d+) \[\d+s\] Jenn:", transcript).group(1))
     out = call(mcp, "reassign_line", line_id=line, name="Me")
     assert "moved from Jenn to Me" in out
     seg = pipeline.store.get_segment(line)
