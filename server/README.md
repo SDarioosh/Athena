@@ -70,6 +70,12 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   threshold) is labelled as the owner. `CONVO_OWNER_HINT_MARGIN=0` turns it off.
 - whisper gets a prompt: `CONVO_WHISPER_PROMPT` (names, places, jargon) plus the names
   of known speakers, so they are spelled right.
+- Text whisper invents is dropped: on a short clip of noise (a cough, a rustle the VAD
+  took for speech) large-v3-turbo often answers "Thank you.". A segment that is only such
+  a stock phrase is dropped when whisper was unsure of it (mean token log-probability
+  below `CONVO_WHISPER_DROP_PHRASE_LOGPROB`, -0.7), so a real "thank you" stays. Subtitle
+  credits and lines with no words go too, and repetition loops are cut to
+  `CONVO_WHISPER_MAX_REPEATS` (4). `CONVO_WHISPER_DROP_HALLUCINATIONS=false` turns it off.
 
 ## Deploy: one command, runs in the background
 

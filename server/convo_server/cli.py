@@ -13,19 +13,31 @@ from .llm import LLMClient, Summarizer
 from .pipeline import Pipeline
 from .search import OpenAIEmbedder
 from .store import Store
-from .transcribe import Transcriber, WhisperCliTranscriber, WhisperServerTranscriber
+from .transcribe import (
+    HallucinationFilter,
+    Transcriber,
+    WhisperCliTranscriber,
+    WhisperServerTranscriber,
+)
 from .vad import make_vad
 
 
 def build_transcriber(settings: Settings) -> Transcriber | None:
+    t: WhisperServerTranscriber | WhisperCliTranscriber
     if settings.whisper_server_url:
-        return WhisperServerTranscriber(settings.whisper_server_url, settings.language,
-                                        temperature_inc=settings.whisper_temperature_inc)
-    if settings.whisper_cli and settings.whisper_model:
-        return WhisperCliTranscriber(settings.whisper_cli, settings.whisper_model,
-                                     settings.language,
+        t = WhisperServerTranscriber(settings.whisper_server_url, settings.language,
                                      temperature_inc=settings.whisper_temperature_inc)
-    return None
+    elif settings.whisper_cli and settings.whisper_model:
+        t = WhisperCliTranscriber(settings.whisper_cli, settings.whisper_model,
+                                  settings.language,
+                                  temperature_inc=settings.whisper_temperature_inc)
+    else:
+        return None
+    t.hallucinations = HallucinationFilter(
+        phrase_logprob=settings.whisper_drop_phrase_logprob,
+        max_repeats=settings.whisper_max_repeats,
+    ) if settings.whisper_drop_hallucinations else None
+    return t
 
 
 def build_diarizer(settings: Settings, store: Store) -> Diarizer | None:
