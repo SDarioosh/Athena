@@ -413,6 +413,137 @@ static bool event_upcoming(const feed_event_t *e, int64_t now)
     return (e->end > e->start ? e->end : e->start + 1) > now;
 }
 
+/* A section heading: a faint caps label and a hairline to the right edge, or to `right`, a
+ * faint note at the right end. y is the label's baseline. */
+static void draw_section(int y, const char *label, const char *right)
+{
+    const int x = gfx_text(TEXT, MARGIN, y, label, GFX_FAINT) + 12;
+    int x_end = W - MARGIN;
+    if (right && *right) {
+        const int rw = gfx_text_width(TEXT, right);
+        gfx_text(TEXT, x_end - rw, y, right, GFX_FAINT);
+        x_end -= rw + 12;
+    }
+    if (x_end > x) {
+        /* 2 px black: the panel doesn't show grey */
+        gfx_hline(x, y - 9, x_end - x, 0x00);
+        gfx_hline(x, y - 8, x_end - x, 0x00);
+    }
+}
+
+/* ---- the digest on Today: flowed paragraphs until a last baseline ---- */
+
+#define PARA_GAP 12   /* between paragraphs (blank lines collapse into this) */
+#define BULLET_GAP 6  /* between bullets */
+#define BULLET_IND 24 /* hanging indent of a bullet */
+
+typedef struct {
+    int y, y_end; /* next baseline; the last baseline allowed */
+    int last;     /* baseline of the last line laid out */
+    bool draw, cut;
+} flow_t;
+
+static void flow_para(flow_t *fl, const char *s, bool bullet)
+{
+    if (fl->cut || !*s) {
+        return;
+    }
+    const int ind = bullet ? BULLET_IND : 0;
+    const int gap = bullet ? BULLET_GAP : PARA_GAP;
+    if (!fl->draw) {
+        const int n = gfx_wrap(TEXT, 0, -1000, LIST_W - ind, s, GFX_INK, 1 << 20, 0);
+        fl->last = fl->y + (n - 1) * LH;
+        fl->y += n * LH + gap;
+        return;
+    }
+    const int room = (fl->y_end - fl->y) / LH + 1;
+    if (room <= 0) {
+        fl->cut = true;
+        return;
+    }
+    if (bullet) {
+        gfx_text(TEXT, MARGIN + 4, fl->y, "\xe2\x80\xa2", GFX_INK); /* • */
+    }
+    const int n = gfx_wrap(TEXT, MARGIN + ind, fl->y, LIST_W - ind, s, GFX_INK, 0, room);
+    if (n > room) {
+        fl->cut = true;
+        return;
+    }
+    fl->last = fl->y + (n - 1) * LH;
+    fl->y += n * LH + gap;
+}
+
+/* A first line that only names the digest ("Daily Conversation Digest: 2026-10-19"): the
+ * section heading already says it. */
+static bool digest_title_line(const char *line, const char *date)
+{
+    if (strlen(line) > 60) {
+        return false;
+    }
+    return strstr(line, "Digest") || strstr(line, "digest") || (date && *date && strstr(line, date));
+}
+
+/* The briefing text line by line ("- ", "* ", "• " lines as bullets, "#" stripped), then the
+ * highlights as bullets. */
+static void flow_digest(flow_t *fl, const feed_t *f)
+{
+    static char body[2048]; /* UI task only */
+    snprintf(body, sizeof(body), "%s", f->brief_text ? f->brief_text : "");
+    char *p = body;
+    bool first = true;
+    while (*p && !fl->cut) {
+        char *line = p;
+        char *nl = strchr(p, '\n');
+        if (nl) {
+            *nl = 0;
+            p = nl + 1;
+        } else {
+            p += strlen(p);
+        }
+        while (*line == ' ' || *line == '\t' || *line == '\r') {
+            line++;
+        }
+        size_t len = strlen(line);
+        while (len > 0 && (line[len - 1] == ' ' || line[len - 1] == '\r')) {
+            line[--len] = 0;
+        }
+        if (!*line) {
+            continue;
+        }
+        if (first) {
+            first = false;
+            if (digest_title_line(line, f->brief_date)) {
+                continue;
+            }
+        }
+        bool bullet = false;
+        if (line[0] == '#') {
+            while (*line == '#' || *line == ' ') {
+                line++;
+            }
+        } else if ((line[0] == '-' || line[0] == '*') && line[1] == ' ') {
+            line += 2;
+            bullet = true;
+        } else if (strncmp(line, "\xe2\x80\xa2", 3) == 0) {
+            line += 3;
+            while (*line == ' ') {
+                line++;
+            }
+            bullet = true;
+        }
+        flow_para(fl, line, bullet);
+    }
+    for (int i = 0; i < f->n_highlights && !fl->cut; i++) {
+        flow_para(fl, f->highlights[i], true);
+    }
+}
+
+/* Today: the daily digest sits in the lower part of the screen (its heading at DIGEST_Y),
+ * with the to-do card and the latest conversation just above it; the calendar gets the rest
+ * of the top, as many events as fit. */
+#define DIGEST_Y 530 /* baseline of the digest heading: room for 3 events above */
+#define EVENT_H (2 * LH + 12)
+
 static void draw_today(const feed_t *f)
 {
     draw_header("Today");
@@ -421,57 +552,67 @@ static void draw_today(const feed_t *f)
         return;
     }
     const int64_t now = now_s();
-    char buf[96];
-    /* the next three events */
-    int y = TOP + 26;
-    const int y_ev = TOP;
-    gfx_text(TEXT, MARGIN, y, "NEXT", GFX_FAINT);
-    y += LH + 4;
+    const int32_t today = pda_local_day(now, tz());
+    const int y_end = TAB_Y - 18; /* the last baseline above the tab bar */
+    char buf[160];
+
+    /* the blocks above the digest, bottom up */
+    const EpdRect card = {MARGIN, DIGEST_Y - 116, LIST_W, 72};
+    const int talk_y = card.y + 20 - (LH + 12); /* baseline of the latest-talk line */
+    const int events_end = f->n_conv > 0 ? talk_y - LH - 6 : card.y - 20; /* last event baseline */
+
+    /* the next events: title, then when and where; "+n more" when they don't all fit */
+    int y = TOP + 28;
+    const int first_ev = y + LH + 6;
+    const int fit = (events_end - LH - first_ev) / EVENT_H + 1;
+    int upcoming = 0;
+    for (int i = 0; i < f->n_events; i++) {
+        upcoming += event_upcoming(&f->events[i], now);
+    }
+    if (upcoming > fit) {
+        snprintf(buf, sizeof(buf), "+%d more \xe2\x80\xba", upcoming - fit);
+    } else {
+        buf[0] = 0;
+    }
+    draw_section(y, "NEXT", buf);
+    y = first_ev;
     int shown = 0;
-    for (int i = 0; i < f->n_events && shown < 3; i++) {
+    for (int i = 0; i < f->n_events && shown < fit; i++) {
         const feed_event_t *e = &f->events[i];
         if (!event_upcoming(e, now)) {
             continue;
         }
+        const int32_t day = e->all_day ? e->start_day : pda_local_day(e->start, tz());
         char when[48];
-        fmt_event_when(e, when, sizeof(when), true);
-        gfx_text(TEXT, MARGIN, y, when, GFX_INK);
-        y += LH;
-        gfx_text_fit(TEXT, MARGIN + 20, y, LIST_W - 20, e->title, GFX_INK);
-        y += LH;
+        fmt_event_when(e, when, sizeof(when), day != today);
+        gfx_text_fit(TEXT, MARGIN, y, LIST_W, e->title, GFX_INK);
         if (e->where) {
-            gfx_text_fit(TEXT, MARGIN + 20, y, LIST_W - 20, e->where, GFX_FAINT);
-            y += LH;
+            snprintf(buf, sizeof(buf), "%s  \xc2\xb7  %s", when, e->where);
+        } else {
+            snprintf(buf, sizeof(buf), "%s", when);
         }
-        y += 8;
+        gfx_text_fit(TEXT, MARGIN, y + LH, LIST_W, buf, GFX_FAINT);
+        y += EVENT_H;
         shown++;
     }
     if (!shown) {
-        gfx_text(TEXT, MARGIN, y, "Nothing in the next 7 days", GFX_FAINT);
-        y += LH;
+        gfx_text(TEXT, MARGIN, y, "Nothing scheduled in the next 7 days", GFX_FAINT);
     }
-    hit((EpdRect){0, y_ev, W, y - y_ev - 10}, A_OPEN, UI_CALENDAR);
-    gfx_hline(MARGIN, y - 14, LIST_W, 0xA0);
+    const int cal_bottom = (f->n_conv > 0 ? talk_y : card.y + 20) - 30;
+    hit((EpdRect){0, TOP, W, cal_bottom - TOP}, A_OPEN, UI_CALENDAR);
 
-    /* the briefing's first lines */
-    y += 16;
-    if (f->has_briefing) {
-        const int y_b = y - 30;
-        snprintf(buf, sizeof(buf), "BRIEFING %s", f->brief_date ? f->brief_date : "");
-        gfx_text(TEXT, MARGIN, y, buf, GFX_FAINT);
-        y += LH + 4;
-        const int n = gfx_wrap(TEXT, MARGIN, y, LIST_W, f->brief_text ? f->brief_text : "", GFX_INK, 0, 7);
-        y += (n < 7 ? n : 7) * LH + 8;
-        hit((EpdRect){0, y_b, W, y - y_b - 10}, A_OPEN, UI_BRIEFING);
-        gfx_hline(MARGIN, y - 14, LIST_W, 0xA0);
-        y += 16;
+    /* the latest conversation, one line */
+    if (f->n_conv > 0) {
+        const int x = gfx_text(TEXT, MARGIN, talk_y, "Latest talk", GFX_FAINT) + 14;
+        gfx_text_fit(TEXT, x, talk_y, W - MARGIN - x, f->conv[0].title, GFX_INK);
+        hit((EpdRect){0, talk_y - 28, W, LH + 8}, A_CONV, 0);
     }
 
-    /* open checklist items (Odysseus notes, §4.4) */
-    const int y_a = y - 30;
+    /* open checklist items (Odysseus notes, §4.4) in a card */
+    gfx_frame(card, 0x00);
+    const int by = card.y + 50; /* FONT_BIG baseline, centred */
     if (f->has_todos) {
         int open = 0, notes_due = 0;
-        const int32_t today = pda_local_day(now, tz());
         for (int n = 0; n < f->n_todos; n++) {
             const feed_todo_t *note = &f->todos[n];
             for (int k = 0; k < note->n_items; k++) {
@@ -480,27 +621,55 @@ static void draw_today(const feed_t *f)
             }
             notes_due += note->due_day != FEED_NO_DAY && note->due_day <= today + 7;
         }
-        snprintf(buf, sizeof(buf), "%d open to-do%s", open, open == 1 ? "" : "s");
-        gfx_text(BIG, MARGIN, y + 14, buf, GFX_INK);
-        y += 50;
+        snprintf(buf, sizeof(buf), "%d", open);
+        const int x = gfx_text(BIG, card.x + 20, by, buf, GFX_INK);
+        gfx_text(TEXT, x + 12, by, open == 1 ? "open to-do" : "open to-dos", GFX_INK);
+        const int ax = card.x + card.width - 18 - gfx_text_width(BIG, "\xe2\x80\xba");
+        gfx_text(BIG, ax, by, "\xe2\x80\xba", GFX_FAINT); /* › */
         if (notes_due) {
-            snprintf(buf, sizeof(buf), "%d checklist%s due within a week", notes_due, notes_due == 1 ? "" : "s");
-            gfx_text(TEXT, MARGIN, y, buf, GFX_FAINT);
-            y += LH;
+            snprintf(buf, sizeof(buf), "%d due this week", notes_due);
+            gfx_text_right(TEXT, ax - 14, by, buf, GFX_FAINT);
         }
     } else {
-        gfx_text(TEXT, MARGIN, y + 6, "No checklists", GFX_FAINT);
-        y += LH + 10;
+        gfx_text(TEXT, card.x + 20, by, "No checklists", GFX_FAINT);
     }
-    hit((EpdRect){0, y_a, W, y - y_a}, A_OPEN, UI_ACTIONS);
+    hit(card, A_OPEN, UI_ACTIONS);
+    y = DIGEST_Y;
 
-    /* the latest conversation */
-    if (f->n_conv > 0 && y + 2 * LH + 20 < BOTTOM) {
-        y += 16;
-        gfx_text(TEXT, MARGIN, y, "LATEST CONVERSATION", GFX_FAINT);
-        gfx_text_fit(TEXT, MARGIN, y + LH + 4, LIST_W, f->conv[0].title, GFX_INK);
-        hit((EpdRect){0, y - 26, W, 2 * LH + 20}, A_CONV, 0);
+    /* the daily digest, as much as fits; the rest is on Brief */
+    const int y_d = y - 30;
+    if (f->has_briefing) {
+        char date[24] = "";
+        int64_t ep;
+        bool date_only;
+        if (f->brief_date && pda_time_parse(f->brief_date, &ep, &date_only)) {
+            const int32_t d = (int32_t)(ep / 86400);
+            if (d == today) {
+                snprintf(date, sizeof(date), "today");
+            } else if (d == today - 1) {
+                snprintf(date, sizeof(date), "yesterday");
+            } else {
+                pda_fmt_day(d, date, sizeof(date));
+            }
+        }
+        draw_section(y, "DAILY DIGEST", date);
+        y += LH + 10;
+        flow_t m = {.y = y, .y_end = y_end, .last = y - LH};
+        flow_digest(&m, f);
+        const bool fits = m.last <= y_end;
+        flow_t d = {.y = y, .y_end = fits ? y_end : y_end - LH - 4, .draw = true};
+        flow_digest(&d, f);
+        if (!fits) {
+            gfx_text_right(TEXT, W - MARGIN, y_end, "More on Brief \xe2\x80\xba", GFX_FAINT);
+        }
+    } else {
+        draw_section(y, "DAILY DIGEST", NULL);
+        y += LH + 10;
+        gfx_wrap(TEXT, MARGIN, y, LIST_W,
+                 "No digest yet. Brief \xe2\x80\xba Refresh digest asks the server for today's.",
+                 GFX_FAINT, 0, 3);
     }
+    hit((EpdRect){0, y_d, W, TAB_Y - y_d}, A_OPEN, UI_BRIEFING);
 }
 
 static void draw_briefing(const feed_t *f)
@@ -637,7 +806,7 @@ static void draw_calendar(const feed_t *f)
             char d[24];
             pda_fmt_day(r->day, d, sizeof(d));
             gfx_text(TEXT, MARGIN, y, d, GFX_FAINT);
-            gfx_hline(MARGIN + gfx_text_width(TEXT, d) + 10, y - 8, LIST_W - gfx_text_width(TEXT, d) - 10, 0xC0);
+            gfx_hline(MARGIN + gfx_text_width(TEXT, d) + 10, y - 8, LIST_W - gfx_text_width(TEXT, d) - 10, 0x00);
             y += LH + 6;
         } else if (r->ev >= 0) {
             const feed_event_t *e = &f->events[r->ev];
@@ -705,7 +874,7 @@ static void draw_action_row(const feed_action_t *a, int idx, int y, int32_t toda
     const pda_failed_t *fail = failed_item(a->id);
     const uint8_t color = pending_close ? GFX_PENDING : GFX_INK;
     const EpdRect box = {MARGIN, y - 22, 28, 28};
-    gfx_frame(box, color == GFX_INK ? 0x00 : 0x70);
+    gfx_frame(box, 0x00);
     if (pending_close) {
         gfx_text(TEXT, box.x + 5, y + 1, strcmp(p->info.status, "done") == 0 ? "\xe2\x9c\x93" : "\xc3\x97",
                  GFX_PENDING); /* ✓ or × */
@@ -849,7 +1018,7 @@ static void draw_tasks(const feed_t *f)
         const bool done = pt ? pt->info.done : it->done;
         const uint8_t color = pt ? GFX_PENDING : done ? GFX_FAINT : GFX_INK;
         const EpdRect box = {MARGIN + 10, y - 22, 28, 28};
-        gfx_frame(box, pt ? 0x70 : 0x00);
+        gfx_frame(box, 0x00);
         if (done) {
             gfx_text(TEXT, box.x + 5, y + 1, "\xe2\x9c\x93", pt ? GFX_PENDING : GFX_INK); /* ✓ */
         }
@@ -906,7 +1075,7 @@ static void draw_conversations(const feed_t *f)
         gfx_text_fit(TEXT, MARGIN + 20, y + (lines > 1 ? 2 : 1) * LH, LIST_W - 20, meta, GFX_FAINT);
         hit((EpdRect){0, y - 30, W, row_h}, A_CONV, i);
         y += row_h;
-        gfx_hline(MARGIN, y - 36, LIST_W, 0xD0);
+        gfx_hline(MARGIN, y - 36, LIST_W, 0x00);
     }
     draw_pager();
 }
