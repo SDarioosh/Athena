@@ -1,0 +1,134 @@
+package org.barvis.sound.relay.relay
+
+/**
+ * The BLE link to one connected, bonded T5 PDA, after MTU negotiation and subscription to
+ * `data` and `status` (docs/t5-pda-plan.md §3.4 steps 1-2). The Android implementation is
+ * [org.barvis.sound.relay.ble.BlePdaLink]; tests use an in-memory fake PDA.
+ */
+interface PdaLink {
+    /** The negotiated ATT MTU. */
+    val mtu: Int
+
+    suspend fun readInfo(): ByteArray
+
+    suspend fun readStatus(): ByteArray
+
+    /** Writes one command to `ctrl` (Write Request) and returns once the write is confirmed. */
+    suspend fun write(command: ByteArray)
+
+    /** The next `data` notification, in order. Throws [LinkException] on timeout or disconnect. */
+    suspend fun receive(timeoutMs: Long): ByteArray
+
+    /** The next `status` notification, or null if none came within [timeoutMs]. */
+    suspend fun awaitStatus(timeoutMs: Long): ByteArray?
+}
+
+/** An HTTP read: the parsed value, an error classified like the watch's uploads, or "not supported". */
+sealed class ApiResult<out T> {
+    data class Ok<T>(val value: T) : ApiResult<T>()
+
+    data class Fail(val error: ServerResult) : ApiResult<Nothing>()
+
+    /** The other side has no such endpoint (or isn't set up). Not retried until settings change. */
+    data class Unsupported(val reason: String) : ApiResult<Nothing>()
+}
+
+/** The odysseus-sound HTTP API calls the PDA needs (server/convo_server/api.py, §4). */
+interface ConvoApi {
+    /** `GET /health` (no token). */
+    suspend fun health(): ServerResult
+
+    /** `GET /v1/digests/{date}`; 404 when there is none. */
+    suspend fun digest(date: String): ApiResult<Map<String, Any?>>
+
+    /** `GET /v1/conversations?since=…&limit=…`, newest first. */
+    suspend fun conversations(sinceEpochS: Long, limit: Int): ApiResult<List<Map<String, Any?>>>
+
+    /** `GET /v1/action-items?status=open`. */
+    suspend fun openActionItems(): ApiResult<List<Map<String, Any?>>>
+
+    /** `GET /v1/conversations/{id}`. */
+    suspend fun conversation(id: String): ApiResult<Map<String, Any?>>
+
+    /** `GET /v1/conversations/{id}/transcript`. */
+    suspend fun transcript(id: String): ApiResult<Map<String, Any?>>
+
+    /** `PATCH /v1/action-items/{id}`. */
+    suspend fun setActionItemStatus(id: Long, status: String): ServerResult
+
+    /** `POST /v1/digests/{date}`. */
+    suspend fun makeDigest(date: String): ServerResult
+}
+
+/** One calendar event as the feed carries it (§4.1). Times are ISO-8601 with an offset, or a date. */
+data class CalEvent(
+    val id: String,
+    val title: String,
+    val start: String,
+    val end: String,
+    val where: String,
+    val allDay: Boolean,
+)
+
+/** A `cal_add` action after validation. [start]/[end] are ISO with an offset, or dates if [allDay]. */
+data class NewEvent(
+    val title: String,
+    val start: String,
+    val end: String?,
+    val allDay: Boolean,
+    val description: String = "",
+)
+
+/** The Odysseus calendar (hub `/api/codex/calendar/…`, docs/t5-pda-plan.md §6). */
+interface CalendarApi {
+    /** Events overlapping [fromIso, toIso). */
+    suspend fun listEvents(fromIso: String, toIso: String): ApiResult<List<CalEvent>>
+
+    /** Returns the new event's uid. Not idempotent on the hub: callers dedupe. */
+    suspend fun createEvent(event: NewEvent): ApiResult<String>
+
+    /** Deletes the event (the whole series). 404 = already gone. */
+    suspend fun deleteEvent(uid: String): ApiResult<Unit>
+}
+
+/** Used when no Odysseus URL and token are set: the feed has `"calendar": []`, calendar actions wait. */
+object NoCalendar : CalendarApi {
+    private val why = ApiResult.Unsupported("Odysseus isn't set up in the relay settings")
+    override suspend fun listEvents(fromIso: String, toIso: String) = why
+    override suspend fun createEvent(event: NewEvent) = why
+    override suspend fun deleteEvent(uid: String) = why
+}
+
+/**
+ * What the relay remembers per PDA between connections. The app persists it in
+ * SharedPreferences; tests use [MemoryPdaMemory].
+ */
+interface PdaMemory {
+    /** Hash of the feed content (without `version` / `generated`) last pushed to [device]. */
+    fun lastFeedHash(device: String): String?
+
+    /** `version` of the feed last pushed to [device]. */
+    fun lastFeedVersion(device: String): Long
+
+    fun feedPushed(device: String, hash: String, version: Long)
+
+    /** `cal_add` dedupe (§4.2): the event uid created for [actionKey], if any. */
+    fun createdEvent(actionKey: String): String?
+
+    fun eventCreated(actionKey: String, uid: String, nowMs: Long)
+}
+
+class MemoryPdaMemory : PdaMemory {
+    private val hashes = HashMap<String, Pair<String, Long>>()
+    val created = LinkedHashMap<String, String>()
+
+    @Synchronized override fun lastFeedHash(device: String) = hashes[device]?.first
+    @Synchronized override fun lastFeedVersion(device: String) = hashes[device]?.second ?: 0L
+    @Synchronized override fun feedPushed(device: String, hash: String, version: Long) {
+        hashes[device] = hash to version
+    }
+    @Synchronized override fun createdEvent(actionKey: String) = created[actionKey]
+    @Synchronized override fun eventCreated(actionKey: String, uid: String, nowMs: Long) {
+        created[actionKey] = uid
+    }
+}

@@ -17,6 +17,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import org.barvis.sound.relay.protocol.GattProfile
 import org.barvis.sound.relay.protocol.WatchGatt
 import org.barvis.sound.relay.relay.Level
 import org.barvis.sound.relay.relay.LinkException
@@ -39,6 +40,8 @@ class GattClient(
     private val context: Context,
     val device: BluetoothDevice,
     private val log: RelayLog,
+    /** Which service this link talks to: the watch (default) or the PDA. */
+    private val profile: GattProfile = WatchGatt.PROFILE,
 ) {
     private enum class Kind { MTU, DISCOVER, PHY, READ, WRITE, DESCRIPTOR }
 
@@ -108,8 +111,8 @@ class GattClient(
 
     private fun notified(uuid: UUID, value: ByteArray) {
         when (uuid) {
-            WatchGatt.DATA -> data.trySend(value)
-            WatchGatt.STATUS -> onStatus?.invoke(value)
+            profile.data -> data.trySend(value)
+            profile.status -> onStatus?.invoke(value)
         }
     }
 
@@ -175,10 +178,12 @@ class GattClient(
     }
 
     private fun characteristic(uuid: UUID): BluetoothGattCharacteristic =
-        gatt?.getService(WatchGatt.SERVICE)?.getCharacteristic(uuid)
-            ?: throw LinkException("watch has no characteristic $uuid")
+        gatt?.getService(profile.service)?.getCharacteristic(uuid)
+            ?: throw LinkException("device has no characteristic $uuid")
 
     fun hasWatchService(): Boolean = gatt?.getService(WatchGatt.SERVICE) != null
+
+    fun hasService(): Boolean = gatt?.getService(profile.service) != null
 
     suspend fun read(uuid: UUID): ByteArray {
         val c = characteristic(uuid)

@@ -1,0 +1,8 @@
+## Dependencies of the PDA firmware (IDF component registry).
+dependencies:
+  idf: ">=5.4"
+  # epdiy (LGPL-3.0, vroland): parallel e-paper driver; board "v7" is the T5 E-Paper Pro's
+  # layout (PCA9535 + TPS65185 on I2C 39/40), display ED047TC1 (960x540).
+  vroland/epdiy: "^2.0.0"
+  # LittleFS (MIT wrapper, BSD-3 littlefs) for the feed cache and the outbox.
+  joltwallet/littlefs: "^1.14.0"

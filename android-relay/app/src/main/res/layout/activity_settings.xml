@@ -93,6 +93,121 @@
             android:textIsSelectable="true" />
 
         <TextView
+            style="@style/Heading"
+            android:text="@string/pda_heading" />
+
+        <CheckBox
+            android:id="@+id/pda_enabled"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/pda_enabled" />
+
+        <TextView
+            style="@style/Heading"
+            android:labelFor="@id/odysseus_url"
+            android:text="@string/odysseus_url" />
+
+        <EditText
+            android:id="@+id/odysseus_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:autofillHints="url"
+            android:inputType="textUri"
+            android:minHeight="48dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/odysseus_url_hint"
+            android:textAppearance="@android:style/TextAppearance.Material.Small" />
+
+        <TextView
+            android:id="@+id/odysseus_url_warning"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#B3261E"
+            android:visibility="gone" />
+
+        <TextView
+            style="@style/Heading"
+            android:labelFor="@id/odysseus_token"
+            android:text="@string/odysseus_token" />
+
+        <EditText
+            android:id="@+id/odysseus_token"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:importantForAutofill="no"
+            android:inputType="textPassword"
+            android:minHeight="48dp" />
+
+        <TextView
+            android:id="@+id/odysseus_token_state"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@android:style/TextAppearance.Material.Small" />
+
+        <TextView
+            style="@style/Heading"
+            android:labelFor="@id/odysseus_calendar"
+            android:text="@string/odysseus_calendar" />
+
+        <EditText
+            android:id="@+id/odysseus_calendar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:importantForAutofill="no"
+            android:inputType="text"
+            android:minHeight="48dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/odysseus_calendar_hint"
+            android:textAppearance="@android:style/TextAppearance.Material.Small" />
+
+        <TextView
+            style="@style/Heading"
+            android:labelFor="@id/pda_templates"
+            android:text="@string/pda_templates" />
+
+        <EditText
+            android:id="@+id/pda_templates"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="top"
+            android:importantForAutofill="no"
+            android:inputType="textMultiLine|textCapSentences"
+            android:minHeight="96dp" />
+
+        <TextView
+            style="@style/Heading"
+            android:labelFor="@id/pda_interval"
+            android:text="@string/pda_interval" />
+
+        <EditText
+            android:id="@+id/pda_interval"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:importantForAutofill="no"
+            android:inputType="number"
+            android:minHeight="48dp" />
+
+        <Button
+            android:id="@+id/test_odysseus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/test_odysseus" />
+
+        <TextView
+            android:id="@+id/odysseus_result"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textIsSelectable="true" />
+
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"

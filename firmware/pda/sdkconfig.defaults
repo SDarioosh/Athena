@@ -1,0 +1,85 @@
+# odysseus-sound PDA firmware, LilyGO T5 E-Paper Pro (ESP32-S3R8: 16 MB QIO flash, 8 MB
+# octal PSRAM, confirmed with esptool on the owner's board). `idf.py build` uses this file.
+CONFIG_IDF_TARGET="esp32s3"
+
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# Partition table: app + LittleFS "storage" (feed cache, outbox)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# PSRAM: framebuffers (epdiy keeps three of ~260 KB), feed parse, PUT buffers
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+# Code and read-only data run from PSRAM, so a flash write (LittleFS, NVS bonds) doesn't
+# disable the cache. Without it, an outbox write during an e-paper refresh crashed:
+# epdiy's LCD interrupt reads the framebuffer in PSRAM ("Cache disabled but cached memory
+# region accessed", seen on the board).
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+
+# CPU: 240 MHz while drawing (epdiy computes the waveform lines on the CPU, pda_epd.c holds
+# a PM lock for a refresh); DFS drops to 80 MHz otherwise.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+CONFIG_PM_DFS_INIT_AUTO=y
+
+# Console on the native USB (Serial/JTAG)
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+CONFIG_LOG_COLORS=n
+
+# Radios: BLE only, NimBLE peripheral (main/ble_pda.c, plan §3). Wi-Fi is never initialised
+# and not linked.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+# GATT client on (and the central role Kconfig requires for it; nothing scans or connects):
+# without it NimBLE answers an incoming indication with an ATT Error Response, and Android
+# indicates Service Changed to a bonded peer on connect, which then breaks requestMtu and
+# discovery (found on the T-Watch, SDarioosh/barvis-sound#49). Windows never indicates.
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_GATT_CLIENT=y
+CONFIG_BT_NIMBLE_GATT_SERVER=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_CTRL_BLE_MAX_ACT=2
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=517
+CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT=y
+CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_2M_PHY=y
+CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_CODED_PHY=n
+CONFIG_BT_NIMBLE_EXT_ADV=n
+# Pairing (watch protocol §3.1): LE Secure Connections only, passkey shown on the T5,
+# bonds in NVS.
+CONFIG_BT_NIMBLE_SECURITY_ENABLE=y
+CONFIG_BT_NIMBLE_SM_LEGACY=n
+CONFIG_BT_NIMBLE_SM_SC=y
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+CONFIG_BT_NIMBLE_MAX_BONDS=4
+CONFIG_BT_NIMBLE_MAX_CCCDS=8
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=32
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_SIZE=256
+CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
+CONFIG_BT_CTRL_MODEM_SLEEP=y
+CONFIG_BT_CTRL_MODEM_SLEEP_MODE_1=y
+CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y
+
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_NEWLIB_NANO_FORMAT=n
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+
+# LittleFS: names up to 32 bytes are plenty (feed.json, ob/0000002a.json)
+CONFIG_LITTLEFS_MAX_PARTITIONS=1
