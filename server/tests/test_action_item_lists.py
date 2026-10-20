@@ -28,7 +28,8 @@ LIST_ITEMS = [
 @pytest.mark.parametrize(("said", "name"), [
     ("shopping", "shopping"), ("my shopping list", "shopping"),
     ("The Work To-Do list", "Work"), ("  groceries  ", "groceries"),
-    ("to-do list", None), ("list", None), ("", None), (None, None), ("x" * 41, None),
+    ("to-do list", None), ("my todo list", None), ("todos", None), ("To-dos", None),
+    ("list", None), ("", None), (None, None), ("x" * 41, None),
 ])
 def test_clean_list_name(said, name):
     assert clean_list_name(said) == name
@@ -46,6 +47,10 @@ def test_note_items_get_their_list():
     ("Add Bob to the guest list", "guest", ("Bob", "guest")),
     # the model's list wins; a phrase naming another list stays in the text
     ("Add tape to the office list", "home", ("Add tape to the office list", "home")),
+    # the general to-do list is no named list: a to-do of its own, as before
+    ("Add a todo for calling the bank", None, ("Add a todo for calling the bank", None)),
+    ("Put call the bank on my to-do list", None, ("Put call the bank on my to-do list", None)),
+    ("Call the bank", "todos", ("Call the bank", None)),
 ])
 def test_list_phrase_in_text(text, said, want):
     (item,) = note_items([{"text": text, "list_name": said}])
