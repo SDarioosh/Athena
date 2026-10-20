@@ -154,7 +154,7 @@ class FakeWatch:
             self.corrupt_reads[cid] -= 1
             data[len(data) // 2] ^= 0xFF
         end = len(data) if length == 0 else min(len(data), offset + length)
-        step = self.mtu - 3 - p.DATA_HEADER
+        step = p.data_payload_max(self.mtu)
         for frames, off in enumerate(range(offset, end, step)):
             if cid in self.drop_after_frames and frames == self.drop_after_frames[cid]:
                 del self.drop_after_frames[cid]

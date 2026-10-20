@@ -114,6 +114,14 @@ def test_small_mtu_frames_and_multi_frame_chunks(server) -> None:
     assert rep.outcome == d.DONE and rep.acked == [1, 2]
 
 
+def test_mtu_517_frames_fit_512(server) -> None:
+    w = FakeWatch(mtu=517)  # 503-byte DATA payloads, 512-byte notifications
+    chunks = make_session(w, 1, size=5000)
+    rep = run(relay_for(server), w)
+    assert rep.outcome == d.DONE and rep.acked == [1]
+    assert server.ingests()[0].files["audio"][2] == chunks[0].data
+
+
 def test_duplicate_counts_as_ok(server) -> None:
     w = FakeWatch()
     make_session(w, 2)
@@ -261,7 +269,7 @@ def test_resume_read_after_disconnect(server) -> None:
     relay = relay_for(server)
     rep = run(relay, w)
     assert rep.outcome == d.LINK_LOST and not w.acked
-    step = w.mtu - 3 - p.DATA_HEADER
+    step = p.data_payload_max(w.mtu)
     rep = run(relay, w)
     assert rep.outcome == d.DONE and rep.acked == [1, 2]
     assert w.reads[:2] == [(1, 0), (1, 3 * step)]  # resumed at the bytes already received

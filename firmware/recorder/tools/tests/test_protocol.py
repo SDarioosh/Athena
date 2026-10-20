@@ -96,6 +96,19 @@ def test_decode_errors_and_growth() -> None:
         p.decode_response(h("84 00 0000"))
     # §9: a field added at the end is compatible
     assert p.decode_response(h("84 01 0000 07000000 ffff")) == p.Acked(1, 7)
+    # §7.2: no notification value is longer than 512 bytes (the ATT attribute limit)
+    full = p.DataFrame(1, 0, bytes(503)).encode()
+    assert len(full) == 512 and p.decode_response(full) == p.DataFrame(1, 0, bytes(503))
+    with pytest.raises(p.ProtocolError, match="514-byte notification"):
+        p.decode_response(p.DataFrame(1, 0, bytes(505)).encode())
+
+
+def test_data_payload_max() -> None:
+    assert p.data_payload_max(64) == 52
+    assert p.data_payload_max(247) == 235
+    assert p.data_payload_max(512) == 500
+    assert p.data_payload_max(515) == 503
+    assert p.data_payload_max(517) == 503
 
 
 def test_iso_ms() -> None:

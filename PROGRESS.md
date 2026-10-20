@@ -482,6 +482,29 @@ a note alone (`queue` shows NOTE on every chunk, LAST on the last; 5-min cap end
 conversation resumes; mute mid-note doesn't resume); message screen text size; a drain
 shows flag 0x05 on the note's last chunk and the server makes a `note` conversation.
 
+## Done on 2026-10-20: Android relay drains the T-Watch (frame cap, GATT client)
+
+The Android relay skipped every chunk ("DATA offset N, expected 0"); after that was fixed it
+couldn't get past the MTU exchange. Two bugs, both in the firmware:
+
+- **514-byte notifications.** At ATT MTU 517 a DATA frame was 514 bytes; the Core spec caps
+  an attribute value at 512 and Android drops longer notifications, so only each chunk's
+  short last frame arrived (the skipped offsets were all multiples of 505). Frames are now
+  min(MTU - 3, 512) bytes (503-byte payload); the PC relay, the Android tests' fake watch and
+  protocol §7.2 match.
+- **No GATT client in NimBLE.** With `CONFIG_BT_NIMBLE_GATT_CLIENT=n` NimBLE has no handler
+  for an incoming indication or notification and answers it with an ATT Error Response
+  (0x06). Android's own GATT server indicates Service Changed to the bonded watch at
+  connect, and the phone took the error as the answer to its pending request: MTU status 6,
+  read status 133, "incorrect discovery opcode 001d". Windows never indicates, so the PC
+  relay worked. The GATT client (and the central role it depends on in Kconfig) is now on.
+- Android relay: clears Android's GATT cache before discovery (`BluetoothGatt.refresh()` by
+  reflection), so a firmware update that moves handles can't leave it on stale ones.
+- On the owner's Galaxy Z Fold2 (Android 17) with the T-Watch on this firmware: one
+  connection, MTU 517, 6 chunks (324 KB, 670 frames) uploaded and acked, 0 links lost.
+- Diagnosis tools: `adb logcat -b all` shows the stack's GATT state; the `dumpsys
+  bluetooth_manager` BTSNOOP summary has HCI events only, not ATT.
+
 ## Done on 2026-10-20: T-Watch Ultra idle power (light sleep and standby)
 
 The owner's watch lost 30 % (about 330 mAh) overnight while idle: about 35-40 mA, an

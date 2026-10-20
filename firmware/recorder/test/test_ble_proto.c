@@ -507,7 +507,7 @@ static void test_list(void)
 }
 
 /* Check a READ's DATA frames cover [off, end) contiguously with the right bytes, each
- * frame at most MTU - 3, then a READ_END. Returns the number of DATA frames. */
+ * frame at most min(MTU - 3, 512), then a READ_END. Returns the number of DATA frames. */
 static size_t check_read(uint32_t id, uint32_t off, uint32_t end, uint16_t mtu, uint32_t total,
                          uint8_t status)
 {
@@ -517,6 +517,7 @@ static size_t check_read(uint32_t id, uint32_t off, uint32_t end, uint16_t mtu, 
         const uint8_t *f = s_sink.buf[i];
         CHECK_EQ(f[0], BLE_OP_DATA);
         CHECK(s_sink.len[i] <= (size_t)mtu - 3);
+        CHECK(s_sink.len[i] <= BLE_PROTO_ATTR_MAX);
         CHECK(s_sink.len[i] > BLE_PROTO_DATA_HDR_LEN);
         CHECK_EQ(le32(f + 1), id);
         CHECK_EQ(le32(f + 5), pos);
@@ -551,13 +552,17 @@ static void test_read(void)
 {
     fake_store_t st = {0};
     store_add(&st, 7, 24680);
-    store_add(&st, 8, 505);
+    store_add(&st, 8, 503);
     store_add(&st, 9, 0);
+    store_add(&st, 10, 504);
     char cmd[64];
 
     CHECK_EQ(ble_proto_data_payload_max(64), 52);
-    CHECK_EQ(ble_proto_data_payload_max(517), 505);
-    CHECK_EQ(ble_proto_data_payload_max(2000), 505);
+    CHECK_EQ(ble_proto_data_payload_max(247), 235);
+    CHECK_EQ(ble_proto_data_payload_max(512), 500);
+    CHECK_EQ(ble_proto_data_payload_max(515), 503);
+    CHECK_EQ(ble_proto_data_payload_max(517), 503);
+    CHECK_EQ(ble_proto_data_payload_max(2000), 503);
 
     const uint16_t mtus[] = {64, 65, 185, 247, 251, 512, 517, 1024};
     for (size_t m = 0; m < sizeof(mtus) / sizeof(mtus[0]); m++) {
@@ -566,10 +571,14 @@ static void test_read(void)
         const size_t pl = ble_proto_data_payload_max(mtus[m]);
         CHECK_EQ(frames, (24680 + pl - 1) / pl);
     }
-    /* §7.2: at 517 a frame carries 505 bytes */
+    /* §7.2: at 517 a frame carries 503 bytes, a 512-byte notification value (never 514) */
     CHECK_EQ(run(&st, "02 08000000 00000000 00000000", 517), BLE_PROTO_DONE);
-    CHECK_EQ(check_read(8, 0, 505, 517, 505, 0), 1);
-    CHECK_EQ(s_sink.len[0], 514);
+    CHECK_EQ(check_read(8, 0, 503, 517, 503, 0), 1);
+    CHECK_EQ(s_sink.len[0], 512);
+    CHECK_EQ(run(&st, "02 0a000000 00000000 00000000", 517), BLE_PROTO_DONE);
+    CHECK_EQ(check_read(10, 0, 504, 517, 504, 0), 2);
+    CHECK_EQ(s_sink.len[0], 512);
+    CHECK_EQ(s_sink.len[1], BLE_PROTO_DATA_HDR_LEN + 1);
 
     /* offset + length inside the file */
     CHECK_EQ(run(&st, "02 07000000 64000000 32000000", 64), BLE_PROTO_DONE);
