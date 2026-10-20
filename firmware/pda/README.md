@@ -159,6 +159,9 @@ python tools/pda_serial.py -p COM36 fb today.png
   grey ramp, touch targets) and reported no ghosting, missing text or orientation problem;
   the PDA screens themselves were checked through framebuffer dumps. Ghosting after a day
   of partial updates is untested.
+- Grey doesn't show on the owner's panel (2026-10-20): grey text and lines were invisible
+  on the PDA screens, so the UI draws only black and white (`GFX_FAINT` and `GFX_PENDING`
+  are black in `main/gfx.h`). Use layout, labels and marks, not grey, to set things apart.
 - Pairing being refused outside the window, re-pairing, and `ERROR mtu_too_small` (host
   tests only; Windows always negotiates 517).
 - The Service Changed indication from an Android phone (the GATT client is compiled in for

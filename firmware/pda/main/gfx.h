@@ -11,10 +11,12 @@
 extern "C" {
 #endif
 
-/* Grey levels for text (4-bit: 0 black .. 15 white). */
+/* Text colours (4-bit: 0 black .. 15 white). All black: grey text doesn't show on the
+ * owner's panel, so secondary and queued text is told apart by layout, labels ("pending")
+ * and marks, not by colour. */
 #define GFX_INK 0x0
-#define GFX_PENDING 0x7 /* queued but not confirmed by a feed yet */
-#define GFX_FAINT 0x9
+#define GFX_PENDING 0x0 /* queued but not confirmed by a feed yet */
+#define GFX_FAINT 0x0
 
 void gfx_begin(uint8_t *fb);
 
