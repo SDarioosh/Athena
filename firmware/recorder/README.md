@@ -46,6 +46,16 @@ records everything between start and stop.
   10 min of audio from a running one, or anything queued after an hour without a sync).
   The relay connects, sets the watch's clock, pulls each chunk, uploads it to the server,
   and only then tells the watch to delete it (protocol §1, §6).
+- **Power**: the chip light-sleeps whenever it has nothing to do; BLE advertising and
+  syncing keep working, and it stays awake while a USB host is attached (console,
+  flashing). After **2 minutes idle** (no session, nothing to sync and no relay connected,
+  screen off, card unmounted, no USB power) it goes into **standby**: deep sleep until
+  **PWR** is pressed or USB power is plugged in (`standby` on the console does it now).
+  Waking is a reboot of about a second that shows the status screen (no buzz; mute is
+  kept). The waking press does nothing else: it doesn't start a recording. The power log is
+  written to the card before standby (its RAM ring doesn't survive deep sleep).
+  BOOT doesn't wake it: GPIO0 is a strapping pin. Holding PWR ~6 s is still the hardware
+  power-off.
 - **`rec [s]`** (console only): the milestone-1 test, N seconds (default 60) from the mic to
   `/sdcard/rec_<UTC time>.wav`. The log line `recorder: level at ...` gives the file's RMS,
   peak, DC offset, clipped samples and how often the limiter acted. `stop` or mute ends it
@@ -191,7 +201,12 @@ power-cycle) to leave download mode; the USB serial port re-enumerates.
 Confirm the memory layout on the first flash (`esptool.py --port /dev/ttyACM0 flash_id`
 should report a 16 MB flash; the PSRAM line in the boot log should say quad mode, 8 MB).
 
-Exit the monitor with `Ctrl-]`. Log output and the `recorder>` console share the port.
+Exit the monitor with `Ctrl-]`.
+
+On Windows a reset through the USB port's RTS line (`idf.py monitor`, a plain serial
+script) may land in the ROM downloader (`boot:0x23 DOWNLOAD`). `esptool.py -p COMx
+--after watchdog_reset read_mac` boots the firmware; then attach with
+`idf.py monitor --no-reset`. Log output and the `recorder>` console share the port.
 
 Without a monitor (scripts, agents): `tools/wcon.py --port <port> status` sends one command
 and prints the answer; `--boot` resets the watch and prints the boot log; `--listen 60`

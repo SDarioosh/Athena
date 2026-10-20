@@ -145,6 +145,32 @@ static void test_debounce(void)
     CHECK_EQ(g_log[0].ev, BUTTON_GESTURE_LONG);
 }
 
+/* The button task stops polling only when this says so: never in a pending gesture. */
+static void test_idle(void)
+{
+    reset();
+    CHECK(button_gesture_idle(&g_g));
+    level(true, 10); /* raw down, not yet debounced */
+    CHECK(!button_gesture_idle(&g_g));
+    level(true, 100);
+    CHECK(!button_gesture_idle(&g_g));
+    level(false, 100); /* released: waiting for a possible second press */
+    CHECK_EQ(g_n, 0);
+    CHECK(!button_gesture_idle(&g_g));
+    level(false, 300);
+    CHECK_EQ(g_n, 1);
+    CHECK(button_gesture_idle(&g_g));
+    level(true, 1200); /* long press, still held */
+    CHECK(!button_gesture_idle(&g_g));
+    level(false, 50);
+    CHECK(button_gesture_idle(&g_g));
+    /* After hours blocked, the first poll still sees the press. */
+    CHECK_EQ(button_gesture_update(&g_g, false, 3600u * 1000u), BUTTON_GESTURE_NONE);
+    CHECK(button_gesture_idle(&g_g));
+    CHECK_EQ(button_gesture_update(&g_g, true, 3600u * 1000u), BUTTON_GESTURE_NONE);
+    CHECK(!button_gesture_idle(&g_g));
+}
+
 static void test_names(void)
 {
     CHECK(button_gesture_name(BUTTON_GESTURE_SINGLE)[0] == 's');
@@ -159,6 +185,7 @@ int main(void)
     test_double();
     test_long();
     test_debounce();
+    test_idle();
     test_names();
     return checks_done("test_button_gesture");
 }

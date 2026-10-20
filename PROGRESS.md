@@ -482,6 +482,34 @@ a note alone (`queue` shows NOTE on every chunk, LAST on the last; 5-min cap end
 conversation resumes; mute mid-note doesn't resume); message screen text size; a drain
 shows flag 0x05 on the note's last chunk and the server makes a `note` conversation.
 
+## Done on 2026-10-20: T-Watch Ultra idle power (light sleep and standby)
+
+The owner's watch lost 30 % (about 330 mAh) overnight while idle: about 35-40 mA, an
+ESP32-S3 that never sleeps. Light sleep was off, the BT controller would have blocked it
+anyway (main-crystal sleep clock without `BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP`), and
+the button task polled every 10 ms.
+
+- Automatic light sleep: `light_sleep_enable`, the BT crystal option, buttons on level-low
+  interrupts that also wake the chip (no polling while idle; the BOOT gesture machine
+  says when nothing is pending, `button_gesture_idle()`), main loop wakes only for events
+  and the 15 s battery guard, battery/power logs and standby check. The screen holds a no-light-sleep lock
+  while on; a USB host holds one too (`USJ_NO_AUTO_LS_ON_CONNECTION=y`). Without that the
+  USB console dies.
+- Standby: deep sleep after 2 min idle (no session, `ble_sync_wants_relay()` false, no
+  relay, screen off, card unmounted, no USB power), or `standby` on the console. Wake: PWR
+  (AXP2101 IRQ line, ext1) or USB power plugged in. Waking shows the status screen, no
+  buzz; the waking PWR press does not start a recording. Mute survives (RTC memory). The
+  power log is flushed to the card first, and the BT crystal request is dropped before
+  deep sleep.
+- First flash was built from a stale local branch (without rounds 15-17: buttons, voice
+  notes, battery guard, power log); the owner's watch couldn't record with it. Merged main
+  and re-flashed.
+- On the owner's watch: builds, flashes, console works over USB, `standby` refuses while a
+  finished session is queued ("advertising for a relay").
+- Needs the owner: drain the queue, unplug, wait 2 min (standby), press PWR (wakes, screen,
+  no buzz); a BLE drain on battery (light sleep with BLE); overnight battery % idle with an
+  empty queue, and with a queue and no phone in range (light sleep only).
+
 ## Done in round 14: T-Watch Ultra BLE link works from a Windows PC
 
 On the owner's watch (ESP-IDF 5.5.5, COM35) with the bonded Windows desktop:
