@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from conftest import fake_llm_transport, silence, tone
 from test_mcp import T0, call, ingest
 
@@ -81,6 +82,30 @@ def test_too_short_is_discarded_without_a_model_call(pipeline):
     out = pipeline.summarizer.summarize([Segment(0, 1, "Okay.", "Speaker 1")])
     assert out == {"discard": True, "discard_reason": "too_short", "kind": "other"}
     assert log == []
+
+
+@pytest.mark.parametrize("text,reason", [
+    ("Okay. Yeah, yeah. Mm-hmm, sure.", "filler"),
+    ("Testing, testing, one two three.", "mic_check"),
+])
+def test_filler_and_mic_checks_are_discarded_without_a_model_call(pipeline, text, reason):
+    from convo_server.store import Segment
+
+    log: list = []
+    use_llm(pipeline, log)
+    out = pipeline.summarizer.summarize([Segment(0, 1, text, "Speaker 1")])
+    assert out == {"discard": True, "discard_reason": reason, "kind": "other"}
+    assert log == []
+
+
+def test_one_content_word_still_goes_to_triage(pipeline):
+    from convo_server.store import Segment
+
+    log: list = []
+    use_llm(pipeline, log)
+    out = pipeline.summarizer.summarize([Segment(0, 1, "Okay, yeah, call mom.", "Me", True)])
+    assert not out.get("discard")
+    assert log[0]["response_format"]["json_schema"]["name"] == "Triage"
 
 
 def fact_summary(fact):
