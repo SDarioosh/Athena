@@ -27,6 +27,7 @@
 #include "pda_epd.h"
 #include "pda_time.h"
 #include "t5_board.h"
+#include "ui_nav.h"
 
 static const char *TAG = "ui";
 
@@ -1339,23 +1340,69 @@ static void act(const hit_t *h, bool is_long)
     }
 }
 
+/* Swipes (ui_nav.c): tabs at the top level; back / forward inside a detail screen. */
+static void on_swipe(gesture_kind_t k)
+{
+    const bool detail = ui.screen >= UI_CONV_DETAIL;
+    ui_nav_in_t in = {
+        .detail = detail,
+        .tab = detail ? 0 : (int)ui.screen,
+        .page = ui.page,
+        .pages = ui.pages,
+        .next_part = ui.screen == UI_TRANSCRIPT && ui.detail && ui.detail->next,
+        .sel = -1,
+    };
+    pda_app_lock();
+    const feed_t *f = pda_app_feed();
+    if (f && ui.screen == UI_CONV_DETAIL) {
+        in.sel = ui.sel;
+        in.n_items = f->n_conv;
+    } else if (f && ui.screen == UI_EVENT) {
+        in.sel = ui.sel;
+        in.n_items = f->n_events;
+    }
+    pda_app_unlock();
+    const ui_nav_dir_t dir = k == GESTURE_SWIPE_LEFT    ? UI_NAV_LEFT
+                             : k == GESTURE_SWIPE_RIGHT ? UI_NAV_RIGHT
+                             : k == GESTURE_SWIPE_UP    ? UI_NAV_UP
+                                                        : UI_NAV_DOWN;
+    const ui_nav_t r = ui_nav_swipe(&in, dir);
+    switch (r.kind) {
+    case UI_NAV_TAB:
+        go((ui_screen_t)r.arg);
+        break;
+    case UI_NAV_PAGE:
+        ui.page = r.arg;
+        break;
+    case UI_NAV_BACK: {
+        const hit_t back = {.act = A_BACK};
+        act(&back, false);
+        break;
+    }
+    case UI_NAV_NEXT_PART: {
+        const hit_t next = {.act = A_NEXT_PAGE};
+        act(&next, false);
+        break;
+    }
+    case UI_NAV_ITEM:
+        ui.sel = r.arg;
+        ui.page = 0;
+        ui.screen_changed = true; /* a different item: a new screen */
+        break;
+    default:
+        break;
+    }
+}
+
 static void on_gesture(gesture_kind_t k, int x, int y)
 {
     pda_app_touch_activity();
     if (ui.passkey >= 0) {
         return; /* the code stays up until pairing ends */
     }
-    if (k == GESTURE_SWIPE_UP || k == GESTURE_SWIPE_DOWN) {
-        const int d = k == GESTURE_SWIPE_UP ? 1 : -1;
-        if (ui.page + d >= 0 && ui.page + d < ui.pages) {
-            ui.page += d;
-        }
-        return;
-    }
-    if (k == GESTURE_SWIPE_LEFT || k == GESTURE_SWIPE_RIGHT) {
-        int s = ui.screen < UI_CONV_DETAIL ? (int)ui.screen : (int)UI_TODAY;
-        s = (s + (k == GESTURE_SWIPE_LEFT ? 1 : 5)) % 6;
-        go((ui_screen_t)s);
+    if (k == GESTURE_SWIPE_UP || k == GESTURE_SWIPE_DOWN || k == GESTURE_SWIPE_LEFT ||
+        k == GESTURE_SWIPE_RIGHT) {
+        on_swipe(k);
         return;
     }
     /* last matching region wins: buttons drawn over rows */

@@ -392,6 +392,9 @@ a 3 × 4 grid of hour slots and the durations.
     daylight-saving change within the week is shown, and a `cal_add` for such a day is
     made, one hour off until a `TIME` after the change. A fix for v2: the feed carries a
     POSIX TZ string (`"tz_posix": "CET-1CEST,M3.5.0,M10.5.0/3"`) that the T5 evaluates.
+- **Swipes as built:** on a tab screen left/right = next/previous tab, up/down = page; in a
+  detail screen right = back to the list, left = next page, then the next transcript part or
+  the next item, nothing at the end (`ui_nav.c`, host-tested).
 - **Refresh policy as built:** a new screen is a full (GC16) update; a change on the same
   screen (a pending mark, a page) a partial (GL16) one; the minute clock a partial that
   doesn't count; after 10 counted updates, and on the side button or "Clean refresh", a
