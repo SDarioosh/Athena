@@ -8,7 +8,8 @@ it called a convo tool, cited a link to an expected conversation, and included a
     python eval/bakeoff.py --frontend raw     # llama-server + MCP directly (baseline)
     python eval/bakeoff.py --frontend hermes  # `hermes -p convo` one-shot per question
     python eval/bakeoff.py --frontend odysseus  # Odysseus agent chat; env ODYSSEUS_URL,
-        # ODYSSEUS_USER, ODYSSEUS_PASSWORD(_FILE) or ODYSSEUS_API_TOKEN, ODYSSEUS_PRESET
+        # ODYSSEUS_USER, ODYSSEUS_PASSWORD(_FILE) or ODYSSEUS_API_TOKEN, ODYSSEUS_PRESET,
+        # ODYSSEUS_MODE (agent, or chat = the web UI default)
 
 Results go to eval/results/<frontend>.jsonl (gitignored) as JSON lines. A full run replaces
 the file; --only appends to it.
@@ -150,7 +151,10 @@ def _bare_tool(name: str) -> str:
 
 
 def run_odysseus(question: str) -> tuple[str, list[str]]:
-    """One fresh Odysseus agent-mode chat per question over /api/chat_stream (SSE).
+    """One fresh Odysseus chat per question over /api/chat_stream (SSE).
+
+    Agent mode by default; ODYSSEUS_MODE=chat sends what the web UI sends with the agent
+    toggle off, so the eval also covers Odysseus switching the turn to agent mode itself.
 
     Tool-approval prompts ("Allow this task to continue?") are answered the way a user
     clicking "Allow for this task" would (ODYSSEUS_APPROVAL=approve_task|approve|deny).
@@ -160,8 +164,9 @@ def run_odysseus(question: str) -> tuple[str, list[str]]:
     sid = c.post("/api/session", data={"name": f"bakeoff: {question[:60]}",
                                        "endpoint_id": dc["endpoint_id"],
                                        "model": dc["model"]}).json()["id"]
-    base = {"session": sid, "mode": "agent", "allow_web_search": "false",
-            "allow_bash": "false", "selected_endpoint_id": dc["endpoint_id"],
+    base = {"session": sid, "mode": os.environ.get("ODYSSEUS_MODE", "agent"),
+            "allow_web_search": "false", "allow_bash": "false",
+            "selected_endpoint_id": dc["endpoint_id"],
             "selected_model": dc["model"]}
     if os.environ.get("ODYSSEUS_PRESET", "custom"):
         base["preset_id"] = os.environ.get("ODYSSEUS_PRESET", "custom")
