@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-20 (round 17: T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus)_
+_Last updated: 2026-10-20 (round 17: T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board)_
 
 ## Status
 
@@ -33,6 +33,7 @@ _Last updated: 2026-10-20 (round 17: T-Watch Ultra on the owner's watch, bug hun
 | 11c | Android relay app (T-Watch → BLE → phone → server) | **built, unit-tested (67 tests), not yet on a phone**: foreground service, scan/bond/drain per the protocol, uploads with the bearer token over LAN/Tailscale, acks only after the server's ok, backoff; settings (URL, token in Keystore) and status screen; no Google services, no analytics. CI builds the APK | `android-relay/` |
 | 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; the hub's `fork_deploy.sh deploy` runs it first, and it then updates Odysseus itself (`BARVIS_SOUND_ODYSSEUS_DIR`, found from the running container by default), so either command updates both | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, hub `docs/fork/deploy.md` |
 | 13 | Speaker recognition (PR #24) and focused summaries (PR #25): measured in the sandbox, bugs fixed, two improvements | PRs open, **owner: Server verification** | SDarioosh/barvis-sound#31 (recognition), SDarioosh/barvis-sound#38 (insights) |
+| 14 | T5 E-Paper Pro PDA firmware (feed and outbox over BLE through the phone) | **milestones 0–3 built, on the owner's T5**: bring-up and refresh times, all screens from a fictional feed, touch and buttons by hand, BLE pairing, TIME, outbox drain/ack and feed PUT from a Windows PC; host tests in CI. Still open: the PC relay and the Android `PdaSync` against the real T5, the server `PATCH` end to end, sleep and power (milestone 5) | `firmware/pda/`, `docs/t5-pda-plan.md` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -532,6 +533,42 @@ the button task polled every 10 ms.
 - Needs the owner: drain the queue, unplug, wait 2 min (standby), press PWR (wakes, screen,
   no buzz); a BLE drain on battery (light sleep with BLE); overnight battery % idle with an
   empty queue, and with a queue and no phone in range (light sleep only).
+## Done on 2026-10-20: T5 E-Paper Pro PDA firmware, milestones 0–3
+
+New ESP-IDF project `firmware/pda/` (plan §11 Q1 default: separate project, builds
+`crc32`/`isotime` from the recorder unchanged). On the owner's T5 (ESP32-S3R8, MAC
+30:ed:a0:b1:ab:cc; it moved from COM35 to COM36 during the session, so flash by MAC):
+
+- **Bring-up (§1 of the plan, now confirmed):** epdiy 2.1.3 board v7 + ED047TC1 work
+  unchanged on our I2C bus; PCA9535, TPS65185, GT911 (portrait raw frame: swap X/Y, flip
+  Y), PCF8563, BQ27220, BQ25896 all answer. Refresh: partial GL16 ~0.95 s whatever the
+  area, full GC16 ~1.0 s, clean (one flash cycle + GC16) 1.57 s, nothing changed 0.13 s.
+- **Screens (§5):** Today, Briefing, Calendar, Actions, Talks, Status, conversation and
+  transcript details, event detail, template picker and a time grid for new events;
+  pending / undo / couldn't-sync marks; partial, full and clean refresh policy. Checked
+  through framebuffer dumps and by hand (tabs, item done + undo, swipes, both buttons).
+- **Storage:** LittleFS 2 MB: atomic feed swap, 20-entry detail cache, one file per outbox
+  action with a never-reused id counter. The feed, outbox, clock and display offset survive
+  reboot and reflash.
+- **BLE (§3):** NimBLE service with passkey pairing in a 2-minute window, authenticated
+  links only, PUT, OB_LIST/OB_ACK, TIME, BYE. Tested from Windows with
+  `firmware/pda/tools/pda_ble_test.py` (pairs through WinRT with the code read from the USB
+  console): MTU 517, a 4 KB feed in 0.8 s, a 200 KB detail, bad CRC refused, a dropped PUT
+  discarded, a lost ack listed again and acked once.
+- **Bug found on the board and fixed:** a flash write (outbox ack) during an e-paper
+  refresh crashed in epdiy's LCD interrupt ("Cache disabled but cached memory region
+  accessed"); `CONFIG_SPIRAM_XIP_FROM_PSRAM` keeps the cache on during flash writes.
+- **Protocol details settled** in plan §3.6, matching the PC relay's §3.5 (its branch).
+  The relay's scan-response service data and the full name don't fit in 31 bytes
+  together: the service data goes out only while the outbox has entries, with the
+  shortened name `odysseus-p`.
+- Host tests (`firmware/pda/test/`, 6 suites, also under ASan/UBSan) and the `idf.py
+  build` run in CI (`firmware-t5-pda` job).
+
+Not done or not verified: see `firmware/pda/README.md` ("Not verified yet"): the sibling
+relays against the real T5, light/deep sleep and battery life, flash encryption, pairing
+refusal outside the window, and DST (times after a daylight-saving change within the week
+are an hour off until the next TIME; v2 fix proposed: a `tz_posix` feed field).
 
 ## Done in round 14: T-Watch Ultra BLE link works from a Windows PC
 
@@ -724,9 +761,10 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
     the table recording (32.6 %). **Owner: Server verification**, then watch battery and
     drain time at 24 kbps.
     VAD gain stays off (it helps only on very quiet input).
-11. T5 E-Paper Pro PDA (`docs/t5-pda-plan.md`, planned 2026-10-20): briefing, conversations,
-    action items and the Odysseus calendar over BLE via the phone. First: confirm the hub's
-    calendar REST and scoped tokens (plan §6), then milestone 0 bring-up.
+11. T5 E-Paper Pro PDA (`docs/t5-pda-plan.md`): firmware milestones 0–3 done (2026-10-20).
+    Next: run the PC relay's `pda` subcommand and the phone's `PdaSync` against the real T5,
+    then `item_status` through to the sandbox server's `PATCH` (milestone 3's last step) and
+    milestone 4 (phone + calendar), then sleep, power and flash encryption (milestone 5).
 
 ## Open questions for you
 
@@ -747,7 +785,9 @@ Still open:
 - T-Watch Ultra: everything under "Needs the real watch" above. Also: does the battery
   take a 4.2 V charge target (set conservatively; LilyGoLib asks the chip for 4.288 V)?
 - T5 PDA: the questions in `docs/t5-pda-plan.md` §11 (firmware layout, feed window,
-  Wi-Fi at home, transcript QR, auto-blank, languages).
+  Wi-Fi at home, transcript QR, auto-blank, languages). New: should the phone send a POSIX
+  time zone (`tz_posix`) in the feed, so times after a DST change are right? And how does
+  the real panel look to you (contrast, VCOM 1560 mV, ghosting after a day)?
 - Odysseus fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.
 - The remaining XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, extra parts, microSD). They wait until XIAO work
