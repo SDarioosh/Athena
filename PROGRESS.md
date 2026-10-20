@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-19 (renamed to odysseus-sound in prose; round 14: T-Watch Ultra BLE connects from a Windows PC)_
+_Last updated: 2026-10-20 (T5 PDA: PC relay side of the glance protocol built; round 14: T-Watch Ultra BLE connects from a Windows PC)_
 
 ## Status
 
@@ -240,6 +240,25 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
   vendor string, the `barvis_relay` package, and all `convo` identifiers.
 
+## Done on 2026-10-20: T5 PDA, PC relay side
+
+- `ble_relay.py pda` (`tools/pda_relay.py`, `barvis_relay/pda_*.py`) implements
+  `docs/t5-pda-plan.md` §3–§4: the glance codec (status, MTU ≥ 420, the errors), the relay
+  algorithm (TIME with the UTC offset, health, outbox first, feed `PUT` only when its
+  content hash changed, `fetch` detail blobs with 10-minute transcript pages, staying
+  connected while the user is active), strict checks on every action, and the 0/1/no-ack
+  results.
+- The calendar is behind a `Calendar` protocol. For now that is a stub that says "not
+  configured", so calendar actions wait on the T5; the Odysseus calendar REST isn't
+  confirmed yet.
+- Where the plan left a choice, the answer is now in plan §3.5, §4.1 and §4.3.
+- Tests: `tools/tests/test_pda.py` (fake T5 GATT peer, fake server: lost ack, bad CRC,
+  paging, MTU, stay mode) and `server/tests/test_pda_feed.py` (the real API, seeded
+  fictional data). The watch drain is unchanged.
+- **Not run on hardware:** the T5 firmware doesn't speak the protocol yet. Still to check
+  with real devices: bleak MTU on Windows and BlueZ (≥ 420), pairing with the T5, the
+  scan-response flag, PUT throughput.
+
 ## Done in round 14: T-Watch Ultra BLE link works from a Windows PC
 
 On the owner's watch (ESP-IDF 5.5.5, COM35) with the bonded Windows desktop:
@@ -418,7 +437,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 9. XIAO pendant, after the T-Watch Ultra: a second `boards/` directory on the same firmware.
 10. T5 E-Paper Pro PDA (`docs/t5-pda-plan.md`, planned 2026-10-20): briefing, conversations,
     action items and the Odysseus calendar over BLE via the phone. First: confirm the hub's
-    calendar REST and scoped tokens (plan §6), then milestone 0 bring-up.
+    calendar REST and scoped tokens (plan §6), then milestone 0 bring-up. The PC relay side
+    (`ble_relay.py pda`) is built; next it runs against the T5 firmware (milestones 2–3),
+    and it needs a real `Calendar` once the hub's endpoints are confirmed.
 
 ## Open questions for you
 

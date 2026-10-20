@@ -130,6 +130,32 @@ Other options: `--list` (show the watch's status and queue, change nothing), `--
 later (server, link or no adapter), 3 token rejected or bad settings, 4 watch not found.
 Tests (no Bluetooth needed): `python -m pytest -q firmware/recorder/tools`.
 
+### Sync the T5 PDA from a PC: `ble_relay.py pda`
+
+The same relay also speaks the T5 E-Paper Pro's "glance" protocol
+([docs/t5-pda-plan.md](../../docs/t5-pda-plan.md) §3). It sends the T5's outbox actions to
+the server, acks each one with its result, and `PUT`s the feed (briefing, conversations,
+open action items) whenever it changed. Same venv, token and server variables as above.
+The T5 holds no token.
+
+```bash
+export BARVIS_TZ=Europe/Berlin           # the feed's time zone and the T5 clock (default UTC)
+~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py pda --list   # look only
+~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py pda --once   # sync once
+~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py pda          # keep syncing
+```
+
+- Without `--once`, the relay stays connected while the T5's screen is awake. It handles
+  outbox entries within seconds and refreshes the feed every 5 min.
+- Otherwise it reconnects every 15 min, or sooner when the T5 advertises "outbox waiting".
+- Calendar actions stay queued on the T5 until the Odysseus calendar client exists
+  (plan §6).
+- Exit codes: 0 ok, 1 some actions still waiting, 2 retry later, 3 token rejected,
+  incompatible or bad settings, 4 T5 not found.
+- The code is in `tools/pda_relay.py` and `tools/barvis_relay/pda_*.py`. The tests are in
+  `tools/tests/test_pda.py` (fake T5, fake server) and `server/tests/test_pda_feed.py` (the
+  real API, seeded fictional data).
+
 ## Build
 
 Requires ESP-IDF v5.4 or newer (CI uses v5.5.2) with the esp32s3 toolchain installed
@@ -207,7 +233,8 @@ firmware/recorder/
 │   └── idf_component.yml
 ├── test/                     # host tests (plain CMake + ctest)
 ├── tools/pull.py             # copy recordings (or --queue chunks) off the card over USB
-└── tools/ble_relay.py        # PC relay: drain the watch over BLE, upload (barvis_relay/, tests/)
+├── tools/ble_relay.py        # PC relay: drain the watch over BLE, upload (barvis_relay/, tests/)
+└── tools/pda_relay.py        # `ble_relay.py pda`: sync the T5 PDA (barvis_relay/pda_*.py)
 ```
 
 ## Third-party code
