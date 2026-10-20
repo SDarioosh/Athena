@@ -10,6 +10,7 @@
 #include "chunk_store.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
+#include "esp_task_wdt.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -246,6 +247,7 @@ static esp_err_t read_frame(session_t *s)
         if (s_stop) {
             return ESP_ERR_INVALID_STATE;
         }
+        esp_task_wdt_reset(); /* a mic read waits at most MIC_TIMEOUT_MS */
         size_t got = 0;
         const esp_err_t r = mic_read(s->frame + have, OPUS_ENC_FRAME_SAMPLES - have, &got,
                                      MIC_TIMEOUT_MS);
@@ -305,6 +307,10 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
 {
     *why = SESSION_END_REQUEST;
     ESP_RETURN_ON_ERROR(mic_start(), TAG, "mic");
+    /* Task watchdog (CONFIG_ESP_TASK_WDT_TIMEOUT_S): fed once per frame and per mic read. If
+     * the loop hangs (a card or mic driver that never returns), the watch restarts with a
+     * core dump and reset=task_wdt, and the app starts a new session after the boot. */
+    esp_task_wdt_add(NULL);
     s->mono0_ms = mono_ms();
     int64_t epoch;
     s->time_unset = !clock_epoch_ms(&epoch);
@@ -319,6 +325,7 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
         *why = SESSION_END_CARD_FULL;
     }
     while (*why == SESSION_END_REQUEST) {
+        esp_task_wdt_reset();
         if (s->max_packets && s->packets >= s->max_packets) {
             *why = SESSION_END_MAX; /* the open chunk is closed with LAST below */
             break;
@@ -397,6 +404,7 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
             chunk_store_set_last(s->prev_chunk_id); /* broke off between two chunks */
         }
     }
+    esp_task_wdt_delete(NULL);
     return err;
 }
 

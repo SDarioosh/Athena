@@ -17,6 +17,7 @@
 #include "esp_check.h"
 #include "esp_console.h"
 #include "esp_core_dump.h"
+#include "esp_task_wdt.h"
 #include "esp_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -379,8 +380,19 @@ static int cmd_coredump(int argc, char **argv)
 /* `crash yes`: crash on purpose (abort) to test the core dump and the reset reason. */
 static int cmd_crash(int argc, char **argv)
 {
+    if (argc == 2 && strcmp(argv[1], "wdt") == 0) {
+        /* A task that stops feeding the task watchdog: it fires after
+         * CONFIG_ESP_TASK_WDT_TIMEOUT_S and restarts the watch (reset=task_wdt). */
+        printf("hanging the console task (task watchdog test)\n");
+        fflush(stdout);
+        esp_task_wdt_add(NULL);
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
     if (argc != 2 || strcmp(argv[1], "yes") != 0) {
-        printf("usage: crash yes  (aborts; the watch saves a core dump and restarts)\n");
+        printf("usage: crash yes (abort) | crash wdt (hang a watched task); the watch saves a "
+               "core dump and restarts\n");
         return 1;
     }
     printf("crashing on purpose\n");
@@ -594,7 +606,7 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "sd", .help = "Power, mount and report the SD card, then power it off; `sd failwrite <n>` makes the next n chunk writes fail (test)", .func = cmd_sd},
     {.command = "reboot", .help = "Restart", .func = cmd_reboot},
     {.command = "coredump", .help = "The last crash: summary; `coredump get` sends the ELF (tools/pull.py --coredump), `coredump erase`", .func = cmd_coredump},
-    {.command = "crash", .help = "`crash yes`: crash on purpose (test the core dump)", .func = cmd_crash},
+    {.command = "crash", .help = "`crash yes` (abort) / `crash wdt` (hang a watched task): crash on purpose to test the core dump, watchdog and resume", .func = cmd_crash},
 };
 
 esp_err_t console_start(void)

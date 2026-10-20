@@ -17,6 +17,7 @@
 #include "board.h"
 #include "chunk_store.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -338,6 +339,7 @@ static int notify(uint32_t gen, uint16_t attr, const uint8_t *buf, size_t len)
 {
     const int64_t give_up = now_ms() + SEND_GIVE_UP_MS;
     int backoff = 1;
+    esp_task_wdt_reset(); /* one per frame while a READ streams */
     for (;;) {
         const uint16_t h = handle_for(gen);
         if (h == BLE_HS_CONN_HANDLE_NONE) {
@@ -815,12 +817,19 @@ static void handle_job(const job_t *job)
     }
 }
 
+/* Task watchdog: the task waits for jobs at most JOB_WAIT_MS and feeds it every round and
+ * while it streams (notify retries, READ frames), so a stuck card read or host call
+ * restarts the watch with a core dump and reset=task_wdt. */
+#define JOB_WAIT_MS 2000
+
 static void ble_task(void *arg)
 {
     (void)arg;
     job_t job;
+    esp_task_wdt_add(NULL);
     for (;;) {
-        if (xQueueReceive(s_jobs, &job, portMAX_DELAY) != pdTRUE) {
+        esp_task_wdt_reset();
+        if (xQueueReceive(s_jobs, &job, pdMS_TO_TICKS(JOB_WAIT_MS)) != pdTRUE) {
             continue;
         }
         handle_job(&job);

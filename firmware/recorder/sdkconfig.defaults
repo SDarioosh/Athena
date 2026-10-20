@@ -69,8 +69,11 @@ CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y
 # FAT on the SD card: long file names
 CONFIG_FATFS_LFN_HEAP=y
 
-# Watchdog: keep the task watchdog on the main loop
+# Task watchdog: the session and BLE tasks are subscribed (and both idle tasks). A task
+# that doesn't feed it for 10 s panics: core dump, restart, reset=task_wdt, and a
+# conversation that was recording starts again after the boot.
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+CONFIG_ESP_TASK_WDT_PANIC=y
 
 # Core dump of a crash to the `coredump` partition (console `coredump`, tools/pull.py
 # --coredump; decode with `idf.py coredump-info -c <file>`). ELF: task stacks and TCBs only.

@@ -31,7 +31,9 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_pm.h"
+#include "esp_attr.h"
 #include "esp_random.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -69,6 +71,10 @@ typedef enum { SCREEN_OFF, SCREEN_STATUS, SCREEN_MESSAGE, SCREEN_NOTE, SCREEN_PA
 static screen_t s_screen;           /* what is on the panel while ui_is_shown() */
 static bool s_note_pending;         /* a note waits for the conversation session to end */
 static bool s_resume_conversation;  /* start a conversation session again after the note */
+/* Survives a crash or watchdog restart (not a power cut): a conversation was recording, so
+ * the app starts a new session after the boot. Refreshed every second of recording. */
+#define REC_RESUME_MAGIC 0x52454321u
+RTC_NOINIT_ATTR static uint32_t s_rec_resume;
 static battery_guard_t s_batt_guard;
 static volatile bool s_batt_low;    /* too low to record: sessions refused (battery_guard.c) */
 /* Console `batt sim`: a made-up battery (USB unplugged) for testing the low-battery path. */
@@ -457,7 +463,7 @@ static void start_conversation(bool quiet)
         show_message("REC FAILED", "SEE CONSOLE LOG");
         return;
     }
-    ESP_LOGI(TAG, "recording session started%s", quiet ? " again after the note" : " (1 buzz)");
+    ESP_LOGI(TAG, "recording session started%s", quiet ? " again (no buzz)" : " (1 buzz)");
     if (!quiet) {
         board_haptic_pulse(1);
     }
@@ -599,6 +605,7 @@ static void toggle_mute(void)
 
 static void session_done(session_rec_kind_t kind, session_rec_end_t why)
 {
+    s_rec_resume = 0;
     session_rec_state_t ss;
     session_rec_get_state(&ss);
     static const char *const WHY[] = {"stopped", "card full", "error", "5 min limit"};
@@ -699,7 +706,11 @@ static void handle(const app_event_t *ev)
             s_screen = SCREEN_OFF;
         }
         break;
-    case APP_EV_SESSION_TICK:
+    case APP_EV_SESSION_TICK: {
+        session_rec_state_t ss;
+        session_rec_get_state(&ss);
+        s_rec_resume = ss.running && ss.kind == SESSION_KIND_CONVERSATION ? REC_RESUME_MAGIC : 0;
+    }
         if (ui_is_shown() && s_screen == SCREEN_NOTE && note_running()) {
             show_note((uint32_t)ev->arg, false);
         } else {
@@ -860,6 +871,19 @@ void app_main(void)
 
     /* One buzz: haptics work and the recorder starts unmuted. */
     board_haptic_pulse(1);
+
+    /* A crash or a watchdog restart cut a conversation off: record again. A power cut,
+     * brownout or reboot by hand doesn't (s_rec_resume is not kept, or not wanted). */
+    const esp_reset_reason_t rr = esp_reset_reason();
+    const bool crashed = rr == ESP_RST_PANIC || rr == ESP_RST_TASK_WDT ||
+                         rr == ESP_RST_INT_WDT || rr == ESP_RST_WDT;
+    const bool resume = crashed && s_rec_resume == REC_RESUME_MAGIC;
+    s_rec_resume = 0;
+    if (resume) {
+        ESP_LOGW(TAG, "restarted by %s while recording: starting a new session",
+                 reset_reason_name());
+        start_conversation(true);
+    }
 
     ESP_ERROR_CHECK(console_start());
     ESP_LOGI(TAG, "ready: PWR = start/stop recording, PWR held = voice note, BOOT = status "
