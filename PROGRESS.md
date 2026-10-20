@@ -529,6 +529,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 8. T-Watch Ultra recorder: milestones 3+ (`docs/t-watch-ultra-plan.md` §8) once the
    power baseline says go.
 9. XIAO pendant, after the T-Watch Ultra: a second `boards/` directory on the same firmware.
+10. Room pickup (`docs/omi-audio-quality.md` §4): far-field eval on AMI array audio
+    first, then a gained copy for VAD, then Parakeet TDT as a second transcriber, and
+    24/32 kbps Opus in milestone 3.
 
 ## Open questions for you
 
@@ -548,6 +551,9 @@ Still open:
   6-digit passkey on the watch screen.)
 - T-Watch Ultra: everything under "Needs the real watch" above. Also: does the battery
   take a 4.2 V charge target (set conservatively; LilyGoLib asks the chip for 4.288 V)?
+- Room pickup (`docs/omi-audio-quality.md` §6): is "the room" mostly a table at ~1 m or
+  people at 1–3 m while walking? Battery for 24–32 kbps Opus if it clearly helps? GPU
+  room for Parakeet next to whisper for the A/B?
 - Odysseus fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.
 - The remaining XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, extra parts, microSD). They wait until XIAO work
