@@ -133,6 +133,12 @@ void t5_board_log_i2c(void)
         ESP_LOGI(TAG, "i2c 0x%02x %-11s %s", chips[i].addr, chips[i].name,
                  err == ESP_OK ? "ok" : "absent");
     }
+    uint8_t in[2] = {0}, cfg1 = 0;
+    reg_read(s_pca, PCA_IN0, in, 2);
+    reg_read(s_pca, PCA_CFG1, &cfg1, 1);
+    ESP_LOGI(TAG, "PCA9535 in0 0x%02x in1 0x%02x cfg1 0x%02x; BOOT %s, side %s", in[0], in[1], cfg1,
+             t5_button_is_down(T5_BUTTON_BOOT) ? "down" : "up",
+             t5_button_is_down(T5_BUTTON_SIDE) ? "down" : "up");
 }
 
 /* ---- battery ---- */

@@ -70,7 +70,8 @@ def cmd_cmd(a) -> int:
 
 
 def cmd_put(a) -> int:
-    data = open(a.file, "rb").read()
+    with open(a.file, "rb") as f:
+        data = f.read()
     crc = zlib.crc32(data) & 0xFFFFFFFF
     with open_port(a.port) as s:
         read_for(s, 0.3)
@@ -98,11 +99,17 @@ def png_gray4(path: str, w: int, h: int, fb: bytes) -> None:
             rows.append((b >> 4) * 17)
 
     def chunk(tag: bytes, body: bytes) -> bytes:
-        return struct.pack(">I", len(body)) + tag + body + struct.pack(">I", binascii.crc32(tag + body) & 0xFFFFFFFF)
+        return (
+            struct.pack(">I", len(body))
+            + tag
+            + body
+            + struct.pack(">I", binascii.crc32(tag + body) & 0xFFFFFFFF)
+        )
 
     png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
     png += chunk(b"IDAT", zlib.compress(bytes(rows), 6)) + chunk(b"IEND", b"")
-    open(path, "wb").write(png)
+    with open(path, "wb") as f:
+        f.write(png)
 
 
 B64_LINE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
@@ -133,7 +140,9 @@ def cmd_fb(a) -> int:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("-p", "--port", required=True)
     sub = p.add_subparsers(dest="what", required=True)
     lg = sub.add_parser("log")

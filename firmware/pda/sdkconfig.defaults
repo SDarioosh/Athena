@@ -19,6 +19,11 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+# Code and read-only data run from PSRAM, so a flash write (LittleFS, NVS bonds) doesn't
+# disable the cache. Without it, an outbox write during an e-paper refresh crashed:
+# epdiy's LCD interrupt reads the framebuffer in PSRAM ("Cache disabled but cached memory
+# region accessed", seen on the board).
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 
 # CPU: 240 MHz while drawing (epdiy computes the waveform lines on the CPU, pda_epd.c holds
 # a PM lock for a refresh); DFS drops to 80 MHz otherwise.

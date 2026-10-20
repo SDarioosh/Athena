@@ -63,7 +63,11 @@ FEED = {
                 "Alice’s move to the Berlin office is set for 12 January. You agreed to take "
                 "over her vendor contracts. The Q4 budget cut is now 10 %, not 15 %."
             ),
-            "points": ["Berlin move: 12 Jan", "You take over vendor contracts", "Budget cut now 10 %"],
+            "points": [
+                "Berlin move: 12 Jan",
+                "You take over vendor contracts",
+                "Budget cut now 10 %",
+            ],
         },
         {
             "id": "c_demo_jonas_dinner",
@@ -74,7 +78,11 @@ FEED = {
                 "Jonas signed up for the Lisbon marathon in December and runs 30 km on Sundays. "
                 "He recommended The Overstory. He is allergic to peanuts."
             ),
-            "points": ["Lisbon marathon in December", "Book tip: The Overstory", "Allergic to peanuts"],
+            "points": [
+                "Lisbon marathon in December",
+                "Book tip: The Overstory",
+                "Allergic to peanuts",
+            ],
         },
         {
             "id": "c_demo_standup",
@@ -96,37 +104,101 @@ FEED = {
                 "Rent rises from €1,450 to €1,520 from January. Tom needs the signed renewal by "
                 "31 October and will fix the bathroom fan next week."
             ),
-            "points": ["Rent €1,520 from January", "Signed renewal due 31 Oct", "Tom fixes the bathroom fan"],
+            "points": [
+                "Rent €1,520 from January",
+                "Signed renewal due 31 Oct",
+                "Tom fixes the bathroom fan",
+            ],
         },
     ],
     "actions": [
-        {"id": 14, "text": "Review Ben’s pull request", "owner": "Me", "due": "2026-10-07",
-         "conv": "c_demo_standup"},
-        {"id": 15, "text": "Check database load before the client demo", "owner": "Me",
-         "due": "2026-10-23", "conv": "c_demo_standup"},
-        {"id": 12, "text": "Sign and return the lease renewal to Tom", "owner": "Me",
-         "due": "2026-10-31", "conv": "c_demo_landlord"},
-        {"id": 11, "text": "Get the photo album for Mom’s 70th", "owner": "Me",
-         "due": "2026-11-08", "conv": "c_demo_maria_oct"},
-        {"id": 18, "text": "Pick up Aunt Rosa from the train station", "owner": "Me",
-         "due": "2026-11-08", "conv": "c_demo_maria_oct"},
-        {"id": 17, "text": "Take over Alice’s vendor contracts", "owner": "Me",
-         "conv": "c_demo_alice_1on1"},
+        {
+            "id": 14,
+            "text": "Review Ben’s pull request",
+            "owner": "Me",
+            "due": "2026-10-07",
+            "conv": "c_demo_standup",
+        },
+        {
+            "id": 15,
+            "text": "Check database load before the client demo",
+            "owner": "Me",
+            "due": "2026-10-23",
+            "conv": "c_demo_standup",
+        },
+        {
+            "id": 12,
+            "text": "Sign and return the lease renewal to Tom",
+            "owner": "Me",
+            "due": "2026-10-31",
+            "conv": "c_demo_landlord",
+        },
+        {
+            "id": 11,
+            "text": "Get the photo album for Mom’s 70th",
+            "owner": "Me",
+            "due": "2026-11-08",
+            "conv": "c_demo_maria_oct",
+        },
+        {
+            "id": 18,
+            "text": "Pick up Aunt Rosa from the train station",
+            "owner": "Me",
+            "due": "2026-11-08",
+            "conv": "c_demo_maria_oct",
+        },
+        {
+            "id": 17,
+            "text": "Take over Alice’s vendor contracts",
+            "owner": "Me",
+            "conv": "c_demo_alice_1on1",
+        },
         {"id": 16, "text": "Fix the bathroom fan", "owner": "Tom", "conv": "c_demo_landlord"},
     ],
     "calendar": [
-        {"id": "ev_demo_1", "title": "Team stand-up", "start": "2026-10-20T07:30:00Z",
-         "end": "2026-10-20T07:45:00Z", "where": "Room 2.14", "all_day": False},
-        {"id": "ev_demo_2", "title": "Dentist follow-up (Dr. Patel)", "start": "2026-10-21T07:00:00Z",
-         "end": "2026-10-21T07:45:00Z", "where": "Praxis Patel", "all_day": False},
-        {"id": "ev_demo_3", "title": "Client demo", "start": "2026-10-23T12:00:00Z",
-         "end": "2026-10-23T13:00:00Z", "where": "Video call", "all_day": False},
-        {"id": "ev_demo_4", "title": "Ben’s PR review session", "start": "2026-10-22T13:00:00Z",
-         "end": "2026-10-22T13:30:00Z", "all_day": False},
-        {"id": "ev_demo_5", "title": "Jonas: long run (cheer at km 20)", "start": "2026-10-25",
-         "all_day": True},
-        {"id": "ev_demo_6", "title": "Lease renewal reminder", "start": "2026-10-26",
-         "all_day": True},
+        {
+            "id": "ev_demo_1",
+            "title": "Team stand-up",
+            "start": "2026-10-20T07:30:00Z",
+            "end": "2026-10-20T07:45:00Z",
+            "where": "Room 2.14",
+            "all_day": False,
+        },
+        {
+            "id": "ev_demo_2",
+            "title": "Dentist follow-up (Dr. Patel)",
+            "start": "2026-10-21T07:00:00Z",
+            "end": "2026-10-21T07:45:00Z",
+            "where": "Praxis Patel",
+            "all_day": False,
+        },
+        {
+            "id": "ev_demo_3",
+            "title": "Client demo",
+            "start": "2026-10-23T12:00:00Z",
+            "end": "2026-10-23T13:00:00Z",
+            "where": "Video call",
+            "all_day": False,
+        },
+        {
+            "id": "ev_demo_4",
+            "title": "Ben’s PR review session",
+            "start": "2026-10-22T13:00:00Z",
+            "end": "2026-10-22T13:30:00Z",
+            "all_day": False,
+        },
+        {
+            "id": "ev_demo_5",
+            "title": "Jonas: long run (cheer at km 20)",
+            "start": "2026-10-25",
+            "all_day": True,
+        },
+        {
+            "id": "ev_demo_6",
+            "title": "Lease renewal reminder",
+            "start": "2026-10-26",
+            "all_day": True,
+        },
     ],
     # Event titles for the "+" picker, configured in the phone app.
     "templates": ["Call", "Meeting", "Reminder", "Focus time"],
@@ -140,8 +212,15 @@ DETAIL_CONV = {
     "people": ["Alice"],
     "summary": FEED["conversations"][1]["summary"],
     "points": FEED["conversations"][1]["points"],
-    "actions": [{"id": 17, "text": "Take over Alice’s vendor contracts", "owner": "Me",
-                 "due": "", "status": "open"}],
+    "actions": [
+        {
+            "id": 17,
+            "text": "Take over Alice’s vendor contracts",
+            "owner": "Me",
+            "due": "",
+            "status": "open",
+        }
+    ],
 }
 
 # The same lines as seed_demo.py's "alice-1on1", ~8 s apart.
