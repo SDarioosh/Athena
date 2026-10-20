@@ -33,10 +33,27 @@ static int cmd_status(int argc, char **argv)
     return 0;
 }
 
+/* `batt`: the real battery. `batt sim <percent> [mV]` makes the app see that battery with
+ * USB unplugged (to test the low-battery guard); `batt sim off` ends it. */
 static int cmd_batt(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
+    if (argc >= 2 && strcmp(argv[1], "sim") == 0) {
+        if (argc == 3 && strcmp(argv[2], "off") == 0) {
+            app_battery_simulate(false, 0, 0);
+            printf("battery simulation off\n");
+            return 0;
+        }
+        if (argc < 3 || argc > 4) {
+            printf("usage: batt sim <percent> [mV] | batt sim off\n");
+            return 1;
+        }
+        const int percent = atoi(argv[2]);
+        const int mv = argc == 4 ? atoi(argv[3]) : 3800;
+        app_battery_simulate(true, percent, mv);
+        printf("simulating %d%%, %d mV, USB unplugged (checked every 15 s; 2 low readings "
+               "in a row count)\n", percent, mv);
+        return 0;
+    }
     board_battery_t b;
     if (board_battery_read(&b) != ESP_OK) {
         printf("battery: read failed\n");
@@ -474,7 +491,7 @@ static int cmd_reboot(int argc, char **argv)
 
 static const esp_console_cmd_t cmds[] = {
     {.command = "status", .help = "Recorder state, battery, time, card", .func = cmd_status},
-    {.command = "batt", .help = "Battery voltage, percent, charging", .func = cmd_batt},
+    {.command = "batt", .help = "Battery voltage, percent, charging; `batt sim <percent> [mV]` / `batt sim off` fakes it (test)", .func = cmd_batt},
     {.command = "rails", .help = "Read back every power rail from the PMU", .func = cmd_rails},
     {.command = "exp", .help = "Log the XL9555 expander pins (pin-map check)", .func = cmd_exp},
     {.command = "time", .help = "Show time; `time 2026-10-19T12:34:56Z` sets system + RTC", .func = cmd_time},

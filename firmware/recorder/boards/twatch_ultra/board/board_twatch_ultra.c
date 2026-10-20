@@ -197,6 +197,14 @@ esp_err_t board_battery_read(board_battery_t *out)
     return ESP_OK;
 }
 
+void board_battery_limits(bg_limits_t *out)
+{
+    /* 1100 mAh LiPo with the AXP2101 fuel gauge. 5 % leaves ~1 h of recording as margin
+     * for the card writes and the shutdown; 3.5 V under the recording load is near empty
+     * whatever the gauge says. Recording is allowed again from 10 % or on USB. */
+    *out = (bg_limits_t){.low_percent = 5, .low_mv = 3500, .resume_percent = 10};
+}
+
 /* ------------------------------------------------------------- expander ---- */
 
 static esp_err_t expander_init(void)

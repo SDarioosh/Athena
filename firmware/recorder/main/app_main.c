@@ -22,6 +22,7 @@
 #include <sys/time.h>
 
 #include "app.h"
+#include "battery_guard.h"
 #include "ble_sync.h"
 #include "board.h"
 #include "chunk_store.h"
@@ -49,6 +50,7 @@ static const char *TAG = "app";
 #define PASSKEY_ON_MS 30000 /* pairing code: the SMP timeout, pairing fails after it anyway */
 #define TEST_RECORDING_SECONDS 60
 #define BATTERY_LOG_PERIOD_MS 60000
+#define BATTERY_CHECK_PERIOD_MS 15000 /* low-battery guard; it needs 2 low readings */
 #define FW_VERSION "0.2.0"
 
 typedef struct {
@@ -66,6 +68,12 @@ typedef enum { SCREEN_OFF, SCREEN_STATUS, SCREEN_MESSAGE, SCREEN_NOTE, SCREEN_PA
 static screen_t s_screen;           /* what is on the panel while ui_is_shown() */
 static bool s_note_pending;         /* a note waits for the conversation session to end */
 static bool s_resume_conversation;  /* start a conversation session again after the note */
+static battery_guard_t s_batt_guard;
+static volatile bool s_batt_low;    /* too low to record: sessions refused (battery_guard.c) */
+/* Console `batt sim`: a made-up battery (USB unplugged) for testing the low-battery path. */
+static portMUX_TYPE s_sim_lock = portMUX_INITIALIZER_UNLOCKED;
+static bool s_sim_on;
+static int s_sim_percent, s_sim_mv;
 
 void app_post(app_event_type_t type, int arg)
 {
@@ -78,6 +86,36 @@ void app_post(app_event_type_t type, int arg)
 bool app_is_muted(void)
 {
     return s_muted;
+}
+
+bool app_battery_is_low(void)
+{
+    return s_batt_low;
+}
+
+void app_battery_simulate(bool on, int percent, int millivolts)
+{
+    taskENTER_CRITICAL(&s_sim_lock);
+    s_sim_on = on;
+    s_sim_percent = percent;
+    s_sim_mv = millivolts;
+    taskEXIT_CRITICAL(&s_sim_lock);
+}
+
+esp_err_t app_battery_read(board_battery_t *out, bool *simulated)
+{
+    taskENTER_CRITICAL(&s_sim_lock);
+    const bool on = s_sim_on;
+    const int percent = s_sim_percent, mv = s_sim_mv;
+    taskEXIT_CRITICAL(&s_sim_lock);
+    if (simulated) {
+        *simulated = on;
+    }
+    if (on) {
+        *out = (board_battery_t){.present = true, .millivolts = mv, .percent = percent};
+        return ESP_OK;
+    }
+    return board_battery_read(out);
 }
 
 static void on_button(board_button_t button, board_press_t press, void *ctx)
@@ -193,7 +231,8 @@ static void gather_status(ui_status_t *s)
     chunk_store_stats(&q);
     s->queued_chunks = (int)q.chunks;
     s->queued_min = (int)((q.audio_ms + 59999) / 60000);
-    if (board_battery_read(&s->battery) != ESP_OK) {
+    s->battery_low = s_batt_low;
+    if (app_battery_read(&s->battery, NULL) != ESP_OK) {
         s->battery = (board_battery_t){.present = false, .percent = -1};
     }
     if (s->sd_mounted) {
@@ -213,8 +252,12 @@ void app_print_status(void)
     printf("state: %s%s%s\n",
            s.note ? "recording a voice note" : s.session ? "recording session" : "idle",
            s.muted ? ", muted" : "", s.recording_file ? " (writing test WAV)" : "");
-    printf("battery: %d%%, %d mV, %s%s\n", s.battery.percent, s.battery.millivolts,
-           s.battery.charging ? "charging" : "not charging", s.battery.vbus ? ", USB in" : "");
+    bool sim = false;
+    board_battery_t b;
+    app_battery_read(&b, &sim);
+    printf("battery: %d%%, %d mV, %s%s%s%s\n", s.battery.percent, s.battery.millivolts,
+           s.battery.charging ? "charging" : "not charging", s.battery.vbus ? ", USB in" : "",
+           sim ? " (SIMULATED)" : "", s_batt_low ? ", LOW: recording refused" : "");
     printf("time: %s (%s)\n", buf, s.time_valid ? "set" : "NOT SET");
     printf("sd: %s%s\n", s.sd_present ? "card in" : "no card", s.sd_mounted ? ", mounted" : "");
     recorder_state_t rs;
@@ -340,6 +383,14 @@ static void refuse_muted(void)
     show_message("MUTED", "2X BOOT: UNMUTE");
 }
 
+/* A recording was asked for with the battery too low: 3 buzzes and say so. */
+static void refuse_low(void)
+{
+    ESP_LOGW(TAG, "battery low: not recording (charge it)");
+    board_haptic_pulse(3);
+    show_message("BATTERY LOW", "CHARGE ME");
+}
+
 /* ---- the test WAV recorder (console `rec`) ---- */
 
 static void start_test_recording(int seconds)
@@ -350,6 +401,10 @@ static void start_test_recording(int seconds)
     }
     if (s_muted) {
         refuse_muted();
+        return;
+    }
+    if (s_batt_low) {
+        refuse_low();
         return;
     }
     const esp_err_t err = recorder_start(seconds, on_rec_done, on_rec_tick, NULL);
@@ -377,9 +432,9 @@ static void stop_test_recording(const char *why)
 /* quiet: resuming after a note (no buzz; the note's 2 buzzes just played). */
 static void start_conversation(bool quiet)
 {
-    if (s_muted) {
+    if (s_muted || s_batt_low) {
         if (!quiet) {
-            refuse_muted();
+            s_muted ? refuse_muted() : refuse_low();
         }
         return;
     }
@@ -433,6 +488,10 @@ static void start_note(void)
 {
     if (s_muted) {
         refuse_muted();
+        return;
+    }
+    if (s_batt_low) {
+        refuse_low();
         return;
     }
     if (note_running() || s_note_pending) {
@@ -558,7 +617,7 @@ static void session_done(session_rec_kind_t kind, session_rec_end_t why)
         return;
     }
     if (note) {
-        if (!s_muted) { /* stopped by mute: the 2 mute buzzes already said so */
+        if (!s_muted && !s_batt_low) { /* mute or low battery already said so */
             char small[40];
             snprintf(small, sizeof(small), "%" PRIu32 ":%02" PRIu32 "%s", ss.elapsed_s / 60,
                      ss.elapsed_s % 60, why == SESSION_END_MAX ? " - 5 MIN MAX" : "");
@@ -701,9 +760,48 @@ static void clock_from_rtc(void)
 static void log_battery(void)
 {
     board_battery_t b;
-    if (board_battery_read(&b) == ESP_OK) {
-        ESP_LOGI(TAG, "battery %d%% %d mV %s%s", b.percent, b.millivolts,
-                 b.charging ? "charging" : "discharging", b.vbus ? " (USB)" : "");
+    bool sim = false;
+    if (app_battery_read(&b, &sim) == ESP_OK) {
+        ESP_LOGI(TAG, "battery %d%% %d mV %s%s%s%s", b.percent, b.millivolts,
+                 b.charging ? "charging" : "discharging", b.vbus ? " (USB)" : "",
+                 sim ? " SIMULATED" : "", s_batt_low ? " LOW" : "");
+    }
+}
+
+/* Low-battery guard: at the board's limit, end whatever records (its last chunk closes with
+ * LAST as on a normal stop), buzz 3 times, and refuse new recordings until it recovers. */
+static void check_battery(void)
+{
+    board_battery_t b;
+    if (app_battery_read(&b, NULL) != ESP_OK) {
+        return;
+    }
+    const bg_reading_t r = {.present = b.present, .millivolts = b.millivolts,
+                            .percent = b.percent, .vbus = b.vbus};
+    switch (battery_guard_update(&s_batt_guard, &r)) {
+    case BG_ENTER_LOW: {
+        s_batt_low = true;
+        s_note_pending = false;
+        s_resume_conversation = false;
+        const bool was_recording = test_wav_running() || session_rec_running();
+        recorder_stop();
+        session_rec_stop();
+        ESP_LOGW(TAG, "battery low (%d%%, %d mV): %s; new recordings refused until %d%% or USB",
+                 b.percent, b.millivolts, was_recording ? "recording stopped" : "not recording",
+                 s_batt_guard.lim.resume_percent);
+        board_haptic_pulse(3);
+        show_message("BATTERY LOW", was_recording ? "RECORDING STOPPED" : "CHARGE ME");
+        ble_sync_kick();
+        break;
+    }
+    case BG_LEAVE_LOW:
+        s_batt_low = false;
+        ESP_LOGI(TAG, "battery OK again (%d%%, %d mV%s): recording allowed", b.percent,
+                 b.millivolts, b.vbus ? ", USB" : "");
+        refresh_screen_if_shown();
+        break;
+    case BG_NONE:
+        break;
     }
 }
 
@@ -738,7 +836,11 @@ void app_main(void)
     clock_from_rtc();
     ESP_ERROR_CHECK(mic_init(board_mic_pins()));
     board_buttons_set_callback(on_button, NULL);
+    bg_limits_t lim;
+    board_battery_limits(&lim);
+    battery_guard_init(&s_batt_guard, &lim);
     log_battery();
+    check_battery();
 
     /* The queue survives reboots: rebuild it from the card (recovers a chunk cut by a power
      * loss). Without a card the queue starts empty; a session start retries. */
@@ -761,11 +863,15 @@ void app_main(void)
                   "screen, BOOT x2 = mute, BOOT held = BLE sync window; type `help` on the USB "
                   "console");
 
-    TickType_t last_batt = xTaskGetTickCount();
+    TickType_t last_batt = xTaskGetTickCount(), last_check = last_batt;
     for (;;) {
         app_event_t ev;
         if (xQueueReceive(s_events, &ev, pdMS_TO_TICKS(1000)) == pdTRUE) {
             handle(&ev);
+        }
+        if (xTaskGetTickCount() - last_check >= pdMS_TO_TICKS(BATTERY_CHECK_PERIOD_MS)) {
+            last_check = xTaskGetTickCount();
+            check_battery();
         }
         if (xTaskGetTickCount() - last_batt >= pdMS_TO_TICKS(BATTERY_LOG_PERIOD_MS)) {
             last_batt = xTaskGetTickCount();
