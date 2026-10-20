@@ -1,8 +1,8 @@
 # convo-ai knowledge frontend: Hermes Agent vs Odysseus vs Hybrid (own SQLite + MCP)
 
 *Decision document. Researched 2026-10-18 against the copies installed on this machine:
-Hermes Agent v0.22.2 (git `d923a5eb`, 2026-10-15) at `/home/steam/.hermes/hermes-agent`, and
-Odysseus (git `0590edd4`, 2026-10-16, `HARNESS_VERSION` 0.20.19) at `/home/steam/models/odysseus`.
+Hermes Agent v0.22.2 (git `d923a5eb`, 2026-10-15) at `~/.hermes/hermes-agent`, and
+Odysseus (git `0590edd4`, 2026-10-16, `HARNESS_VERSION` 0.20.19) at `~/models/odysseus`.
 No `.env`, `auth.json` or other credential files were read.*
 
 ---
@@ -592,7 +592,7 @@ Odysseus kept as a possible second frontend for the tasks/calendar UI.**
 
 ## Sources
 
-**Hermes (local, `/home/steam/.hermes/hermes-agent`)**
+**Hermes (local, `~/.hermes/hermes-agent`)**
 - `hermes_cli/config_defaults.py:738-760, 1319-1320`
 - `tools/memory_tool_store.py:1-60, 175-230`; `tools/memory_tool.py:56`
 - `agent/memory_provider.py:84-180`; `plugins/memory/__init__.py:1-8`; `plugins/memory/{byterover,retaindb}`
@@ -612,7 +612,7 @@ Odysseus kept as a possible second frontend for the tasks/calendar UI.**
 - https://hermes-agent.nousresearch.com/docs ; https://github.com/NousResearch/hermes-agent
 - https://api.github.com/repos/NousResearch/hermes-agent
 
-**Odysseus (local, `/home/steam/models/odysseus`)**
+**Odysseus (local, `~/models/odysseus`)**
 - `docker-compose.yml` (secrets redacted); `README.md`; `website/setup.md:335-345, 437-457, 505-528`
 - `src/memory.py:25-49, 261-323, 361-452`; `src/memory_vector.py:6-28, 104-175`; `src/memory_provider.py:96-210`
 - `src/chat_processor.py:92, 164-260, 320-390`; `services/memory/memory_extractor.py:70-90, 137, 467, 525-698`

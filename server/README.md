@@ -231,11 +231,11 @@ phone uses (e.g. the server's Tailscale IP) so links work there.
 ```yaml
 mcp_servers:
   convo:
-    command: /home/steam/projects/barvis-ai/server/.venv/bin/convo-server
+    command: /home/<user>/projects/barvis-ai/server/.venv/bin/convo-server
     args: [mcp]
     env:
       CONVO_INGEST_TOKEN: ${CONVO_INGEST_TOKEN}     # put the value in the profile's .env
-      CONVO_DATA_DIR: /home/steam/projects/barvis-ai/server/data
+      CONVO_DATA_DIR: /home/<user>/projects/barvis-ai/server/data
       CONVO_TIMEZONE: Europe/Berlin
       CONVO_PUBLIC_URL: http://<tailscale-ip>:8000
     timeout: 120

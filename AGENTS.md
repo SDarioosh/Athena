@@ -184,7 +184,7 @@ the data path touches the cloud.**
   real-device steps ([format](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/sandbox.md#server-verification)).
 - The owner runs it and pastes the result into the PR; continue from that result.
 - Never write steps that touch the owner's production Odysseus install (Docker,
-  `/home/steam/models/odysseus`, port 7000). Server-side evals target the Odysseus test
+  `~/models/odysseus`, port 7000). Server-side evals target the Odysseus test
   instance on `127.0.0.1:7010`.
 
 ## Checks

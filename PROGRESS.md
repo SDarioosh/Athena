@@ -858,7 +858,7 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
    AXP2101 reports discharge current (it has no battery-current ADC channel in its
    register map, so expect a USB meter or PPK2); full-discharge run.
 2. **Owner: T-Rex watch test.** The steps are in `zepp-app/README.md`. Server URL
-   `http://100.106.28.112:8000`; the token is in that checkout's `server/.env`.
+   `http://<server-tailscale-ip>:8000`; the token is in that checkout's `server/.env`.
 3. **Odysseus fork:** citations from 9/20 to ≥ 15/20 (hub `docs/fork/roadmap.md`).
 4. **Owner: server verification** of the failed-summary retry (steps in its PR), and of
    SDarioosh/Barvis#5 (full eval on the test instance; expect no approvals for read-only
