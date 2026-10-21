@@ -34,7 +34,7 @@ _Last updated: 2026-10-20 (round 17: to-do lists for voice-note items; T-Watch U
 | 11d | T5 E-Paper Pro PDA (briefing, conversations, action items, calendar over BLE via the phone) | **phone side built, unit-tested, not on hardware**: Odysseus calendar REST verified (plan §6); `android-relay` syncs the T5 next to the watch (glance protocol, feed, outbox, `cal_add` to Odysseus). Firmware and PC relay `pda` in sibling branches | `docs/t5-pda-plan.md`, `android-relay/` |
 | 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; the hub's `fork_deploy.sh deploy` runs it first, and it then updates Odysseus itself (`BARVIS_SOUND_ODYSSEUS_DIR`, found from the running container by default), so either command updates both | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, hub `docs/fork/deploy.md` |
 | 13 | Speaker recognition (PR #24) and focused summaries (PR #25): measured in the sandbox, bugs fixed, two improvements | PRs open, **owner: Server verification** | SDarioosh/barvis-sound#31 (recognition), SDarioosh/barvis-sound#38 (insights) |
-| 14 | T5 E-Paper Pro PDA firmware (feed and outbox over BLE through the phone) | **milestones 0–3 built, on the owner's T5**: bring-up and refresh times, all screens from a fictional feed, touch and buttons by hand, BLE pairing, TIME, outbox drain/ack and feed PUT from a Windows PC; host tests in CI. Still open: the PC relay and the Android `PdaSync` against the real T5, the server `PATCH` end to end, sleep and power (milestone 5) | `firmware/pda/`, `docs/t5-pda-plan.md` |
+| 14 | T5 E-Paper Pro PDA firmware (feed and outbox over BLE through the phone) | **milestones 0–3 built, on the owner's T5**: bring-up and refresh times, all screens from a fictional feed, touch and buttons by hand, BLE pairing, TIME, outbox drain/ack and feed PUT from a Windows PC; host tests in CI. Front light, BOOT-hold sleep and side-hold sync mode built, not yet on the board. Still open: the PC relay and the Android `PdaSync` against the real T5, the server `PATCH` end to end, light sleep and power (milestone 5) | `firmware/pda/`, `docs/t5-pda-plan.md` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -641,6 +641,28 @@ the button task polled every 10 ms.
 - Needs the owner: drain the queue, unplug, wait 2 min (standby), press PWR (wakes, screen,
   no buzz); a BLE drain on battery (light sleep with BLE); overnight battery % idle with an
   empty queue, and with a queue and no phone in range (light sleep only).
+## Done on 2026-10-20: T5 PDA front light, sleep and sync buttons
+
+- **Front light** (GPIO11, LEDC PWM at 1 kHz on the XTAL clock so DFS doesn't change it):
+  "Light" on the Status screen steps off → 25 → 50 → 100 % (kept in NVS); it goes off
+  after 60 s without a touch or button and comes back with the next one. Console `light`.
+- **BOOT held 1 s = sleep:** an "Asleep" screen (clean refresh, it stays on the panel), the
+  GT911 put to sleep, the light pin held low, then deep sleep once BOOT is released;
+  a BOOT press wakes it (EXT0 on GPIO0), which restarts the firmware. The feed, outbox,
+  bonds and clock (RTC) survive. A button still held at start reports nothing, so the
+  waking press isn't a "back". Console `sleep`.
+- **The button next to BOOT** (labelled IO48; it is LilyGO's S3 on PCA9535 IO1_2, GPIO48
+  is the e-paper's CKV): short = light on/off (the last level used), held 1 s = sync mode,
+  the 2-minute pairing window (what BOOT long did), with fast advertising. Clean refresh
+  is only on the Status screen now. The power button is hardware only (no log line when
+  pressed, checked on the board), so sync mode can't go on it. A bonded phone syncs on its own schedule either way: the phone
+  only scans while a sync is due, so the T5 can't call it over.
+- Firmware builds and runs on the owner's T5 (boot log clean; the light toggle checked from
+  the console). **Still to check by hand**: the list under "Not verified yet" in
+  `firmware/pda/README.md`.
+- Open question for the owner: should the T5 be able to ask the phone for a sync (a
+  service-data flag the phone keeps a low-duty scan for)? That needs an android-relay change.
+
 ## Done on 2026-10-20: T5 E-Paper Pro PDA firmware, milestones 0–3
 
 New ESP-IDF project `firmware/pda/` (plan §11 Q1 default: separate project, builds

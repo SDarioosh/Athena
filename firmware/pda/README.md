@@ -87,8 +87,17 @@ cmake -S firmware/pda/test -B build-pda-host && cmake --build build-pda-host && 
   queues a `fetch`; "Next part" follows the page's `next`.
 - **Status:** phone, bonds, outbox, feed version, clock, battery; "Pair a phone",
   "Clean refresh", "Wipe cache (hold)".
-- **Buttons:** BOOT short = back / Today; BOOT long (1 s) = pairing window (2 min);
-  side button = clean refresh. RST resets.
+- **Buttons:** BOOT short = back / Today; BOOT held 1 s = sleep (deep sleep, an "Asleep"
+  screen stays on the panel; press BOOT to wake, which restarts the firmware and redraws
+  Today); the button next to BOOT (LilyGO's S3, labelled IO48 on the board, read through
+  the PCA9535 IO1_2; GPIO48 itself is the e-paper's CKV line) short = front light on/off,
+  held 1 s = sync mode (the 2-minute pairing window with fast advertising, so a phone
+  finds it quickly). Clean refresh is on the Status screen. RST resets. The power button
+  is hardware only: the firmware never sees it (checked on the board, 2026-10-20).
+- **Front light:** the IO48 button toggles it between off and the last level used (50 %
+  the first time); "Light" on the Status screen steps off → 25 % → 50 % → 100 % → off (kept
+  in NVS). It stays on while the screen is used and goes off after 60 s without a touch or
+  button; the next touch or button turns it on again. Off in sleep.
 - **Pairing:** open the window, then pair from the phone (android-relay) or the PC
   (Windows Settings → Bluetooth → Add device → `odysseus-pda`, or `tools/pda_ble_test.py
   pair`). The T5 shows the 6-digit code; type it on the other side.
@@ -108,6 +117,8 @@ cmd "<command>"` runs one from a script.
 | `fb` | framebuffer as base64 with the rotation (`pda_serial.py fb out.png` writes it upright) |
 | `time [<epoch\|ISO> [utc_offset_min]]` | clock and display offset (normally set by TIME) |
 | `ble [pair\|forget]` | BLE state, open the pairing window, delete all bonds |
+| `light [0-100]` | front light level (kept in NVS) |
+| `sleep` | deep sleep until BOOT is pressed (the USB console goes away) |
 | `rotate [90\|270]` | portrait orientation |
 | `wipe` | delete feed, details and outbox |
 | `i2c`, `batt`, `rtc [set <t>]`, `touch [trace <s>]`, `epd [bench\|clean]` | board bring-up and timing |
@@ -170,5 +181,12 @@ python tools/pda_serial.py -p COM36 fb today.png
   Android `PdaSync` (they were written against the same spec and a fake T5).
 - Battery life, light sleep (not implemented: the T5 stays awake with DFS; plan
   milestone 5), deep sleep with an advertising window, flash encryption.
+- Front light, sleep and the new button mapping (2026-10-20): built, **not on the board
+  yet**. To check: the light's PWM (1 kHz on GPIO11) dims in steps without flicker or
+  whine, and stays dark in sleep; BOOT held 1 s shows "Asleep" and the T5 sleeps once
+  BOOT is released; a BOOT press wakes it without entering download mode and without a
+  stray "back"; the IO48 button held 1 s opens sync mode (Status shows "Pairing open");
+  sleep current. Checked so far: the IO48 button is the PCA9535 button (three presses
+  logged as `button side`), and its short press toggles the light (console).
 - Events after a daylight-saving change within the week are shown and created one hour
   off (the T5 knows only the phone's current UTC offset; plan §5 note).

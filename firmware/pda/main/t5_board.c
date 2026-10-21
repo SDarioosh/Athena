@@ -4,7 +4,10 @@
 #include <stdio.h>
 
 #include "driver/gpio.h"
+#include "driver/ledc.h"
+#include "driver/rtc_io.h"
 #include "esp_log.h"
+#include "esp_sleep.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,6 +21,13 @@ static const char *TAG = "board";
 #define BUTTON_POLL_MS 20
 #define BUTTON_LONG_MS 1000
 #define BUTTON_TASK_STACK 3072
+/* Front light PWM. The XTAL clock keeps the frequency fixed while DFS changes the APB
+ * clock. 1 kHz, 10 bits; the LED driver's EN pin takes it directly. */
+#define BL_TIMER LEDC_TIMER_0
+#define BL_CHANNEL LEDC_CHANNEL_0
+#define BL_HZ 1000
+#define BL_BITS LEDC_TIMER_10_BIT
+#define BL_MAX ((1 << 10) - 1)
 
 /* PCA9535 registers */
 #define PCA_IN0 0x00
@@ -30,6 +40,7 @@ static i2c_master_bus_handle_t s_bus;
 static i2c_master_dev_handle_t s_pca, s_rtc, s_gauge, s_charger;
 static t5_button_cb_t s_cb;
 static void *s_cb_ctx;
+static bool s_bl_ready;
 
 static esp_err_t add_dev(uint8_t addr, i2c_master_dev_handle_t *out)
 {
@@ -54,10 +65,35 @@ static esp_err_t reg_write8(i2c_master_dev_handle_t d, uint8_t reg, uint8_t val)
 
 esp_err_t t5_board_init(void)
 {
-    /* Front light off: the PDA reads in daylight; the LED driver would cost ~tens of mA. */
-    gpio_config_t bl = {.pin_bit_mask = 1ULL << T5_BACKLIGHT, .mode = GPIO_MODE_OUTPUT};
-    gpio_config(&bl);
-    gpio_set_level(T5_BACKLIGHT, 0);
+    /* After a wake from deep sleep: the BOOT pad is still an RTC pin and the backlight pin
+     * is held low (t5_board_deep_sleep). Give both back to the digital GPIO matrix. */
+    rtc_gpio_deinit(T5_BOOT_BTN);
+    gpio_hold_dis(T5_BACKLIGHT);
+    gpio_deep_sleep_hold_dis();
+
+    /* Front light off until the app sets its level (the LED driver costs tens of mA). */
+    const ledc_timer_config_t bt = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = BL_BITS,
+        .timer_num = BL_TIMER,
+        .freq_hz = BL_HZ,
+        .clk_cfg = LEDC_USE_XTAL_CLK,
+    };
+    const ledc_channel_config_t bc = {
+        .gpio_num = T5_BACKLIGHT,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = BL_CHANNEL,
+        .timer_sel = BL_TIMER,
+        .duty = 0,
+    };
+    if (ledc_timer_config(&bt) == ESP_OK && ledc_channel_config(&bc) == ESP_OK) {
+        s_bl_ready = true;
+    } else {
+        ESP_LOGW(TAG, "front light PWM unavailable: kept off");
+        gpio_config_t bl = {.pin_bit_mask = 1ULL << T5_BACKLIGHT, .mode = GPIO_MODE_OUTPUT};
+        gpio_config(&bl);
+        gpio_set_level(T5_BACKLIGHT, 0);
+    }
 
     gpio_config_t boot = {
         .pin_bit_mask = 1ULL << T5_BOOT_BTN,
@@ -228,7 +264,7 @@ esp_err_t t5_rtc_set(int64_t epoch)
     return i2c_master_transmit(s_rtc, b, sizeof(b), I2C_TIMEOUT_MS);
 }
 
-/* ---- buttons ---- */
+/* ---- button inputs ---- */
 
 static bool side_down(void)
 {
@@ -244,6 +280,53 @@ bool t5_button_is_down(t5_button_t button)
     return button == T5_BUTTON_BOOT ? gpio_get_level(T5_BOOT_BTN) == 0 : side_down();
 }
 
+/* ---- front light ---- */
+
+void t5_backlight_set(int percent)
+{
+    if (!s_bl_ready) {
+        return;
+    }
+    percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, BL_CHANNEL, (uint32_t)(BL_MAX * percent / 100));
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, BL_CHANNEL);
+}
+
+/* ---- deep sleep ---- */
+
+void t5_board_deep_sleep(void)
+{
+    /* Light off, and the pin held low through sleep: a floating EN would light the LEDs. */
+    if (s_bl_ready) {
+        ledc_stop(LEDC_LOW_SPEED_MODE, BL_CHANNEL, 0);
+    }
+    const gpio_config_t bl = {.pin_bit_mask = 1ULL << T5_BACKLIGHT, .mode = GPIO_MODE_OUTPUT};
+    gpio_set_level(T5_BACKLIGHT, 0);
+    gpio_config(&bl); /* back from the LEDC signal to a plain GPIO */
+    gpio_set_level(T5_BACKLIGHT, 0);
+    gpio_hold_en(T5_BACKLIGHT);
+    gpio_deep_sleep_hold_en();
+
+    /* The hold that sent us here: sleeping with BOOT down would wake at once. */
+    while (gpio_get_level(T5_BOOT_BTN) == 0) {
+        vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
+    }
+    vTaskDelay(pdMS_TO_TICKS(50)); /* debounce the release */
+
+    rtc_gpio_pullup_en(T5_BOOT_BTN);
+    rtc_gpio_pulldown_dis(T5_BOOT_BTN);
+    esp_sleep_enable_ext0_wakeup(T5_BOOT_BTN, 0);
+    ESP_LOGI(TAG, "deep sleep: press BOOT to wake");
+    esp_deep_sleep_start();
+}
+
+bool t5_board_woke_from_sleep(void)
+{
+    return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
+}
+
+/* ---- buttons ---- */
+
 static void button_task(void *arg)
 {
     (void)arg;
@@ -251,6 +334,12 @@ static void button_task(void *arg)
         bool down, long_sent;
         int64_t since;
     } st[2] = {0};
+    /* A button already down when the task starts (BOOT still held from the press that woke
+     * the T5) reports nothing: neither a long press nor, on release, a short one. */
+    for (int b = 0; b < 2; b++) {
+        st[b].down = t5_button_is_down((t5_button_t)b);
+        st[b].long_sent = st[b].down;
+    }
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
         const int64_t now = esp_timer_get_time() / 1000;

@@ -200,6 +200,26 @@ static int cmd_button(int argc, char **argv)
     return 0;
 }
 
+static int cmd_light(int argc, char **argv)
+{
+    if (argc >= 2) {
+        pda_app_set_light(atoi(argv[1]));
+    }
+    printf("front light %d%% (off after %d s idle; a touch or button turns it on)\n", pda_app_light(),
+           PDA_LIGHT_IDLE_MS / 1000);
+    return 0;
+}
+
+static int cmd_sleep(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    printf("deep sleep: press BOOT to wake (the USB console goes away)\n");
+    const pda_ev_t ev = {.type = PDA_EV_SLEEP};
+    pda_app_post(&ev);
+    return 0;
+}
+
 static int cmd_ble(int argc, char **argv)
 {
     if (argc >= 2 && strcmp(argv[1], "pair") == 0) {
@@ -308,6 +328,8 @@ void pda_console_register_app(void)
     pda_console_register("screen", "screen <name>: show a screen", cmd_screen);
     pda_console_register("redraw", "redraw [clean]", cmd_redraw);
     pda_console_register("button", "button boot|side [long]", cmd_button);
+    pda_console_register("light", "light [0-100]: front light level (kept in NVS)", cmd_light);
+    pda_console_register("sleep", "Deep sleep until BOOT is pressed (as holding BOOT)", cmd_sleep);
     pda_console_register("ble", "ble [pair|forget]: state, pairing window, delete bonds", cmd_ble);
     pda_console_register("time", "time [<epoch|ISO> [utc_offset_min]]", cmd_time);
     pda_console_register("feed", "Summary of the stored feed", cmd_feed);

@@ -36,6 +36,7 @@ typedef enum {
     PDA_EV_REDRAW,   /* console: redraw the current screen; arg 1 = clean refresh */
     PDA_EV_SCREEN,   /* console: go to screen arg */
     PDA_EV_OPEN,     /* console: open the transcript ref given to ui_pda_open() */
+    PDA_EV_SLEEP,    /* console: go to deep sleep, as a BOOT hold does */
 } pda_ev_type_t;
 
 typedef struct {
@@ -107,6 +108,19 @@ void pda_app_touch_activity(void);
 bool pda_app_user_active(void);
 int64_t pda_app_last_link_s(void); /* last time a relay was connected, 0 never */
 void pda_app_note_link(bool up);   /* ble_pda's on_link hook */
+
+/* Front light: the level (0 = off .. 100), kept in NVS ("pda"/"light"). It is on at that
+ * level while the screen is used and goes off after PDA_LIGHT_IDLE_MS without a touch or
+ * button; the next touch or button turns it on again (pda_app_touch_activity). */
+#define PDA_LIGHT_IDLE_MS 60000
+int pda_app_light(void);
+void pda_app_set_light(int percent);
+/* The next level for the Status button: off, 25, 50, 100, off. */
+int pda_app_light_next(int percent);
+/* The S3 button (labelled IO48, next to BOOT): off <-> the last level used (50 % the first
+ * time). A light that went off for idleness just comes back on. Call before
+ * pda_app_touch_activity(). */
+void pda_app_light_toggle(void);
 
 /* UI event queue */
 void pda_app_post(const pda_ev_t *ev);

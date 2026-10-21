@@ -5,8 +5,14 @@
  *
  * Refresh policy (§5): a new screen is a full (flashing) update, a change on the same
  * screen (a pending mark, a page) a partial one, the minute clock a small partial that
- * doesn't count towards the ghosting budget; every PDA_EPD_PARTIAL_LIMIT updates and the
- * side button give a clean refresh. */
+ * doesn't count towards the ghosting budget; every PDA_EPD_PARTIAL_LIMIT updates and
+ * "Clean refresh" on the Status screen give a clean refresh.
+ *
+ * Buttons: BOOT short = back / Today, BOOT held 1 s = deep sleep (the "Asleep" screen
+ * stays on the panel; a BOOT press wakes it); the S3 button next to BOOT (labelled IO48,
+ * read through the PCA9535) short = front light on/off, held 1 s = sync mode (the 2-minute
+ * pairing window, fast advertising). Clean refresh is on the Status screen. The power
+ * button is hardware only: the firmware never sees it. */
 #include "ui_pda.h"
 
 #include <inttypes.h>
@@ -27,6 +33,7 @@
 #include "pda_epd.h"
 #include "pda_time.h"
 #include "t5_board.h"
+#include "touch_gt911.h"
 #include "ui_nav.h"
 
 static const char *TAG = "ui";
@@ -88,6 +95,7 @@ typedef enum {
     A_CANCEL_PENDING, /* arg: index into the pending list */
     A_ROTATE,     /* the other portrait orientation */
     A_TODO,       /* arg: note * 64 + item */
+    A_LIGHT,      /* the next front light level */
 } action_t;
 
 typedef struct {
@@ -375,7 +383,7 @@ static void draw_no_feed(void)
     gfx_text(BIG, MARGIN + 20, y, "No feed yet", GFX_INK);
     y += 60;
     gfx_wrap(TEXT, MARGIN + 20, y, W - 2 * MARGIN - 40,
-             "Pair a phone on the Status screen (or hold BOOT for a second). The phone sends the "
+             "Pair a phone on the Status screen (or hold the button next to BOOT for a second). The phone sends the "
              "briefing, conversations, action items and calendar when it syncs. For a test, load "
              "the demo feed over USB: tools/pda_serial.py put test/fixtures/feed_demo.json",
              GFX_INK, 0, 8);
@@ -1389,6 +1397,7 @@ static void draw_status(const feed_t *f)
     const EpdRect pair = {MARGIN, ROW_Y - 2 * (bh + 12), bw, bh};
     const EpdRect clean = {MARGIN + bw + 12, ROW_Y - 2 * (bh + 12), bw, bh};
     const EpdRect rot = {MARGIN, ROW_Y - (bh + 12), bw, bh};
+    const EpdRect light = {MARGIN + bw + 12, ROW_Y - (bh + 12), bw, bh};
     const EpdRect wipe = {MARGIN, ROW_Y, bw, bh};
     char pl[48];
     const int left = ble_pda_window_left_s();
@@ -1401,7 +1410,15 @@ static void draw_status(const feed_t *f)
     gfx_button(clean, "Clean refresh", false);
     gfx_button(wipe, "Wipe cache (hold)", false);
     gfx_button(rot, "Turn 180\xc2\xb0", false);
+    char ll[32];
+    if (pda_app_light() > 0) {
+        snprintf(ll, sizeof(ll), "Light: %d%%", pda_app_light());
+    } else {
+        snprintf(ll, sizeof(ll), "Light: off");
+    }
+    gfx_button(light, ll, pda_app_light() > 0);
     hit(rot, A_ROTATE, 0);
+    hit(light, A_LIGHT, 0);
     hit(pair, A_PAIR, 0);
     hit(clean, A_CLEAN, 0);
     hit(wipe, A_WIPE, 0);
@@ -1695,6 +1712,9 @@ static void act(const hit_t *h, bool is_long)
     case A_CLEAN:
         pda_epd_update(PDA_EPD_CLEAN);
         break;
+    case A_LIGHT:
+        pda_app_set_light(pda_app_light_next(pda_app_light()));
+        break;
     case A_ROTATE:
         pda_epd_set_rotation(pda_epd_rotation() == 90 ? 270 : 90);
         ui.screen_changed = true; /* everything moves: redraw as a new screen */
@@ -1795,6 +1815,31 @@ static void on_detail_arrived(uint32_t ref_crc)
     }
 }
 
+/* Deep sleep (BOOT held): an "Asleep" screen that stays on the panel, then sleep until a
+ * BOOT press. Waking is a reset (app_main again), so this doesn't return. */
+static void go_to_sleep(void)
+{
+    ESP_LOGI(TAG, "going to sleep");
+    gfx_begin(pda_epd_fb());
+    pda_epd_clear_fb();
+    ui.n_hits = 0;
+    const char *title = "Asleep";
+    gfx_text(BIG, (W - gfx_text_width(BIG, title)) / 2, H / 2 - 60, title, GFX_INK);
+    const char *hint = "Press BOOT to wake";
+    gfx_text(TEXT, (W - gfx_text_width(TEXT, hint)) / 2, H / 2, hint, GFX_INK);
+    if (pda_app_time_valid()) {
+        char d[24], t[12], line[64];
+        pda_fmt_date(pda_app_now(), tz(), d, sizeof(d));
+        pda_fmt_hm(pda_app_now(), tz(), t, sizeof(t));
+        snprintf(line, sizeof(line), "since %s %s", d, t);
+        gfx_text(TEXT, (W - gfx_text_width(TEXT, line)) / 2, H / 2 + 50, line, GFX_INK);
+    }
+    pda_epd_update(PDA_EPD_CLEAN); /* the image stays for hours: no ghosting */
+    touch_sleep();
+    pda_app_lock(); /* no feed or outbox change from the BLE task from here on */
+    t5_board_deep_sleep();
+}
+
 /* Redraw and push to the panel with the refresh policy. */
 static void refresh(pda_epd_kind_t kind)
 {
@@ -1823,20 +1868,31 @@ static void ui_task(void *arg)
         case PDA_EV_BUTTON: {
             const t5_button_t b = (t5_button_t)(ev.arg >> 1);
             const bool lng = ev.arg & 1;
-            pda_app_touch_activity();
             if (b == T5_BUTTON_BOOT && lng) {
+                go_to_sleep();
+                break;
+            }
+            if (b == T5_BUTTON_SIDE && !lng) {
+                pda_app_light_toggle();
+            }
+            pda_app_touch_activity();
+            if (b == T5_BUTTON_SIDE && lng) {
+                /* Sync mode: the pairing window, with fast advertising, for 2 minutes. */
                 ble_pda_open_window();
                 go(UI_STATUS);
-                toast("Pairing open for 2 minutes");
+                toast("Sync mode for 2 minutes: sync or pair from the phone now");
                 refresh(PDA_EPD_FULL);
             } else if (b == T5_BUTTON_BOOT) {
                 go(ui.screen >= UI_CONV_DETAIL ? ui.back_to : UI_TODAY);
                 refresh(PDA_EPD_PARTIAL);
-            } else {
-                refresh(PDA_EPD_CLEAN);
+            } else if (ui.screen == UI_STATUS) {
+                refresh(PDA_EPD_PARTIAL); /* the Light button shows the new level */
             }
             break;
         }
+        case PDA_EV_SLEEP:
+            go_to_sleep();
+            break;
         case PDA_EV_FEED:
             refresh(PDA_EPD_FULL);
             break;

@@ -20,6 +20,10 @@ typedef void (*touch_cb_t)(const gesture_t *g, void *ctx);
  * pda_epd_init() (epdiy installs the GPIO ISR service). */
 esp_err_t touch_init(i2c_master_bus_handle_t bus, touch_cb_t cb, void *ctx);
 
+/* Before deep sleep: stop polling and put the GT911 in its sleep mode. touch_init's reset
+ * wakes it after the T5 wakes. */
+void touch_sleep(void);
+
 /* Console: log every raw sample for this many ms (for the coordinate mapping check). */
 void touch_trace(int ms);
 void touch_print(void);

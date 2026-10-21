@@ -25,7 +25,7 @@ typedef struct {
 
 typedef enum {
     T5_BUTTON_BOOT, /* GPIO0, next to USB */
-    T5_BUTTON_SIDE, /* PCA9535 IO1_2 */
+    T5_BUTTON_SIDE, /* PCA9535 IO1_2: LilyGO's S3, next to BOOT, labelled IO48 on the board */
 } t5_button_t;
 
 typedef enum {
@@ -36,7 +36,8 @@ typedef enum {
 /* Called from the button task; post an event and return. */
 typedef void (*t5_button_cb_t)(t5_button_t button, t5_press_t press, void *ctx);
 
-/* Bus, backlight off, LoRa/GPS rail off. Call first. */
+/* Bus, backlight off, LoRa/GPS rail off. Call first. Also undoes what deep sleep left on
+ * the pins (the BOOT pad as an RTC pin, the backlight pin held low). */
 esp_err_t t5_board_init(void);
 i2c_master_bus_handle_t t5_board_i2c(void);
 
@@ -54,6 +55,16 @@ esp_err_t t5_rtc_get(int64_t *epoch, bool *valid);
 esp_err_t t5_rtc_set(int64_t epoch);
 
 bool t5_button_is_down(t5_button_t button);
+
+/* Front light (GPIO11, LED driver enable) as PWM: 0 = off .. 100 = full. */
+void t5_backlight_set(int percent);
+
+/* Deep sleep until BOOT is pressed (EXT0 on GPIO0, low). Turns the front light off and
+ * holds its pin low, waits for BOOT to be released (a held button would wake it at once),
+ * then sleeps. Doesn't return: waking is a reset, and app_main starts again. */
+void t5_board_deep_sleep(void);
+/* The last reset was a wake from t5_board_deep_sleep(). */
+bool t5_board_woke_from_sleep(void);
 
 #ifdef __cplusplus
 }
