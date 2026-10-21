@@ -129,8 +129,12 @@ against LilyGO's `docs/pinmap.md` and examples (github.com/Xinyuan-LilyGO/T5S3-4
   Latin-1, general punctuation, arrows. The euro sign isn't in them and is drawn as "EUR";
   other missing characters as "?".
 - **Sleep:** with the screen idle for 60 s and no BLE link, the T5 goes into light sleep. The
-  e-paper keeps the image. Touch or a button wakes it. Deep sleep with periodic wake
-  for an advertising window is milestone 5. **Not built yet:** v1 stays awake with DFS
+  e-paper keeps the image. Touch or a button wakes it. Deep sleep (BOOT held) wakes on
+  BOOT and on a timer aimed at the phone's next due sync (last BYE + 15 min): no UI, no
+  light, no refresh, BLE for bonded relays for about a minute, then sleep again
+  (`main/sleep_plan.h`, `main/pda_sleep.c`; built 2026-10-20, not on the board yet).
+  Waking skips epdiy's full clear: the first screen is one clean refresh. **Light sleep
+  not built yet:** v1 stays awake with DFS
   (240 MHz during a refresh, 80 MHz otherwise); light sleep moves to milestone 5 with the
   power measurements.
 

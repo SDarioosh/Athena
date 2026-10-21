@@ -89,7 +89,7 @@ cmake -S firmware/pda/test -B build-pda-host && cmake --build build-pda-host && 
   "Clean refresh", "Wipe cache (hold)".
 - **Buttons:** BOOT short = back / Today; BOOT held 1 s = sleep (deep sleep, an "Asleep"
   screen stays on the panel; press BOOT to wake, which restarts the firmware and redraws
-  Today); the button next to BOOT (LilyGO's S3, labelled IO48 on the board, read through
+  Today with one clean refresh, a single flash); the button next to BOOT (LilyGO's S3, labelled IO48 on the board, read through
   the PCA9535 IO1_2; GPIO48 itself is the e-paper's CKV line) short = front light on/off,
   held 1 s = sync mode (the 2-minute pairing window with fast advertising, so a phone
   finds it quickly). Clean refresh is on the Status screen. RST resets. The power button
@@ -98,6 +98,14 @@ cmake -S firmware/pda/test -B build-pda-host && cmake --build build-pda-host && 
   the first time); "Light" on the Status screen steps off → 25 % → 50 % → 100 % → off (kept
   in NVS). It stays on while the screen is used and goes off after 60 s without a touch or
   button; the next touch or button turns it on again. Off in sleep.
+- **Sync while asleep:** asleep, the T5 also wakes on a timer when the phone's next sync is
+  due (15 min after the last one, android-relay's default `pdaSyncMinutes`), without the
+  UI, the front light or a screen refresh: BLE for bonded phones only (fast advertising,
+  no pairing window) for about a minute, a sync if the phone comes, then back to sleep
+  (at most 4 min awake; `main/sleep_plan.h` explains the numbers). If a new feed came,
+  only the Asleep screen's "synced HH:MM" line is redrawn. BOOT during such a wake starts
+  the UI. A phone set to a longer interval still syncs (one wake in between misses); with
+  auto sync off the wakes find nobody.
 - **Pairing:** open the window, then pair from the phone (android-relay) or the PC
   (Windows Settings → Bluetooth → Add device → `odysseus-pda`, or `tools/pda_ble_test.py
   pair`). The T5 shows the 6-digit code; type it on the other side.
@@ -118,7 +126,7 @@ cmd "<command>"` runs one from a script.
 | `time [<epoch\|ISO> [utc_offset_min]]` | clock and display offset (normally set by TIME) |
 | `ble [pair\|forget]` | BLE state, open the pairing window, delete all bonds |
 | `light [0-100]` | front light level (kept in NVS) |
-| `sleep` | deep sleep until BOOT is pressed (the USB console goes away) |
+| `sleep [<min>\|off\|info]` | deep sleep as BOOT held (the USB console goes away); `<min>`: the first sync wake in that many minutes; `off`: no sync wakes; `info`: sync-wake counters since power-on |
 | `rotate [90\|270]` | portrait orientation |
 | `wipe` | delete feed, details and outbox |
 | `i2c`, `batt`, `rtc [set <t>]`, `touch [trace <s>]`, `epd [bench\|clean]` | board bring-up and timing |
@@ -180,7 +188,15 @@ python tools/pda_serial.py -p COM36 fb today.png
 - The sibling relays against this firmware: the PC relay's `pda` subcommand and the
   Android `PdaSync` (they were written against the same spec and a fake T5).
 - Battery life, light sleep (not implemented: the T5 stays awake with DFS; plan
-  milestone 5), deep sleep with an advertising window, flash encryption.
+  milestone 5), flash encryption.
+- Sync wakes from deep sleep and the no-flash wake (2026-10-20): built and host-tested
+  (`test_sleep_plan`), **not on the board yet**. To check: the front light stays dark and
+  the panel doesn't change during a timer wake (except the "synced HH:MM" line after a new
+  feed, with no flash and no ghost of the old line); the phone syncs within a minute of
+  each wake (`sleep info` counts wakes, syncs, misses); the deep-sleep timer's drift (the
+  log's "woke N s early"); BOOT during a timer wake starts the UI; a BOOT wake shows Today
+  with a single flash; the GT911 stays asleep through timer wakes (sleep current with and
+  without them).
 - Front light, sleep and the new button mapping (2026-10-20): built, **not on the board
   yet**. To check: the light's PWM (1 kHz on GPIO11) dims in steps without flicker or
   whine, and stays dark in sleep; BOOT held 1 s shows "Asleep" and the T5 sleeps once
