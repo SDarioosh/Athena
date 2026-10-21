@@ -25,6 +25,8 @@ data class PdaStats(
     val calendarNote: String? = null,
     /** Why the T5 gets no checklists, or `todo_toggle` waits (plan §4.4); null if all is well. */
     val todosNote: String? = null,
+    /** Why the T5 shows no Today insight (plan §4.1), e.g. "token lacks insight:read"; null if it has one. */
+    val insightNote: String? = null,
 )
 
 /** How one PDA connection ended. */
@@ -82,6 +84,8 @@ class PdaSync(
     private val keepaliveMs: Long = 20_000L,
     /** The owner's Odysseus checklists (plan §4.4). */
     private val todos: TodosApi = NoTodos,
+    /** The hub's Today insight (plan §4.1). */
+    private val insight: InsightApi = NoInsight,
 ) {
     private var done = 0
     private var rejected = 0
@@ -90,17 +94,18 @@ class PdaSync(
     private var details = 0
     private var calendarNote: String? = null
     private var todosNote: String? = null
+    private var insightNote: String? = null
     private var todoNotes: ApiResult<List<TodoNote>>? = null
     private var status: PdaStatus? = null
     private var t5FeedVersion = 0L
     private var lastCommandMs = 0L
-    private val feedBuilder = FeedBuilder(api, calendar, clock, zone, templates, log = log, todos = todos)
+    private val feedBuilder = FeedBuilder(api, calendar, clock, zone, templates, log = log, todos = todos, insight = insight)
     private val detailBuilder = DetailBuilder(api)
 
     private class DeviceProblem(message: String) : Exception(message)
     private class ServerStop(val outcome: (PdaStats) -> PdaOutcome) : Exception()
 
-    private fun stats() = PdaStats(done, rejected, waiting, feeds, details, calendarNote, todosNote)
+    private fun stats() = PdaStats(done, rejected, waiting, feeds, details, calendarNote, todosNote, insightNote)
 
     suspend fun run(): PdaOutcome = try {
         runSteps()
@@ -414,6 +419,7 @@ class PdaSync(
         }
         feedBuilder.calendarNote?.let { calendarNote = calendarNote ?: it }
         feedBuilder.todosNote?.let { todosNote = todosNote ?: it }
+        insightNote = feedBuilder.insightNote
         val lastVersion = memory.lastFeedVersion(deviceKey)
         val unchanged = content.hash == memory.lastFeedHash(deviceKey) && t5FeedVersion == lastVersion && lastVersion != 0L
         if (unchanged && !force) {

@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-21 (T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-21 (T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -27,7 +27,7 @@ _Last updated: 2026-10-21 (T4-S3 conference recorder firmware with a 4-mic I2S a
 | 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | merged (PR #4), **waiting for owner's watch test**; test server is running | `zepp-app/` |
 | 9d | Watch voice profile (guided 60–90 s owner enrollment) | PR open, **needs the real watch** | `zepp-app/page/enroll.js`, `POST /v1/speakers/enroll.json` |
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
-| 9c | Calendar/task integration for action items | module side built (kinds, times, JSON listing, edits, named to-do list: "add milk to my shopping list" → `list_name` `shopping`); hub files voice-note items into the Odysseus calendar and to-dos, items with a list onto that to-do list (coordinated hub PRs); **needs owner verification on real voice notes** | `server/convo_server/{llm,dates,store,mcp_server}.py` |
+| 9c | Calendar/task integration for action items | module side built (kinds, times, JSON listing, edits, named to-do list: "add milk to my shopping list" → `list_name` `shopping`; notes: "create a note …" → kind `note` with `note_title`, "add to my hardware notes …" → `list_name` `hardware`); hub files voice-note items into the Odysseus calendar, to-dos and notes, items with a list onto that to-do list, notes with a name onto those notes (coordinated hub PRs); **needs owner verification on real voice notes** | `server/convo_server/{llm,dates,store,mcp_server}.py` |
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
 | 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **running on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, buttons, haptics and recording work (mic timeout fix; stop early with BOOT+PWR again, `stop` or mute). Mic: raw level was nearly inaudible and muffled; now high-pass + T-Watch EQ (+9 dB 1.6 kHz, -6 dB 3.6 kHz) + 30 dB gain + limiter, speech ~-24 dBFS, owner says it sounds best; `gain`/`eq` on the console. Recordings copy off over USB (`tools/pull.py`). SD_DET confirmed (P12 LOW with card, HIGH without; expander question §2.1 answered); RTC set, files get dated names. Still to check: one recording of fictional speech through `smoke_upload.py` on the server (owner). **Round 12: BLE upload path built, not yet on hardware**: BOOT+PWR records an Opus session (libopus, 16 kbps) as 30 s Ogg/Opus chunks into a queue on the SD card that survives reboots; NimBLE GATT service drains it (protocol `docs/twatch-ble-protocol.md`); `tools/ble_relay.py` is the PC relay; Wi-Fi still not linked. Needs the owner: flash, record, drain with the PC relay and the phone (PR Server verification). Then milestone 2 (power baseline), milestone 3 (gain/EQ/bitrate by transcription) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` §11, `docs/twatch-ble-protocol.md` |
 | 11d | LilyGO T-Watch S3 recorder (same firmware, `boards/twatch_s3/`) | **built 2026-10-20, flashing on the owner's watch**: one button (clicks: 1 rec, 2 mute, 3 status, 4 sync; hold note), queue in a FAT partition in flash (no SD card), ST7789 240x240 screen, PCF8563 RTC. Host tests pass; button timing, mic level and the screen still need the real watch | `firmware/recorder/boards/twatch_s3/` |
@@ -37,6 +37,7 @@ _Last updated: 2026-10-21 (T4-S3 conference recorder firmware with a 4-mic I2S a
 | 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; the hub's `fork_deploy.sh deploy` runs it first, and it then updates Odysseus itself (`BARVIS_SOUND_ODYSSEUS_DIR`, found from the running container by default), so either command updates both | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, hub `docs/fork/deploy.md` |
 | 13 | Speaker recognition (PR #24) and focused summaries (PR #25): measured in the sandbox, bugs fixed, two improvements | PRs open, **owner: Server verification** | SDarioosh/barvis-sound#31 (recognition), SDarioosh/barvis-sound#38 (insights) |
 | 14 | T5 E-Paper Pro PDA firmware (feed and outbox over BLE through the phone) | **milestones 0–3 built, on the owner's T5**: bring-up and refresh times, all screens from a fictional feed, touch and buttons by hand, BLE pairing, TIME, outbox drain/ack and feed PUT from a Windows PC; host tests in CI. Front light, BOOT-hold sleep, sync mode, automatic light sleep and timed sync wakes from deep sleep built and flashed; currents not measured yet. Still open: the PC relay and the Android `PdaSync` against the real T5, the server `PATCH` end to end, light sleep and power (milestone 5) | `firmware/pda/`, `docs/t5-pda-plan.md` |
+| 15 | Today insight: confirmed facts (`list_facts confirmed=true format=json`, MCP 0.4.0) for the hub's memory; relays put the hub's Today insight in the T5 feed; T5 Today tab shows it with a rule-based fallback (`today_plan.c`) | **built, tested, not on hardware** (PDA host tests, `idf.py build`, Android tests); hub side on the same branch in SDarioosh/Barvis; **owner: Server verification** (confirmed-fact counts, insight time on `qwen3.5-35b`, phone and T5 steps) | `server/convo_server/{store,mcp_server}.py`, `firmware/recorder/tools/barvis_relay/pda_insight.py`, `android-relay/`, `firmware/pda/main/{today_plan,ui_today}.c`, `docs/t5-pda-plan.md` §4.1, §5 |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -113,6 +114,49 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
+
+## Done on 2026-10-21: Today insight and confirmed facts (hub: same branch in SDarioosh/Barvis)
+
+Phase 0 of the hub's personal-context plan (hub `docs/fork/personal-context.md`). Built by
+parallel agents, one per stream, reviewed and merged by the orchestrator.
+
+- **Confirmed facts (server).** A fact is confirmed when it is current, was said in
+  ≥ `CONVO_FACT_CONFIRM_SOURCES` (3) distinct conversations spanning ≥
+  `CONVO_FACT_CONFIRM_DAYS` (2) local dates. `list_facts` gains `confirmed` and
+  `format="json"` (`id`, `subject`, `about` owner/person/other, `fact`, `times_said`,
+  `days`, `first_said`, `last_said`, `link`; `limit` up to 1000 in JSON mode so the hub can
+  reconcile by id). Text output unchanged (snapshot test). MCP version 0.4.0. The hub's
+  hourly "Module Facts" task copies them into Odysseus memory and retires ids that stop
+  being returned; there is no `changed_since` (decided: a full reconcile is simpler and
+  self-healing).
+- **Relays (PC and Android, identical).** `GET /api/codex/insight/today` on the hub
+  (scope `insight:read`, same Odysseus token) → feed section `insight` (`date`,
+  `headline`, three sections of `ref`/`why`, caps 200/80/5). Refs are kept only when they
+  resolve in the feed's `todos` (note id + `i`) or `calendar` (event uid, occurrence form
+  for series); 403, 404, no hub or a malformed answer leaves `insight` out and never
+  fails the feed; it is trimmed after done items and before action items. The
+  `type == "checklist"` filter is right against a current hub (the JSON notes route
+  reports `todo` and `goal` as `checklist`); a test per relay documents it.
+- **T5 firmware.** `feed.c` parses `insight` (unknown keys ignored, unresolvable refs
+  dropped, 11 host tests incl. a fixture with a missing note, a missing `why`, a section
+  that is not a list). `today_plan.c` (pure C) builds the three sections from the insight,
+  or from rules when there is none for today: overdue → due today (by time) → next days →
+  pinned → undated; shopping-type lists left out unless dated. New Today tab (`ui_today.c`):
+  INSIGHT, DO FIRST, COMING UP, ALSO WORTH A LOOK, each item with its why, to-dos tickable
+  through `todo_toggle` with the tick shown at once, today's remaining timed events in
+  order, "Digest ready on Brief ›". Screens render on the host from fictional fixtures
+  (`build-pda-host/today_screens/*.png`, see `firmware/pda/README.md`). `idf.py build`
+  (ESP-IDF 5.5.2) passes.
+- **Checks:** server 329 tests + ruff; relay 196 tests + ruff; PDA host 11/11; Android
+  build, 147 tests, lint. Sandbox stack (Qwen3-4B on CPU, both PRs): MCP 0.4.0 connected;
+  bakeoff `--only 1 4 16 21` **4/4** at the default thresholds (2/3 on 1, 4, 16 before);
+  the hub's insight placed 8/8 fictional candidates in 82 s. With every seed fact forced
+  into the hub's memory the model answered two questions from memory without a tool
+  call (2/4): a scoring question for the owner (hub PR).
+- **Follow-ups noticed:** Android feed trimming never drops pinned checklists or an
+  emptied checklist, unlike the PC relay (pre-existing); a timed series stored in UTC
+  gets a UTC date in its occurrence uid, so a near-midnight occurrence can open the
+  calendar on the neighbouring day (hub).
 
 ## Done in round 2 (PR #3, stacked on #2)
 
@@ -1000,6 +1044,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 ## Next
 
+- **Owner: Today insight end to end** (this branch's PR, Server verification): confirmed-fact
+  counts at the default thresholds, one insight on `qwen3.5-35b` (time), the phone relay with
+  a token that has `insight:read`, the T5 Today tab (look, tick, taps) on the real panel.
 - **Owner: transcription quality** (PRs #39 and #42, Server verification): the AMI eval on
   the GPU before/after, switch whisper to large-v3-turbo-q5_0, then the 24 kbps firmware on
   the watch (encode time per frame, drain time, a fictional-speech recording).
@@ -1053,6 +1100,10 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
+- Today insight: the T5's rule-based fallback puts today's all-day events in DO FIRST
+  ("today, all day") before the timed ones. Keep, or leave all-day events out?
+- Confirmed facts: are 3 conversations over 2 days the right bar once real counts are in,
+  or should a fact the owner confirms by hand (Phase 1 review page) be the main path?
 - Recognition: if pyannote on the server GPU names people right without more wrong names
   than ECAPA (step 3 of SDarioosh/barvis-sound#31's Server verification), should it become the default there?
 - Insights: should doctor's instructions like "avoid hard food until the follow-up" be

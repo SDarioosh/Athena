@@ -198,7 +198,8 @@ sherpa-onnx on CPU, extra `parakeet`, `CONVO_PARAKEET_MODEL_DIR`); see `.env.exa
 whisper stays the default.
 
 Read API: `/v1/conversations`, `/v1/conversations/{id}`, `/v1/conversations/{id}/transcript`
-(`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items`, `/v1/digests/{date}`,
+(`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items` (`?include_notes=true`
+adds note items), `/v1/digests/{date}`,
 `/v1/sessions`, `/v1/speakers`; `PATCH /v1/action-items/{id}` takes any of `status`,
 `kind`, `due_date`, `due_time`, `list_name` (`null` clears a date, time or list). Conversations carry a
 signed `link`, and action items and facts a `source_url`, of the form `<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`: an HTML
@@ -215,9 +216,10 @@ source of truth, so the frontend can be swapped. Tools:
 | `search_transcripts(speaker, query, since, until)` | "what did X say (about Y) on/since DATE": actual lines, with links |
 | `search_conversations(query, person, since, until)` | conversations by topic / person / date |
 | `get_conversation(id)`, `get_transcript(id, start_seconds, end_seconds)` | details |
-| `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs (the hub files voice-note items into its calendar and to-dos from it) |
+| `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs, notes (kind `note`, `note_title`) included (the hub files voice-note items into its calendar, to-dos and notes from it) |
 | `update_action_item(item_id, status, kind, due_date, due_time, list_name)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears), time (`HH:MM`, `none` clears) or to-do list (`shopping`, `none` clears); every argument but `item_id` is optional |
-| `list_facts(subject, query)`, `get_daily_digest(date)`, `list_people()` | memory |
+| `list_facts(subject, query, limit, confirmed, format)` | facts about people, the user and things; `confirmed=true` keeps only confirmed facts (below); `format="json"` returns a JSON object for programs (the hub copies confirmed facts into its memory from it) |
+| `get_daily_digest(date)`, `list_people()` | memory |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
 | `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists) |
 | `reassign_line(line_id, name)` | one line given to the wrong person (`#id` from `get_transcript`) |
@@ -225,6 +227,29 @@ source of truth, so the frontend can be swapped. Tools:
 
 Dates are `YYYY-MM-DD` in `CONVO_TIMEZONE`. Set `CONVO_PUBLIC_URL` to the address your
 phone uses (e.g. the server's Tailscale IP) so links work there.
+
+**Confirmed facts.** A fact is confirmed when no newer fact has replaced it and it was
+said in at least `CONVO_FACT_CONFIRM_SOURCES` (default 3) distinct conversations (its own
+plus every "said again") that started on at least `CONVO_FACT_CONFIRM_DAYS` (default 2)
+distinct dates in `CONVO_TIMEZONE`. `list_facts(confirmed=true)` lists only those, in
+both formats. `list_facts(format="json")` returns current facts in the text mode's order
+(newest conversation first), with no citation line:
+
+```json
+{"facts": [{"id": 12, "subject": "Alice", "about": "person",
+            "fact": "Alice is vegetarian", "times_said": 3, "days": 2,
+            "first_said": "2025-10-09", "last_said": "2025-10-10",
+            "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
+```
+
+`about` is `owner` when the subject (trimmed, any case) is me, I, myself, owner, the
+owner, user, the user, `CONVO_OWNER_NAME` or the name of the enrolled owner voice;
+`person` when it is an enrolled speaker or a person named in a conversation; else
+`other`. `times_said` counts distinct conversations, `days` distinct local dates, and
+`first_said`/`last_said` are the first and last of those dates. `link` is the same
+transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
+program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
+fact id that stops being returned (replaced, or its conversation deleted).
 
 **Hermes** (stdio; add to the profile's `config.yaml`):
 
@@ -290,6 +315,18 @@ small local model does better on narrow questions):
    "Milk", list `shopping`), without "my"/"the"/"list". If the model leaves the phrase
    in an "Add …"/"Put …" text, code takes the list from it and drops it from the text.
    Odysseus adds the item to its to-do list with that name (or creates it).
+   **Notes (voice notes only, explicit commands only):** "create a note battery
+   dimensions are 13mm x 14mm x 3mm" becomes an item of kind `note` with text "Battery
+   dimensions are 13 mm x 14 mm x 3 mm" and `note_title` "Battery dimensions"; "add to
+   my hardware notes: the screen is 1.4 inch" also gets `list_name` `hardware` (the
+   notes to add it to, without "my"/"the"/"notes"). Code keeps a note only when the
+   voice note says "note"/"notes", strips command words the model leaves in, and gives
+   a note no date, time or owner. It also finds the command sentences itself: one the
+   model missed becomes a note (untitled; the hub titles it from the text), and an
+   undated task the model wrote for it becomes that note. In a conversation a `note` becomes a `task`. Notes
+   are left out of the text `list_action_items`, the digest and `GET /v1/action-items`
+   (add `?include_notes=true`); the JSON listing has them. Odysseus files each into its
+   notes (a note of its own, or a line on the named notes) and marks it done here.
 4. **Facts**, then a **linking** call against related known facts (same subject or
    matching words): a repeat becomes another source of the known fact; a changed value
    replaces the older one (by conversation time, so re-summarizing an old conversation

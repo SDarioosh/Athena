@@ -25,6 +25,7 @@ extern "C" {
 #define FEED_MAX_TODO_NOTES 20 /* plan §4.4 */
 #define FEED_MAX_TODO_ITEMS 40
 #define FEED_TODO_TEXT_MAX 160 /* characters of an item text the relay sends (§4.4) */
+#define FEED_MAX_INSIGHT_ITEMS 5 /* per insight section (§4.1 `insight`) */
 #define DETAIL_MAX_ACTIONS 16
 #define FEED_NO_DAY INT32_MIN
 #define DETAIL_MAX_SEGMENTS 200
@@ -76,6 +77,32 @@ typedef struct {
     int n_items;
 } feed_todo_t;
 
+/* The hub's "Today insight" (§4.1 `insight`): three sections of items, each a resolved
+ * reference into this feed's todos or calendar. */
+typedef enum {
+    FEED_INSIGHT_FOCUS = 0, /* "focus": do first */
+    FEED_INSIGHT_COMING_UP,
+    FEED_INSIGHT_ALSO,
+    FEED_INSIGHT_SECTIONS,
+} feed_insight_section_t;
+
+typedef enum {
+    FEED_REF_TODO = 1, /* f->todos[note].items[item] */
+    FEED_REF_EVENT,    /* f->events[event] */
+} feed_ref_kind_t;
+
+typedef struct {
+    uint8_t kind;       /* feed_ref_kind_t */
+    int16_t note, item; /* FEED_REF_TODO: array indexes (not the hub's `i`) */
+    int16_t event;      /* FEED_REF_EVENT: index into the sorted events */
+    const char *why;    /* the hub's reason; NULL if missing */
+} feed_insight_item_t;
+
+typedef struct {
+    feed_insight_item_t items[FEED_MAX_INSIGHT_ITEMS];
+    int n;
+} feed_insight_list_t;
+
 typedef struct {
     uint32_t version;
     int64_t generated;
@@ -95,6 +122,13 @@ typedef struct {
     bool has_todos;  /* the feed has a `todos` key (Odysseus is set up) */
     feed_todo_t todos[FEED_MAX_TODO_NOTES]; /* in the hub's order: pinned first */
     int n_todos;
+    /* `insight`: set when the key is an object with a valid "date". Items whose ref
+     * doesn't resolve to a todo item or an event of this feed are dropped. */
+    bool has_insight;
+    char insight_date[11];        /* "YYYY-MM-DD" */
+    int32_t insight_day;          /* the same as a day number */
+    const char *insight_headline; /* may be NULL */
+    feed_insight_list_t insight[FEED_INSIGHT_SECTIONS];
     char *arena;
 } feed_t;
 

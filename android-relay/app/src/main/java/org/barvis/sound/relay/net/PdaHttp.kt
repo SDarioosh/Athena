@@ -7,6 +7,7 @@ import org.barvis.sound.relay.relay.CalEvent
 import org.barvis.sound.relay.relay.CalendarApi
 import org.barvis.sound.relay.relay.ConvoApi
 import org.barvis.sound.relay.relay.FeedBuilder
+import org.barvis.sound.relay.relay.InsightApi
 import org.barvis.sound.relay.relay.Level
 import org.barvis.sound.relay.relay.NewEvent
 import org.barvis.sound.relay.relay.RelayLog
@@ -253,6 +254,47 @@ class OdysseusTodosClient(
         const val TODOS = "/api/codex/todos"
         const val NO_SCOPE = "add the Todos and Todos write permissions to the Odysseus token"
         const val OLD_HUB = "this Odysseus can't list checklists (update the hub)"
+    }
+}
+
+/**
+ * The hub's Today insight through `/api/codex/insight/today` (plan §4.1), with the same URL and
+ * token as the calendar (scope `insight:read`). The reasons are the PC relay's words.
+ */
+class OdysseusInsightClient(
+    baseUrl: String,
+    token: () -> String,
+    transport: HttpTransport = UrlConnectionTransport(),
+    log: RelayLog = RelayLog.NONE,
+) : InsightApi {
+    private val c = JsonClient(baseUrl, token, transport, log, "Odysseus")
+
+    override suspend fun today(): ApiResult<Map<String, Any?>> {
+        val a = c.call("GET", INSIGHT) ?: return ApiResult.Fail(c.networkError())
+        when {
+            a.code == 403 -> return ApiResult.Unsupported(NO_SCOPE)
+            // FastAPI's 404 for a missing route says "Not Found"; no insight yet says {"error": …}.
+            a.code == 405 || a.code == 404 && JsonClient.detail(a.body) == "Not Found" -> return ApiResult.Unsupported(OLD_HUB)
+            a.code == 404 -> return ApiResult.Unsupported(NOT_YET)
+            a.code == 200 -> return try {
+                ApiResult.Ok(Json.parseObject(a.body))
+            } catch (e: Json.ParseException) {
+                ApiResult.Unsupported(MALFORMED)
+            }
+        }
+        return when (val r = HttpUploader.classify(a.code, a.body, needOkField = false)) {
+            is ServerResult.Rejected -> ApiResult.Unsupported("Odysseus insight: HTTP ${a.code}") // another final 4xx
+            is ServerResult.Ok -> ApiResult.Fail(ServerResult.Transient("Odysseus insight: HTTP ${a.code}")) // an odd 2xx
+            else -> ApiResult.Fail(r) // network, 5xx, 408/429, 3xx, 401: like the calendar
+        }
+    }
+
+    companion object {
+        const val INSIGHT = "/api/codex/insight/today"
+        const val NOT_YET = FeedBuilder.INSIGHT_NOT_YET
+        const val NO_SCOPE = "token lacks insight:read"
+        const val OLD_HUB = "this Odysseus has no insight route (update the hub)"
+        const val MALFORMED = FeedBuilder.INSIGHT_MALFORMED
     }
 }
 

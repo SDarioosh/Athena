@@ -14,19 +14,21 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import relevance_rules
 from .dates import resolve_due, resolve_time
-from .store import Segment, clean_list_name
+from .store import NOTE_ITEM, Segment, clean_list_name, clean_notes_name
 
 log = logging.getLogger(__name__)
 
 
-ItemKind = Literal["task", "event", "reminder"]
+# "note": the user asked a voice note to save a note ("create a note ..."); voice notes only
+ItemKind = Literal["task", "event", "reminder", "note"]
 
 
 class ActionItem(BaseModel):
     text: str = Field(description="What needs to be done, imperative, self-contained")
     kind: ItemKind = Field(default="task",
                            description="event (meeting, appointment, call at a set day), "
-                                       "reminder (remind me at a time) or task")
+                                       "reminder (remind me at a time), note (the user "
+                                       "asked to save a note) or task")
     owner: str | None = Field(default=None, description="Who should do it, if stated")
     due: str | None = Field(default=None, description="Deadline as stated, e.g. 'Friday'")
     due_date: str | None = Field(default=None,
@@ -40,6 +42,9 @@ class ActionItem(BaseModel):
     list_name: str | None = Field(default=None,
                                   description="The user's list it goes on, if they name one "
                                               "('add milk to my shopping list' -> 'shopping')")
+    title: str | None = Field(default=None,
+                              description="For a note: a short title, e.g. 'Battery "
+                                          "dimensions'; else null")
     at_seconds: int | None = Field(default=None,
                                    description="Offset in seconds where it was mentioned")
 
@@ -215,7 +220,17 @@ note says someone else should do it. due: the deadline as said ("Friday"); due_d
 that deadline as YYYY-MM-DD counted from the note's date, or null if there is none. \
 at_seconds: the bracketed number of the line it comes from. Return an empty list if \
 there are none.
-""" + KINDS + "\n" + ACTION_KEYS
+""" + KINDS + """
+kind "note" ONLY when the user explicitly asks to save a note: "create a note ...", "make \
+a note ...", "take a note ...", "note that ...", "add to my hardware notes ...". text: what \
+the note says, cleaned up, without the command words, e.g. "create a note battery \
+dimensions are 13mm x 14mm x 3mm" -> text "Battery dimensions are 13 mm x 14 mm x 3 mm", \
+title "Battery dimensions". list_name: the notes the user names to add it to, e.g. "add to \
+my hardware notes: the screen is 1.4 inch" -> text "The screen is 1.4 inch", title \
+"Screen size", list_name "hardware"; else null. A note has no due, time or owner. A plain \
+statement without such a command ("the wifi password is on the router") is no item, and \
+"remember to ..." is a task, not a note.
+""" + ACTION_KEYS.replace("list_name, at_seconds", "list_name, title, at_seconds")
 
 MERGE_SYSTEM = """You merge partial notes of ONE long conversation (given in order) into \
 a single set of notes with the same JSON shape. Deduplicate. Output JSON only."""
@@ -346,6 +361,9 @@ class Summarizer:
             actions_sys, p, ActionItemList).action_items]
         facts = [f for p in parts for f in self.llm.structured(  # type: ignore[attr-defined]
             facts_sys, p, FactList).facts]
+        # notes are voice-note commands only; in a conversation it is a task at most
+        actions = [a.model_copy(update={"kind": "task"}) if a.kind == NOTE_ITEM else a
+                   for a in actions]
         result = ConversationSummary(**merged.model_dump(), action_items=_unique(actions),
                                      facts=_unique(facts))
         out = to_storage(result, origin)
@@ -374,6 +392,16 @@ class Summarizer:
                                              facts=_unique(facts)), origin)
         out["kind"] = "note"
         self._resolve_due_dates(out, origin)
+        # only explicit commands make a note: none without the word "note(s)"
+        asked = _NOTE_WORD.search("\n".join(parts)) is not None
+        out["action_items"] = [i for i in out["action_items"]
+                               if i["kind"] != NOTE_ITEM or (asked and i["text"])]
+        if asked:  # a command the model missed or took for a task
+            _notes_from_commands(out["action_items"], parts, origin)
+        for item in out["action_items"]:
+            if item["kind"] == NOTE_ITEM:  # a note is filed as it is: no date or time
+                item.update(due=None, due_date=None, due_time=None, time_unclear=False,
+                            owner=None)
         return out
 
     def _resolve_due_dates(self, out: dict[str, Any], origin: float) -> None:
@@ -447,7 +475,8 @@ class Summarizer:
             "title": c["title"], "summary": c["summary"], "key_points": c["key_points"],
             "people": c["people"],
             "action_items": [a["text"] for a in c.get("action_items", [])
-                             if a.get("status", "open") == "open"],
+                             if a.get("status", "open") == "open"
+                             and a.get("kind") != NOTE_ITEM],
             **({"voice_note": True} if c.get("kind") == "note" else {}),
         } for c in conversations]
         result = self.llm.structured(DIGEST_SYSTEM.format(date=date), json.dumps(notes),
@@ -546,12 +575,14 @@ def _item_storage(a: ActionItem, source_at: float | None) -> dict[str, Any]:
             text = _REPEAT_PREFIX + text[:1].lower() + text[1:]
     duration = a.duration_minutes if a.duration_minutes and 0 < a.duration_minutes <= 1440 \
         else None
+    if kind == NOTE_ITEM:
+        return _note_storage(a, text, source_at)
     text, list_ = _list_and_text(text, a.list_name)
     return {"text": text, "kind": kind, "owner": a.owner, "due": a.due,
             "due_date": _iso_date(a.due_date), "time": a.time,
             "duration_minutes": duration if kind == "event" else None,
             "location": (a.location or "").strip() or None, "list_name": list_,
-            "source_at": source_at}
+            "note_title": None, "source_at": source_at}
 
 
 # "... to my shopping list", "on the work to-do list", "to shopping list": a list the
@@ -580,6 +611,99 @@ def _list_and_text(text: str, said: str | None) -> tuple[str, str | None]:
         return text, name
     rest = _ADD.sub("", (text[:m.start()] + text[m.end():]).strip(" ,.")).strip()
     return (rest[:1].upper() + rest[1:] if rest else text), name
+
+
+# A voice note that asks for a note says the word: "create a note", "note that", "add to
+# my hardware notes". Transcribers write "notes" and "note" alike.
+_NOTE_WORD = re.compile(r"\bnotes?\b", re.IGNORECASE)
+# command words a model may leave in the note's text
+_NOTE_COMMAND = re.compile(
+    r"^(?:(?:please|ok(?:ay)?|so)[,\s]+)?(?:(?:create|make|take|add|save|write(?:\s+down)?|"
+    r"start)\s+(?:a\s+|new\s+|a\s+new\s+)?note|note\s+(?:down\s+)?)"
+    r"(?:\s*(?:that|saying|about|of|:|,|-))?\s+", re.IGNORECASE)
+# "... to my hardware notes", "in the car notes": notes the user named
+_NOTES_PHRASE = re.compile(
+    r"\s*\b(?:to|in|into|on|onto)\s+(?:(?:my|the|our)\s+)?"
+    rf"(?P<name>{_NAME_WORD}(?:\s+{_NAME_WORD}){{0,2}}?)\s+notes\b[\s:,.-]*",
+    re.IGNORECASE)
+
+
+def _note_storage(a: ActionItem, text: str, source_at: float | None) -> dict[str, Any]:
+    """A note item: its text without the command words, a title, and the notes it goes
+    into when the user named them ("add to my hardware notes" -> "hardware")."""
+    name = clean_notes_name(a.list_name)
+    m = _NOTES_PHRASE.search(text)
+    if m and (name is None or name.lower() == (clean_notes_name(m["name"]) or "").lower()):
+        name = name or clean_notes_name(m["name"])
+        rest = (text[:m.start()] + " " + text[m.end():]).strip(" ,.:-")
+        rest = re.sub(r"[\s,]*\b(?:add|put|write)\s+(?:it|this|that)$", "", rest,
+                      flags=re.IGNORECASE)
+        text = re.sub(r"^(?:add|put|write(?:\s+down)?)\s*[:,-]?\s*", "", rest,
+                      flags=re.IGNORECASE) or text
+    text = _NOTE_COMMAND.sub("", text.strip()).strip(" :,-") or text.strip()
+    text = re.sub(r"(?<!\.)\.$", "", text[:1].upper() + text[1:])  # a sentence's period
+    title = re.sub(r"\s+", " ", (a.title or "").strip().strip(".\"'"))[:80] or None
+    return {"text": text, "kind": NOTE_ITEM, "owner": None, "due": None, "due_date": None,
+            "time": None, "duration_minutes": None, "location": None, "list_name": name,
+            "note_title": title, "source_at": source_at}
+
+
+# "[12] Me: text": a line of format_transcript
+_LINE = re.compile(r"^\[(?P<at>\d+)\] [^:]*: (?P<text>.*)$")
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+_LEAD = re.compile(r"^(?:and|also|then|oh|so)[,\s]+", re.IGNORECASE)
+_ADD_TO_NOTES = re.compile(r"^(?:add|put|write(?:\s+down)?)\b", re.IGNORECASE)
+
+
+def _command_sentences(parts: list[str]) -> list[tuple[str, int]]:
+    """Sentences that ask for a note ("create a note ...", "note that ...", "add to my
+    hardware notes ..."), with the line's offset in seconds."""
+    out = []
+    for part in parts:
+        for line in part.splitlines():
+            m = _LINE.match(line.strip())
+            if not m:
+                continue
+            for sentence in _SENTENCE_END.split(m["text"]):
+                said = _LEAD.sub("", sentence.strip())
+                if _NOTE_COMMAND.match(said + " ") or (
+                        _ADD_TO_NOTES.match(said) and _NOTES_PHRASE.search(said)):
+                    out.append((said, int(m["at"])))
+    return out
+
+
+def _words(text: str) -> set[str]:
+    return set(re.findall(r"[^\W\d_]+|\d+", text.lower()))  # "13mm" = "13 mm"
+
+
+def _covers(item: dict[str, Any], want: set[str]) -> bool:
+    """The item says mostly the same words."""
+    got = _words(item["text"])
+    return bool(got) and len(want & got) >= 0.6 * min(len(want), len(got))
+
+
+def _notes_from_commands(items: list[dict[str, Any]], parts: list[str],
+                         origin: float) -> None:
+    """Make sure each spoken note command gives a note: an item the model already wrote
+    for it becomes the note (small models take "add to my hardware notes ..." for a
+    task); a command without an item gets one, untitled (the hub titles it)."""
+    for said, at in _command_sentences(parts):
+        note = _note_storage(ActionItem(text=said, kind=NOTE_ITEM), said, origin + at)
+        want = _words(note["text"])
+        if not want:
+            continue
+        if any(i["kind"] == NOTE_ITEM and _covers(i, want) for i in items):
+            continue
+        twin = next((i for i in items if i["kind"] != NOTE_ITEM and not i.get("due_date")
+                     and not i.get("due_time") and _covers(i, want)), None)
+        if twin is not None:
+            twin.update(note, note_title=None, source_at=twin.get("source_at") or origin + at,
+                        time_unclear=False)
+            twin.pop("time", None)
+        else:
+            note.pop("time", None)
+            note["due_time"], note["time_unclear"] = None, False
+            items.append(note)
 
 
 def _dedupe(items: list[str]) -> list[str]:

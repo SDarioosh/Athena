@@ -14,10 +14,11 @@ import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
@@ -205,6 +206,9 @@ class Segment:
 
 ITEM_STATUSES = ("open", "done", "dismissed")
 ITEM_KINDS = ("task", "event", "reminder")
+# an action item that is a note the user asked a voice note to save; the hub files it
+# into its notes (update_action_item can change it to another kind, not make one)
+NOTE_ITEM = "note"
 UNSET: Any = object()  # "not given" for optional updates (None means "clear")
 
 
@@ -300,6 +304,10 @@ class Store:
             # the to-do list the user named for an item ("add milk to my shopping list")
             self._add_column("action_items", "list_name", "TEXT")
             self._conn.execute("PRAGMA user_version = 7")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 8:
+            # notes from voice notes ("create a note ..."): the note's title
+            self._add_column("action_items", "note_title", "TEXT")
+            self._conn.execute("PRAGMA user_version = 8")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -568,13 +576,13 @@ class Store:
                 cur = c.execute(
                     "INSERT INTO action_items (id, conversation_id, text, owner, due, due_date,"
                     " source_at, status, kind, due_time, duration_minutes, location,"
-                    " time_unclear, created_at, edited, list_name)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " time_unclear, created_at, edited, list_name, note_title)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (row["id"], conv_id, item["text"], item.get("owner"), item.get("due"),
                      row["due_date"], item.get("source_at"), row["status"], row["kind"],
                      row["due_time"], item.get("duration_minutes"), item.get("location"),
                      row["time_unclear"], row["created_at"], row["edited"],
-                     row["list_name"]))
+                     row["list_name"], item.get("note_title")))
                 c.execute("INSERT INTO search_fts VALUES ('action_item', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id, item["text"]))
             for fact in summary["facts"]:
@@ -745,11 +753,67 @@ class Store:
             " GROUP BY p.name ORDER BY last_mentioned DESC")
 
     def list_facts(self, *, subject: str | None = None, query: str | None = None,
-                   limit: int = 50) -> list[dict[str, Any]]:
+                   limit: int = 50, counts_tz: str | None = None,
+                   min_sources: int = 0, min_days: int = 0) -> list[dict[str, Any]]:
         """Current facts matching ``subject``/``query``, newest first.
 
-        A match on an older, replaced fact returns the fact that replaced it.
+        A match on an older, replaced fact returns the fact that replaced it. With
+        ``counts_tz`` each fact also gets its ``fact_counts`` (local dates in that
+        timezone); ``min_sources``/``min_days`` then keep only facts said in at least that
+        many conversations on at least that many dates ("confirmed" facts).
         """
+        rows = self._list_current_facts(subject, query, -1 if counts_tz else limit)
+        if counts_tz is None:
+            return rows
+        counts = self.fact_counts([r["id"] for r in rows], counts_tz)
+        out = []
+        for r in rows:
+            r.update(counts[r["id"]])
+            if r["times_said"] >= min_sources and r["days"] >= min_days:
+                out.append(r)
+        return out[:limit] if limit >= 0 else out
+
+    def fact_counts(self, ids: Iterable[int], tz: str) -> dict[int, dict[str, Any]]:
+        """For each fact: in how many distinct conversations it was said (its own plus
+        its ``fact_sources``), on how many distinct local dates (``tz``), and the first
+        and last of those dates (YYYY-MM-DD). One query for the whole set."""
+        ids = list(ids)
+        if not ids:
+            return {}
+        zone = ZoneInfo(tz)
+        marks = ",".join("?" * len(ids))
+        said: dict[int, dict[str, str]] = {i: {} for i in ids}
+        for r in self._q(
+                "SELECT f.id AS fact_id, c.id AS conv, c.started_at FROM facts f"
+                f" JOIN conversations c ON c.id = f.conversation_id WHERE f.id IN ({marks})"
+                " UNION SELECT s.fact_id, c.id, c.started_at FROM fact_sources s"
+                f" JOIN conversations c ON c.id = s.conversation_id WHERE s.fact_id IN ({marks})",
+                [*ids, *ids]):
+            said[r["fact_id"]][r["conv"]] = (
+                datetime.fromtimestamp(r["started_at"], zone).strftime("%Y-%m-%d"))
+        out: dict[int, dict[str, Any]] = {}
+        for fid, convs in said.items():
+            days = sorted(set(convs.values()))
+            out[fid] = {"times_said": len(convs), "days": len(days),
+                        "first_said": days[0] if days else None,
+                        "last_said": days[-1] if days else None}
+        return out
+
+    def known_names(self) -> tuple[set[str], set[str]]:
+        """(owner names, person names), lower-cased: enrolled speakers marked as the
+        owner, and every enrolled speaker or person named in a conversation."""
+        owners: set[str] = set()
+        people: set[str] = set()
+        for r in self._q("SELECT name, is_owner FROM speakers"
+                         " UNION SELECT name, 0 FROM conversation_people"):
+            name = (r["name"] or "").strip().lower()
+            people.add(name)
+            if r["is_owner"]:
+                owners.add(name)
+        return owners - {""}, people - {""}
+
+    def _list_current_facts(self, subject: str | None, query: str | None,
+                            limit: int) -> list[dict[str, Any]]:
         sql = "SELECT id, status, superseded_by FROM facts WHERE 1=1"
         params: list[Any] = []
         if subject:
@@ -939,15 +1003,22 @@ class Store:
             "SELECT id FROM conversations WHERE status = 'failed' AND updated_at <= ?"
             " ORDER BY updated_at, started_at", (before,))]
 
-    def list_action_items(self, status: str | None = "open") -> list[dict[str, Any]]:
+    def list_action_items(self, status: str | None = "open", *,
+                          notes: bool = True) -> list[dict[str, Any]]:
+        """Newest conversation first. ``notes=False`` leaves out note items (they are no
+        to-dos)."""
         sql = ("SELECT a.*, c.title AS conversation_title, c.started_at AS conversation_at,"
                " c.kind AS conversation_kind"
-               " FROM action_items a JOIN conversations c ON c.id = a.conversation_id")
-        params: tuple[Any, ...] = ()
+               " FROM action_items a JOIN conversations c ON c.id = a.conversation_id"
+               " WHERE 1=1")
+        params: list[Any] = []
         if status:
-            sql += " WHERE a.status = ?"
-            params = (status,)
-        return self._q(sql + " ORDER BY c.started_at DESC, a.id", params)
+            sql += " AND a.status = ?"
+            params.append(status)
+        if not notes:
+            sql += " AND a.kind IS NOT ?"
+            params.append(NOTE_ITEM)
+        return self._q(sql + " ORDER BY c.started_at DESC, a.id", tuple(params))
 
     def get_action_item(self, item_id: int) -> dict[str, Any] | None:
         return self._one(
@@ -1216,6 +1287,21 @@ def clean_list_name(value: str | None) -> str | None:
     for _ in range(2):
         name = _LIST_NOISE.sub("", name).strip()
     if not name or len(name) > 40 or name.lower() in _NO_LIST:
+        return None
+    return name
+
+
+_NOTES_NOISE = re.compile(r"^(?:my|the|our|a)\s+|\s+notes?$", re.IGNORECASE)
+
+
+def clean_notes_name(value: str | None) -> str | None:
+    """The notes a note goes into, as the user said them, without "my", "the" and a
+    trailing "notes" ("my Hardware notes" -> "Hardware"); None for plain "my notes",
+    nothing usable, or too long."""
+    name = re.sub(r"\s+", " ", (value or "").strip().strip(".\"'"))
+    for _ in range(2):
+        name = _NOTES_NOISE.sub("", name).strip()
+    if not name or len(name) > 40 or name.lower() in {"note", "notes", "none", "null"}:
         return None
     return name
 

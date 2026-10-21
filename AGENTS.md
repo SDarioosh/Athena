@@ -148,6 +148,12 @@ the data path touches the cloud.**
   `instructions`.
 - HTTP auth accepts `Authorization: Bearer` or `?access_token=` (`BearerAuth`); Odysseus
   can only use the query form.
+- `list_action_items` and `list_facts` take `format="json"` for programs (the hub's
+  jobs). `list_facts(confirmed=true)` keeps only confirmed facts: current, said in
+  ≥ `CONVO_FACT_CONFIRM_SOURCES` (3) distinct conversations on ≥
+  `CONVO_FACT_CONFIRM_DAYS` (2) distinct dates in `CONVO_TIMEZONE`. The hub copies them
+  into its memory hourly (`confirmed=true, format="json"`) and retires any fact id no
+  longer returned. JSON fields are listed in `server/README.md`.
 - **Changing a tool name, an argument, an annotation, the link format, or the auth is a
   breaking change.** It needs a coordinated hub PR (module doc, preset text) per the
   [versioning rules](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules.md#versioning),

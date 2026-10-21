@@ -6,6 +6,7 @@ Ben, Jonas), already summarized, as the phone would build them from the server's
 Everything is made up. Output (committed, used by the host tests and the console loader):
 
     firmware/pda/test/fixtures/feed_demo.json
+    firmware/pda/test/fixtures/feed_insight_demo.json  (the same day with the hub's insight)
     firmware/pda/test/fixtures/detail_conv_demo.json
     firmware/pda/test/fixtures/detail_transcript_demo.json
 
@@ -14,6 +15,7 @@ Everything is made up. Output (committed, used by the host tests and the console
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -220,6 +222,79 @@ FEED = {
     "templates": ["Call", "Meeting", "Reminder", "Focus time"],
 }
 
+# The same morning with more on the lists and the calendar, and the hub's "Today insight"
+# (plan §4.1 `insight`). It also carries what the T5 must survive: a ref to a note that
+# isn't in the feed, an item without `why`, a section that isn't a list, an event that
+# is already over (08:00 local, the feed is from 09:00) and an unknown key.
+FEED_INSIGHT = copy.deepcopy(FEED)
+FEED_INSIGHT["calendar"] += [
+    {
+        "id": "ev_demo_call_tom",
+        "title": "Call Tom about the bathroom fan",
+        "start": "2026-10-20T06:00:00Z",
+        "end": "2026-10-20T06:15:00Z",
+        "all_day": False,
+    },
+    {
+        "id": "ev_demo_lunch",
+        "title": "Lunch with Maria",
+        "start": "2026-10-20T10:30:00Z",
+        "end": "2026-10-20T11:30:00Z",
+        "where": "Café Mira",
+        "all_day": False,
+    },
+    {
+        "id": "ev_demo_alice",
+        "title": "1:1 with Alice",
+        "start": "2026-10-20T14:00:00Z",
+        "end": "2026-10-20T14:30:00Z",
+        "where": "Room 3.02",
+        "all_day": False,
+    },
+]
+FEED_INSIGHT["calendar"].sort(key=lambda e: e["start"])
+FEED_INSIGHT["todos"] = [
+    FEED["todos"][0],  # Groceries, pinned: a shopping list, so not on Today
+    {"id": "note_demo_house", "title": "House", "pinned": True, "due": None,
+     "items": [{"i": 0, "text": "Ask Tom when he fixes the bathroom fan", "done": False},
+               {"i": 1, "text": "Water the plants", "done": False}]},
+    FEED["todos"][1],  # Mom's 70th, due 8 Nov
+    {"id": "note_demo_work", "title": "Work", "pinned": False, "due": "2026-10-19",
+     "items": [{"i": 0, "text": "Send the Q4 budget sheet to Alice", "done": False},
+               {"i": 1, "text": "Book the Berlin trip for January", "done": False},
+               {"i": 2, "text": "Expense report for September", "done": True}]},
+    {"id": "note_demo_demo", "title": "Client demo prep", "pinned": False,
+     "due": "2026-10-20",
+     "items": [{"i": 0, "text": "Rehearse the demo end to end", "done": False},
+               {"i": 1, "text": "Check database load with Ben’s new queries",
+                "done": False}]},
+    FEED["todos"][2],  # untitled, undated
+    {"id": "note_demo_shopping", "title": "Shopping list", "pinned": False, "due": None,
+     "items": [{"i": 0, "text": "AA batteries", "done": False}]},
+]
+FEED_INSIGHT["insight"] = {
+    "date": "2026-10-20",
+    "headline": (
+        "Friday’s client demo is the week’s big item: rehearse it this morning while the "
+        "calendar is clear, and send Alice the Q4 budget, a day late. Lunch with Maria "
+        "settles the seating plan."
+    ),
+    "focus": [
+        {"ref": "todo:note_demo_work:0", "why": "a day late; Alice needs it for the Q4 plan"},
+        {"ref": "todo:note_demo_demo:0", "why": "the morning is clear until the stand-up"},
+        {"ref": "event:ev_demo_lunch", "why": "Maria wants the seating plan settled"},
+        {"ref": "event:ev_demo_call_tom", "why": "the fan again"},
+        {"ref": "todo:note_demo_gone:2", "why": "a note that isn't in the feed"},
+    ],
+    "coming_up": [
+        {"ref": "event:ev_demo_2", "why": "bring the insurance card"},
+        {"ref": "event:ev_demo_3", "why": "check database load before it"},
+        {"ref": "todo:note_demo_mom70:1"},
+    ],
+    "also": {"ref": "todo:note_demo_house:1", "why": "not a list: ignored"},
+    "tone": "calm",
+}
+
 DETAIL_CONV = {
     "v": 1,
     "ref": "conv:c_demo_alice_1on1",
@@ -265,13 +340,15 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     for name, doc in (
         ("feed_demo.json", FEED),
+        ("feed_insight_demo.json", FEED_INSIGHT),
         ("detail_conv_demo.json", DETAIL_CONV),
         ("detail_transcript_demo.json", DETAIL_TRANSCRIPT),
     ):
         data = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode()
         (OUT / name).write_bytes(data)
         print(f"{name}: {len(data)} bytes")
-    assert len((OUT / "feed_demo.json").read_bytes()) < 32 * 1024
+    for name in ("feed_demo.json", "feed_insight_demo.json"):
+        assert len((OUT / name).read_bytes()) < 32 * 1024
 
 
 if __name__ == "__main__":
