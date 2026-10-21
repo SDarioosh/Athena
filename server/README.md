@@ -201,7 +201,8 @@ Read API: `/v1/conversations`, `/v1/conversations/{id}`, `/v1/conversations/{id}
 (`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items` (`?include_notes=true`
 adds note items), `/v1/digests/{date}`,
 `/v1/sessions`, `/v1/speakers`; `PATCH /v1/action-items/{id}` takes any of `status`,
-`kind`, `due_date`, `due_time`, `list_name` (`null` clears a date, time or list). Conversations carry a
+`kind`, `due_date`, `due_time`, `list_name`, `title` (`null` clears a date, time or list,
+and gives the title back from the text). Conversations carry a
 signed `link`, and action items and facts a `source_url`, of the form `<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`: an HTML
 transcript page that opens in a phone browser without the bearer token and jumps to that
 moment. Rotating `CONVO_INGEST_TOKEN` revokes all links.
@@ -216,8 +217,8 @@ source of truth, so the frontend can be swapped. Tools:
 | `search_transcripts(speaker, query, since, until)` | "what did X say (about Y) on/since DATE": actual lines, with links |
 | `search_conversations(query, person, since, until)` | conversations by topic / person / date |
 | `get_conversation(id)`, `get_transcript(id, start_seconds, end_seconds)` | details |
-| `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs, notes (kind `note`, `note_title`) included (the hub files voice-note items into its calendar, to-dos and notes from it) |
-| `update_action_item(item_id, status, kind, due_date, due_time, list_name)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears), time (`HH:MM`, `none` clears) or to-do list (`shopping`, `none` clears); every argument but `item_id` is optional |
+| `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs (below), notes (kind `note`, `note_title`) included (the hub files voice-note items into its calendar, to-dos and notes from it) |
+| `update_action_item(item_id, status, kind, due_date, due_time, list_name, title)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears), time (`HH:MM`, `none` clears), to-do list (`shopping`, `none` clears) or title (at most 60 characters, `none` = from the text); every argument but `item_id` is optional |
 | `list_facts(subject, query, limit, confirmed, format)` | facts about people, the user and things; `confirmed=true` keeps only confirmed facts (below); `format="json"` returns a JSON object for programs (the hub copies confirmed facts into its memory from it) |
 | `retire_fact(fact_id, reason)` | "forget that": the fact is retired for good (below); answers `Fact #12 retired.`, `Fact #12 was already retired.` or `No fact #12.` |
 | `get_daily_digest(date)` | memory |
@@ -229,6 +230,32 @@ source of truth, so the frontend can be swapped. Tools:
 
 Dates are `YYYY-MM-DD` in `CONVO_TIMEZONE`. Set `CONVO_PUBLIC_URL` to the address your
 phone uses (e.g. the server's Tailscale IP) so links work there.
+
+**Action items in JSON.** `list_action_items(format="json")` returns an array, newest
+conversation first, with no citation line:
+
+```json
+[{"id": 7, "status": "open", "kind": "reminder", "title": "Send the slides to Greta",
+  "explicit": true, "text": "Send the slides to Greta", "owner": "Me", "due": "Friday",
+  "due_date": "2025-10-10", "due_time": null, "duration_minutes": null, "location": null,
+  "list_name": null, "note_title": null, "time_unclear": false,
+  "conversation_id": "…", "conversation_title": "Errands", "conversation_kind": "note",
+  "conversation_at": "2025-10-09T08:53:20+00:00",
+  "created_at": "2025-10-09T08:55:02+00:00", "timezone": "Europe/Berlin",
+  "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=0"}]
+```
+
+`title` is a short imperative summary of at most 60 characters ("Call the plumber about
+the tap"), written by the model; when it gives none (or a longer one) code takes the
+start of the text (or the title) cut at a word boundary, and a note's title is its
+`note_title`. `explicit` is true when the user asked for the item: it has a due date or
+time, a `list_name`, kind `reminder`, `event` or `note`, or the voice note used a command
+word ("remind me", "todo", "to-do", "task:", "add a task", "add … to my … list", "note
+that"). It is worked out when the conversation is summarized and stored, so the hub
+files explicit items itself and offers the others as suggestions. An item the user later
+gives a date, time, list or reminder/event kind with `update_action_item` becomes
+explicit; a re-summary keeps an item explicit. Both fields are also in `GET
+/v1/action-items` and `GET /v1/conversations/{id}`. The text listing is unchanged.
 
 **Confirmed facts.** A fact is confirmed when no newer fact has replaced it and it was
 said in at least `CONVO_FACT_CONFIRM_SOURCES` (default 3) distinct conversations (its own
@@ -341,6 +368,23 @@ small local model does better on narrow questions):
    thirty-first", "tomorrow") the date is worked out in code (`convo_server/dates.py`)
    from the conversation date in `CONVO_TIMEZONE` ("by Friday" said on Wednesday
    2026-10-14 → 2026-10-16); the model's date is used only for vaguer deadlines.
+   An action item is a concrete thing to do with an object and ideally a time ("send the
+   slides to Greta", "call the plumber on Friday"). A statement of intent, priority,
+   principle or decision ("I should focus on X before Y", "stop prioritizing Z", "we
+   decided to …", "from now on …") is not one: the facts prompt makes it a fact about
+   the speaker, phrased as a decision (subject the owner: "The owner decided to stabilise
+   the base system before side projects."). A vague wish with nothing to act on ("figure
+   out how it could use less battery") is a plan fact too, unless it has a time, a named
+   list or a command word. In a voice note, code moves any undated task without a list
+   or command word that the model still lists into the facts (subject the owner's name,
+   `CONVO_OWNER_NAME`): one that says a decision or principle ("from now on", "going
+   forward", "decided", "focus on", "prioritize", "stop/quit/avoid …ing", or an intent
+   word such as "should", "need to", "want to", "going to" with a habit such as "be
+   more …", "try to", "start/keep …ing", "sleep more") becomes "The owner decided …",
+   and a vague wish ("figure out how/whether …", "think about how …") "The owner plans
+   …", unless the facts already say it. An intent word alone keeps a concrete to-do ("I
+   should email Bob about the invoice" stays a task), and so does an item another person
+   should do. Every item gets a `title` and `explicit` (above).
    Each item has a `kind`: `event` (meeting, appointment, call: "meeting with Jason on
    Wednesday at 12 pm"), `reminder` ("remind me at 5 to call Mom") or `task` ("get the
    proposal done on Wednesday"), plus `duration_minutes` and `location` for events if
@@ -375,8 +419,8 @@ small local model does better on narrow questions):
    with "said again" and "replaces:" lines that link every source transcript.
 
 A re-summary (e.g. after a speaker is renamed) keeps what was known about the old items:
-the id, status and creation time of action items (and the kind, date, time and list if
-the user changed them with `update_action_item`; an item with the same text is matched
+the id, status, creation time and `explicit` of action items (and the kind, date, time,
+list and title if the user changed them with `update_action_item`; an item with the same text is matched
 before a similar one said nearby), the other sources of a fact, which facts it
 replaced, and whether the owner retired it. Stable ids matter: Odysseus files voice-note
 items by id.

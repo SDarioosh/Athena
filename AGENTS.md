@@ -156,6 +156,12 @@ the data path touches the cloud.**
   longer returned. Each JSON row also has `confirmed` (true/false by those thresholds),
   so a program can read all current facts and promote the confirmed ones. JSON fields are
   listed in `server/README.md`.
+- Each `list_action_items` JSON row has `title` (≤ 60 characters, for the hub's to-do or
+  note) and `explicit` (true when the item has a date or time, a named list, kind
+  reminder/event/note, or the voice note used a command word such as "remind me" or "add a
+  task"), so the hub files explicit items itself and offers the rest as suggestions;
+  `update_action_item` can set `title` (MCP 0.7.0, additive). Intentions, priorities,
+  principles and decisions are facts about the owner, not action items.
 - People have a stable id (`people` table) that survives renames, so the hub can link a
   person here to one of its contacts. `list_people(format="json")` returns
   `{"people": [{id, name, aliases, is_owner, has_voice, conversations, first_seen,

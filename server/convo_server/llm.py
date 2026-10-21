@@ -14,7 +14,14 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import relevance_rules
 from .dates import resolve_due, resolve_time
-from .store import NOTE_ITEM, Segment, clean_list_name, clean_notes_name
+from .store import (
+    NOTE_ITEM,
+    Segment,
+    clean_list_name,
+    clean_notes_name,
+    is_explicit,
+    short_title,
+)
 
 log = logging.getLogger(__name__)
 
@@ -43,8 +50,10 @@ class ActionItem(BaseModel):
                                   description="The user's list it goes on, if they name one "
                                               "('add milk to my shopping list' -> 'shopping')")
     title: str | None = Field(default=None,
-                              description="For a note: a short title, e.g. 'Battery "
-                                          "dimensions'; else null")
+                              description="A short imperative summary, at most 60 "
+                                          "characters, e.g. 'Call the plumber about the "
+                                          "tap'; for a note, its title, e.g. 'Battery "
+                                          "dimensions'")
     at_seconds: int | None = Field(default=None,
                                    description="Offset in seconds where it was mentioned")
 
@@ -162,8 +171,19 @@ list the user wants it on if they name one, e.g. "add milk to my shopping list" 
 "Milk", list_name "shopping"; "put call the bank on my work to-do list" -> text "Call the \
 bank", list_name "work"; else null."""
 
-ACTION_KEYS = ("Keys: action_items[{{text, kind, owner, due, due_date, time, "
+ACTION_KEYS = ("Keys: action_items[{{text, title, kind, owner, due, due_date, time, "
                "duration_minutes, location, list_name, at_seconds}}].")
+
+# Both action prompts: what is an action item and what is a fact about the speaker.
+ITEM_RULES = """An action item is a concrete thing to do, with an object and ideally a \
+time: "send the slides to Greta", "call the plumber on Friday". A statement of intent, \
+priority, principle or decision ("I should focus on X before Y", "stop prioritizing Z", \
+"we decided to ...", "from now on ...") is NOT an action item: it is a durable fact about \
+the speaker, listed with the facts, not here. A vague wish with nothing concrete to act \
+on ("figure out how it could use less battery") is not an action item either, unless it \
+has a time, a named list or a command word ("remind me", "to-do", "add a task").
+title: a short imperative summary of the item, at most 60 characters, e.g. "Call the \
+plumber about the tap"; never the whole sentence."""
 
 ACTIONS_SYSTEM = """You list the action items of one conversation. """ + COMMON + """
 The conversation happened on {date}.
@@ -171,6 +191,7 @@ An action item is something someone promised or was asked to do after this \
 conversation: a promise ("I'll send you the slides tonight"), a request ("can you water \
 the plants while I'm away?") or an appointment to keep. List every \
 one, small ones too; leave out things already done.
+""" + ITEM_RULES + """
 text: a task that starts with a verb and names who and what, e.g. "Send Sam the \
 slides" or "Water Lena's plants". Never copy the spoken sentence.
 owner: who should do it ("{owner}" for the user), if clear. due: the deadline in the \
@@ -187,7 +208,13 @@ one-off logistics and anything only true for today. Each fact is a complete sent
 names its subject and makes sense on its own, e.g. \
 {{"subject": "Alice", "fact": "Alice is vegetarian."}}, never a bare value like "May". \
 at_seconds: the bracketed number of the supporting line. Return an empty list if there \
-are none. Keys: facts[{{subject, fact, at_seconds}}]."""
+are none.
+Decisions, priorities and principles someone states about how they want to work or live \
+are facts about that person (the subject is the speaker, "{owner}" for the user), \
+phrased as a decision, e.g. the user saying "I should stop prioritizing side projects \
+before the base system is stable" -> {{"subject": "{owner}", "fact": "The owner decided \
+to stabilise the base system before side projects."}}. A plan with no time is a fact \
+too: "The owner plans to ...". Keys: facts[{{subject, fact, at_seconds}}]."""
 
 LINK_SYSTEM = """You keep the user's memory of facts up to date. You get facts already \
 known (with id and the date they were learned) and new facts from a conversation on \
@@ -213,8 +240,10 @@ NOTE_ACTIONS_SYSTEM = """You list the to-dos in a voice note the user recorded f
 themselves. """ + COMMON + """
 The note was recorded on {date}.
 action_items: things the note says the user wants or needs to do ("call the plumber", \
-"remember to buy milk", "I should email Bob"), appointments and meetings it \
-mentions, and things to be reminded of. Not vague wishes. text: imperative and \
+"remember to buy milk", "email Bob about the invoice"), appointments and meetings it \
+mentions, and things to be reminded of.
+""" + ITEM_RULES + """
+text: imperative and \
 self-contained ("Call the plumber about the leaking tap"). owner: "{owner}" unless the \
 note says someone else should do it. due: the deadline as said ("Friday"); due_date: \
 that deadline as YYYY-MM-DD counted from the note's date, or null if there is none. \
@@ -230,7 +259,7 @@ my hardware notes: the screen is 1.4 inch" -> text "The screen is 1.4 inch", tit
 "Screen size", list_name "hardware"; else null. A note has no due, time or owner. A plain \
 statement without such a command ("the wifi password is on the router") is no item, and \
 "remember to ..." is a task, not a note.
-""" + ACTION_KEYS.replace("list_name, at_seconds", "list_name, title, at_seconds")
+""" + ACTION_KEYS
 
 MERGE_SYSTEM = """You merge partial notes of ONE long conversation (given in order) into \
 a single set of notes with the same JSON shape. Deduplicate. Output JSON only."""
@@ -369,6 +398,7 @@ class Summarizer:
         out = to_storage(result, origin)
         out["kind"] = triage.kind
         self._resolve_due_dates(out, origin)
+        _mark_explicit(out["action_items"], None)
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
         return out
@@ -402,7 +432,52 @@ class Summarizer:
             if item["kind"] == NOTE_ITEM:  # a note is filed as it is: no date or time
                 item.update(due=None, due_date=None, due_time=None, time_unclear=False,
                             owner=None)
+        spoken = _spoken(parts)
+        self._intentions_to_facts(out, spoken)
+        _mark_explicit(out["action_items"], spoken)
         return out
+
+    def _intentions_to_facts(self, out: dict[str, Any],
+                             spoken: list[tuple[str, str]]) -> None:
+        """A voice note's decisions and principles ("stop prioritizing side projects",
+        "focus on bugs before features") and vague wishes ("figure out how it could use
+        less battery") are facts about the owner, not to-dos: small models list them as
+        tasks anyway. An undated task without a list or command word that reads like one
+        becomes a fact ("The owner decided ..." / "The owner plans ..."), unless the
+        facts already say it."""
+        items = []
+        for item in out["action_items"]:
+            fact = self._intention(item, spoken)
+            if fact is None:
+                items.append(item)
+                continue
+            want = _content_words(item["text"])
+            if not any(want and (got := _content_words(f["fact"]))
+                       and len(want & got) >= 0.6 * min(len(want), len(got))
+                       for f in out["facts"]):
+                out["facts"].append({"subject": self.owner, "fact": fact,
+                                     "source_at": item.get("source_at")})
+        out["action_items"] = items
+
+    def _intention(self, item: dict[str, Any], spoken: list[tuple[str, str]]) -> str | None:
+        """The fact an action item really is (see ``_intentions_to_facts``), or None."""
+        if (item["kind"] != "task" or item.get("due_date") or item.get("due_time")
+                or item.get("list_name")):
+            return None
+        owner = (item.get("owner") or "").strip().lower()
+        if owner and owner not in {self.owner.lower(), *_OWNER_WORDS}:
+            return None  # someone else's to-do
+        text = item["text"]
+        clause, sentence = _said_in(text, spoken)
+        if _COMMAND_WORDS.search(text) or _COMMAND_WORDS.search(sentence):
+            return None
+        here = (text, clause)
+        decided = any(_DECISION.search(x) for x in here) or (
+            _INTENT.search(f"{text}\n{sentence}") is not None
+            and any(_HABIT.search(x) for x in here))
+        if not decided and not any(_VAGUE.search(x) for x in here):
+            return None
+        return _intent_fact(text, decided)
 
     def _resolve_due_dates(self, out: dict[str, Any], origin: float) -> None:
         """Work the date and time out in code where the phrase names them; the model's
@@ -578,9 +653,9 @@ def _item_storage(a: ActionItem, source_at: float | None) -> dict[str, Any]:
     if kind == NOTE_ITEM:
         return _note_storage(a, text, source_at)
     text, list_ = _list_and_text(text, a.list_name)
-    return {"text": text, "kind": kind, "owner": a.owner, "due": a.due,
-            "due_date": _iso_date(a.due_date), "time": a.time,
-            "duration_minutes": duration if kind == "event" else None,
+    return {"text": text, "title": short_title(a.title, text), "kind": kind,
+            "owner": a.owner, "due": a.due, "due_date": _iso_date(a.due_date),
+            "time": a.time, "duration_minutes": duration if kind == "event" else None,
             "location": (a.location or "").strip() or None, "list_name": list_,
             "note_title": None, "source_at": source_at}
 
@@ -643,8 +718,9 @@ def _note_storage(a: ActionItem, text: str, source_at: float | None) -> dict[str
     text = _NOTE_COMMAND.sub("", text.strip()).strip(" :,-") or text.strip()
     text = re.sub(r"(?<!\.)\.$", "", text[:1].upper() + text[1:])  # a sentence's period
     title = re.sub(r"\s+", " ", (a.title or "").strip().strip(".\"'"))[:80] or None
-    return {"text": text, "kind": NOTE_ITEM, "owner": None, "due": None, "due_date": None,
-            "time": None, "duration_minutes": None, "location": None, "list_name": name,
+    return {"text": text, "title": short_title(title, text), "kind": NOTE_ITEM,
+            "owner": None, "due": None, "due_date": None, "time": None,
+            "duration_minutes": None, "location": None, "list_name": name,
             "note_title": title, "source_at": source_at}
 
 
@@ -704,6 +780,93 @@ def _notes_from_commands(items: list[dict[str, Any]], parts: list[str],
             note.pop("time", None)
             note["due_time"], note["time_unclear"] = None, False
             items.append(note)
+
+
+# Voice notes: how the owner wants to work is a fact, not a to-do (``_intention``).
+# A decision or principle: "stop prioritizing side projects", "focus on bugs", "from now
+# on ...", "we decided ..."
+_DECISION = re.compile(
+    r"\b(?:from\s+now\s+on|going\s+forward|decided)\b|\bfocus(?:ing)?\s+on\b"
+    r"|\b(?:de)?prioriti[sz](?:e|es|ing)\b|\b(?:stop|quit|avoid)\s+\w+ing\b",
+    re.IGNORECASE)
+# a vague wish with nothing to act on yet: "figure out how it could use less battery"
+_VAGUE = re.compile(r"\b(?:figure|work|find)\s+out\s+(?:how|why|whether|what|if|a\s+way)\b"
+                    r"|\bthink\s+about\s+(?:how|why|whether|what|if)\b", re.IGNORECASE)
+# intent words: a principle only with a habit or attitude ("I should be more patient",
+# "I want to start running"); "I should email Bob" stays a to-do
+_INTENT = re.compile(r"\b(?:should|ought\s+to|need\s+to|want\s+to|wanna|going\s+to|"
+                     r"gonna|have\s+to|got\s+to|gotta|must)\b", re.IGNORECASE)
+_HABIT = re.compile(r"\b(?:be|become|get\s+better\s+at|try\s+(?:to|and))\b"
+                    r"|\b(?:start|keep)\s+\w+ing\b|\b(?:more|less)\s+(?:often|time)\b"
+                    r"|\b\w+\s+(?:more|less)[.!?]*\s*$", re.IGNORECASE)
+# the user asked for a to-do: "remind me", "todo", "to-do", "task:", "add a task", "add
+# ... to my ... list", "note that"
+_COMMAND_WORDS = re.compile(
+    r"\bremind\s+me\b|\breminder\b|\bto-?do\b|\bto\s+do\s+list\b|\btask\s*:"
+    r"|\b(?:add|create|make|new)\s+(?:a\s+)?(?:new\s+)?task\b|\bnote\s+that\b"
+    r"|\b(?:add|put|write)\b[^.!?]*\blist\b", re.IGNORECASE)
+# owners that are the user ("Me" is the summarizer's name for them by default)
+_OWNER_WORDS = frozenset({"me", "i", "myself", "user", "the user", "owner", "the owner"})
+_CLAUSE_END = re.compile(r";\s*|,?\s+(?:and|but)\s+(?:then\s+|also\s+)?|,\s+(?:then|also)\s+",
+                         re.IGNORECASE)
+_INTENT_LEAD = re.compile(
+    r"^(?:(?:so|okay|ok|and|also|well)[,\s]+)*(?:(?:from\s+now\s+on|going\s+forward)[,\s]+)?"
+    r"(?:(?:I|we)(?:'m|\s+am|'re|\s+are)?\s*(?:really\s+|probably\s+|definitely\s+|just\s+)?"
+    r"(?:should|ought\s+to|need\s+to|have\s+to|want\s+to|wanna|going\s+to|gonna|got\s+to|"
+    r"gotta|must|will|'ll)\s+)?", re.IGNORECASE)
+_DECIDED_LEAD = re.compile(r"^(?:I|we)\s+(?:have\s+|'ve\s+|just\s+)?decided\s+(?:to\s+)?",
+                           re.IGNORECASE)
+
+
+def _spoken(parts: list[str]) -> list[tuple[str, str]]:
+    """Every clause of the transcript, with its sentence."""
+    out = []
+    for part in parts:
+        for line in part.splitlines():
+            m = _LINE.match(line.strip())
+            if not m:
+                continue
+            for sentence in _SENTENCE_END.split(m["text"]):
+                sentence = sentence.strip()
+                out += [(c.strip(), sentence) for c in _CLAUSE_END.split(sentence)
+                        if c.strip()]
+    return out
+
+
+def _said_in(text: str, spoken: list[tuple[str, str]]) -> tuple[str, str]:
+    """The clause and sentence an item was written from: the clause with most of the
+    item's words; empty strings when none has them."""
+    want = _content_words(text)
+    best, score = ("", ""), 0.0
+    for clause, sentence in spoken:
+        got = len(want & _content_words(clause)) / len(want) if want else 0.0
+        if got > score:
+            best, score = (clause, sentence), got
+    return best if score >= 0.6 else ("", "")
+
+
+def _intent_fact(text: str, decided: bool) -> str:
+    """"I should stop prioritizing X." -> "The owner decided to stop prioritizing X.";
+    "Figure out how ..." -> "The owner plans to figure out how ..."."""
+    body = text.strip().rstrip(" .!?")
+    body = _DECIDED_LEAD.sub("", _INTENT_LEAD.sub("", body, count=1), count=1) or body
+    if body[:1].isupper() and not body[1:2].isupper() and not body.startswith("I "):
+        body = body[:1].lower() + body[1:]
+    if decided and body.lower().startswith("that "):
+        return f"The owner decided {body}."
+    return f"The owner {'decided to' if decided else 'plans to'} {body}."
+
+
+def _mark_explicit(items: list[dict[str, Any]],
+                   spoken: list[tuple[str, str]] | None) -> None:
+    """``explicit``: the user asked for the item (a date or time, a named list, a
+    reminder, event or note, or in a voice note (``spoken``) a command word), so the hub
+    files it; the rest are suggestions."""
+    for item in items:
+        said = ""
+        if spoken is not None:
+            said = f"{item['text']}\n{_said_in(item['text'], spoken)[1]}"
+        item["explicit"] = is_explicit(item) or _COMMAND_WORDS.search(said) is not None
 
 
 def _dedupe(items: list[str]) -> list[str]:

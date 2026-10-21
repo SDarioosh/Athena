@@ -22,7 +22,7 @@ from .diarize import load_voices
 from .links import local_time, transcript_link
 from .search import Embedder, search
 from .speakers import relabel_matches, suggestion
-from .store import CONVERSATION, ITEM_KINDS, NOTE, UNSET, Store
+from .store import CONVERSATION, ITEM_KINDS, NOTE, UNSET, Store, short_title
 
 INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
 with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
@@ -92,7 +92,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.6.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.7.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -231,6 +231,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
 
     def item_json(r: dict[str, Any]) -> dict[str, Any]:
         return {"id": r["id"], "status": r["status"], "kind": r.get("kind") or "task",
+                "title": r.get("title") or short_title(r.get("note_title"), r["text"]),
+                "explicit": bool(r.get("explicit")),
                 "text": r["text"], "owner": r["owner"], "due": r["due"],
                 "due_date": r["due_date"], "due_time": r.get("due_time"),
                 "duration_minutes": r.get("duration_minutes"), "location": r.get("location"),
@@ -253,7 +255,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         first. Each is a task, an event (meeting, appointment) or a reminder, with its due
         date and time of day if known, and the to-do list the user named for it. The JSON
         format also lists notes the user asked a voice note to save (kind "note", with
-        note_title and, in list_name, the notes to add it to); the text format doesn't."""
+        note_title and, in list_name, the notes to add it to); the text format doesn't.
+        Each JSON row has a short title and explicit: true when the user asked for the
+        item (a date or time, a named list, a reminder, event or note, or a command such
+        as "remind me" or "add a task"), false for one the summary only suggests."""
         fmt = (format or "text").strip().lower()
         if fmt not in ("text", "json"):
             return "format must be text or json"
@@ -290,9 +295,12 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                                                        "clear; empty = unchanged")] = "",
             list_name: Annotated[str, Field(description="the to-do list it goes on, e.g. "
                                                         "'shopping'; 'none' to clear; empty "
-                                                        "= unchanged")] = "") -> str:
+                                                        "= unchanged")] = "",
+            title: Annotated[str, Field(description="a short title, at most 60 characters; "
+                                                    "'none' = from the text; empty = "
+                                                    "unchanged")] = "") -> str:
         """Change an action item: mark it done/dismissed (or reopen it), or change its kind,
-        due date, time of day or to-do list. Only when the user asks."""
+        due date, time of day, to-do list or title. Only when the user asks."""
         def opt(value: str) -> Any:
             v = (value or "").strip()
             return UNSET if not v else None if v.lower() == "none" else v
@@ -306,7 +314,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         try:
             item = store.update_action_item(item_id, status=st or None, kind=kd or None,
                                             due_date=opt(due_date), due_time=opt(due_time),
-                                            list_name=opt(list_name))
+                                            list_name=opt(list_name), title=opt(title))
         except ValueError as e:  # returned, not raised: the model sees the message
             return str(e)
         if item is None:
