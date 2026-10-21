@@ -36,7 +36,7 @@ typedef enum {
     PDA_EV_REDRAW,   /* console: redraw the current screen; arg 1 = clean refresh */
     PDA_EV_SCREEN,   /* console: go to screen arg */
     PDA_EV_OPEN,     /* console: open the transcript ref given to ui_pda_open() */
-    PDA_EV_SLEEP,    /* console: go to deep sleep, as a BOOT hold does */
+    PDA_EV_SLEEP,    /* console: deep sleep as a BOOT hold; arg: pda_sleep_enter override_min */
 } pda_ev_type_t;
 
 typedef struct {

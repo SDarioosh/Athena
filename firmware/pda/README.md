@@ -17,9 +17,9 @@ the feed in and takes the actions out over BLE: the glance protocol of plan §3.
 
 | File | What |
 |---|---|
-| `main/t5_pins.h`, `t5_board.*` | pins and I2C addresses; I2C bus, PCA9535 (LoRa/GPS rail off, side button), PCF8563 RTC, BQ27220 gauge, BQ25896 charger, buttons |
+| `main/t5_pins.h`, `t5_board.*` | pins and I2C addresses; I2C bus, PCA9535 (LoRa/GPS rail off, side button), PCF8563 RTC, BQ27220 gauge, BQ25896 charger, buttons, power management (light sleep, PM locks) |
 | `main/pda_epd.*` | epdiy (board v7, ED047TC1) and the refresh policy: partial, full, clean |
-| `main/touch_gt911.*`, `gesture.*` | GT911 polling and tap / long press / swipe |
+| `main/touch_gt911.*`, `touch_idle.*`, `gesture.*` | GT911 on its INT line (polled while a finger is down, safety-net poll when idle) and tap / long press / swipe |
 | `main/pda_proto.*` | the glance protocol: frames, parsing, the gate, PUT, OB_LIST/OB_ACK, TIME, BYE (pure, host-tested) |
 | `main/ble_pda.*` | NimBLE GATT server, pairing window, passkey, advertising |
 | `main/json.*`, `feed.*`, `pda_time.*` | JSON tokenizer, feed and detail parsing, feed times (pure) |
@@ -89,7 +89,7 @@ cmake -S firmware/pda/test -B build-pda-host && cmake --build build-pda-host && 
   "Clean refresh", "Wipe cache (hold)".
 - **Buttons:** BOOT short = back / Today; BOOT held 1 s = sleep (deep sleep, an "Asleep"
   screen stays on the panel; press BOOT to wake, which restarts the firmware and redraws
-  Today); the button next to BOOT (LilyGO's S3, labelled IO48 on the board, read through
+  Today with one clean refresh, a single flash); the button next to BOOT (LilyGO's S3, labelled IO48 on the board, read through
   the PCA9535 IO1_2; GPIO48 itself is the e-paper's CKV line) short = front light on/off,
   held 1 s = sync mode (the 2-minute pairing window with fast advertising, so a phone
   finds it quickly). Clean refresh is on the Status screen. RST resets. The power button
@@ -98,6 +98,14 @@ cmake -S firmware/pda/test -B build-pda-host && cmake --build build-pda-host && 
   the first time); "Light" on the Status screen steps off → 25 % → 50 % → 100 % → off (kept
   in NVS). It stays on while the screen is used and goes off after 60 s without a touch or
   button; the next touch or button turns it on again. Off in sleep.
+- **Sync while asleep:** asleep, the T5 also wakes on a timer when the phone's next sync is
+  due (15 min after the last one, android-relay's default `pdaSyncMinutes`), without the
+  UI, the front light or a screen refresh: BLE for bonded phones only (fast advertising,
+  no pairing window) for about a minute, a sync if the phone comes, then back to sleep
+  (at most 4 min awake; `main/sleep_plan.h` explains the numbers). If a new feed came,
+  only the Asleep screen's "synced HH:MM" line is redrawn. BOOT during such a wake starts
+  the UI. A phone set to a longer interval still syncs (one wake in between misses); with
+  auto sync off the wakes find nobody.
 - **Pairing:** open the window, then pair from the phone (android-relay) or the PC
   (Windows Settings → Bluetooth → Add device → `odysseus-pda`, or `tools/pda_ble_test.py
   pair`). The T5 shows the 6-digit code; type it on the other side.
@@ -118,10 +126,11 @@ cmd "<command>"` runs one from a script.
 | `time [<epoch\|ISO> [utc_offset_min]]` | clock and display offset (normally set by TIME) |
 | `ble [pair\|forget]` | BLE state, open the pairing window, delete all bonds |
 | `light [0-100]` | front light level (kept in NVS) |
-| `sleep` | deep sleep until BOOT is pressed (the USB console goes away) |
+| `sleep [<min>\|off\|info]` | deep sleep as BOOT held (the USB console goes away); `<min>`: the first sync wake in that many minutes; `off`: no sync wakes; `info`: sync-wake counters since power-on |
 | `rotate [90\|270]` | portrait orientation |
 | `wipe` | delete feed, details and outbox |
 | `i2c`, `batt`, `rtc [set <t>]`, `touch [trace <s>]`, `epd [bench\|clean]` | board bring-up and timing |
+| `power` | light sleep on/off, CPU clock range, what keeps the T5 awake (PM locks) |
 | `reboot` | restart |
 
 Example, with the demo data:
@@ -179,8 +188,42 @@ python tools/pda_serial.py -p COM36 fb today.png
   it, as on the T-Watch, SDarioosh/barvis-sound#49; Windows never sends one).
 - The sibling relays against this firmware: the PC relay's `pda` subcommand and the
   Android `PdaSync` (they were written against the same spec and a fake T5).
-- Battery life, light sleep (not implemented: the T5 stays awake with DFS; plan
-  milestone 5), deep sleep with an advertising window, flash encryption.
+- Battery life, flash encryption.
+- Idle power (2026-10-20, `feature/t5-idle-power`): built, **not on the board yet**.
+  Automatic light sleep (DFS 240/40 MHz), held off while the front light is lit, during a
+  refresh and while USB power is in; touch on the GT911 INT line with a safety-net poll;
+  buttons polled every 50 ms. Rebuild from a fresh `sdkconfig` (delete it first: the new
+  `sdkconfig.defaults` entries don't override an existing one). To check:
+  - Boot log: `INT <mode> (0x804D = 0x..)` from `touch` (note the mode), and no
+    "light sleep mode will not be able to apply when bluetooth is enabled" from BLE.
+  - On USB: `power` says light sleep on, kept awake by USB yes; the console works as before.
+  - Touch with INT: after a few taps the log says "INT works: safety-net poll every
+    1000 ms"; `touch` shows touches started by INT counting up and by poll at 0. If instead
+    "a poll found a touch INT didn't report" or "INT stays at its active level" appears,
+    paste the `touch` output: INT doesn't wake it and taps under 250 ms can be lost.
+  - Taps, long press (700 ms) and swipes work as before, also as the first touch after a
+    minute untouched (on battery, i.e. with light sleep); the first tap after idle isn't
+    noticeably slow.
+  - Buttons: a quick BOOT and IO48 press (as short as you can) are each reported once;
+    held 1 s still gives `long` at 1 s; waking from deep sleep with BOOT still gives no
+    stray "back".
+  - Front light at 25 % stays steady (no flicker) for its 60 s, also on battery.
+  - BLE on battery: the phone still finds the T5 for a due sync and "Sync T5 now", stays
+    connected through a sync, and the clock's minute tick keeps time.
+  - Unplug USB: `USB power out: light sleep on` in the log; plug in again and the
+    console comes back within about 1 s (`USB power in`).
+  - Current on battery with the screen idle and no link (`batt` mA, or a meter): before
+    and after this change.
+  - Deep sleep (BOOT held 1 s) still sleeps until a BOOT press (no instant wake from the
+    touch INT or the light-sleep timer).
+- Sync wakes from deep sleep and the no-flash wake (2026-10-20): built and host-tested
+  (`test_sleep_plan`), **not on the board yet**. To check: the front light stays dark and
+  the panel doesn't change during a timer wake (except the "synced HH:MM" line after a new
+  feed, with no flash and no ghost of the old line); the phone syncs within a minute of
+  each wake (`sleep info` counts wakes, syncs, misses); the deep-sleep timer's drift (the
+  log's "woke N s early"); BOOT during a timer wake starts the UI; a BOOT wake shows Today
+  with a single flash; the GT911 stays asleep through timer wakes (sleep current with and
+  without them).
 - Front light, sleep and the new button mapping (2026-10-20): built, **not on the board
   yet**. To check: the light's PWM (1 kHz on GPIO11) dims in steps without flicker or
   whine, and stays dark in sleep; BOOT held 1 s shows "Asleep" and the T5 sleeps once

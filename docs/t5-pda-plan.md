@@ -128,11 +128,16 @@ against LilyGO's `docs/pinmap.md` and examples (github.com/Xinyuan-LilyGO/T5S3-4
 - **Fonts:** Fira Sans 12 and 20 pt (SIL OFL), epdiy's pre-converted headers: ASCII,
   Latin-1, general punctuation, arrows. The euro sign isn't in them and is drawn as "EUR";
   other missing characters as "?".
-- **Sleep:** with the screen idle for 60 s and no BLE link, the T5 goes into light sleep. The
-  e-paper keeps the image. Touch or a button wakes it. Deep sleep with periodic wake
-  for an advertising window is milestone 5. **Not built yet:** v1 stays awake with DFS
-  (240 MHz during a refresh, 80 MHz otherwise); light sleep moves to milestone 5 with the
-  power measurements.
+- **Sleep:** between events the T5 is in automatic light sleep (ESP-IDF PM, DFS 240/40 MHz;
+  the BLE controller keeps the main crystal as its sleep clock). It stays awake during a
+  refresh, while the front light is lit and while USB power is in (the USB console). Touch
+  wakes it on the GT911 INT line (with a slow safety-net poll); the buttons are polled every
+  50 ms (the side button is on the PCA9535, whose INT is epdiy's). The e-paper keeps the
+  image. Deep sleep (BOOT held) wakes on BOOT and on a timer aimed at the phone's next due
+  sync (last BYE + 15 min): no UI, no light, no refresh, BLE for bonded relays for about a
+  minute, then sleep again (`main/sleep_plan.h`, `main/pda_sleep.c`). Waking skips epdiy's
+  full clear: the first screen is one clean refresh. Built 2026-10-20, not yet measured on
+  the board.
 
 ## 3. BLE service ("glance" protocol v1)
 

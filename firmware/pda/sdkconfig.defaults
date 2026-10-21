@@ -26,11 +26,19 @@ CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 
 # CPU: 240 MHz while drawing (epdiy computes the waveform lines on the CPU, pda_epd.c holds
-# a PM lock for a refresh); DFS drops to 80 MHz otherwise.
+# a PM lock for a refresh); DFS drops to 40 MHz otherwise, and t5_board_init turns on
+# automatic light sleep (esp_pm_configure). Kept out of light sleep: a refresh (pda_epd's
+# CPU_FREQ_MAX lock), the lit front light and USB power (NO_LIGHT_SLEEP locks in t5_board.c).
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_PM_ENABLE=y
 CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
 CONFIG_PM_DFS_INIT_AUTO=y
+# In automatic light sleep IDF would otherwise isolate every GPIO (input and output off, no
+# pulls): the front-light enable, GT911 reset, the I2C lines and epdiy's panel lines would
+# float. Keep each pin as it is while awake. The workaround is for an ESD pulse > 6 V on an
+# input-only pin resetting the chip at wake; our inputs are driven or pulled up.
+CONFIG_ESP_SLEEP_GPIO_RESET_WORKAROUND=n
+CONFIG_PM_SLP_DISABLE_GPIO=n
 
 # Console on the native USB (Serial/JTAG)
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
@@ -75,6 +83,13 @@ CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
 CONFIG_BT_CTRL_MODEM_SLEEP=y
 CONFIG_BT_CTRL_MODEM_SLEEP_MODE_1=y
 CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y
+# BLE with automatic light sleep. The controller's sleep clock must be within 500 ppm: the
+# T5 has no 32 kHz crystal on the ESP32-S3 (GPIO15/16 are epdiy's), and the internal 136 kHz
+# RC is far off (IDF: not for connections). So the main crystal stays the sleep clock and
+# stays powered in light sleep. Without this option the controller holds a NO_LIGHT_SLEEP
+# lock for good ("light sleep mode will not be able to apply when bluetooth is enabled").
+# Costs the XTAL's current in light sleep (roughly 1 mA, still far below staying awake).
+CONFIG_BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP=y
 
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

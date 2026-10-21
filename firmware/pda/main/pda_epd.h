@@ -55,7 +55,10 @@ typedef struct {
     int since_clean;     /* partial and full updates since the last clean one */
 } pda_epd_stats_t;
 
-/* epdiy on the board's I2C bus (TPS65185 and PCA9535 port 1 belong to epdiy after this). */
+/* epdiy on the board's I2C bus (TPS65185 and PCA9535 port 1 belong to epdiy after this).
+ * Doesn't touch the panel: it keeps what it shows (the Asleep screen after a wake). epdiy's
+ * framebuffers start white, so make the first update PDA_EPD_CLEAN, or redraw what the
+ * panel shows and call pda_epd_mark_shown() before partial updates. */
 esp_err_t pda_epd_init(i2c_master_bus_handle_t bus);
 
 /* 90 or 270; kept in NVS ("pda"/"rot"). Takes effect for the next drawing; the caller
@@ -68,6 +71,10 @@ void pda_epd_touch_to_screen(int px, int py, int *x, int *y);
 uint8_t *pda_epd_fb(void);
 /* Fill the framebuffer white. */
 void pda_epd_clear_fb(void);
+/* The framebuffer as drawn is what the panel shows now (epdiy's back buffer := front): the
+ * next updates drive only what differs from it. For a timer wake, which redraws the Asleep
+ * screen in RAM without a refresh. */
+void pda_epd_mark_shown(void);
 
 /* Push the framebuffer to the panel. Blocks for the refresh (~0.1-1.6 s). Returns the
  * kind actually done (a partial or full update becomes clean when the budget ran out). */

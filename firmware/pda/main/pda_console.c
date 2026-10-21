@@ -123,6 +123,14 @@ static int cmd_touch(int argc, char **argv)
     return 0;
 }
 
+static int cmd_power(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    t5_board_print_power();
+    return 0;
+}
+
 /* The framebuffer as base64 between markers; tools/fbdump.py turns it into a PNG. */
 static int cmd_fb(int argc, char **argv)
 {
@@ -174,6 +182,7 @@ void pda_console_start(void)
     pda_console_register("epd", "epd [bench|clean]: refresh stats, timing test, clean refresh",
                          cmd_epd);
     pda_console_register("touch", "touch [trace <s>]: touch stats, raw sample log", cmd_touch);
+    pda_console_register("power", "Light sleep, CPU clock and the PM locks", cmd_power);
     pda_console_register("fb", "Dump the framebuffer (tools/fbdump.py)", cmd_fb);
     pda_console_register("reboot", "Restart", cmd_reboot);
     pda_console_register_app();

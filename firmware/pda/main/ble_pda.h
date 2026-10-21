@@ -50,6 +50,11 @@ int64_t ble_pda_last_sync(void);
 /* State changed (outbox, feed, user activity): notify status, refresh the scan response. */
 void ble_pda_kick(void);
 
+/* Advertise at the pairing window's fast interval without opening the window (bonded
+ * peers only): a sync wake from deep sleep, so the phone's low-power scan hears us within
+ * one scan window. Callable before ble_pda_init(). */
+void ble_pda_set_fast_adv(bool fast);
+
 void ble_pda_print(void);
 esp_err_t ble_pda_forget_bonds(void);
 int ble_pda_bond_count(void);

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "check.h"
 #include "outbox.h"
@@ -217,11 +218,31 @@ static void test_outbox(void)
     CHECK_EQ(ob.next_id, next);
 }
 
+/* A fresh folder under /tmp, not under the build directory: the firmware's paths are short
+ * ("/lfs/ob", OUTBOX_DIR_MAX 48; feed_store PATH_LEN 96), and a CI checkout path is longer
+ * than that. */
+static void remove_dir(void)
+{
+    char cmd[300];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir);
+    (void)system(cmd);
+}
+
+/* /tmp/pda_<name>_<pid>, empty (mkdtemp isn't declared on macOS under _POSIX_C_SOURCE). */
+static int make_dir(const char *name)
+{
+    snprintf(dir, sizeof(dir), "/tmp/pda_%s_%d", name, (int)getpid());
+    remove_dir();
+    return mkdir(dir, 0755);
+}
+
 int main(void)
 {
-    const char *tmp = getenv("TEST_TMPDIR");
-    snprintf(dir, sizeof(dir), "%s", tmp ? tmp : "/tmp/test_outbox");
+    if (make_dir("ob") != 0) {
+        return 1;
+    }
     test_actions();
     test_outbox();
+    remove_dir();
     return checks_done("test_outbox");
 }

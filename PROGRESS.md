@@ -34,7 +34,7 @@ _Last updated: 2026-10-20 (round 17: to-do lists for voice-note items; T-Watch U
 | 11d | T5 E-Paper Pro PDA (briefing, conversations, action items, calendar over BLE via the phone) | **phone side built, unit-tested, not on hardware**: Odysseus calendar REST verified (plan §6); `android-relay` syncs the T5 next to the watch (glance protocol, feed, outbox, `cal_add` to Odysseus). Firmware and PC relay `pda` in sibling branches | `docs/t5-pda-plan.md`, `android-relay/` |
 | 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; the hub's `fork_deploy.sh deploy` runs it first, and it then updates Odysseus itself (`BARVIS_SOUND_ODYSSEUS_DIR`, found from the running container by default), so either command updates both | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, hub `docs/fork/deploy.md` |
 | 13 | Speaker recognition (PR #24) and focused summaries (PR #25): measured in the sandbox, bugs fixed, two improvements | PRs open, **owner: Server verification** | SDarioosh/barvis-sound#31 (recognition), SDarioosh/barvis-sound#38 (insights) |
-| 14 | T5 E-Paper Pro PDA firmware (feed and outbox over BLE through the phone) | **milestones 0–3 built, on the owner's T5**: bring-up and refresh times, all screens from a fictional feed, touch and buttons by hand, BLE pairing, TIME, outbox drain/ack and feed PUT from a Windows PC; host tests in CI. Front light, BOOT-hold sleep and side-hold sync mode built, not yet on the board. Still open: the PC relay and the Android `PdaSync` against the real T5, the server `PATCH` end to end, light sleep and power (milestone 5) | `firmware/pda/`, `docs/t5-pda-plan.md` |
+| 14 | T5 E-Paper Pro PDA firmware (feed and outbox over BLE through the phone) | **milestones 0–3 built, on the owner's T5**: bring-up and refresh times, all screens from a fictional feed, touch and buttons by hand, BLE pairing, TIME, outbox drain/ack and feed PUT from a Windows PC; host tests in CI. Front light, BOOT-hold sleep, sync mode, automatic light sleep and timed sync wakes from deep sleep built and flashed; currents not measured yet. Still open: the PC relay and the Android `PdaSync` against the real T5, the server `PATCH` end to end, light sleep and power (milestone 5) | `firmware/pda/`, `docs/t5-pda-plan.md` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -641,6 +641,35 @@ the button task polled every 10 ms.
 - Needs the owner: drain the queue, unplug, wait 2 min (standby), press PWR (wakes, screen,
   no buzz); a BLE drain on battery (light sleep with BLE); overnight battery % idle with an
   empty queue, and with a queue and no phone in range (light sleep only).
+## Done on 2026-10-21: T5 PDA idle power and sync wakes
+
+- **Idle power:** automatic light sleep (DFS 240/40 MHz, `CONFIG_BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP`:
+  the main crystal stays the BLE sleep clock, the T5 has no 32 kHz crystal), held off
+  while the front light is lit, during a refresh and while USB power is in (BQ25896
+  power-good; keeps the console up). Touch waits on the GT911 INT line (low level,
+  0x804D = 0x06 on the owner's board) with a safety-net poll (250 ms, 1 s once INT is
+  trusted); buttons polled every 50 ms instead of 20. Advertising stays at 1–1.25 s
+  (android-relay's low-power scan would miss a slower T5 during "Sync T5 now"). Console
+  `power`. Estimated idle on battery: ~1.5–3 mA for the ESP32-S3 instead of ~15–25 mA
+  (not measured).
+- **Sync wakes from deep sleep:** besides BOOT, a timer aimed at the phone's next due
+  sync (last BYE + 15 min, android-relay's default `pdaSyncMinutes`): awake from 10 s
+  before to 45 s after (at most 240 s), fast advertising, bonded relays only, no UI, no
+  light, panel untouched except a "synced HH:MM" line after a new feed. The RC sleep timer
+  runs ~2 % fast, so a wake more than 25 s early sleeps again (PCF8563 time). A crash
+  during a sync wake goes back to sleep. Decisions in `main/sleep_plan.c` (host-tested,
+  with a 24 h simulation against the phone's schedule). Console `sleep [<min>|off|info]`.
+- **Faster wake:** no epdiy full clear at boot; the first screen is one clean refresh
+  (0.9 s on the owner's board, one flash instead of three).
+- Built by two subagents in parallel (branches `feature/t5-idle-power`,
+  `feature/t5-sleep-sync`), merged in `feature/t5-power-sleep`; flashed to the owner's T5,
+  boot log clean. **Still to check by hand:** the two lists under "Not verified yet" in
+  `firmware/pda/README.md`, above all the sleep and idle currents.
+- Seen in the boot log: epdiy halves its pixel clock (20 → 10 MHz) because the data cache
+  line is 32 B; a 64 B line (`CONFIG_ESP32S3_DATA_CACHE_LINE_64B`) may make refreshes faster.
+- Open for the owner: sending `pdaSyncMinutes` to the T5 (e.g. in TIME) so sync wakes
+  follow a non-default interval (an android-relay change).
+
 ## Done on 2026-10-20: T5 PDA front light, sleep and sync buttons
 
 - **Front light** (GPIO11, LEDC PWM at 1 kHz on the XTAL clock so DFS doesn't change it):
