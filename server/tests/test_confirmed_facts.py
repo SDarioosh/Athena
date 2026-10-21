@@ -189,3 +189,18 @@ def test_text_mode_is_unchanged(pipeline, snapshot_facts):
         f"- [Alice] Alice is vegetarian (learned 2025-10-09) {links['c0']}",
         f"  said again 2025-10-10 {links['c1']}",
         "When answering, put the link next to each fact you use."])
+
+
+def test_json_limit_cap_is_1000_text_stays_200(pipeline, monkeypatch):
+    """A program reconciles by id, so JSON mode may ask for every fact."""
+    seen = []
+    orig = pipeline.store.list_facts
+
+    def spy(**kw):
+        seen.append(kw["limit"])
+        return orig(**kw)
+    monkeypatch.setattr(pipeline.store, "list_facts", spy)
+    mcp = build_mcp(pipeline.store, pipeline.settings)
+    call(mcp, "list_facts", limit=5000, format="json")
+    call(mcp, "list_facts", limit=5000)
+    assert seen == [1000, 200]

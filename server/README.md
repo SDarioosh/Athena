@@ -246,8 +246,9 @@ owner, user, the user, `CONVO_OWNER_NAME` or the name of the enrolled owner voic
 `person` when it is an enrolled speaker or a person named in a conversation; else
 `other`. `times_said` counts distinct conversations, `days` distinct local dates, and
 `first_said`/`last_said` are the first and last of those dates. `link` is the same
-transcript link as in the text. The hub retires any fact id that stops being returned
-(replaced, or its conversation deleted).
+transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
+program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
+fact id that stops being returned (replaced, or its conversation deleted).
 
 **Hermes** (stdio; add to the profile's `config.yaml`):
 

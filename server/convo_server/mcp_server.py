@@ -332,8 +332,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if fmt not in ("text", "json"):
             return "format must be text or json"
         counted = confirmed or fmt == "json"
+        # programs reconcile by id, so the JSON cap is high enough to hold every fact
+        cap = 1000 if fmt == "json" else 200
         rows = store.list_facts(
-            subject=subject or None, query=query or None, limit=max(1, min(limit, 200)),
+            subject=subject or None, query=query or None, limit=max(1, min(limit, cap)),
             counts_tz=settings.timezone if counted else None,
             min_sources=settings.fact_confirm_sources if confirmed else 0,
             min_days=settings.fact_confirm_days if confirmed else 0)
