@@ -15,6 +15,7 @@
 #include "pda_console.h"
 #include "pda_epd.h"
 #include "pda_proto.h"
+#include "pda_sleep.h"
 #include "t5_board.h"
 #include "ui_pda.h"
 
@@ -212,10 +213,26 @@ static int cmd_light(int argc, char **argv)
 
 static int cmd_sleep(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
-    printf("deep sleep: press BOOT to wake (the USB console goes away)\n");
-    const pda_ev_t ev = {.type = PDA_EV_SLEEP};
+    int32_t arg = 0; /* pda_sleep_enter's override_min */
+    if (argc >= 2 && strcmp(argv[1], "info") == 0) {
+        pda_sleep_print();
+        return 0;
+    } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
+        arg = -1;
+    } else if (argc >= 2) {
+        char *end;
+        const long m = strtol(argv[1], &end, 10);
+        if (*end || m < 1 || m > 24 * 60) {
+            printf("usage: sleep [<minutes 1-1440>|off|info]\n");
+            return 1;
+        }
+        arg = (int32_t)m;
+    }
+    printf("deep sleep: press BOOT to wake (the USB console goes away); %s\n",
+           arg < 0   ? "no sync wakes"
+           : arg > 0 ? "first sync wake in the minutes given"
+                     : "sync wakes when the phone is due");
+    const pda_ev_t ev = {.type = PDA_EV_SLEEP, .arg = arg};
     pda_app_post(&ev);
     return 0;
 }
@@ -329,7 +346,10 @@ void pda_console_register_app(void)
     pda_console_register("redraw", "redraw [clean]", cmd_redraw);
     pda_console_register("button", "button boot|side [long]", cmd_button);
     pda_console_register("light", "light [0-100]: front light level (kept in NVS)", cmd_light);
-    pda_console_register("sleep", "Deep sleep until BOOT is pressed (as holding BOOT)", cmd_sleep);
+    pda_console_register("sleep",
+                         "sleep [<min>|off|info]: deep sleep as holding BOOT (first sync wake "
+                         "in <min>, or none); info: sync wake counters",
+                         cmd_sleep);
     pda_console_register("ble", "ble [pair|forget]: state, pairing window, delete bonds", cmd_ble);
     pda_console_register("time", "time [<epoch|ISO> [utc_offset_min]]", cmd_time);
     pda_console_register("feed", "Summary of the stored feed", cmd_feed);

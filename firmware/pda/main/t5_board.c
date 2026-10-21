@@ -6,8 +6,10 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/rtc_io.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -41,6 +43,7 @@ static i2c_master_dev_handle_t s_pca, s_rtc, s_gauge, s_charger;
 static t5_button_cb_t s_cb;
 static void *s_cb_ctx;
 static bool s_bl_ready;
+static bool s_bl_held; /* timer wake: the pin is still held low from the sleep */
 
 static esp_err_t add_dev(uint8_t addr, i2c_master_dev_handle_t *out)
 {
@@ -63,15 +66,9 @@ static esp_err_t reg_write8(i2c_master_dev_handle_t d, uint8_t reg, uint8_t val)
     return i2c_master_transmit(d, b, sizeof(b), I2C_TIMEOUT_MS);
 }
 
-esp_err_t t5_board_init(void)
+/* Front light off until the app sets its level (the LED driver costs tens of mA). */
+static void backlight_init(void)
 {
-    /* After a wake from deep sleep: the BOOT pad is still an RTC pin and the backlight pin
-     * is held low (t5_board_deep_sleep). Give both back to the digital GPIO matrix. */
-    rtc_gpio_deinit(T5_BOOT_BTN);
-    gpio_hold_dis(T5_BACKLIGHT);
-    gpio_deep_sleep_hold_dis();
-
-    /* Front light off until the app sets its level (the LED driver costs tens of mA). */
     const ledc_timer_config_t bt = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = BL_BITS,
@@ -94,13 +91,55 @@ esp_err_t t5_board_init(void)
         gpio_config(&bl);
         gpio_set_level(T5_BACKLIGHT, 0);
     }
+}
 
+/* t5_board_restart_awake() leaves this for the next boot (survives a software reset). */
+#define RESTART_AWAKE_MAGIC 0x57414b45u /* "WAKE" */
+static RTC_NOINIT_ATTR uint32_t s_restart_awake;
+static t5_wake_t s_wake;
+static bool s_wake_known;
+
+t5_wake_t t5_board_wake_reason(void)
+{
+    if (!s_wake_known) {
+        s_wake_known = true;
+        const esp_sleep_wakeup_cause_t c = esp_sleep_get_wakeup_cause();
+        if (c == ESP_SLEEP_WAKEUP_TIMER) {
+            s_wake = T5_WAKE_TIMER;
+        } else if (c == ESP_SLEEP_WAKEUP_EXT0) {
+            s_wake = T5_WAKE_BUTTON;
+        } else if (esp_reset_reason() == ESP_RST_SW && s_restart_awake == RESTART_AWAKE_MAGIC) {
+            s_wake = T5_WAKE_BUTTON;
+        } else {
+            s_wake = T5_WAKE_RESET;
+        }
+        s_restart_awake = 0;
+    }
+    return s_wake;
+}
+
+esp_err_t t5_board_init(void)
+{
+    const bool timer_wake = t5_board_wake_reason() == T5_WAKE_TIMER;
+    /* After a wake from deep sleep the BOOT pad is still an RTC pin: back to the digital
+     * GPIO matrix (EXT0 is set up again before the next sleep). */
+    rtc_gpio_deinit(T5_BOOT_BTN);
     gpio_config_t boot = {
         .pin_bit_mask = 1ULL << T5_BOOT_BTN,
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
     };
     gpio_config(&boot);
+
+    if (timer_wake) {
+        /* A sync wake: the backlight pin stays held low as t5_board_deep_sleep() left it
+         * (releasing it would let EN float, and the LEDs flash on). No PWM. */
+        s_bl_held = true;
+    } else {
+        gpio_hold_dis(T5_BACKLIGHT);
+        gpio_deep_sleep_hold_dis();
+        backlight_init();
+    }
 
     const i2c_master_bus_config_t bus = {
         .i2c_port = I2C_NUM_0,
@@ -294,35 +333,67 @@ void t5_backlight_set(int percent)
 
 /* ---- deep sleep ---- */
 
-void t5_board_deep_sleep(void)
+static void wait_boot_released(int max_ms)
 {
-    /* Light off, and the pin held low through sleep: a floating EN would light the LEDs. */
-    if (s_bl_ready) {
-        ledc_stop(LEDC_LOW_SPEED_MODE, BL_CHANNEL, 0);
+    for (int ms = 0; gpio_get_level(T5_BOOT_BTN) == 0 && (max_ms < 0 || ms < max_ms);
+         ms += BUTTON_POLL_MS) {
+        vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
     }
-    const gpio_config_t bl = {.pin_bit_mask = 1ULL << T5_BACKLIGHT, .mode = GPIO_MODE_OUTPUT};
-    gpio_set_level(T5_BACKLIGHT, 0);
-    gpio_config(&bl); /* back from the LEDC signal to a plain GPIO */
-    gpio_set_level(T5_BACKLIGHT, 0);
+    vTaskDelay(pdMS_TO_TICKS(50)); /* debounce the release */
+}
+
+void t5_board_deep_sleep(uint64_t timer_us)
+{
+    /* Light off, and the pin held low through sleep: a floating EN would light the LEDs.
+     * In a timer wake it is still held from the last sleep; holding it again is a no-op. */
+    if (!s_bl_held) {
+        if (s_bl_ready) {
+            ledc_stop(LEDC_LOW_SPEED_MODE, BL_CHANNEL, 0);
+        }
+        const gpio_config_t bl = {.pin_bit_mask = 1ULL << T5_BACKLIGHT, .mode = GPIO_MODE_OUTPUT};
+        gpio_set_level(T5_BACKLIGHT, 0);
+        gpio_config(&bl); /* back from the LEDC signal to a plain GPIO */
+        gpio_set_level(T5_BACKLIGHT, 0);
+    }
     gpio_hold_en(T5_BACKLIGHT);
     gpio_deep_sleep_hold_en();
 
     /* The hold that sent us here: sleeping with BOOT down would wake at once. */
-    while (gpio_get_level(T5_BOOT_BTN) == 0) {
-        vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
-    }
-    vTaskDelay(pdMS_TO_TICKS(50)); /* debounce the release */
+    wait_boot_released(-1);
 
     rtc_gpio_pullup_en(T5_BOOT_BTN);
     rtc_gpio_pulldown_dis(T5_BOOT_BTN);
     esp_sleep_enable_ext0_wakeup(T5_BOOT_BTN, 0);
-    ESP_LOGI(TAG, "deep sleep: press BOOT to wake");
+    if (timer_us > 0) {
+        esp_sleep_enable_timer_wakeup(timer_us);
+        ESP_LOGI(TAG, "deep sleep: press BOOT to wake; sync wake in %" PRIu64 " s",
+                 timer_us / 1000000);
+    } else {
+        ESP_LOGI(TAG, "deep sleep: press BOOT to wake");
+    }
     esp_deep_sleep_start();
 }
 
 bool t5_board_woke_from_sleep(void)
 {
-    return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
+    return t5_board_wake_reason() != T5_WAKE_RESET;
+}
+
+void t5_board_side_button_input(void)
+{
+    uint8_t cfg = 0;
+    if (reg_read(s_pca, PCA_CFG1, &cfg, 1) == ESP_OK) {
+        reg_write8(s_pca, PCA_CFG1, (uint8_t)(cfg | T5_PCA_P1_BUTTON));
+    }
+}
+
+void t5_board_restart_awake(void)
+{
+    /* BOOT is a strapping pin: don't reset while it's down. */
+    wait_boot_released(5000);
+    s_restart_awake = RESTART_AWAKE_MAGIC;
+    ESP_LOGI(TAG, "BOOT pressed during a sync wake: restarting into the UI");
+    esp_restart();
 }
 
 /* ---- buttons ---- */

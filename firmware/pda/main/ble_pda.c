@@ -155,6 +155,7 @@ static esp_timer_handle_t s_idle_timer, s_bye_timer, s_kick_timer, s_status_time
 static volatile bool s_synced;
 static uint8_t s_own_addr_type;
 static bool s_adv_fast;
+static volatile bool s_fast_adv; /* ble_pda_set_fast_adv: a sync wake */
 static uint8_t s_adv_flags = 0xff; /* scan response content last set */
 static uint8_t s_status_sent[PDA_PROTO_STATUS_LEN];
 static bool s_status_sent_valid;
@@ -437,7 +438,7 @@ static void adv_start(bool fast)
         ESP_LOGW(TAG, "advertising start failed: %d", rc);
     } else {
         s_adv_fast = fast;
-        ESP_LOGI(TAG, "advertising%s%s", fast ? " (pairing window)" : "",
+        ESP_LOGI(TAG, "advertising%s%s", fast ? (s_fast_adv ? " (fast)" : " (pairing window)") : "",
                  s_adv_flags ? ", outbox waiting" : "");
     }
 }
@@ -457,7 +458,8 @@ static void refresh(void)
     const uint8_t flags = pda_adv_flags(app.outbox);
     if (s_synced && !connected) {
         bool active = ble_gap_adv_active();
-        if (active && (s_adv_fast != window || flags != s_adv_flags)) {
+        const bool fast = window || s_fast_adv;
+        if (active && (s_adv_fast != fast || flags != s_adv_flags)) {
             ble_gap_adv_stop();
             active = false;
         }
@@ -465,7 +467,7 @@ static void refresh(void)
             if (flags != s_adv_flags && set_scan_response(flags) == 0) {
                 s_adv_flags = flags;
             }
-            adv_start(window);
+            adv_start(fast);
         }
     }
     if (window) {
@@ -1014,6 +1016,14 @@ void ble_pda_open_window(void)
 void ble_pda_kick(void)
 {
     post_kick();
+}
+
+void ble_pda_set_fast_adv(bool fast)
+{
+    s_fast_adv = fast;
+    if (s_jobs) {
+        post_kick();
+    }
 }
 
 esp_err_t ble_pda_forget_bonds(void)

@@ -59,12 +59,33 @@ bool t5_button_is_down(t5_button_t button);
 /* Front light (GPIO11, LED driver enable) as PWM: 0 = off .. 100 = full. */
 void t5_backlight_set(int percent);
 
-/* Deep sleep until BOOT is pressed (EXT0 on GPIO0, low). Turns the front light off and
- * holds its pin low, waits for BOOT to be released (a held button would wake it at once),
- * then sleeps. Doesn't return: waking is a reset, and app_main starts again. */
-void t5_board_deep_sleep(void);
-/* The last reset was a wake from t5_board_deep_sleep(). */
+/* Deep sleep until BOOT is pressed (EXT0 on GPIO0, low) or, if timer_us > 0, that many
+ * microseconds have passed (a sync wake, pda_sleep.c). Turns the front light off and holds
+ * its pin low, waits for BOOT to be released (a held button would wake it at once), then
+ * sleeps. Doesn't return: waking is a reset, and app_main starts again. */
+void t5_board_deep_sleep(uint64_t timer_us);
+
+typedef enum {
+    T5_WAKE_RESET,  /* power on, reset button, flash, crash: not from our sleep */
+    T5_WAKE_BUTTON, /* BOOT pressed in deep sleep, or during a timer wake (restart below) */
+    T5_WAKE_TIMER,  /* the deep-sleep timer: a sync wake, no UI */
+} t5_wake_t;
+
+/* Why this boot happened. Valid from the start of app_main. */
+t5_wake_t t5_board_wake_reason(void);
+/* The last reset was a wake from t5_board_deep_sleep() (button or timer). */
 bool t5_board_woke_from_sleep(void);
+
+/* Timer wake: t5_board_init() leaves the front light's pin held low (no PWM, the light
+ * can't come on, t5_backlight_set() does nothing) and the BOOT pad readable. */
+
+/* After epdiy's init without the button task (a sync wake that redraws a line): the
+ * side-button pin back to an input, as t5_board_start_buttons() does. */
+void t5_board_side_button_input(void);
+
+/* Leave a timer wake for the full UI: wait for BOOT to be released, then restart; the next
+ * boot reports T5_WAKE_BUTTON and runs the normal path. Doesn't return. */
+void t5_board_restart_awake(void);
 
 #ifdef __cplusplus
 }

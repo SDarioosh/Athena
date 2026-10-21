@@ -9,7 +9,8 @@
  * "Clean refresh" on the Status screen give a clean refresh.
  *
  * Buttons: BOOT short = back / Today, BOOT held 1 s = deep sleep (the "Asleep" screen
- * stays on the panel; a BOOT press wakes it); the S3 button next to BOOT (labelled IO48,
+ * stays on the panel; a BOOT press wakes it, and it wakes on its own every 15 min to sync,
+ * pda_sleep.c); the S3 button next to BOOT (labelled IO48,
  * read through the PCA9535) short = front light on/off, held 1 s = sync mode (the 2-minute
  * pairing window, fast advertising). Clean refresh is on the Status screen. The power
  * button is hardware only: the firmware never sees it. */
@@ -31,6 +32,7 @@
 #include "pda_actions.h"
 #include "pda_app.h"
 #include "pda_epd.h"
+#include "pda_sleep.h"
 #include "pda_time.h"
 #include "t5_board.h"
 #include "touch_gt911.h"
@@ -1815,29 +1817,51 @@ static void on_detail_arrived(uint32_t ref_crc)
     }
 }
 
-/* Deep sleep (BOOT held): an "Asleep" screen that stays on the panel, then sleep until a
- * BOOT press. Waking is a reset (app_main again), so this doesn't return. */
-static void go_to_sleep(void)
+/* The "synced HH:MM" line, the only part a sync wake redraws. */
+#define ASLEEP_SYNCED_Y (H / 2 + 95)
+
+void ui_pda_draw_asleep(const char *since, const char *synced)
 {
-    ESP_LOGI(TAG, "going to sleep");
     gfx_begin(pda_epd_fb());
     pda_epd_clear_fb();
-    ui.n_hits = 0;
     const char *title = "Asleep";
     gfx_text(BIG, (W - gfx_text_width(BIG, title)) / 2, H / 2 - 60, title, GFX_INK);
     const char *hint = "Press BOOT to wake";
     gfx_text(TEXT, (W - gfx_text_width(TEXT, hint)) / 2, H / 2, hint, GFX_INK);
+    if (since[0]) {
+        gfx_text(TEXT, (W - gfx_text_width(TEXT, since)) / 2, H / 2 + 50, since, GFX_INK);
+    }
+    if (synced[0]) {
+        gfx_text(TEXT, (W - gfx_text_width(TEXT, synced)) / 2, ASLEEP_SYNCED_Y, synced, GFX_INK);
+    }
+}
+
+EpdRect ui_pda_asleep_synced_area(void)
+{
+    /* FONT_TEXT: ascender 24, descender 7; clear of the "since" line 45 px above. */
+    return (EpdRect){0, ASLEEP_SYNCED_Y - 26, W, 36};
+}
+
+/* Deep sleep (BOOT held, or the console): an "Asleep" screen that stays on the panel, then
+ * sleep until a BOOT press, with sync wakes in between (pda_sleep.c). override_min: as
+ * pda_sleep_enter(). Waking is a reset (app_main again), so this doesn't return. */
+static void go_to_sleep(int override_min)
+{
+    ESP_LOGI(TAG, "going to sleep");
+    char since[PDA_SLEEP_LINE_MAX] = "", synced[PDA_SLEEP_LINE_MAX] = "";
     if (pda_app_time_valid()) {
-        char d[24], t[12], line[64];
+        char d[24], t[12];
         pda_fmt_date(pda_app_now(), tz(), d, sizeof(d));
         pda_fmt_hm(pda_app_now(), tz(), t, sizeof(t));
-        snprintf(line, sizeof(line), "since %s %s", d, t);
-        gfx_text(TEXT, (W - gfx_text_width(TEXT, line)) / 2, H / 2 + 50, line, GFX_INK);
+        snprintf(since, sizeof(since), "since %s %s", d, t);
+        pda_sleep_synced_line(ble_pda_last_sync(), synced, sizeof(synced));
     }
+    ui.n_hits = 0;
+    ui_pda_draw_asleep(since, synced);
     pda_epd_update(PDA_EPD_CLEAN); /* the image stays for hours: no ghosting */
     touch_sleep();
     pda_app_lock(); /* no feed or outbox change from the BLE task from here on */
-    t5_board_deep_sleep();
+    pda_sleep_enter(since, synced, override_min);
 }
 
 /* Redraw and push to the panel with the refresh policy. */
@@ -1871,7 +1895,7 @@ static void ui_task(void *arg)
             const t5_button_t b = (t5_button_t)(ev.arg >> 1);
             const bool lng = ev.arg & 1;
             if (b == T5_BUTTON_BOOT && lng) {
-                go_to_sleep();
+                go_to_sleep(0);
                 break;
             }
             if (b == T5_BUTTON_SIDE && !lng) {
@@ -1893,7 +1917,7 @@ static void ui_task(void *arg)
             break;
         }
         case PDA_EV_SLEEP:
-            go_to_sleep();
+            go_to_sleep((int)ev.arg);
             break;
         case PDA_EV_FEED:
             refresh(PDA_EPD_FULL);
