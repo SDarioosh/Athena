@@ -141,6 +141,69 @@ systemd it starts background processes instead (pid files and logs in
 also runs this script before it rebuilds Odysseus, so either command updates both
 ([hub docs/fork/deploy.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/deploy.md)).
 
+## Docker
+
+The same services as containers, from `server/compose.yml`, configured by the same
+`server/.env`:
+
+| container | runs | notes |
+|---|---|---|
+| `sound-api` | `convo-server serve` | published on `CONVO_HOST:CONVO_PORT` (where devices reach it) |
+| `sound-mcp` | `convo-server mcp --http` | published on `CONVO_MCP_HOST:CONVO_MCP_PORT`; needs `CONVO_MCP_TOKEN` |
+| `whisper-gpu` | whisper-server, CUDA | profile `whisper-gpu`; needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) |
+| `whisper-cpu` | whisper-server, CPU | profile `whisper-cpu` |
+
+llama-server stays outside Docker. Loopback URLs in `.env`
+(`CONVO_LLM_BASE_URL=http://127.0.0.1:8082/v1`, `CONVO_EMBED_BASE_URL`) are pointed at
+the Docker host by the image's entrypoint, so the same `.env` works both ways. The
+server must listen on an address containers reach: `0.0.0.0`, or the Docker bridge
+(`172.17.0.1`) through a forwarder. Data stays in `CONVO_DATA_DIR` on the host, mounted
+at `/data`; the containers run as `PUID:PGID` (default `1000:1000`, see `id -u`), so the
+files stay yours.
+
+Add to `server/.env` (all keys: the Docker block at the bottom of `.env.example`):
+
+```bash
+COMPOSE_PROFILES=whisper-gpu           # or whisper-cpu; empty = whisper outside Docker
+CONVO_DOCKER_CUDA_ARCH=86              # GPU compute capability without the dot (RTX 3060)
+CONVO_DOCKER_WHISPER_MODELS=./data/whisper-models   # folder with the ggml model
+CONVO_DOCKER_WHISPER_MODEL=ggml-large-v3-turbo-q5_0.bin
+# CONVO_DOCKER_WHISPER_URL=http://127.0.0.1:8178     # only for whisper outside Docker
+```
+
+Get the model once, if it isn't on the machine already (point
+`CONVO_DOCKER_WHISPER_MODELS` at the folder it is in otherwise):
+
+```bash
+mkdir -p data/whisper-models
+curl -L -o data/whisper-models/ggml-large-v3-turbo-q5_0.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
+```
+
+Then either let `deploy.sh` run it (`BARVIS_SOUND_RUNNER=docker` in `.env`; it stops the
+native services first and rolls back like before), or run Compose yourself:
+
+```bash
+server/scripts/deploy.sh deploy        # with BARVIS_SOUND_RUNNER=docker
+server/scripts/deploy.sh status        # docker compose ps
+server/scripts/deploy.sh logs whisper  # serve | mcp | whisper
+
+cd server && docker compose up -d --build --wait   # by hand
+```
+
+The first build takes a while (the CUDA whisper build ~10–20 min); later deploys reuse
+the cache, and whisper is only restarted when its image or settings change.
+
+One-off commands run in the API container, through the entrypoint so the model URLs
+are rewritten: `docker compose exec sound-api convo-entrypoint process` (or `digest`,
+`summarize-pending`).
+
+Not in the containers yet: `whisper-cli` mode (`CONVO_WHISPER_CLI`; use whisper-server),
+and paths outside the data dir (put a Parakeet model under `data/` and set
+`CONVO_PARAKEET_MODEL_DIR=/data/...`). pyannote needs `CONVO_DOCKER_EXTRAS=vad,diarization,pyannote`
+and runs on CPU there. A stdio MCP client (Hermes) still uses the native `.venv`; it can
+read the same data dir next to the containers.
+
 ## Run by hand
 
 ```bash

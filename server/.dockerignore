@@ -1,0 +1,11 @@
+# Keep the build context small and free of data and secrets.
+.env
+.venv/
+data/
+eval/
+tests/
+**/__pycache__/
+*.egg-info/
+build/
+.pytest_cache/
+.ruff_cache/

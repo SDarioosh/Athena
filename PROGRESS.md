@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-20 (round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-21 (Docker step 1; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -33,6 +33,7 @@ _Last updated: 2026-10-20 (round 17: to-do lists for voice-note items; T-Watch U
 | 11c | Android relay app (T-Watch → BLE → phone → server) | **built, unit-tested (67 tests), not yet on a phone**: foreground service, scan/bond/drain per the protocol, uploads with the bearer token over LAN/Tailscale, acks only after the server's ok, backoff; settings (URL, token in Keystore) and status screen; no Google services, no analytics. CI builds the APK | `android-relay/` |
 | 11d | T5 E-Paper Pro PDA (briefing, conversations, action items, calendar over BLE via the phone) | **phone side built, unit-tested, not on hardware**: Odysseus calendar REST verified (plan §6); `android-relay` syncs the T5 next to the watch (glance protocol, feed, outbox, `cal_add` to Odysseus). Firmware and PC relay `pda` in sibling branches | `docs/t5-pda-plan.md`, `android-relay/` |
 | 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; the hub's `fork_deploy.sh deploy` runs it first, and it then updates Odysseus itself (`BARVIS_SOUND_ODYSSEUS_DIR`, found from the running container by default), so either command updates both | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, hub `docs/fork/deploy.md` |
+| 12b | Everything in Docker, step 1: module image (`serve` + MCP), whisper-server in Docker (CUDA for the RTX 3060, or CPU), `server/compose.yml`, `deploy.sh` `docker` runner (stops the native services, rolls back); llama-server and Proton Bridge stay on the host | built, run in the sandbox (CPU whisper, host llama-server, MCP on 172.17.0.1, whisper on the host), CUDA image compiled without a GPU; **needs the owner's server run** (PR Server verification). Next: hub `install.sh` (step 2), settings API + UI (step 3) | `server/compose.yml`, `server/Dockerfile`, `server/docker/`, `server/README.md#docker` |
 | 13 | Speaker recognition (PR #24) and focused summaries (PR #25): measured in the sandbox, bugs fixed, two improvements | PRs open, **owner: Server verification** | SDarioosh/barvis-sound#31 (recognition), SDarioosh/barvis-sound#38 (insights) |
 | 14 | T5 E-Paper Pro PDA firmware (feed and outbox over BLE through the phone) | **milestones 0–3 built, on the owner's T5**: bring-up and refresh times, all screens from a fictional feed, touch and buttons by hand, BLE pairing, TIME, outbox drain/ack and feed PUT from a Windows PC; host tests in CI. Front light, BOOT-hold sleep, sync mode, automatic light sleep and timed sync wakes from deep sleep built and flashed; currents not measured yet. Still open: the PC relay and the Android `PdaSync` against the real T5, the server `PATCH` end to end, light sleep and power (milestone 5) | `firmware/pda/`, `docs/t5-pda-plan.md` |
 | 10 | End-to-end with real devices | not started | — |
@@ -242,6 +243,24 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   `barvis-sound*` service names and `BARVIS_SOUND_*` vars, the Android app ID
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
   vendor string, the `barvis_relay` package, and all `convo` identifiers.
+
+## Done on 2026-10-21: Docker, step 1 (module containers)
+
+- Goal (owner): clone the repos, run one script, configure settings without editing `.env`.
+  Agreed plan: 1) module in Docker, 2) hub `install.sh` with first-run setup, 3) settings
+  API here + settings tab in Odysseus, 4) move the server over, delete the native deploy code.
+- Step 1: `server/Dockerfile` (CPU torch, ffmpeg; entrypoint points loopback model URLs at
+  the Docker host so one `.env` works both ways), `server/docker/whisper.Dockerfile`
+  (pinned whisper.cpp v1.9.5, static, `BACKEND=cuda|cpu`), `server/compose.yml`
+  (`sound-api`, `sound-mcp`, `whisper-gpu`/`whisper-cpu` profiles), `deploy.sh`
+  `BARVIS_SOUND_RUNNER=docker`, a CI job that builds and starts the stack.
+- Measured first (sandbox, 88 s of audio, base.en, 4 threads): whisper in a container is
+  as fast as native (~10 s both); Docker adds no CPU overhead.
+- Host services: the owner's llama-server listens on 0.0.0.0:8082, reachable at
+  `host.docker.internal`; Proton Bridge (127.0.0.1 only) is reached through the owner's
+  socat forwarders on 172.17.0.1, which move into the hub stack in step 2.
+- Open for the owner: the PR's Server verification (CUDA image on the RTX 3060, cutover
+  from the systemd services, compare a transcription with the host whisper).
 
 ## Done on 2026-10-20: faster transcript requests (hub: same branch in SDarioosh/Barvis)
 
