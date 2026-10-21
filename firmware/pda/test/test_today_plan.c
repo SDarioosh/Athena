@@ -184,6 +184,7 @@ static void test_rules_insight_fixture(void)
     REASON(TODAY_DO_FIRST, 2, "due today");
     REASON(TODAY_DO_FIRST, 4, "today 09:30");
     CHECK_EQ(plan.sec[TODAY_DO_FIRST].more, 2);
+    CHECK_EQ(plan.sec[TODAY_DO_FIRST].more_events, 2);
     SEC(TODAY_COMING_UP, "Dentist follow-up (Dr. Patel)", "Ben\xe2\x80\x99s PR review session", "Client demo",
         "Jonas: long run (cheer at km 20)", "Lease renewal reminder");
     /* pinned House first (pinned Groceries is a shopping list), then undated; the
@@ -280,6 +281,7 @@ static void test_insight_edges(void)
     today_plan_from_insight(&feed, TODAY, NOW, TZ, &plan);
     SEC(TODAY_DO_FIRST, "a", "f", "c", "d", "e", "Today 11", "Today 15", "Today 17");
     CHECK_EQ(plan.sec[TODAY_DO_FIRST].more, 1);
+    CHECK_EQ(plan.sec[TODAY_DO_FIRST].more_events, 1);
     SEC_EMPTY(TODAY_ALSO); /* f was already shown */
 
     /* the rules on the same feed: the shopping list without a date is left out */
@@ -339,8 +341,10 @@ static void test_caps(void)
     /* events on the 21st..27th are within 7 days (7 of them), capped at 5 */
     SEC(TODAY_COMING_UP, "E1", "E2", "E3", "E4", "E5");
     CHECK_EQ(plan.sec[TODAY_COMING_UP].more, 2);
+    CHECK_EQ(plan.sec[TODAY_COMING_UP].more_events, 2);
     SEC(TODAY_ALSO, "u0", "u1", "u2", "u3", "u4");
     CHECK_EQ(plan.sec[TODAY_ALSO].more, 7);
+    CHECK_EQ(plan.sec[TODAY_ALSO].more_events, 0);
     feed_free(&feed);
 }
 

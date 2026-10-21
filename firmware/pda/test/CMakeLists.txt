@@ -42,3 +42,20 @@ foreach(t test_pda_proto test_json test_feed test_outbox test_feed_store test_ge
     set_tests_properties(${t} PROPERTIES ENVIRONMENT
         "FIXTURES=${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 endforeach()
+
+# The Today tab rendered to PNG through a host stand-in for epdiy (host/epdiy.h): needs zlib
+# for the fonts' compressed glyphs. Output: <build dir>/today_screens/*.png
+find_package(ZLIB)
+if(ZLIB_FOUND)
+    add_executable(test_ui_today test_ui_today.c host/epdiy_host.c
+        ${FW}/main/gfx.c ${FW}/main/fonts.c ${FW}/main/ui_today.c)
+    # host/ first: its epdiy.h stands in for the component's
+    target_include_directories(test_ui_today BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/host)
+    target_link_libraries(test_ui_today pda_pure ZLIB::ZLIB)
+    set_source_files_properties(${FW}/main/fonts.c PROPERTIES COMPILE_OPTIONS "-Wno-bidi-chars")
+    add_test(NAME test_ui_today COMMAND test_ui_today)
+    set_tests_properties(test_ui_today PROPERTIES ENVIRONMENT
+        "FIXTURES=${CMAKE_CURRENT_SOURCE_DIR}/fixtures;OUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/today_screens")
+else()
+    message(WARNING "zlib not found: test_ui_today (Today tab rendering) is skipped")
+endif()

@@ -51,7 +51,8 @@ typedef struct {
 typedef struct {
     today_item_t items[TODAY_PLAN_MAX];
     int n;
-    int more; /* left out by the cap */
+    int more;        /* left out by the cap */
+    int more_events; /* how many of those are events */
 } today_section_t;
 
 typedef struct {

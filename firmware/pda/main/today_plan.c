@@ -18,11 +18,13 @@ typedef struct {
     today_item_t items[TODAY_PLAN_MAX];
     int64_t keys[TODAY_PLAN_MAX];
     int n, total, cap;
+    int events, events_kept; /* offered / kept */
 } pick_t;
 
 static void offer(pick_t *p, int64_t key, const today_item_t *it)
 {
     p->total++;
+    p->events += it->ref.kind == FEED_REF_EVENT;
     int at = p->n;
     while (at > 0 && p->keys[at - 1] > key) {
         at--;
@@ -30,6 +32,10 @@ static void offer(pick_t *p, int64_t key, const today_item_t *it)
     if (at >= p->cap) {
         return;
     }
+    if (p->n == p->cap) {
+        p->events_kept -= p->items[p->cap - 1].ref.kind == FEED_REF_EVENT; /* pushed out */
+    }
+    p->events_kept += it->ref.kind == FEED_REF_EVENT;
     const int last = p->n < p->cap ? p->n : p->cap - 1;
     for (int k = last; k > at; k--) {
         p->items[k] = p->items[k - 1];
@@ -47,6 +53,7 @@ static void take(today_section_t *s, const pick_t *p)
     memcpy(s->items, p->items, sizeof(p->items[0]) * (size_t)p->n);
     s->n = p->n;
     s->more = p->total - p->n;
+    s->more_events = p->events - p->events_kept;
 }
 
 bool today_is_shopping_list(const char *title)
@@ -194,6 +201,7 @@ static void push(today_section_t *s, const today_item_t *it)
         s->items[s->n++] = *it;
     } else {
         s->more++;
+        s->more_events += it->ref.kind == FEED_REF_EVENT;
     }
 }
 
