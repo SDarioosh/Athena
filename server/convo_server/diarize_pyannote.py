@@ -26,6 +26,7 @@ os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
 # huggingface_hub (model download) usage pings off too
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
+import logging  # noqa: E402
 from collections.abc import Callable  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -43,6 +44,8 @@ from .diarize import (  # noqa: E402
     rms_db,
     window,
 )
+
+log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "pyannote-community/speaker-diarization-community-1"
 # Up to this much of a speaker's own speech is embedded for their voiceprint.
@@ -125,7 +128,14 @@ class PyannoteDiarizer(Diarizer):
                 loud.append(rms_db(speech))
         if not keys:  # pyannote heard nobody long enough: per-piece fallback
             return super().diarize_runs(runs, pieces)
-        cids = cluster(np.stack(embs), self.cluster_threshold) if len(embs) > 1 else [0]
+        # pyannote already decided who is who inside a run, so its speakers of one run are
+        # never merged; only speakers of different runs are joined by voice. (Merging
+        # within a run collapsed two people on a body-worn mic into one name: their ECAPA
+        # voiceprints are often more similar than the cluster threshold.)
+        cids = (cluster(np.stack(embs), self.cluster_threshold,
+                        cannot_link=[ri for ri, _ in keys]) if len(embs) > 1 else [0])
+        log.info("pyannote: %s speaker(s) per run, %d after joining runs",
+                 [len({t[2] for t in tt}) for tt in turns], max(cids) + 1)
         n = max(cids) + 1
         members = [[j for j, c in enumerate(cids) if c == cid] for cid in range(n)]
         centroids = [_normalize(np.mean([embs[j] for j in m], axis=0)) for m in members]
