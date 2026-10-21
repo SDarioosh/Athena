@@ -9,6 +9,7 @@ import org.barvis.sound.relay.ble.GattClient
 import org.barvis.sound.relay.ble.GattStatusException
 import org.barvis.sound.relay.net.ConvoHttpApi
 import org.barvis.sound.relay.net.OdysseusCalendarClient
+import org.barvis.sound.relay.net.OdysseusInsightClient
 import org.barvis.sound.relay.net.OdysseusTodosClient
 import org.barvis.sound.relay.net.ServerUrl
 import org.barvis.sound.relay.protocol.PdaGatt
@@ -16,9 +17,11 @@ import org.barvis.sound.relay.protocol.PdaStatus
 import org.barvis.sound.relay.protocol.ProtocolException
 import org.barvis.sound.relay.protocol.WatchInfo
 import org.barvis.sound.relay.relay.CalendarApi
+import org.barvis.sound.relay.relay.InsightApi
 import org.barvis.sound.relay.relay.Level
 import org.barvis.sound.relay.relay.LinkException
 import org.barvis.sound.relay.relay.NoCalendar
+import org.barvis.sound.relay.relay.NoInsight
 import org.barvis.sound.relay.relay.NoTodos
 import org.barvis.sound.relay.relay.PdaListener
 import org.barvis.sound.relay.relay.PdaOutcome
@@ -73,6 +76,7 @@ class PdaConnector(private val context: Context, private val settings: Settings)
         if (s.feedsPushed > 0) parts += "feed sent" else parts += "feed unchanged"
         s.calendarNote?.let { parts += "calendar: $it" }
         s.todosNote?.let { parts += "todos: $it" }
+        s.insightNote?.let { parts += "insight: $it" }
         return " · " + parts.joinToString(" · ")
     }
 
@@ -80,6 +84,12 @@ class PdaConnector(private val context: Context, private val settings: Settings)
         val url = ServerUrl.check(settings.odysseusUrl)
         if (url !is ServerUrl.Check.Ok || !settings.hasOdysseusToken) return NoTodos
         return OdysseusTodosClient(url.base, { settings.odysseusToken() }, log = log)
+    }
+
+    private fun insight(): InsightApi {
+        val url = ServerUrl.check(settings.odysseusUrl)
+        if (url !is ServerUrl.Check.Ok || !settings.hasOdysseusToken) return NoInsight
+        return OdysseusInsightClient(url.base, { settings.odysseusToken() }, log = log)
     }
 
     private fun calendar(): CalendarApi {
@@ -117,6 +127,7 @@ class PdaConnector(private val context: Context, private val settings: Settings)
                 // Manual sync: one pass and BYE, so the watch gets the BLE stack back at once.
                 maxStayMs = if (settings.pdaAutoSync) 10 * 60_000L else 0L,
                 todos = todos(),
+                insight = insight(),
             )
             return sync.run().also { client.highPriority(false) }
         } catch (e: GattStatusException) {

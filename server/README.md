@@ -218,7 +218,8 @@ source of truth, so the frontend can be swapped. Tools:
 | `get_conversation(id)`, `get_transcript(id, start_seconds, end_seconds)` | details |
 | `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs, notes (kind `note`, `note_title`) included (the hub files voice-note items into its calendar, to-dos and notes from it) |
 | `update_action_item(item_id, status, kind, due_date, due_time, list_name)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears), time (`HH:MM`, `none` clears) or to-do list (`shopping`, `none` clears); every argument but `item_id` is optional |
-| `list_facts(subject, query)`, `get_daily_digest(date)`, `list_people()` | memory |
+| `list_facts(subject, query, limit, confirmed, format)` | facts about people, the user and things; `confirmed=true` keeps only confirmed facts (below); `format="json"` returns a JSON object for programs (the hub copies confirmed facts into its memory from it) |
+| `get_daily_digest(date)`, `list_people()` | memory |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
 | `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists) |
 | `reassign_line(line_id, name)` | one line given to the wrong person (`#id` from `get_transcript`) |
@@ -226,6 +227,29 @@ source of truth, so the frontend can be swapped. Tools:
 
 Dates are `YYYY-MM-DD` in `CONVO_TIMEZONE`. Set `CONVO_PUBLIC_URL` to the address your
 phone uses (e.g. the server's Tailscale IP) so links work there.
+
+**Confirmed facts.** A fact is confirmed when no newer fact has replaced it and it was
+said in at least `CONVO_FACT_CONFIRM_SOURCES` (default 3) distinct conversations (its own
+plus every "said again") that started on at least `CONVO_FACT_CONFIRM_DAYS` (default 2)
+distinct dates in `CONVO_TIMEZONE`. `list_facts(confirmed=true)` lists only those, in
+both formats. `list_facts(format="json")` returns current facts in the text mode's order
+(newest conversation first), with no citation line:
+
+```json
+{"facts": [{"id": 12, "subject": "Alice", "about": "person",
+            "fact": "Alice is vegetarian", "times_said": 3, "days": 2,
+            "first_said": "2025-10-09", "last_said": "2025-10-10",
+            "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
+```
+
+`about` is `owner` when the subject (trimmed, any case) is me, I, myself, owner, the
+owner, user, the user, `CONVO_OWNER_NAME` or the name of the enrolled owner voice;
+`person` when it is an enrolled speaker or a person named in a conversation; else
+`other`. `times_said` counts distinct conversations, `days` distinct local dates, and
+`first_said`/`last_said` are the first and last of those dates. `link` is the same
+transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
+program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
+fact id that stops being returned (replaced, or its conversation deleted).
 
 **Hermes** (stdio; add to the profile's `config.yaml`):
 

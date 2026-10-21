@@ -14,10 +14,11 @@ import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
@@ -752,11 +753,67 @@ class Store:
             " GROUP BY p.name ORDER BY last_mentioned DESC")
 
     def list_facts(self, *, subject: str | None = None, query: str | None = None,
-                   limit: int = 50) -> list[dict[str, Any]]:
+                   limit: int = 50, counts_tz: str | None = None,
+                   min_sources: int = 0, min_days: int = 0) -> list[dict[str, Any]]:
         """Current facts matching ``subject``/``query``, newest first.
 
-        A match on an older, replaced fact returns the fact that replaced it.
+        A match on an older, replaced fact returns the fact that replaced it. With
+        ``counts_tz`` each fact also gets its ``fact_counts`` (local dates in that
+        timezone); ``min_sources``/``min_days`` then keep only facts said in at least that
+        many conversations on at least that many dates ("confirmed" facts).
         """
+        rows = self._list_current_facts(subject, query, -1 if counts_tz else limit)
+        if counts_tz is None:
+            return rows
+        counts = self.fact_counts([r["id"] for r in rows], counts_tz)
+        out = []
+        for r in rows:
+            r.update(counts[r["id"]])
+            if r["times_said"] >= min_sources and r["days"] >= min_days:
+                out.append(r)
+        return out[:limit] if limit >= 0 else out
+
+    def fact_counts(self, ids: Iterable[int], tz: str) -> dict[int, dict[str, Any]]:
+        """For each fact: in how many distinct conversations it was said (its own plus
+        its ``fact_sources``), on how many distinct local dates (``tz``), and the first
+        and last of those dates (YYYY-MM-DD). One query for the whole set."""
+        ids = list(ids)
+        if not ids:
+            return {}
+        zone = ZoneInfo(tz)
+        marks = ",".join("?" * len(ids))
+        said: dict[int, dict[str, str]] = {i: {} for i in ids}
+        for r in self._q(
+                "SELECT f.id AS fact_id, c.id AS conv, c.started_at FROM facts f"
+                f" JOIN conversations c ON c.id = f.conversation_id WHERE f.id IN ({marks})"
+                " UNION SELECT s.fact_id, c.id, c.started_at FROM fact_sources s"
+                f" JOIN conversations c ON c.id = s.conversation_id WHERE s.fact_id IN ({marks})",
+                [*ids, *ids]):
+            said[r["fact_id"]][r["conv"]] = (
+                datetime.fromtimestamp(r["started_at"], zone).strftime("%Y-%m-%d"))
+        out: dict[int, dict[str, Any]] = {}
+        for fid, convs in said.items():
+            days = sorted(set(convs.values()))
+            out[fid] = {"times_said": len(convs), "days": len(days),
+                        "first_said": days[0] if days else None,
+                        "last_said": days[-1] if days else None}
+        return out
+
+    def known_names(self) -> tuple[set[str], set[str]]:
+        """(owner names, person names), lower-cased: enrolled speakers marked as the
+        owner, and every enrolled speaker or person named in a conversation."""
+        owners: set[str] = set()
+        people: set[str] = set()
+        for r in self._q("SELECT name, is_owner FROM speakers"
+                         " UNION SELECT name, 0 FROM conversation_people"):
+            name = (r["name"] or "").strip().lower()
+            people.add(name)
+            if r["is_owner"]:
+                owners.add(name)
+        return owners - {""}, people - {""}
+
+    def _list_current_facts(self, subject: str | None, query: str | None,
+                            limit: int) -> list[dict[str, Any]]:
         sql = "SELECT id, status, superseded_by FROM facts WHERE 1=1"
         params: list[Any] = []
         if subject:
