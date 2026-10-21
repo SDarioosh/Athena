@@ -172,6 +172,15 @@ def test_malformed_answer_leaves_it_out(api_server, ody, caplog, answer) -> None
     assert MALFORMED in caplog.text
 
 
+@pytest.mark.parametrize(("status", "why"), [
+    (405, OLD_HUB), (400, "Odysseus insight: HTTP 400"), (410, "Odysseus insight: HTTP 410"),
+])
+def test_client_other_final_answers_are_no_insight(ody, caplog, status, why) -> None:
+    ody.fail.append(status)
+    assert insight(ody).today() is None
+    assert why in caplog.text
+
+
 def test_no_odysseus_leaves_it_out(api_server) -> None:
     feed = f.build_feed(f.HttpApi(api_server.url, TOKEN, timeout=3.0), now=NOW,
                         tz_name="UTC")
