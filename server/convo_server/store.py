@@ -1323,7 +1323,27 @@ def _carry_over(c: sqlite3.Connection, conv_id: str, before: dict[str, Any],
     return fresh
 
 
+# Words that say nothing about a topic: common English words plus the ones people use to
+# point at a recording ("the one where we talked about ..."). In an OR-query they match
+# nearly every conversation and bury the one that is meant.
+_STOPWORDS_TEXT = """
+a about after again all also am an and any are as at be because been before being but by
+can could did do does doing for from had has have having he her here hers him his how i if
+in into is it its just me my of on one ones or our out over she so some than that the
+their them then there these they this those to too up us very was we were what when where
+which while who whom why will with would you your
+conversation conversations discussion discussed discussing mentioned mentioning recording
+recordings said say saying talk talked talking talks thing things transcript transcripts
+"""
+_STOPWORDS = frozenset(_STOPWORDS_TEXT.split())
+
+
 def _fts_query(text: str) -> str:
-    """Turn free text into a safe FTS5 OR-query of quoted terms."""
-    terms = ["".join(ch for ch in t if ch.isalnum()) for t in text.split()]
-    return " OR ".join(f'"{t}"' for t in terms if t)
+    """Turn free text into a safe FTS5 OR-query of quoted terms.
+
+    Stopwords are dropped unless nothing else is left ("the one about AI glasses" ->
+    "AI" OR "glasses").
+    """
+    terms = [t for t in ("".join(ch for ch in w if ch.isalnum()) for w in text.split()) if t]
+    topic = [t for t in terms if t.lower() not in _STOPWORDS]
+    return " OR ".join(f'"{t}"' for t in topic or terms)

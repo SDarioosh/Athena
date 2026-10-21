@@ -422,6 +422,23 @@ right after its sizes, flags and timings were read; none was uploaded.
   `/sound`): 0/1 before, 1/1 after. **Owner:** rerun `seed_demo.py` on the server's demo
   store (adds only the notes), then the Server verification in the PR.
 
+## Done on 2026-10-20: "the one about AI glasses" finds the conversation faster
+
+- Problem (owner): `/sound` asked for "the one talking about AI glasses" called the same
+  transcript many times before answering, although the title ("Privacy and AI Glasses
+  Discussion") and summary already matched.
+- `INSTRUCTIONS` (the `/sound` skill text) get a "Finding a conversation" paragraph:
+  `search_conversations` once with only the topic words, pick the match from the titles
+  and summaries it returns, `get_conversation` only for details, `get_transcript` only for
+  exact wording, never the same call twice. The `search_conversations` and
+  `get_transcript` descriptions say the same.
+- Search drops stopwords and "pointing" words (the, one, about, talking, conversation...)
+  unless nothing else is left, so "the one talking about AI glasses" searches "AI" OR
+  "glasses" instead of matching nearly every conversation. Also used by
+  `search_transcripts` and fact linking.
+- **Owner:** paste the new `INSTRUCTIONS` into the Odysseus Custom preset and rerun
+  `modules_setup.py` (PR Server verification), then retry the question.
+
 ## Done on 2026-10-20: junk discarded without a model call
 
 Fixed rules now run before the triage call (`server/convo_server/relevance_rules.py`).
