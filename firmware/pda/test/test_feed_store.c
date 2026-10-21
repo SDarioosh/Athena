@@ -2,19 +2,34 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "check.h"
 #include "feed_store.h"
 
 static char dir[256];
 
-int main(void)
+/* A fresh folder under /tmp, not under the build directory: the firmware's paths are short
+ * ("/lfs/ob", OUTBOX_DIR_MAX 48; feed_store PATH_LEN 96), and a CI checkout path is longer
+ * than that. */
+static void remove_dir(void)
 {
-    const char *tmp = getenv("TEST_TMPDIR");
-    snprintf(dir, sizeof(dir), "%s", tmp ? tmp : "/tmp/test_feed_store");
     char cmd[300];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir);
-    if (system(cmd) != 0) {
+    (void)system(cmd);
+}
+
+/* /tmp/pda_<name>_<pid>, empty (mkdtemp isn't declared on macOS under _POSIX_C_SOURCE). */
+static int make_dir(const char *name)
+{
+    snprintf(dir, sizeof(dir), "/tmp/pda_%s_%d", name, (int)getpid());
+    remove_dir();
+    return mkdir(dir, 0755);
+}
+
+int main(void)
+{
+    if (make_dir("fs") != 0) {
         return 1;
     }
     CHECK_EQ(feed_store_init(dir), 0);
@@ -75,5 +90,6 @@ int main(void)
     CHECK_EQ(feed_store_wipe(dir), 0);
     CHECK_EQ(feed_store_count_details(dir), 0);
     CHECK_EQ(feed_store_load_feed(dir, &data, &len), -1);
+    remove_dir();
     return checks_done("test_feed_store");
 }

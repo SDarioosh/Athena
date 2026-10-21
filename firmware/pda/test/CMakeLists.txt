@@ -39,5 +39,5 @@ foreach(t test_pda_proto test_json test_feed test_outbox test_feed_store test_ge
     target_link_libraries(${t} pda_pure)
     add_test(NAME ${t} COMMAND ${t})
     set_tests_properties(${t} PROPERTIES ENVIRONMENT
-        "TEST_TMPDIR=${CMAKE_CURRENT_BINARY_DIR}/tmp_${t};FIXTURES=${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+        "FIXTURES=${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 endforeach()
