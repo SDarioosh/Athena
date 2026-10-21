@@ -563,13 +563,43 @@ a 3 × 4 grid of hour slots and the durations.
 
 | Screen | Content | Interactions |
 |---|---|---|
-| **Today** (home) | clock and date, battery, sync age; the next 3 events; the briefing's first lines; the count of open checklist items | tap a section to open it |
+| **Today** (home) | the header (clock, date, battery, sync age); INSIGHT, DO FIRST, COMING UP, ALSO WORTH A LOOK (below); "Digest ready on Brief ›" in the bottom row | tap a to-do: done / not done (`todo_toggle`, as on Tasks); tap an event: its details; "+n more ›": Tasks or Cal; the digest line: Brief |
 | **Briefing** | yesterday's digest, highlights | `digest_refresh` |
 | **Calendar** | agenda, today to +7 days | tap an event for details; "+" opens the template picker |
 | **Tasks** | the owner's Odysseus checklists (§4.4): a heading per note (pinned first, with its due date), its items below | tap an item: done / not done (`todo_toggle`); without Odysseus: "No checklists. Set up Odysseus in the phone app" |
 | **Conversations** | the last 48 h, title, people, time | tap: summary and key points, then that conversation's suggested action items (`actions` with this `conv`); on those: tap done, long press dismiss, "→ calendar" when `due` is set; "transcript" → `fetch` |
 | **Status** | bond, phone last seen, outbox, feed version, battery, pairing window button | |
 
+- **Today as built (2026-10-21):**
+  - **Sections:** INSIGHT (the hub's headline, wrapped, at most 3 lines), DO FIRST, COMING
+    UP, ALSO WORTH A LOOK. Each item takes two lines: the to-do text or event title (cut to
+    fit), then why it is there. To-dos have a tick box, events a filled mark and "›".
+    Empty sections are left out. The sections flow over pages (the pager, swipe up/down); a
+    section that goes on to the next page repeats its heading with "(cont.)".
+  - **With the hub's insight** (feed `insight`, §4.1, dated today): its items in the hub's
+    order, under the hub's `why`; events also show their time. Items whose ref names nothing
+    in the feed, done items, events that are over and repeats are dropped. Today's timed
+    events still to come all end DO FIRST in time order, wherever the hub put them (with
+    its `why` when it named them).
+  - **Without one** (no key, or `date` isn't today), the same sections from rules, and
+    INSIGHT says "No insight for today yet: by date and time":
+    - DO FIRST: open items of overdue checklists (oldest first, "overdue since
+      2026-10-19"), then of those due today ("due today"), then today's events that aren't
+      over (all-day first, "today, all day"; then "today 14:00");
+    - COMING UP: events and items of checklists due within the next 7 days, by date and
+      time ("Wed 21 Oct 09:00", "due Fri 23 Oct");
+    - ALSO WORTH A LOOK: items of pinned checklists not listed above ("pinned"), then of
+      undated ones ("no date"); unpinned checklists due later than that aren't on Today.
+  - **Left out:** done items, events that are over, and shopping lists: a checklist titled
+    Shopping, Groceries or Grocery (any case, with or without " list") unless it has a due
+    date. The hub's insight may still name one of their items.
+  - **Caps:** 5 items per section from the rules, the rest as "+n more ›" on the heading
+    (to Cal when most of the rest are events, else Tasks). With the insight, DO FIRST holds
+    the hub's 5 plus today's events, up to 8.
+  - **The digest** is on Brief only; the bottom row of Today says "Digest ready on Brief ›"
+    when the feed has a briefing.
+  - Code: `main/today_plan.c` (the plan, pure, `test/test_today_plan.c`), `main/ui_today.c`
+    (the drawing; rendered on the host by `test/test_ui_today.c`).
 - **Adding an event without a keyboard:**
   - From a suggested action item (in its conversation): "→ calendar" fills in the title from the item and the date from
     `due_date`. The user picks a time from a grid (morning slots, then +/− 15 min) and a
