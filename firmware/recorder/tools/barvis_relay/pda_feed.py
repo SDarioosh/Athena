@@ -9,9 +9,11 @@
 
 Sources: `GET /v1/digests/{today}` or `{yesterday}` (the first that exists),
 `GET /v1/conversations?since=<now - 48 h>&limit=20` (summarized ones only),
-`GET /v1/action-items?status=open`, and the calendar (today to +7 days) through the
-`Calendar` protocol of `pda_actions`. A source that fails for a reason other than "absent"
-(digest 404, calendar not configured) fails the build: the T5 keeps its last feed.
+`GET /v1/action-items?status=open`, the calendar (today to +7 days) through the
+`Calendar` protocol of `pda_actions`, the Odysseus checklists (`pda_todos`) and the hub's
+Today insight (`pda_insight`). A source that fails for a reason other than "absent"
+(digest 404, calendar not configured, no todos or no insight for this hub/token) fails the
+build: the T5 keeps its last feed.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from typing import Any, Protocol
 
+from .pda_insight import MALFORMED
 from .uploader import SKIP, Uploader, UploadError
 
 log = logging.getLogger("barvis_relay.pda")
@@ -48,8 +51,13 @@ TODO_ITEMS_MAX = 40
 TODO_TEXT_MAX = 160
 TEMPLATES_MAX = 12  # event-title templates for the T5's "+" picker (§5)
 TEMPLATE_MAX = 40
+INSIGHT_HEADLINE_MAX = 200  # the hub's Today insight (§4.1)
+INSIGHT_WHY_MAX = 80
+INSIGHT_ITEMS_MAX = 5  # per section
+INSIGHT_SECTIONS = ("focus", "coming_up", "also")
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")  # fullmatch: ASCII digits only
 UTC = timezone.utc  # noqa: UP017 (Python 3.10 has no datetime.UTC)
 
 
@@ -232,8 +240,56 @@ def _todos(todos: Any) -> list[dict[str, Any]] | None:
     return out
 
 
+def _feed_refs(feed: dict[str, Any]) -> set[str]:
+    """The refs an insight item may point at: `todo:<note id>:<i>` for each item in the
+    feed's `todos` and `event:<id>` for each `calendar` entry."""
+    refs = {f"todo:{n['id']}:{it['i']}" for n in feed.get("todos") or [] for it in n["items"]}
+    refs.update(f"event:{e['id']}" for e in feed.get("calendar") or [])
+    return refs
+
+
+def insight_section(raw: dict[str, Any], feed: dict[str, Any]) -> dict[str, Any] | None:
+    """The `insight` section (§4.1) from the hub's answer, or None if the answer is
+    malformed (no `YYYY-MM-DD` date or no string headline). Keeps only `date`, `headline`
+    and each item's `ref` and `why`, and only refs that resolve in `feed`."""
+    day, headline = raw.get("date"), raw.get("headline")
+    if not isinstance(day, str) or not _ISO_DATE.fullmatch(day) or not isinstance(headline, str):
+        return None
+    refs = _feed_refs(feed)
+    out: dict[str, Any] = {"date": day, "headline": cut(headline, INSIGHT_HEADLINE_MAX)}
+    for key in INSIGHT_SECTIONS:
+        rows = raw.get(key)
+        items: list[dict[str, str]] = []
+        for it in rows if isinstance(rows, list) else []:
+            if not isinstance(it, dict) or not isinstance(it.get("ref"), str) \
+                    or it["ref"] not in refs:
+                continue
+            why = it.get("why")
+            items.append({"ref": it["ref"],
+                          "why": cut(why, INSIGHT_WHY_MAX) if isinstance(why, str) else ""})
+            if len(items) == INSIGHT_ITEMS_MAX:
+                break
+        out[key] = items
+    return out
+
+
+def _insight(insight: Any, feed: dict[str, Any]) -> dict[str, Any] | None:
+    """The `insight` section, or None to leave it out (no Odysseus, no insight yet, a token
+    without insight:read, or a malformed answer; `pda_insight` logs why)."""
+    if insight is None:
+        return None
+    raw = insight.today()
+    if raw is None:
+        return None
+    out = insight_section(raw, feed)
+    if out is None:
+        log.warning("Odysseus insight: %s; the feed has no insight", MALFORMED)
+    return out
+
+
 def build_feed(api: ServerApi, *, now: float, tz_name: str, calendar: Any = None,
-               templates: list[str] | None = None, todos: Any = None) -> dict[str, Any]:
+               templates: list[str] | None = None, todos: Any = None,
+               insight: Any = None) -> dict[str, Any]:
     """The feed dict (§4.1), not yet trimmed (see `encode_feed`). Raises UploadError."""
     tz = resolve_tz(tz_name)
     local_now = datetime.fromtimestamp(now, tz)
@@ -250,6 +306,9 @@ def build_feed(api: ServerApi, *, now: float, tz_name: str, calendar: Any = None
     checklists = _todos(todos)
     if checklists is not None:
         feed["todos"] = checklists
+    today_insight = _insight(insight, feed)
+    if today_insight is not None:
+        feed["insight"] = today_insight
     if templates:
         feed["templates"] = _strings(templates, TEMPLATES_MAX, TEMPLATE_MAX)
     return feed
@@ -269,8 +328,9 @@ class FeedTooLarge(Exception):
 def encode_feed(feed: dict[str, Any], limit: int = FEED_MAX) -> bytes:
     """Compact JSON of at most `limit` bytes. Trims `feed` in place if it's too big (§4.1):
     summaries are cut first, then the oldest conversations go, then (rarely needed) done
-    checklist items, the last action items, the last unpinned checklists, the last
-    calendar entries and, last of all, the last pinned checklists."""
+    checklist items, the whole `insight`, the last action items, the last unpinned
+    checklists, the last calendar entries and, last of all, the last pinned checklists.
+    An `insight` that is kept loses the refs whose item was dropped."""
     raw = _dump(feed)
     if len(raw) <= limit:
         return raw
@@ -284,6 +344,8 @@ def encode_feed(feed: dict[str, Any], limit: int = FEED_MAX) -> bytes:
             convs.pop()  # newest first, so this is the oldest
         elif _drop_done_item(feed.get("todos") or []):
             pass
+        elif "insight" in feed:
+            del feed["insight"]
         elif feed.get("actions"):
             feed["actions"].pop()
         elif _drop_last(feed.get("todos") or [], lambda n: not n["pinned"]):
@@ -294,8 +356,17 @@ def encode_feed(feed: dict[str, Any], limit: int = FEED_MAX) -> bytes:
             feed["todos"].pop()
         else:
             raise FeedTooLarge(f"feed is {len(raw)} bytes with nothing left to drop")
+    if "insight" in feed:  # only done items went: drop the refs that pointed at them
+        _prune_insight(feed)
+        raw = _dump(feed)
     log.info("feed trimmed to %d bytes (summaries cut, %d entries dropped)", len(raw), steps)
     return raw
+
+
+def _prune_insight(feed: dict[str, Any]) -> None:
+    refs = _feed_refs(feed)
+    for key in INSIGHT_SECTIONS:
+        feed["insight"][key] = [it for it in feed["insight"][key] if it["ref"] in refs]
 
 
 def _drop_done_item(todos: list[dict[str, Any]]) -> bool:

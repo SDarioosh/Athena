@@ -27,9 +27,10 @@ Sync once and exit (exit code 0 = everything delivered):
         --templates "Call,Meeting,Reminder"
 
 The same URL and token also give the T5's Tasks tab the owner's Odysseus checklists
-(plan §4.4; the token needs todos:read and todos:write too). Without --odysseus-url and the
+(plan §4.4; the token needs todos:read and todos:write too) and the Today screen the hub's
+Today insight (plan §4.1; the token needs insight:read too). Without --odysseus-url and the
 token, calendar and checklist actions stay queued on the T5, the feed's calendar is empty
-and it has no todos.
+and it has no todos and no insight.
 
 Exit codes for --once/--list: 0 ok, 1 some actions still waiting, 2 retry later (server,
 link or T5 error), 3 token rejected / incompatible / bad settings, 4 T5 not found.
@@ -52,6 +53,7 @@ from barvis_relay.anchors import default_state_dir
 from barvis_relay.pda_actions import NoCalendar
 from barvis_relay.pda_calendar import OdysseusCalendar
 from barvis_relay.pda_feed import HttpApi, resolve_tz
+from barvis_relay.pda_insight import OdysseusInsight
 from barvis_relay.pda_todos import OdysseusTodos
 from barvis_relay.protocol import iso_ms
 
@@ -224,8 +226,9 @@ def exit_code(report: s.Report) -> int:
 
 
 def make_odysseus(args: argparse.Namespace):
-    """(calendar, todos): OdysseusCalendar and OdysseusTodos if a URL and token are set,
-    (NoCalendar, None) if neither, None (an error) if only one is."""
+    """(calendar, todos, insight): OdysseusCalendar, OdysseusTodos and OdysseusInsight if a
+    URL and token are set, (NoCalendar, None, None) if neither, None (an error) if only one
+    is."""
     from ble_relay import read_token
 
     url = args.odysseus_url or os.environ.get("ODYSSEUS_URL")
@@ -234,9 +237,9 @@ def make_odysseus(args: argparse.Namespace):
     else:
         token = os.environ.get("ODYSSEUS_TOKEN", "").strip() or None
     if not url and not token:
-        return NoCalendar(), None
+        return NoCalendar(), None, None
     if not url or not token:
-        log.error("Odysseus (calendar, todos) needs both --odysseus-url (or ODYSSEUS_URL) "
+        log.error("Odysseus (calendar, todos, insight) needs both --odysseus-url (or ODYSSEUS_URL) "
                   "and the token in ODYSSEUS_TOKEN or --odysseus-token-file")
         return None
     if not args.calendar_href:
@@ -245,7 +248,8 @@ def make_odysseus(args: argparse.Namespace):
     try:
         return (OdysseusCalendar(url, token, calendar_href=args.calendar_href,
                                  timeout=args.http_timeout),
-                OdysseusTodos(url, token, timeout=args.http_timeout))
+                OdysseusTodos(url, token, timeout=args.http_timeout),
+                OdysseusInsight(url, token, timeout=args.http_timeout))
     except ValueError as e:
         log.error("--odysseus-url: %s", e)
         return None
@@ -271,13 +275,13 @@ async def main_async(args: argparse.Namespace) -> int:
     odysseus = make_odysseus(args)
     if odysseus is None:
         return 3
-    calendar, todos = odysseus
+    calendar, todos, insight = odysseus
     templates = [x.strip() for x in (args.templates or "").split(",") if x.strip()]
     state_dir = args.state_dir.expanduser() if args.state_dir else default_state_dir()
     state = s.PdaState(None if args.list else state_dir / "pda.json")
     once = args.once or args.list
     sync = s.PdaSync(api, tz_name=tz_name, calendar=calendar, templates=templates, todos=todos,
-                     state=state, stay=not once, list_only=args.list)
+                     insight=insight, state=state, stay=not once, list_only=args.list)
     backoff = s.Backoff()
     next_due = 0.0
     early = False  # after a good sync: connect before next_due if the outbox is waiting
