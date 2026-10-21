@@ -396,6 +396,8 @@ class Summarizer:
         asked = _NOTE_WORD.search("\n".join(parts)) is not None
         out["action_items"] = [i for i in out["action_items"]
                                if i["kind"] != NOTE_ITEM or (asked and i["text"])]
+        if asked:  # a command the model missed or took for a task
+            _notes_from_commands(out["action_items"], parts, origin)
         for item in out["action_items"]:
             if item["kind"] == NOTE_ITEM:  # a note is filed as it is: no date or time
                 item.update(due=None, due_date=None, due_time=None, time_unclear=False,
@@ -639,11 +641,69 @@ def _note_storage(a: ActionItem, text: str, source_at: float | None) -> dict[str
         text = re.sub(r"^(?:add|put|write(?:\s+down)?)\s*[:,-]?\s*", "", rest,
                       flags=re.IGNORECASE) or text
     text = _NOTE_COMMAND.sub("", text.strip()).strip(" :,-") or text.strip()
-    text = text[:1].upper() + text[1:]
+    text = re.sub(r"(?<!\.)\.$", "", text[:1].upper() + text[1:])  # a sentence's period
     title = re.sub(r"\s+", " ", (a.title or "").strip().strip(".\"'"))[:80] or None
     return {"text": text, "kind": NOTE_ITEM, "owner": None, "due": None, "due_date": None,
             "time": None, "duration_minutes": None, "location": None, "list_name": name,
             "note_title": title, "source_at": source_at}
+
+
+# "[12] Me: text": a line of format_transcript
+_LINE = re.compile(r"^\[(?P<at>\d+)\] [^:]*: (?P<text>.*)$")
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+_LEAD = re.compile(r"^(?:and|also|then|oh|so)[,\s]+", re.IGNORECASE)
+_ADD_TO_NOTES = re.compile(r"^(?:add|put|write(?:\s+down)?)\b", re.IGNORECASE)
+
+
+def _command_sentences(parts: list[str]) -> list[tuple[str, int]]:
+    """Sentences that ask for a note ("create a note ...", "note that ...", "add to my
+    hardware notes ..."), with the line's offset in seconds."""
+    out = []
+    for part in parts:
+        for line in part.splitlines():
+            m = _LINE.match(line.strip())
+            if not m:
+                continue
+            for sentence in _SENTENCE_END.split(m["text"]):
+                said = _LEAD.sub("", sentence.strip())
+                if _NOTE_COMMAND.match(said + " ") or (
+                        _ADD_TO_NOTES.match(said) and _NOTES_PHRASE.search(said)):
+                    out.append((said, int(m["at"])))
+    return out
+
+
+def _words(text: str) -> set[str]:
+    return set(re.findall(r"[^\W\d_]+|\d+", text.lower()))  # "13mm" = "13 mm"
+
+
+def _covers(item: dict[str, Any], want: set[str]) -> bool:
+    """The item says mostly the same words."""
+    got = _words(item["text"])
+    return bool(got) and len(want & got) >= 0.6 * min(len(want), len(got))
+
+
+def _notes_from_commands(items: list[dict[str, Any]], parts: list[str],
+                         origin: float) -> None:
+    """Make sure each spoken note command gives a note: an item the model already wrote
+    for it becomes the note (small models take "add to my hardware notes ..." for a
+    task); a command without an item gets one, untitled (the hub titles it)."""
+    for said, at in _command_sentences(parts):
+        note = _note_storage(ActionItem(text=said, kind=NOTE_ITEM), said, origin + at)
+        want = _words(note["text"])
+        if not want:
+            continue
+        if any(i["kind"] == NOTE_ITEM and _covers(i, want) for i in items):
+            continue
+        twin = next((i for i in items if i["kind"] != NOTE_ITEM and not i.get("due_date")
+                     and not i.get("due_time") and _covers(i, want)), None)
+        if twin is not None:
+            twin.update(note, note_title=None, source_at=twin.get("source_at") or origin + at,
+                        time_unclear=False)
+            twin.pop("time", None)
+        else:
+            note.pop("time", None)
+            note["due_time"], note["time_unclear"] = None, False
+            items.append(note)
 
 
 def _dedupe(items: list[str]) -> list[str]:

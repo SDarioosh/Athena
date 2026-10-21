@@ -297,7 +297,9 @@ small local model does better on narrow questions):
    my hardware notes: the screen is 1.4 inch" also gets `list_name` `hardware` (the
    notes to add it to, without "my"/"the"/"notes"). Code keeps a note only when the
    voice note says "note"/"notes", strips command words the model leaves in, and gives
-   a note no date, time or owner. In a conversation a `note` becomes a `task`. Notes
+   a note no date, time or owner. It also finds the command sentences itself: one the
+   model missed becomes a note (untitled; the hub titles it from the text), and an
+   undated task the model wrote for it becomes that note. In a conversation a `note` becomes a `task`. Notes
    are left out of the text `list_action_items`, the digest and `GET /v1/action-items`
    (add `?include_notes=true`); the JSON listing has them. Odysseus files each into its
    notes (a note of its own, or a line on the named notes) and marks it done here.

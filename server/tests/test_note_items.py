@@ -149,3 +149,32 @@ def test_status_and_kind_changes(stored):
     assert stored.store.update_action_item(item["id"], kind="task")["kind"] == "task"
     with pytest.raises(ValueError):
         stored.store.update_action_item(item["id"], kind="note")
+
+
+# ---------------------------------------------------------- commands the model missed
+def test_missed_command_is_made_a_note_in_code():
+    (item,) = note_items([], "Note that the router admin page is at 192.168.1.1.")
+    assert (item["kind"], item["text"], item["note_title"], item["list_name"]) == (
+        "note", "The router admin page is at 192.168.1.1", None, None)
+    assert item["source_at"] == T0 and item["due_time"] is None
+
+
+def test_command_taken_for_a_task_becomes_the_note():
+    task = {"text": "The screen is 1.4 inch", "kind": "task", "at_seconds": 0}
+    (item,) = note_items([task], "Add to my hardware notes the screen is 1.4 inch")
+    assert (item["kind"], item["text"], item["list_name"]) == (
+        "note", "The screen is 1.4 inch", "hardware")
+
+
+def test_fallback_keeps_other_items_and_model_notes():
+    milk = {"text": "Buy milk", "kind": "task", "at_seconds": 0}
+    garage = {"text": "The garage code is 4417", "kind": "note", "title": "Garage code",
+              "at_seconds": 0}
+    items = note_items([milk, garage],
+                       "Remember to buy milk. And create a note the garage code is 4417.")
+    assert [(i["kind"], i["text"], i["note_title"]) for i in items] == [
+        ("task", "Buy milk", None), ("note", "The garage code is 4417", "Garage code")]
+    # a task with a date is never taken for the note
+    dated = {"text": "Call the plumber", "kind": "task", "due": "Friday", "at_seconds": 0}
+    items = note_items([dated], "Note that I should call the plumber. Call the plumber Friday")
+    assert sorted(i["kind"] for i in items) == ["note", "task"]
