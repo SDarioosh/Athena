@@ -453,6 +453,11 @@ bool board_button_is_down(board_button_t button)
     return button == BOARD_BUTTON_BOOT && gpio_get_level(PIN_BOOT_BUTTON) == 0;
 }
 
+bool board_screen_on_while_recording(void)
+{
+    return false; /* battery: the screen lights for a few seconds per action */
+}
+
 const char *board_button_hint(void)
 {
     return "PWR: REC  2X BOOT: MUTE";

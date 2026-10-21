@@ -392,6 +392,11 @@ bool board_button_is_down(board_button_t button)
     return false; /* the PMU key reports events, not a level */
 }
 
+bool board_screen_on_while_recording(void)
+{
+    return false; /* battery: the screen lights for a few seconds per action */
+}
+
 const char *board_button_hint(void)
 {
     return "1:REC 2:MUTE 3:INFO";

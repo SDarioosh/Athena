@@ -53,8 +53,9 @@ static esp_err_t push_line(int y, const char *text, int scale, uint16_t color)
     if (s_compact && y + h > s_info.height) {
         h = s_info.height - y;
     }
-    /* Small panels: shrink text that would not fit across rather than cutting it off. */
-    while (s_compact && scale > 1 && textfb_text_width(text, scale) > s_info.width) {
+    /* Shrink text that would not fit across rather than cutting it off (any panel: lines
+     * that fit are drawn as before). */
+    while (scale > 1 && textfb_text_width(text, scale) > s_info.width) {
         scale--;
     }
     const int w = textfb_text_width(text, scale);
@@ -89,7 +90,7 @@ static esp_err_t clear_screen(void)
     return ESP_OK;
 }
 
-typedef enum { VIEW_STATUS, VIEW_PAIRING, VIEW_MESSAGE } view_t;
+typedef enum { VIEW_STATUS, VIEW_PAIRING, VIEW_MESSAGE, VIEW_RECORDING } view_t;
 static view_t s_view; /* what is on screen while s_shown */
 
 /* Power the panel on if needed; clear it when it was off or showed another view. */
@@ -240,6 +241,69 @@ esp_err_t ui_show_message(const char *big, const char *small)
     push_line(y, big, scale, white);
     push_line(y + band_for(scale) + (s_compact ? 6 : 12), small ? small : "", SMALL_SCALE, grey);
     return board_display_set_brightness(BRIGHTNESS_PERCENT);
+}
+
+#define REC_BRIGHTNESS_PERCENT 40 /* on for hours: dimmer, less burn-in */
+#define REC_SHIFT_STEPS 5         /* line positions it cycles through, one per minute */
+#define REC_SHIFT_PX 8
+
+esp_err_t ui_show_recording(const ui_rec_t *r)
+{
+    /* A new minute moves every line; clear so nothing is left behind. */
+    static int s_rec_shift = -1;
+    const int shift = (int)((r->elapsed_s / 60) % REC_SHIFT_STEPS) * REC_SHIFT_PX -
+                      (REC_SHIFT_STEPS / 2) * REC_SHIFT_PX;
+    const bool moved = s_shown && s_view == VIEW_RECORDING && shift != s_rec_shift;
+    ESP_RETURN_ON_ERROR(screen_begin(VIEW_RECORDING), TAG, "screen");
+    if (moved) {
+        ESP_RETURN_ON_ERROR(clear_screen(), TAG, "clear");
+    }
+    s_rec_shift = shift;
+
+    const uint16_t white = textfb_rgb(255, 255, 255);
+    const uint16_t grey = textfb_rgb(140, 140, 140);
+    const uint16_t red = textfb_rgb(240, 40, 40);
+    const uint16_t amber = textfb_rgb(255, 176, 0);
+    const int big = band_for(MESSAGE_SCALE);
+    const int gap = s_compact ? 6 : 16;
+    int y = s_info.height / 4 + shift;
+    char line[32];
+
+    push_line(y, r->note ? "NOTE" : "REC", MESSAGE_SCALE, red);
+    y += big + gap;
+    const uint32_t h = r->elapsed_s / 3600, m = (r->elapsed_s / 60) % 60, sec = r->elapsed_s % 60;
+    if (h) {
+        snprintf(line, sizeof(line), "%u:%02u:%02u", (unsigned)h, (unsigned)m, (unsigned)sec);
+    } else {
+        snprintf(line, sizeof(line), "%u:%02u", (unsigned)m, (unsigned)sec);
+    }
+    push_line(y, line, MESSAGE_SCALE, white);
+    y += big + 3 * gap;
+
+    if (r->mics_mixed >= 0) {
+        if (r->mics_mixed == 0) {
+            snprintf(line, sizeof(line), "NO MICS");
+        } else {
+            snprintf(line, sizeof(line), "%d MIC%s", r->mics_mixed, r->mics_mixed == 1 ? "" : "S");
+        }
+        push_line(y, line, TEXT_SCALE, r->mics_mixed ? grey : amber);
+        y += band_for(TEXT_SCALE) + gap;
+    }
+    if (r->battery_known && r->battery.vbus) {
+        if (r->battery.present && r->battery.percent >= 0) {
+            snprintf(line, sizeof(line), "USB  BATT %d%%", r->battery.percent);
+        } else {
+            snprintf(line, sizeof(line), "USB POWER");
+        }
+    } else if (r->battery_known && r->battery.percent >= 0) {
+        snprintf(line, sizeof(line), "BATTERY %d%%", r->battery.percent);
+    } else {
+        snprintf(line, sizeof(line), "BATTERY ?");
+    }
+    push_line(y, line, SMALL_SCALE, r->battery_low ? amber : grey);
+    y += band_for(SMALL_SCALE) + gap;
+    push_line(y, r->stop_hint ? r->stop_hint : "", SMALL_SCALE, grey);
+    return board_display_set_brightness(REC_BRIGHTNESS_PERCENT);
 }
 
 esp_err_t ui_hide(void)

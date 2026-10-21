@@ -77,7 +77,14 @@ static RTC_DATA_ATTR volatile bool s_muted;
 static volatile bool s_time_valid;
 static esp_err_t s_session_result; /* set by the session's done callback */
 /* Event loop only. */
-typedef enum { SCREEN_OFF, SCREEN_STATUS, SCREEN_MESSAGE, SCREEN_NOTE, SCREEN_PAIRING } screen_t;
+typedef enum {
+    SCREEN_OFF,
+    SCREEN_STATUS,
+    SCREEN_MESSAGE,
+    SCREEN_NOTE,
+    SCREEN_PAIRING,
+    SCREEN_REC, /* the recording screen, on for the whole recording (some boards) */
+} screen_t;
 static screen_t s_screen;           /* what is on the panel while ui_is_shown() */
 static bool s_note_pending;         /* a note waits for the conversation session to end */
 static bool s_resume_conversation;  /* start a conversation session again after the note */
@@ -374,6 +381,36 @@ static void show_note(uint32_t elapsed_s, bool restart_timer)
     }
 }
 
+/* Boards that keep the screen on while recording (board_screen_on_while_recording()): true
+ * while a session or note records. */
+static bool rec_screen_wanted(void)
+{
+    return board_screen_on_while_recording() && session_rec_running();
+}
+
+/* The recording screen, until the recording ends (no timer). */
+static void show_rec(void)
+{
+    session_rec_state_t ss;
+    session_rec_get_state(&ss);
+    ui_rec_t r = {
+        .note = ss.kind == SESSION_KIND_NOTE,
+        .elapsed_s = ss.elapsed_s,
+        .mics_mixed = mic_array_channels() > 0 ? mic_mix_count(mic_array_mask()) : -1,
+        .battery_low = s_batt_low,
+        .stop_hint = "PRESS BOOT TO STOP",
+    };
+    bool simulated = false;
+    r.battery_known = app_battery_read(&r.battery, &simulated) == ESP_OK;
+    if (ui_show_recording(&r) != ESP_OK) {
+        ui_hide();
+        s_screen = SCREEN_OFF;
+        return;
+    }
+    esp_timer_stop(s_screen_timer);
+    s_screen = SCREEN_REC;
+}
+
 static void refresh_screen_if_shown(void)
 {
     if (ui_is_shown() && s_screen == SCREEN_STATUS) {
@@ -481,7 +518,11 @@ static void start_conversation(bool quiet)
     if (!quiet) {
         board_haptic_pulse(1);
     }
-    show_message("RECORDING", quiet ? "RESUMED" : NULL);
+    if (board_screen_on_while_recording()) {
+        show_rec();
+    } else {
+        show_message("RECORDING", quiet ? "RESUMED" : NULL);
+    }
     ble_sync_kick();
 }
 
@@ -502,7 +543,11 @@ static void begin_note(void)
     }
     ESP_LOGI(TAG, "voice note started (1 buzz; max %d s, PWR press or hold stops it)", SESSION_REC_NOTE_MAX_S);
     board_haptic_pulse(1);
-    show_note(0, true);
+    if (board_screen_on_while_recording()) {
+        show_rec();
+    } else {
+        show_note(0, true);
+    }
     ble_sync_kick();
 }
 
@@ -780,7 +825,9 @@ static void handle(const app_event_t *ev)
         session_rec_get_state(&ss);
         s_rec_resume = ss.running && ss.kind == SESSION_KIND_CONVERSATION ? REC_RESUME_MAGIC : 0;
     }
-        if (ui_is_shown() && s_screen == SCREEN_NOTE && note_running()) {
+        if (rec_screen_wanted() && (s_screen == SCREEN_REC || !ui_is_shown())) {
+            show_rec(); /* also back on after anything turned the screen off */
+        } else if (ui_is_shown() && s_screen == SCREEN_NOTE && note_running()) {
             show_note((uint32_t)ev->arg, false);
         } else {
             refresh_screen_if_shown();
@@ -793,8 +840,12 @@ static void handle(const app_event_t *ev)
         session_done((session_rec_kind_t)(ev->arg >> 8), (session_rec_end_t)(ev->arg & 0xff));
         break;
     case APP_EV_SCREEN_TIMEOUT:
-        ui_hide();
-        s_screen = SCREEN_OFF;
+        if (rec_screen_wanted()) {
+            show_rec(); /* a status or message screen during a recording: back to it */
+        } else {
+            ui_hide();
+            s_screen = SCREEN_OFF;
+        }
         break;
     case APP_EV_RECORD:
         start_test_recording(ev->arg);

@@ -388,6 +388,11 @@ bool board_button_is_down(board_button_t button)
     return gpio_get_level(PIN_BUTTON) == 0;
 }
 
+bool board_screen_on_while_recording(void)
+{
+    return true; /* a desk recorder, mostly on USB: show that it records, all the time */
+}
+
 const char *board_button_hint(void)
 {
     return "1X REC  2X MUTE  TAP INFO  HOLD NOTE";

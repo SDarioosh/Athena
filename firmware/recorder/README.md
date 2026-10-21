@@ -174,8 +174,14 @@ notes, the flash queue, BLE sync and the console work as on the T-Watch S3. Diff
   8 s ring in PSRAM, and the I2S interrupt keeps running while flash is written
   (`CONFIG_I2S_ISR_IRAM_SAFE`). Measured: 74.9 s recorded in 74.9 s; the recorder fell up to
   2.3 s behind while closing a chunk, the ring absorbed it. `status` shows lost buffers.
+- **Screen on while recording** (`board_screen_on_while_recording()`; the watches keep
+  their few-seconds screen): a red REC (or NOTE), the running time, the mics mixed ("NO
+  MICS" in amber when none answer), USB/battery and "PRESS BOOT TO STOP", for the whole
+  recording. A tap or a status screen shows for a few seconds, then it comes back. At 40 %
+  brightness, its lines move a few pixels every minute (AMOLED burn-in). Meant for a desk
+  on USB; on battery the screen costs runtime.
 - **Screen**: 450x600 RM690B0 AMOLED (QSPI, driven by `esp_lcd_co5300` with LilyGO's init
-  list). The UI draws in 16-row strips (a 14 KB buffer instead of 43 KB).
+  list). Lines too wide for a panel now shrink to fit (all boards). The UI draws in 16-row strips (a 14 KB buffer instead of 43 KB).
 - **Charger: SY6970** (I2C 0x6A): 512 mA charge current, watchdog off, ADC one-shot per read.
   No fuel gauge: the percentage is estimated from the voltage. With the slide switch off the
   battery is cut off and reads as absent.

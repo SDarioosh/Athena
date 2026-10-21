@@ -445,6 +445,11 @@ right after its sizes, flags and timings were read; none was uploaded.
 - Screen: RM690B0 450x600 AMOLED through `esp_lcd_co5300` with LilyGO's init list. The UI
   now draws in 16-row strips (all boards): the 43 KB band didn't fit next to the mic DMA
   buffers while recording.
+- Screen on for the whole recording (owner: the T4-S3 sits on a desk on USB, switched off
+  when unused): red REC/NOTE, running time, mics mixed, USB/battery, how to stop; dimmed and
+  shifted a few pixels a minute against burn-in. On the owner's board: on for a 2.5 min
+  recording, readable, BOOT stopped it and the screen went dark. The watches are unchanged
+  (`board_screen_on_while_recording()` false). Lines too wide for a panel now shrink.
 - Tap-to-wake (owner's request): a tap on the touchscreen (CST226SE, INT on GPIO8) shows the
   status screen, once per touch. On the owner's board: tap, resting finger, tap = three
   status screens. Its idle current isn't measured yet.

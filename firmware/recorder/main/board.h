@@ -130,6 +130,9 @@ esp_err_t board_rtc_set(int64_t epoch);
 void board_buttons_set_callback(board_button_cb_t cb, void *ctx);
 /* Live level of a button. Only GPIO buttons can answer; the PWR button reports false. */
 bool board_button_is_down(board_button_t button);
+/* Keep the screen on for the whole recording, showing the time (ui_show_recording). For a
+ * desk recorder on USB (T4-S3); the watches light it only for a few seconds per action. */
+bool board_screen_on_while_recording(void);
 /* One short line for the status screen saying what the buttons do, e.g. "PWR: REC  2X BOOT: MUTE". */
 const char *board_button_hint(void);
 /* `count` short buzzes (1 = started, 2 = stopped or muted). Blocks for the duration. */
