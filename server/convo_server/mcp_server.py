@@ -92,11 +92,12 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.4.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.5.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
-    # merging two names can't be undone (the lines of both look the same afterwards)
+    # merging two names can't be undone (the lines of both look the same afterwards);
+    # retire_fact uses it too: a forgotten fact is out of every listing for good
     rw_merge = ToolAnnotations(read_only_hint=False, destructive_hint=True,
                                idempotent_hint=True, open_world_hint=False)
 
@@ -350,6 +351,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                  "about": _about(f["subject"], owners, people), "fact": f["fact"],
                  "times_said": f["times_said"], "days": f["days"],
                  "first_said": f["first_said"], "last_said": f["last_said"],
+                 "confirmed": (f["times_said"] >= settings.fact_confirm_sources
+                               and f["days"] >= settings.fact_confirm_days),
                  "link": fact_link(f)} for f in rows]}, ensure_ascii=False)
         lines = [header(len(rows), "confirmed facts" if confirmed else "facts")]
         for f in rows:
@@ -367,6 +370,22 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                                                (old["source_at"] or old["conversation_at"])
                                                - old["conversation_at"]))
         return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
+
+    @mcp.tool(annotations=rw_merge)
+    def retire_fact(fact_id: Annotated[int, Field(description="The fact's id (list_facts "
+                                                              "format=json)")],
+                    reason: Annotated[str, Field(description="Why, e.g. 'wrong' or "
+                                                             "'private'; optional")] = ""
+                    ) -> str:
+        """Forget a fact the user says is wrong or should not be kept. It disappears from
+        list_facts and search, and stays forgotten when it is said again or its
+        conversation is re-summarized. Only when the user asks."""
+        result = store.retire_fact(fact_id, reason)
+        if result is None:
+            return f"No fact #{fact_id}."
+        if result == "already":
+            return f"Fact #{fact_id} was already retired."
+        return f"Fact #{fact_id} retired."
 
     @mcp.tool(annotations=ro)
     def get_daily_digest(date: Annotated[str, Field(description="YYYY-MM-DD")]) -> str:
