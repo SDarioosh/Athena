@@ -92,7 +92,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.3.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.4.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -312,19 +312,44 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                 + (f"due {when_due}" if when_due else "no due date")
                 + (f", on the {item['list_name']} list." if item.get("list_name") else "."))
 
+    def fact_link(f: dict[str, Any]) -> str:
+        return transcript_link(settings, f["conversation_id"],
+                               (f["source_at"] or f["conversation_at"]) - f["conversation_at"])
+
     @mcp.tool(annotations=ro)
     def list_facts(subject: Annotated[str, Field(description="Person/thing the fact is about")]
-                   = "", query: Text = "", limit: int = 50) -> str:
+                   = "", query: Text = "", limit: int = 50,
+                   confirmed: Annotated[bool, Field(
+                       description="true = only confirmed facts: said in several "
+                                   "conversations on different days, not replaced since")]
+                   = False,
+                   format: Annotated[str, Field(  # noqa: A002
+                       description="'text' (default) or 'json' (a JSON object, for "
+                                   "programs)")] = "text") -> str:
         """Durable facts learned from conversations (preferences, plans, relationships...).
         Only the latest version of each fact; older values it replaced are listed under it."""
-        rows = store.list_facts(subject=subject or None, query=query or None,
-                                limit=max(1, min(limit, 200)))
-        lines = [header(len(rows), "facts")]
+        fmt = (format or "text").strip().lower()
+        if fmt not in ("text", "json"):
+            return "format must be text or json"
+        counted = confirmed or fmt == "json"
+        rows = store.list_facts(
+            subject=subject or None, query=query or None, limit=max(1, min(limit, 200)),
+            counts_tz=settings.timezone if counted else None,
+            min_sources=settings.fact_confirm_sources if confirmed else 0,
+            min_days=settings.fact_confirm_days if confirmed else 0)
+        if fmt == "json":
+            owners, people = store.known_names()
+            owners |= _OWNER_WORDS | {settings.owner_name.strip().lower()} - {""}
+            return json.dumps({"facts": [
+                {"id": f["id"], "subject": f["subject"] or "",
+                 "about": _about(f["subject"], owners, people), "fact": f["fact"],
+                 "times_said": f["times_said"], "days": f["days"],
+                 "first_said": f["first_said"], "last_said": f["last_said"],
+                 "link": fact_link(f)} for f in rows]}, ensure_ascii=False)
+        lines = [header(len(rows), "confirmed facts" if confirmed else "facts")]
         for f in rows:
-            off = (f["source_at"] or f["conversation_at"]) - f["conversation_at"]
             lines.append(f"- [{f['subject']}] {f['fact']} (learned "
-                         f"{when(f['conversation_at'], '%Y-%m-%d')}) "
-                         + transcript_link(settings, f["conversation_id"], off))
+                         f"{when(f['conversation_at'], '%Y-%m-%d')}) " + fact_link(f))
             for s in store.fact_sources(f["id"]):
                 lines.append(f"  said again {when(s['conversation_at'], '%Y-%m-%d')} "
                              + transcript_link(settings, s["conversation_id"],
@@ -463,6 +488,19 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         return "\n".join(out)
 
     return mcp
+
+
+# Subjects that mean the owner (the user) in a fact, besides the owner's own names.
+_OWNER_WORDS = {"me", "i", "myself", "owner", "the owner", "user", "the user"}
+
+
+def _about(subject: str | None, owners: set[str], people: set[str]) -> str:
+    """Who a fact is about: "owner", "person" (a known speaker or a person named in a
+    conversation) or "other"."""
+    s = (subject or "").strip().lower()
+    if s in owners:
+        return "owner"
+    return "person" if s and s in people else "other"
 
 
 _UNNAMED = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
