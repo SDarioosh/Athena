@@ -63,7 +63,7 @@ static void draw_item(const lay_t *l, int top, const today_item_t *it)
 {
     const feed_t *f = l->in->f;
     const int y1 = top + 26, y2 = y1 + LH;
-    char why[160];
+    char why[400]; /* the hub's why is up to 80 characters of UTF-8 */
     const char *r = it->reason, *w = it->ref.why;
     if (r[0] && w) {
         snprintf(why, sizeof(why), "%s \xc2\xb7 %s", r, w); /* · */
