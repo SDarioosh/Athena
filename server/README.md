@@ -198,7 +198,8 @@ sherpa-onnx on CPU, extra `parakeet`, `CONVO_PARAKEET_MODEL_DIR`); see `.env.exa
 whisper stays the default.
 
 Read API: `/v1/conversations`, `/v1/conversations/{id}`, `/v1/conversations/{id}/transcript`
-(`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items`, `/v1/digests/{date}`,
+(`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items` (`?include_notes=true`
+adds note items), `/v1/digests/{date}`,
 `/v1/sessions`, `/v1/speakers`; `PATCH /v1/action-items/{id}` takes any of `status`,
 `kind`, `due_date`, `due_time`, `list_name` (`null` clears a date, time or list). Conversations carry a
 signed `link`, and action items and facts a `source_url`, of the form `<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`: an HTML
@@ -215,7 +216,7 @@ source of truth, so the frontend can be swapped. Tools:
 | `search_transcripts(speaker, query, since, until)` | "what did X say (about Y) on/since DATE": actual lines, with links |
 | `search_conversations(query, person, since, until)` | conversations by topic / person / date |
 | `get_conversation(id)`, `get_transcript(id, start_seconds, end_seconds)` | details |
-| `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs (the hub files voice-note items into its calendar and to-dos from it) |
+| `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs, notes (kind `note`, `note_title`) included (the hub files voice-note items into its calendar, to-dos and notes from it) |
 | `update_action_item(item_id, status, kind, due_date, due_time, list_name)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears), time (`HH:MM`, `none` clears) or to-do list (`shopping`, `none` clears); every argument but `item_id` is optional |
 | `list_facts(subject, query)`, `get_daily_digest(date)`, `list_people()` | memory |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
@@ -290,6 +291,16 @@ small local model does better on narrow questions):
    "Milk", list `shopping`), without "my"/"the"/"list". If the model leaves the phrase
    in an "Add …"/"Put …" text, code takes the list from it and drops it from the text.
    Odysseus adds the item to its to-do list with that name (or creates it).
+   **Notes (voice notes only, explicit commands only):** "create a note battery
+   dimensions are 13mm x 14mm x 3mm" becomes an item of kind `note` with text "Battery
+   dimensions are 13 mm x 14 mm x 3 mm" and `note_title` "Battery dimensions"; "add to
+   my hardware notes: the screen is 1.4 inch" also gets `list_name` `hardware` (the
+   notes to add it to, without "my"/"the"/"notes"). Code keeps a note only when the
+   voice note says "note"/"notes", strips command words the model leaves in, and gives
+   a note no date, time or owner. In a conversation a `note` becomes a `task`. Notes
+   are left out of the text `list_action_items`, the digest and `GET /v1/action-items`
+   (add `?include_notes=true`); the JSON listing has them. Odysseus files each into its
+   notes (a note of its own, or a line on the named notes) and marks it done here.
 4. **Facts**, then a **linking** call against related known facts (same subject or
    matching words): a repeat becomes another source of the known fact; a changed value
    replaces the older one (by conversation time, so re-summarizing an old conversation

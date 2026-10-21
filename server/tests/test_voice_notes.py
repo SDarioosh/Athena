@@ -95,7 +95,7 @@ def test_migration_gives_old_sessions_kind_conversation(tmp_path):
     old.close()
     store = Store(path)
     assert store.get_session("old")["kind"] == "conversation"
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 8
 
 
 # ---------------------------------------------------------------- pipeline

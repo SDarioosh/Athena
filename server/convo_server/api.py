@@ -298,8 +298,11 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
 
     # ---------------------------------------------------------- action items
     @v1.get("/action-items")
-    def action_items(status: str | None = "open") -> dict[str, Any]:
-        rows = store.list_action_items(None if status == "all" else status)
+    def action_items(status: str | None = "open",
+                     include_notes: bool = False) -> dict[str, Any]:
+        # notes ("create a note ...") are no to-dos: only on request
+        rows = store.list_action_items(None if status == "all" else status,
+                                       notes=include_notes)
         for r in rows:
             r["source_at"], r["conversation_at"] = iso(r["source_at"]), iso(r["conversation_at"])
             r["created_at"] = iso(r.get("created_at"))
