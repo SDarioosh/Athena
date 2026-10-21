@@ -5,6 +5,9 @@
  * the USB console. The phone (or the PC relay) pushes the feed and drains the outbox over
  * BLE; the T5 never talks to a server and holds no tokens.
  *
+ * Deep sleep: a BOOT press wakes into this normal boot; the sync timer (every 15 min) runs
+ * only pda_sleep_sync_wake(): no UI, the panel left alone, BLE for a minute, sleep again.
+ *
  * Buttons: BOOT short = back / Today, BOOT held 1 s = deep sleep (a BOOT press wakes it),
  * the S3 button next to BOOT (labelled IO48, on the PCA9535) short = front light on/off,
  * held 1 s = sync mode (the 2-minute pairing window). The light's level is on the Status
@@ -20,6 +23,7 @@
 #include "pda_app.h"
 #include "pda_console.h"
 #include "pda_epd.h"
+#include "pda_sleep.h"
 #include "t5_board.h"
 #include "touch_gt911.h"
 #include "ui_pda.h"
@@ -97,6 +101,13 @@ static void on_tick(void *arg)
     arm_tick();
 }
 
+static const ble_pda_hooks_t s_hooks = {
+    .fw_version = PDA_FW_VERSION,
+    .get_state = ble_state,
+    .on_passkey = on_passkey,
+    .on_link = on_link,
+};
+
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -104,8 +115,13 @@ void app_main(void)
         nvs_flash_erase();
         nvs_flash_init();
     }
+    const t5_wake_t wake = t5_board_wake_reason();
     ESP_ERROR_CHECK(t5_board_init());
-    if (t5_board_woke_from_sleep()) {
+    if (wake == T5_WAKE_TIMER) {
+        pda_sleep_sync_wake(&s_hooks); /* doesn't return */
+    }
+    pda_sleep_check_crash(); /* a crash during a sync wake: back to sleep */
+    if (wake == T5_WAKE_BUTTON) {
         ESP_LOGI(TAG, "woke from deep sleep (BOOT)");
     }
     ESP_ERROR_CHECK(pda_epd_init(t5_board_i2c()));
@@ -115,13 +131,7 @@ void app_main(void)
     }
     t5_board_start_buttons(on_button, NULL);
 
-    static const ble_pda_hooks_t hooks = {
-        .fw_version = PDA_FW_VERSION,
-        .get_state = ble_state,
-        .on_passkey = on_passkey,
-        .on_link = on_link,
-    };
-    err = ble_pda_init(pda_app_store(), NULL, &hooks);
+    err = ble_pda_init(pda_app_store(), NULL, &s_hooks);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "BLE: %s", esp_err_to_name(err));
     }

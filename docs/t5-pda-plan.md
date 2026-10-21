@@ -133,8 +133,11 @@ against LilyGO's `docs/pinmap.md` and examples (github.com/Xinyuan-LilyGO/T5S3-4
   refresh, while the front light is lit and while USB power is in (the USB console). Touch
   wakes it on the GT911 INT line (with a slow safety-net poll); the buttons are polled every
   50 ms (the side button is on the PCA9535, whose INT is epdiy's). The e-paper keeps the
-  image. Deep sleep with periodic wake for an advertising window is milestone 5. Built,
-  not yet measured on the board.
+  image. Deep sleep (BOOT held) wakes on BOOT and on a timer aimed at the phone's next due
+  sync (last BYE + 15 min): no UI, no light, no refresh, BLE for bonded relays for about a
+  minute, then sleep again (`main/sleep_plan.h`, `main/pda_sleep.c`). Waking skips epdiy's
+  full clear: the first screen is one clean refresh. Built 2026-10-20, not yet measured on
+  the board.
 
 ## 3. BLE service ("glance" protocol v1)
 

@@ -43,20 +43,14 @@ esp_err_t pda_epd_init(i2c_master_bus_handle_t bus)
         return err;
     }
     s_ready = true;
-
-    /* The panel's state is unknown after a reset: flash it white once. */
-    const int64_t t0 = esp_timer_get_time();
-    if (s_pm) {
-        esp_pm_lock_acquire(s_pm);
-    }
-    epd_poweron();
-    epd_fullclear(&s_hl, (int)epd_ambient_temperature());
-    epd_poweroff();
-    if (s_pm) {
-        esp_pm_lock_release(s_pm);
-    }
-    ESP_LOGI(TAG, "ready: %dx%d, portrait %d, VCOM %d mV, clear %d ms", epd_width(), epd_height(),
-             s_rot_deg, PDA_EPD_VCOM_MV, (int)((esp_timer_get_time() - t0) / 1000));
+    /* No clear here (it was epd_fullclear: three black/white cycles, ~1.9 s, before the UI's
+     * own GC16 redraw). The panel keeps its image, the Asleep screen after a wake, until
+     * the caller's first update: PDA_EPD_CLEAN, one cycle and every pixel drawn from white.
+     * epd_hl_init left both framebuffers white, which is what that update assumes. A caller
+     * that wants partial updates over the image on the panel redraws that image and calls
+     * pda_epd_mark_shown() first (a timer wake's "synced" line). */
+    ESP_LOGI(TAG, "ready: %dx%d, portrait %d, VCOM %d mV", epd_width(), epd_height(), s_rot_deg,
+             PDA_EPD_VCOM_MV);
     return ESP_OK;
 }
 
@@ -101,6 +95,16 @@ uint8_t *pda_epd_fb(void)
 void pda_epd_clear_fb(void)
 {
     epd_hl_set_all_white(&s_hl);
+}
+
+void pda_epd_mark_shown(void)
+{
+    if (!s_ready) {
+        return;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    memcpy(s_hl.back_fb, s_hl.front_fb, PDA_EPD_W / 2 * PDA_EPD_H);
+    xSemaphoreGive(s_lock);
 }
 
 static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area, bool count)
