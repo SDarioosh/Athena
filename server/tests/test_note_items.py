@@ -62,7 +62,7 @@ def test_add_to_named_notes():
     ("Add to my hardware notes: the screen is 1.4 inch", None,
      ("The screen is 1.4 inch", "hardware")),
     ("The screen is 1.4 inch, add it to the car notes", None,
-     ("The screen is 1.4 inch, add it", "car")),
+     ("The screen is 1.4 inch", "car")),
     # "my notes" names no notes: a note of its own
     ("Battery is 3 mm", "my notes", ("Battery is 3 mm", None)),
     ("Battery is 3 mm", "Hardware Notes", ("Battery is 3 mm", "Hardware")),

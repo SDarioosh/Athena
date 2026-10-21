@@ -583,8 +583,6 @@ def _item_storage(a: ActionItem, source_at: float | None) -> dict[str, Any]:
             "note_title": None, "source_at": source_at}
 
 
-
-
 # "... to my shopping list", "on the work to-do list", "to shopping list": a list the
 # user named. "my" / "the" is optional (speech and models drop it), so a name word is
 # never one ("add a reminder to check the list" names no list).
@@ -636,6 +634,8 @@ def _note_storage(a: ActionItem, text: str, source_at: float | None) -> dict[str
     if m and (name is None or name.lower() == (clean_notes_name(m["name"]) or "").lower()):
         name = name or clean_notes_name(m["name"])
         rest = (text[:m.start()] + " " + text[m.end():]).strip(" ,.:-")
+        rest = re.sub(r"[\s,]*\b(?:add|put|write)\s+(?:it|this|that)$", "", rest,
+                      flags=re.IGNORECASE)
         text = re.sub(r"^(?:add|put|write(?:\s+down)?)\s*[:,-]?\s*", "", rest,
                       flags=re.IGNORECASE) or text
     text = _NOTE_COMMAND.sub("", text.strip()).strip(" :,-") or text.strip()
