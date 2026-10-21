@@ -59,7 +59,7 @@ QUESTIONS: list[tuple[str, list[str], list[str]]] = [
 CONVO_TOOLS = {"search_transcripts", "search_conversations", "get_conversation",
                "get_transcript", "list_action_items", "update_action_item", "list_facts",
                "get_daily_digest", "list_people", "name_speaker", "list_unnamed_speakers",
-               "reassign_line", "rename_speaker_everywhere"}
+               "reassign_line", "rename_speaker_everywhere", "retire_fact"}
 
 
 def conv_ids(db: Path) -> dict[str, str]:

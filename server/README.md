@@ -219,6 +219,7 @@ source of truth, so the frontend can be swapped. Tools:
 | `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs, notes (kind `note`, `note_title`) included (the hub files voice-note items into its calendar, to-dos and notes from it) |
 | `update_action_item(item_id, status, kind, due_date, due_time, list_name)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears), time (`HH:MM`, `none` clears) or to-do list (`shopping`, `none` clears); every argument but `item_id` is optional |
 | `list_facts(subject, query, limit, confirmed, format)` | facts about people, the user and things; `confirmed=true` keeps only confirmed facts (below); `format="json"` returns a JSON object for programs (the hub copies confirmed facts into its memory from it) |
+| `retire_fact(fact_id, reason)` | "forget that": the fact is retired for good (below); answers `Fact #12 retired.`, `Fact #12 was already retired.` or `No fact #12.` |
 | `get_daily_digest(date)`, `list_people()` | memory |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
 | `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists) |
@@ -239,17 +240,31 @@ both formats. `list_facts(format="json")` returns current facts in the text mode
 {"facts": [{"id": 12, "subject": "Alice", "about": "person",
             "fact": "Alice is vegetarian", "times_said": 3, "days": 2,
             "first_said": "2025-10-09", "last_said": "2025-10-10",
-            "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
+            "confirmed": false, "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
 ```
 
 `about` is `owner` when the subject (trimmed, any case) is me, I, myself, owner, the
 owner, user, the user, `CONVO_OWNER_NAME` or the name of the enrolled owner voice;
 `person` when it is an enrolled speaker or a person named in a conversation; else
 `other`. `times_said` counts distinct conversations, `days` distinct local dates, and
-`first_said`/`last_said` are the first and last of those dates. `link` is the same
-transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
+`first_said`/`last_said` are the first and last of those dates. `confirmed` is true when
+the fact meets the thresholds above, so a program can take every current fact with its
+counts without knowing them (`confirmed=true` as an argument still filters). `link` is
+the same transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
 program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
-fact id that stops being returned (replaced, or its conversation deleted).
+fact id that stops being returned (replaced, retired, or its conversation deleted).
+
+**Retired facts.** `retire_fact(fact_id, reason)` (write, destructive) is how the owner
+forgets a fact from the hub's review page. The fact gets status `retired` (next to
+`current` and `superseded`) with `retired_at` and `retired_reason`, and leaves
+`list_facts` (both formats), search (keyword index and embeddings), `get_conversation`
+and `GET /v1/conversations/{id}`. Facts it had replaced stay replaced. It stays
+forgotten: a re-summary of its conversation (e.g. after `name_speaker`) marks the matching
+new fact retired again (a re-summary gives facts new ids, so the hub reconciles by the
+facts returned, not by old ids), and the fact linker is shown retired facts too, so the
+same fact said in a later conversation becomes another source of the retired fact
+instead of a new one. A later fact that *updates* a retired one is a new belief and is
+shown. Calling it again answers "already retired".
 
 **Hermes** (stdio; add to the profile's `config.yaml`):
 
@@ -337,8 +352,9 @@ small local model does better on narrow questions):
 A re-summary (e.g. after a speaker is renamed) keeps what was known about the old items:
 the id, status and creation time of action items (and the kind, date, time and list if
 the user changed them with `update_action_item`; an item with the same text is matched
-before a similar one said nearby), the other sources of a fact and which facts it
-replaced. Stable ids matter: Odysseus files voice-note items by id.
+before a similar one said nearby), the other sources of a fact, which facts it
+replaced, and whether the owner retired it. Stable ids matter: Odysseus files voice-note
+items by id.
 
 ## Recognition eval
 
