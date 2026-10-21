@@ -194,7 +194,9 @@ export BARVIS_TZ=Europe/Berlin           # the feed's time zone and the T5 clock
   `--calendar-href <CalDAV calendar id>`. Without them, calendar actions stay queued on the
   T5 and the feed has no events.
 - The same Odysseus URL and token fill the T5's Tasks tab with the owner's checklists
-  (plan §4.4; the token also needs `todos:read` and `todos:write`).
+  (plan §4.4; the token also needs `todos:read` and `todos:write`), and the feed with the
+  hub's Today insight (plan §4.1; the token also needs `insight:read`, else the feed has no
+  `insight`).
 - `--templates "Call,Meeting,Reminder"`: event titles for the T5's "+" picker.
 - Exit codes: 0 ok, 1 some actions still waiting, 2 retry later, 3 token rejected,
   incompatible or bad settings, 4 T5 not found.

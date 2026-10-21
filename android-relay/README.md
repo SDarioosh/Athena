@@ -127,12 +127,19 @@ Odysseus /api/codex/calendar/events, /api/codex/todos (one ody_ token)  ┴→ t
   (`exit_code` 0 is result 0, 1 is result 1). A hub without `format=json` or a token without
   the Todos permission means "no checklists": the status line says why and the rest syncs.
   Without Odysseus, `todo_toggle` stays queued.
+- **Today insight** (plan §4.1, the same rules as the PC relay). The feed's `insight` is the
+  hub's `GET /api/codex/insight/today` (same URL and token, scope `insight:read`): the date,
+  the headline (≤ 200 characters) and up to 5 `ref`/`why` items per section, keeping only
+  refs to a checklist item or calendar entry that is in the same feed. No insight yet, a
+  token without `insight:read`, a hub without the route or a malformed answer leave it
+  out (the status line says why, e.g. "insight: token lacks insight:read") and the rest
+  syncs; a network error or 5xx fails the feed like the calendar's.
 
 Setup:
 
 1. In Odysseus (Settings → API tokens), create a token with only **Calendar**,
-   **Calendar write**, **Todos** and **Todos write**. Copy the `ody_…` value; it is shown
-   once.
+   **Calendar write**, **Todos** and **Todos write**, plus `insight:read` for the T5's Today
+   insight (plan §4.1). Copy the `ody_…` value; it is shown once.
 2. In the relay's **Settings → PDA**: turn the sync on, enter the Odysseus URL (the same
    Tailscale host as the server, port 7000 on the owner's install, for example
    `http://myserver.<tailnet>.ts.net:7000`), the token, and the **calendar id** of your
@@ -141,7 +148,7 @@ Setup:
    `<Odysseus URL>/api/calendar/calendars` in a browser that is logged in to Odysseus and
    copy the `href` of the calendar whose `source` is `caldav`. Edit the event templates (one per
    line; the T5 offers them in its "+" picker), and, for automatic sync, the interval. **Test Odysseus**
-   counts the events of the next 7 days and the checklists. **Save**.
+   counts the events of the next 7 days and the checklists, and checks the Today insight. **Save**.
 3. Open the pairing window on the T5's Status screen and let the relay find it; type the
    code shown on the T5 when Android asks.
 

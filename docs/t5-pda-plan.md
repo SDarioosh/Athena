@@ -377,6 +377,7 @@ The phone builds it from these sources:
 | `actions` | `GET /v1/action-items?status=open`: id, text, owner, `due_date`, conversation id |
 | `calendar` | Odysseus calendar REST, today to +7 days: id, title, start, end, location, all-day |
 | `todos` | Odysseus notes (§4.4): the owner's checklists, pinned first, with their items |
+| `insight` | Odysseus `GET /api/codex/insight/today` (scope `insight:read`): the hub's Today insight, a headline and the to-dos and events to look at today (404 → leave out) |
 
 ```json
 {"v": 1, "version": 1729411200, "generated": "2026-10-20T07:00:00Z", "tz": "Europe/Berlin",
@@ -387,6 +388,9 @@ The phone builds it from these sources:
  "calendar": [{"id": "…", "title": "…", "start": "…", "end": "…", "where": "…", "all_day": false}],
  "todos": [{"id": "3f2c…", "title": "Groceries", "pinned": true, "due": null,
             "items": [{"i": 0, "text": "Milk", "done": false}, {"i": 2, "text": "Eggs", "done": false}]}],
+ "insight": {"date": "2026-10-20", "headline": "…",
+             "focus": [{"ref": "todo:3f2c…:0", "why": "…"}, {"ref": "event:…", "why": "…"}],
+             "coming_up": [{"ref": "event:…", "why": "…"}], "also": []},
  "templates": ["Call", "Meeting", "Reminder"]}
 ```
 
@@ -408,6 +412,29 @@ The phone builds it from these sources:
     `null`.
   - `calendar`: sorted by `start`.
   - `todos`: see §4.4.
+  - `insight` (added 2026-10-21): the hub's Today insight, from
+    `GET /api/codex/insight/today` with the calendar's URL and token (scope
+    `insight:read`). The hub answers `{"date", "generated", "headline", "focus",
+    "coming_up", "also"}`, each section a list of `{"ref", "why", "title"}`, or 404
+    `{"error": "no insight yet"}`.
+    - Only `date`, `headline`, and `ref` and `why` per item are copied (no `title`, no
+      `generated`); other keys are ignored. The keys come after `todos`.
+    - Caps: `headline` ≤ 200 characters and `why` ≤ 80 (cut like the other fields), at
+      most 5 items per section, the first that resolve. A `why` that is missing or not a
+      string is `""`. A section that is missing or not a list is `[]`.
+    - **Refs must resolve in this feed:** `todo:<note id>:<i>` only when `todos` has that
+      note with an item whose `i` is that number (written as the feed writes it, so `01`
+      or `x` never match), `event:<id>` only when `calendar` has an entry with that `id`
+      (the hub's event `uid`, an occurrence's `<uid>::<occurrence>` included). Anything
+      else is dropped silently. Without Odysseus todos or calendar, no ref of that kind
+      resolves.
+    - **Left out** (no `insight` key; the build doesn't fail): no Odysseus configured, no
+      insight yet (404), a hub without the route (FastAPI's 404 "Not Found", or 405), a
+      token without `insight:read` (403), any other final 4xx, and an answer that isn't a
+      JSON object or has no `YYYY-MM-DD` `date` or no string `headline`. The relay logs
+      why, and the phone's status line says it (for example "insight: token lacks
+      insight:read"). Network errors, 5xx, 408/429 and 401 fail the build, like a failing
+      calendar.
   - `templates` (optional): the owner's event titles for the "+" picker (§5), e.g.
     `["Call", "Meeting", "Reminder"]`. At most 12 of up to 40 characters. The phone takes
     them from its settings, the PC relay from `--templates "Call,Meeting,Reminder"`. The key
@@ -415,11 +442,14 @@ The phone builds it from these sources:
   - Field caps in characters: title 120, summary 600, 5 points of 160, action text 200.
   - The size limit is 32,768 bytes of compact UTF-8 JSON. Over it, each summary is cut to
     240 characters, then the oldest conversations are dropped. If it is still too big
-    (hundreds of open items), done checklist items go, then the last action items, then the
-  last unpinned checklists, then the last calendar entries.
+    (hundreds of open items), done checklist items go, then the whole `insight`, then the
+    last action items, then the last unpinned checklists, then the last calendar entries. An
+    `insight` that is kept loses the refs to done items that were dropped, so every ref
+    still resolves.
   - A source that fails fails the whole build, so nothing is pushed and the T5 keeps its
     feed. These don't count as failures: a digest 404, no Odysseus configured (no `calendar`
-  entries, no `todos`), and a hub that can't list notes for this token (§4.4).
+    entries, no `todos`, no `insight`), a hub that can't list notes for this token (§4.4),
+    and an insight the hub can't give (see `insight` above).
   - **Push rule:** the content hash is SHA-256 over the feed without `version` and
     `generated`. The relay pushes when this hash differs from the last one it pushed to
     this T5, or when `status.feed_version` isn't the version it pushed (the T5 was wiped,
@@ -481,7 +511,8 @@ same ones the Odysseus website shows. The action items the server suggests from
 conversations (`actions`) move into the conversation's detail screen (§5).
 
 - **Token:** the same Odysseus token as the calendar, with **Todos** (`todos:read`) and
-  **Todos write** (`todos:write`) added.
+  **Todos write** (`todos:write`) added. The Today insight (§4.1) needs `insight:read` on
+  the same token; without it the feed has no `insight`, and the rest syncs.
 - **Reading (hub change, SDarioosh/Barvis):** `GET /api/codex/todos?format=json` (scope
   `todos:read`). Without `format=json` the route keeps answering with the chat-model text it
   has today. Answer:
@@ -497,7 +528,8 @@ conversations (`actions`) move into the conversation's detail screen (§5).
   at most 20 notes and 40 items per note. Each item keeps its index `i` in the note's item
   list (the hub toggles by index). `title` ≤ 120 characters (an empty title is `null`), item
   `text` ≤ 160, `due` = `due_date` as `YYYY-MM-DD` or `null`. Done items are kept (shown
-  struck through) unless the feed is too big (§4.1).
+  struck through) unless the feed is too big (§4.1). The `type: checklist` filter is right
+  for `todo` and `goal` notes too: the hub reports them as `checklist` (both relays test it).
 - **`todo_toggle`:** `{"t":"todo_toggle","note":"<note id>","i":<index>,"text":"<the item's
   first 80 characters>","done":true|false}`. The relay:
   1. reads the note's current items (`GET /api/codex/todos?format=json`, once per sync);
