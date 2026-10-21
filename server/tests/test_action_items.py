@@ -118,7 +118,7 @@ def test_migration_v5_to_v6_makes_old_items_tasks(tmp_path):
     path = tmp_path / "old.db"
     old_v5_db(path)
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 8
     (item,) = store.list_action_items()
     assert item["kind"] == "task" and item["due_date"] == "2025-10-10"
     assert item["due_time"] is None and item["time_unclear"] == 0
@@ -220,7 +220,8 @@ def test_list_action_items_json(pipeline, note_mcp):
     assert meet == {
         "id": meet["id"], "status": "open", "kind": "event", "text": "Meet Jason",
         "owner": "Me", "due": "Wednesday", "due_date": "2025-10-15", "due_time": "12:00",
-        "duration_minutes": None, "location": None, "list_name": None, "time_unclear": False,
+        "duration_minutes": None, "location": None, "list_name": None, "note_title": None,
+        "time_unclear": False,
         "conversation_id": conv["id"], "conversation_title": "Plans for the week",
         "conversation_kind": "note", "conversation_at": "2025-10-09T08:53:20+00:00",
         "created_at": meet["created_at"], "timezone": "Europe/Berlin",
