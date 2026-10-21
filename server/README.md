@@ -220,9 +220,10 @@ source of truth, so the frontend can be swapped. Tools:
 | `update_action_item(item_id, status, kind, due_date, due_time, list_name)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears), time (`HH:MM`, `none` clears) or to-do list (`shopping`, `none` clears); every argument but `item_id` is optional |
 | `list_facts(subject, query, limit, confirmed, format)` | facts about people, the user and things; `confirmed=true` keeps only confirmed facts (below); `format="json"` returns a JSON object for programs (the hub copies confirmed facts into its memory from it) |
 | `retire_fact(fact_id, reason)` | "forget that": the fact is retired for good (below); answers `Fact #12 retired.`, `Fact #12 was already retired.` or `No fact #12.` |
-| `get_daily_digest(date)`, `list_people()` | memory |
+| `get_daily_digest(date)` | memory |
+| `list_people(format)` | speakers and people mentioned; `format="json"` returns each person's stable id for programs (the hub links people to its contacts by it, below) |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
-| `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists) |
+| `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists); the person keeps their id |
 | `reassign_line(line_id, name)` | one line given to the wrong person (`#id` from `get_transcript`) |
 | `list_unnamed_speakers(limit)` | voices nobody has named yet, with quotes and a guess, for "who is this?" |
 
@@ -237,7 +238,7 @@ both formats. `list_facts(format="json")` returns current facts in the text mode
 (newest conversation first), with no citation line:
 
 ```json
-{"facts": [{"id": 12, "subject": "Alice", "about": "person",
+{"facts": [{"id": 12, "subject": "Alice", "about": "person", "person_id": 3,
             "fact": "Alice is vegetarian", "times_said": 3, "days": 2,
             "first_said": "2025-10-09", "last_said": "2025-10-10",
             "confirmed": false, "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
@@ -245,14 +246,38 @@ both formats. `list_facts(format="json")` returns current facts in the text mode
 
 `about` is `owner` when the subject (trimmed, any case) is me, I, myself, owner, the
 owner, user, the user, `CONVO_OWNER_NAME` or the name of the enrolled owner voice;
-`person` when it is an enrolled speaker or a person named in a conversation; else
-`other`. `times_said` counts distinct conversations, `days` distinct local dates, and
+`person` when it is an enrolled speaker, a person named in a conversation or one of their
+former names (aliases, below); else `other`. `person_id` is the subject's person id (below) when `about` is `person`, and
+the owner's person id when it is `owner` (the enrolled owner voice's person, else the
+person called `CONVO_OWNER_NAME`); null for `other` or when no such person exists.
+`times_said` counts distinct conversations, `days` distinct local dates, and
 `first_said`/`last_said` are the first and last of those dates. `confirmed` is true when
 the fact meets the thresholds above, so a program can take every current fact with its
 counts without knowing them (`confirmed=true` as an argument still filters). `link` is
 the same transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
 program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
 fact id that stops being returned (replaced, retired, or its conversation deleted).
+
+**People.** Every enrolled voice and every person named in a conversation has a row in
+`people` with a stable id, so the hub can link them to its contacts. Names match in any
+case. `rename_speaker_everywhere` keeps the id and keeps the old name as an alias; if
+the new name is already a person, the two are merged and the id of the name that
+already existed survives (the other row gets `merged_into` it, its aliases and voice
+move, and its old id and names resolve to the survivor). Unnamed `Speaker N` labels are
+not people. `list_people(format="json")` lists the people not merged into another, in
+the text mode's order (speakers by last heard, then people mentioned, then the rest by
+name):
+
+```json
+{"people": [{"id": 3, "name": "Alice", "aliases": ["Ally"], "is_owner": false,
+             "has_voice": true, "conversations": 4, "first_seen": "2025-10-09",
+             "last_seen": "2025-10-12"}]}
+```
+
+`has_voice` means an enrolled or learned voice; `conversations` counts distinct
+conversations they spoke in or were named in (under their name or an alias), and
+`first_seen`/`last_seen` are the local dates (`CONVO_TIMEZONE`) of the first and last of
+those, null if none. The text mode is unchanged.
 
 **Retired facts.** `retire_fact(fact_id, reason)` (write, destructive) is how the owner
 forgets a fact from the hub's review page. The fact gets status `retired` (next to

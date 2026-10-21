@@ -156,6 +156,13 @@ the data path touches the cloud.**
   longer returned. Each JSON row also has `confirmed` (true/false by those thresholds),
   so a program can read all current facts and promote the confirmed ones. JSON fields are
   listed in `server/README.md`.
+- People have a stable id (`people` table) that survives renames, so the hub can link a
+  person here to one of its contacts. `list_people(format="json")` returns
+  `{"people": [{id, name, aliases, is_owner, has_voice, conversations, first_seen,
+  last_seen}]}` (people merged into another are left out), and each `list_facts` JSON
+  row has `person_id` (the subject's person for `about` person or owner, else null).
+  `rename_speaker_everywhere` keeps the id and keeps the old name as an alias; renaming
+  onto an existing person merges into that person, whose id survives.
 - `retire_fact(fact_id, reason)` forgets a fact (the hub's review page): status
   `retired`, out of `list_facts` (both formats), search and conversation details. It
   stays retired when its conversation is re-summarized, and a later fact linked "same"
