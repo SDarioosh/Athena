@@ -1,0 +1,10 @@
+# Name,     Type, SubType,  Offset,   Size,  Flags
+# T-Watch S3: 16 MB flash and no SD card. The recording queue lives in "storage", a FAT
+# file system with wear levelling (boards/twatch_s3/board/flashfs.c), ~11.8 MB: about an hour
+# of Opus audio at 24 kbps.
+nvs,        data, nvs,      0x9000,   0x6000,
+phy_init,   data, phy,      0xf000,   0x1000,
+factory,    app,  factory,  0x10000,  4M,
+# ELF core dump of the last crash (console `coredump`). Task stacks and TCBs, no heap.
+coredump,   data, coredump, 0x410000, 128K,
+storage,    data, fat,      0x430000, 0xBD0000,

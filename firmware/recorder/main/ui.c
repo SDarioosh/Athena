@@ -13,10 +13,16 @@
 static const char *TAG = "ui";
 
 #define BAND_H 48       /* rows per push: one text line at scale 5 (35 px) plus margin */
-#define TEXT_SCALE 5    /* 30 px glyph pitch: 13 characters across 410 px */
-#define SMALL_SCALE 3
-#define MESSAGE_SCALE 6 /* 36 px pitch: 11 characters across */
 #define BRIGHTNESS_PERCENT 60
+
+/* Text sizes. Large panels (T-Watch Ultra, 410 px wide): 30 px glyph pitch at scale 5, 13
+ * characters across. Small panels (T-Watch S3, 240x240): scale 3, 18 px pitch, 13 across,
+ * and a compact layout with bands as tall as the text. */
+static int s_text_scale = 5, s_small_scale = 3, s_message_scale = 6;
+static bool s_compact;
+#define TEXT_SCALE s_text_scale
+#define SMALL_SCALE s_small_scale
+#define MESSAGE_SCALE s_message_scale
 
 static bool s_shown;
 static board_display_info_t s_info;
@@ -25,14 +31,42 @@ static uint16_t *s_band; /* DISP width * BAND_H, DMA-capable internal RAM */
  * dwarfs what sleeping would save. */
 static esp_pm_lock_handle_t s_pm_lock;
 
+/* Rows one line of text at `scale` takes: a full band on large panels, the glyph plus a
+ * small margin on compact ones. */
+static int band_for(int scale)
+{
+    const int h = s_compact ? 7 * scale + 6 : BAND_H;
+    return h < BAND_H ? h : BAND_H;
+}
+
 static esp_err_t push_line(int y, const char *text, int scale, uint16_t color)
 {
-    textfb_t fb = {s_band, s_info.width, BAND_H};
+    int h = band_for(scale);
+    /* Small panels: keep the band on the panel. (Large panels draw as they always have.) */
+    if (s_compact && (y < 0 || y >= s_info.height)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_compact && y + h > s_info.height) {
+        h = s_info.height - y;
+    }
+    /* Small panels: shrink text that would not fit across rather than cutting it off. */
+    while (s_compact && scale > 1 && textfb_text_width(text, scale) > s_info.width) {
+        scale--;
+    }
+    textfb_t fb = {s_band, s_info.width, h};
     textfb_clear(&fb, 0);
     const int w = textfb_text_width(text, scale);
     const int x = w < s_info.width ? (s_info.width - w) / 2 : 0;
-    textfb_draw(&fb, x, (BAND_H - 7 * scale) / 2, text, scale, color);
-    return board_display_draw(0, y, s_info.width, BAND_H, s_band);
+    textfb_draw(&fb, x, (h - 7 * scale) / 2, text, scale, color);
+    return board_display_draw(0, y, s_info.width, h, s_band);
+}
+
+static void pick_layout(void)
+{
+    s_compact = s_info.width < 400;
+    s_text_scale = s_compact ? 3 : 5;
+    s_small_scale = s_compact ? 2 : 3;
+    s_message_scale = s_compact ? 4 : 6;
 }
 
 static esp_err_t clear_screen(void)
@@ -58,6 +92,7 @@ static esp_err_t screen_begin(view_t view)
             esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "ui", &s_pm_lock);
         }
         ESP_RETURN_ON_ERROR(board_display_on(&s_info), TAG, "display on");
+        pick_layout();
         if (!s_band) {
             s_band = heap_caps_malloc((size_t)s_info.width * BAND_H * sizeof(uint16_t),
                                       MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
@@ -82,7 +117,11 @@ esp_err_t ui_show_status(const ui_status_t *s)
     const uint16_t red = textfb_rgb(240, 40, 40);
     const uint16_t amber = textfb_rgb(250, 180, 30);
     char line[32];
-    int y = 40;
+    /* Where each line starts: the first row, then the step after each of the 8 lines. */
+    static const int steps_large[] = {70, 60, 70, 60, 70, 80, 36};
+    static const int steps_compact[] = {30, 27, 30, 27, 30, 30, 22};
+    const int *step = s_compact ? steps_compact : steps_large;
+    int y = s_compact ? 8 : 40;
 
     if (s->recording_file) {
         snprintf(line, sizeof(line), "WAV %d/%dS", s->rec_elapsed_s, s->rec_total_s);
@@ -96,7 +135,7 @@ esp_err_t ui_show_status(const ui_status_t *s)
     } else {
         push_line(y, "READY", TEXT_SCALE, white);
     }
-    y += 70;
+    y += step[0];
 
     if (!s->battery.present) {
         snprintf(line, sizeof(line), "NO BATTERY");
@@ -108,37 +147,42 @@ esp_err_t ui_show_status(const ui_status_t *s)
         snprintf(line, sizeof(line), "BAT %d%%", s->battery.percent);
     }
     push_line(y, line, TEXT_SCALE, s->battery_low ? red : white);
-    y += 60;
+    y += step[1];
     snprintf(line, sizeof(line), "%d.%02dV%s", s->battery.millivolts / 1000,
              (s->battery.millivolts % 1000) / 10, s->battery.vbus ? " USB" : "");
     push_line(y, line, TEXT_SCALE, grey);
-    y += 70;
+    y += step[2];
 
     if (s->time_valid) {
         isotime_fields_t f;
         isotime_to_fields(s->now, &f);
         snprintf(line, sizeof(line), "%02d:%02d:%02d", f.hour, f.minute, f.second);
         push_line(y, line, TEXT_SCALE, white);
-        y += 60;
+        y += step[3];
         snprintf(line, sizeof(line), "%04d-%02d-%02d", f.year, f.month, f.day);
         push_line(y, line, TEXT_SCALE, grey);
     } else {
         push_line(y, "TIME NOT SET", TEXT_SCALE, amber);
-        y += 60;
+        y += step[3];
         push_line(y, "USE: TIME ISO", SMALL_SCALE, grey);
     }
-    y += 70;
+    y += step[4];
 
-    if (s->sd_mounted) {
-        snprintf(line, sizeof(line), "SD %llu.%lluGB FREE", (unsigned long long)(s->sd_free_mb / 1024),
+    const char *store = board_storage_label();
+    const bool card = strcmp(store, "SD") == 0;
+    if (s->sd_mounted && s->sd_free_mb >= 1024) {
+        snprintf(line, sizeof(line), "%s %llu.%lluGB FREE", store,
+                 (unsigned long long)(s->sd_free_mb / 1024),
                  (unsigned long long)((s->sd_free_mb % 1024) * 10 / 1024));
-    } else if (s->sd_present) {
-        snprintf(line, sizeof(line), "SD CARD IN");
+    } else if (s->sd_mounted) {
+        snprintf(line, sizeof(line), "%s %lluMB FREE", store, (unsigned long long)s->sd_free_mb);
+    } else if (card) {
+        snprintf(line, sizeof(line), "%s", s->sd_present ? "SD CARD IN" : "SD NO CARD");
     } else {
-        snprintf(line, sizeof(line), "SD NO CARD");
+        snprintf(line, sizeof(line), "%s %s", store, s->sd_present ? "READY" : "MISSING");
     }
     push_line(y, line, TEXT_SCALE, s->sd_present || s->sd_mounted ? white : amber);
-    y += 80;
+    y += step[5];
 
     if (s->ble_connected) {
         snprintf(line, sizeof(line), "PHONE: SYNCING %d", s->queued_chunks);
@@ -148,8 +192,8 @@ esp_err_t ui_show_status(const ui_status_t *s)
         snprintf(line, sizeof(line), "QUEUE EMPTY");
     }
     push_line(y, line, SMALL_SCALE, s->queued_chunks ? amber : grey);
-    y += 36;
-    push_line(y, "PWR: REC  2X BOOT: MUTE", SMALL_SCALE, grey);
+    y += step[6];
+    push_line(y, board_button_hint(), SMALL_SCALE, grey);
     /* The init sequence leaves the panel at brightness 0; raise it once the frame is in. */
     return board_display_set_brightness(BRIGHTNESS_PERCENT);
 }
@@ -160,10 +204,11 @@ esp_err_t ui_show_passkey(uint32_t passkey)
     const uint16_t white = textfb_rgb(255, 255, 255);
     const uint16_t grey = textfb_rgb(140, 140, 140);
     char line[16];
-    push_line(120, "PAIRING CODE", TEXT_SCALE, grey);
+    /* Rows 120, 220 and 330 of the Ultra's 502, scaled to the panel. */
+    push_line(s_info.height * 120 / 502, "PAIRING CODE", TEXT_SCALE, grey);
     snprintf(line, sizeof(line), "%03u %03u", (unsigned)(passkey / 1000), (unsigned)(passkey % 1000));
-    push_line(220, line, TEXT_SCALE, white);
-    push_line(330, "TYPE IT ON THE PHONE", SMALL_SCALE, grey);
+    push_line(s_info.height * 220 / 502, line, TEXT_SCALE, white);
+    push_line(s_info.height * 330 / 502, "TYPE IT ON THE PHONE", SMALL_SCALE, grey);
     return board_display_set_brightness(BRIGHTNESS_PERCENT);
 }
 
@@ -182,9 +227,9 @@ esp_err_t ui_show_message(const char *big, const char *small)
     while (scale > TEXT_SCALE && textfb_text_width(big, scale) > s_info.width) {
         scale--;
     }
-    const int y = s_info.height / 2 - BAND_H;
+    const int y = s_info.height / 2 - band_for(scale);
     push_line(y, big, scale, white);
-    push_line(y + BAND_H + 12, small ? small : "", SMALL_SCALE, grey);
+    push_line(y + band_for(scale) + (s_compact ? 6 : 12), small ? small : "", SMALL_SCALE, grey);
     return board_display_set_brightness(BRIGHTNESS_PERCENT);
 }
 

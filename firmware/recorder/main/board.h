@@ -2,8 +2,9 @@
  *
  * Everything the shared firmware needs from a board goes through this header: power
  * rails, battery, wall-clock time, buttons, haptics, display, storage and the mic pins.
- * Each board implements it in boards/<name>/board/. The T-Watch Ultra is the first; the
- * XIAO ESP32-S3 Sense pendant will implement a subset (no display, no rails) and return
+ * Each board implements it in boards/<name>/board/: the T-Watch Ultra and the T-Watch S3
+ * (one button, no SD card: storage is a FAT partition in its flash). The XIAO ESP32-S3
+ * Sense pendant will implement a subset (no display, no rails) and return
  * ESP_ERR_NOT_SUPPORTED for what it lacks.
  *
  * Later milestones add to this file rather than reaching into board code: a "phone sync"
@@ -114,6 +115,8 @@ esp_err_t board_rtc_set(int64_t epoch);
 void board_buttons_set_callback(board_button_cb_t cb, void *ctx);
 /* Live level of a button. Only GPIO buttons can answer; the PWR button reports false. */
 bool board_button_is_down(board_button_t button);
+/* One short line for the status screen saying what the buttons do, e.g. "PWR: REC  2X BOOT: MUTE". */
+const char *board_button_hint(void);
 /* `count` short buzzes (1 = started, 2 = stopped or muted). Blocks for the duration. */
 esp_err_t board_haptic_pulse(int count);
 /* One long buzz (~0.5 s; unmuted). Blocks for the duration. */
@@ -125,7 +128,12 @@ board_mic_pins_t board_mic_pins(void);
 int board_mic_eq(const board_mic_eq_band_t **bands);
 
 /* ---- storage (card powered only while mounted) ---- */
+/* Always true for built-in storage (a flash partition). */
 bool board_storage_card_present(void);
+/* "SD" or "FLASH": what the status screen calls the storage. */
+const char *board_storage_label(void);
+/* Recording stops when less than this is free (room for FAT, the power log, a last chunk). */
+uint64_t board_storage_reserve_bytes(void);
 /* Power the card rail, mount FAT. *mount_point is e.g. "/sdcard". */
 esp_err_t board_storage_mount(const char **mount_point);
 esp_err_t board_storage_unmount(void);

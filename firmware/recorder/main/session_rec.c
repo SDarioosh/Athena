@@ -6,6 +6,7 @@
 #include <string.h>
 #include <sys/time.h>
 
+#include "board.h"
 #include "chunk_queue.h"
 #include "chunk_store.h"
 #include "esp_check.h"
@@ -231,7 +232,7 @@ static bool card_full(void)
         ESP_LOGW(TAG, "free space unknown: %s", esp_err_to_name(err));
         return false; /* a write error will stop us if the card is really gone */
     }
-    if (free_bytes < SESSION_REC_MIN_FREE_BYTES) {
+    if (free_bytes < board_storage_reserve_bytes()) {
         ESP_LOGW(TAG, "card full: %" PRIu64 " KB free", free_bytes / 1024);
         return true;
     }

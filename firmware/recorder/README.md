@@ -48,14 +48,16 @@ records everything between start and stop.
   and only then tells the watch to delete it (protocol §1, §6).
 - **Power**: the chip light-sleeps whenever it has nothing to do; BLE advertising and
   syncing keep working, and it stays awake while a USB host is attached (console,
-  flashing). After **2 minutes idle** (no session, nothing to sync and no relay connected,
-  screen off, card unmounted, no USB power) it goes into **standby**: deep sleep until
-  **PWR** is pressed or USB power is plugged in (`standby` on the console does it now).
+  flashing). Every button works on its first press. It never goes into standby by itself
+  (light sleep only, by choice: a press always acts at once). `standby` on the console puts
+  it into **standby**: deep sleep until **PWR** is pressed or USB power is plugged in.
   Waking is a reboot of about a second that shows the status screen (no buzz; mute is
   kept). The waking press does nothing else: it doesn't start a recording. The power log is
   written to the card before standby (its RAM ring doesn't survive deep sleep).
-  BOOT doesn't wake it: GPIO0 is a strapping pin. Holding PWR ~6 s is still the hardware
-  power-off.
+  BOOT doesn't wake it: GPIO0 is a strapping pin.
+- **Off**: hold PWR ~6 s; the AXP2101 cuts the power (a PWR press turns it back on, a
+  full boot). The hold passes the 1 s voice-note mark first, so a few seconds of note are
+  recorded, kept on the card and uploaded with the next sync.
 - **`rec [s]`** (console only): the milestone-1 test, N seconds (default 60) from the mic to
   `/sdcard/rec_<UTC time>.wav`. The log line `recorder: level at ...` gives the file's RMS,
   peak, DC offset, clipped samples and how often the limiter acted. `stop` or mute ends it
@@ -87,6 +89,49 @@ records everything between start and stop.
   `status` also prints the free heap and the last reset reason.
   `sd failwrite <n>` makes the next n chunk writes fail (to test the recovery below).
   `batt sim`, `coredump [get|erase]` and `crash yes|wdt`: see below.
+
+## What it does (T-Watch S3)
+
+The same firmware on the LilyGO T-Watch S3 (`-DBOARD=twatch_s3`, board layer
+`boards/twatch_s3/board/`). Everything above works the same, with these differences:
+
+- **One button**, the side key (the AXP2101's power key). Clicks are counted, and each count
+  does what a T-Watch Ultra button does:
+
+  | Action | Does |
+  |---|---|
+  | 1 click | Start or stop a recording session (the Ultra's PWR press) |
+  | 2 clicks | Mute / unmute (the Ultra's BOOT double-click) |
+  | 3 clicks | Status screen (the Ultra's BOOT press) |
+  | 4 clicks | BLE sync window for 2 minutes, to pair a phone (the Ultra's BOOT hold) |
+  | Hold ~1 s | Start a voice note, or end the recording (the Ultra's PWR hold) |
+  | Hold ~6 s | Hardware power-off |
+
+  Clicks count when they are less than 0.5 s apart; the action runs 0.5 s after the last
+  click. For 1 s after an action, clicks are ignored (the confirming buzz can shake the key);
+  wait for the buzz before the next action. A hold always counts. Five or more clicks do
+  nothing. Logic: `main/click_counter.c` (host-tested).
+- **No SD card**: the queue and recordings live in a FAT partition in the 16 MB flash
+  (`partitions_twatch_s3.csv`, ~11.8 MB, about an hour of Opus audio), mounted at `/flash`.
+  Recording stops when less than 1 MB is free. `ls`, `get`, `tools/pull.py` work the same.
+- **Screen**: 240x240 ST7789 LCD with a compact status layout; the backlight is on or off,
+  not dimmed.
+- **Power**: ALDO1 (RTC) stays on; screen (ALDO2 backlight, ALDO3 logic), haptics enable
+  (BLDO2), LoRa, GPS and speaker are off unless used. Charging 200 mA to 4.2 V with the
+  battery-temperature input disabled (the watch has no thermistor; LilyGO does the same).
+- **Mic**: Knowles SPM1423 PDM on GPIO44/47, no EQ yet (not measured on this watch).
+
+Build and flash (from `firmware/recorder`):
+
+```bash
+idf.py -B build-s3 -DBOARD=twatch_s3 -DSDKCONFIG=build-s3/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_s3" build
+idf.py -B build-s3 -p COM40 erase-flash flash
+```
+
+The first flash over the factory firmware: erase it (the old file system and settings
+would otherwise sit in the new partitions). If `esptool` can't open the port, power the
+watch off (hold the side key ~6 s), then press it again and retry; or open the back cover
+and use BOOT + RST (download mode) on versions that have them.
 
 ## Upload path (BLE)
 

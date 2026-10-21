@@ -30,6 +30,7 @@ _Last updated: 2026-10-21 (finished T5 lists archive after 10 minutes; round 17:
 | 9c | Calendar/task integration for action items | module side built (kinds, times, JSON listing, edits, named to-do list: "add milk to my shopping list" → `list_name` `shopping`); hub files voice-note items into the Odysseus calendar and to-dos, items with a list onto that to-do list (coordinated hub PRs); **needs owner verification on real voice notes** | `server/convo_server/{llm,dates,store,mcp_server}.py` |
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
 | 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **running on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, buttons, haptics and recording work (mic timeout fix; stop early with BOOT+PWR again, `stop` or mute). Mic: raw level was nearly inaudible and muffled; now high-pass + T-Watch EQ (+9 dB 1.6 kHz, -6 dB 3.6 kHz) + 30 dB gain + limiter, speech ~-24 dBFS, owner says it sounds best; `gain`/`eq` on the console. Recordings copy off over USB (`tools/pull.py`). SD_DET confirmed (P12 LOW with card, HIGH without; expander question §2.1 answered); RTC set, files get dated names. Still to check: one recording of fictional speech through `smoke_upload.py` on the server (owner). **Round 12: BLE upload path built, not yet on hardware**: BOOT+PWR records an Opus session (libopus, 16 kbps) as 30 s Ogg/Opus chunks into a queue on the SD card that survives reboots; NimBLE GATT service drains it (protocol `docs/twatch-ble-protocol.md`); `tools/ble_relay.py` is the PC relay; Wi-Fi still not linked. Needs the owner: flash, record, drain with the PC relay and the phone (PR Server verification). Then milestone 2 (power baseline), milestone 3 (gain/EQ/bitrate by transcription) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` §11, `docs/twatch-ble-protocol.md` |
+| 11d | LilyGO T-Watch S3 recorder (same firmware, `boards/twatch_s3/`) | **built 2026-10-20, flashing on the owner's watch**: one button (clicks: 1 rec, 2 mute, 3 status, 4 sync; hold note), queue in a FAT partition in flash (no SD card), ST7789 240x240 screen, PCF8563 RTC. Host tests pass; button timing, mic level and the screen still need the real watch | `firmware/recorder/boards/twatch_s3/` |
 | 11c | Android relay app (T-Watch → BLE → phone → server) | **built, unit-tested (67 tests), not yet on a phone**: foreground service, scan/bond/drain per the protocol, uploads with the bearer token over LAN/Tailscale, acks only after the server's ok, backoff; settings (URL, token in Keystore) and status screen; no Google services, no analytics. CI builds the APK | `android-relay/` |
 | 11d | T5 E-Paper Pro PDA (briefing, conversations, action items, calendar over BLE via the phone) | **phone side built, unit-tested, not on hardware**: Odysseus calendar REST verified (plan §6); `android-relay` syncs the T5 next to the watch (glance protocol, feed, outbox, `cal_add` to Odysseus). Firmware and PC relay `pda` in sibling branches | `docs/t5-pda-plan.md`, `android-relay/` |
 | 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; the hub's `fork_deploy.sh deploy` runs it first, and it then updates Odysseus itself (`BARVIS_SOUND_ODYSSEUS_DIR`, found from the running container by default), so either command updates both | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, hub `docs/fork/deploy.md` |
@@ -419,6 +420,26 @@ right after its sizes, flags and timings were read; none was uploaded.
   watch, then check `list_action_items format=json` shows event / task / reminder with
   the right date and time (qwen3.5-35b; only fake-LLM tests ran in the sandbox).
 
+## Done on 2026-10-20: T-Watch S3 board (one button, flash storage)
+
+- The recorder firmware now builds for the LilyGO T-Watch S3 (`-DBOARD=twatch_s3`): same
+  recording, Opus queue, BLE sync, standby and console as the Ultra.
+- Its only button is the AXP2101 side key, so clicks are counted (`main/click_counter.c`,
+  host-tested): 1 click recording on/off, 2 mute, 3 status screen, 4 BLE sync window, hold
+  ~1 s voice note, hold ~6 s power-off. Clicks within 1 s after an action are ignored
+  (buzz shake, as on the Ultra's PWR key).
+- No SD card: a ~11.8 MB FAT partition in flash at `/flash` (`partitions_twatch_s3.csv`),
+  about an hour of audio; recording stops at 1 MB free (the Ultra keeps 8 MB, now
+  `board_storage_reserve_bytes()`).
+- New drivers: PCF8563 RTC (codec host-tested), ST7789 screen via esp_lcd. AXP2101,
+  DRV2605 and I2C helpers moved to `boards/common/` and are shared with the Ultra.
+  AXP2101: TS pin disabled (no thermistor on the S3), battery detection on.
+- Status screen has a compact layout for 240x240; the Ultra's layout is unchanged.
+- Fixed in passing: the DRV2605 driver added a new I2C device on every buzz (both watches).
+- Still to check on the watch: AXP2101 click timing (can it report a quick double-click?),
+  the PMU IRQ line level (it is pulled up to 1.8 V on the schematic), screen orientation
+  and colors, mic level (no EQ yet), flash write load while recording, standby current.
+
 ## Done on 2026-10-20: "my latest voice notes" finds voice notes
 
 - Problem (owner): "give me my latest voice notes" returned recent conversations. Voice
@@ -625,6 +646,26 @@ couldn't get past the MTU exchange. Two bugs, both in the firmware:
   connection, MTU 517, 6 chunks (324 KB, 670 frames) uploaded and acked, 0 links lost.
 - Diagnosis tools: `adb logcat -b all` shows the stack's GATT state; the `dumpsys
   bluetooth_manager` BTSNOOP summary has HCI events only, not ATT.
+
+## Done on 2026-10-21: standby no longer wakes itself every few minutes
+
+- Idle with an empty queue, the T-Watch Ultra lit its screen every ~2 min. The power log
+  showed a fresh boot (uptime 6 s) every ~2 min 8 s since 2026-10-20 14:49: standby woke
+  0 s to a few minutes after it started, then waited the 2 min idle time again.
+- Cause: wake cause was the timer (4), not the PMU line. Automatic light sleep arms a
+  timer wake before each light sleep (`esp_pm` `pm_impl.c`) and leaves it armed; deep
+  sleep inherited it. `enter_standby()` now disables the timer wake source before
+  `esp_deep_sleep_start()` (shared code: both watches). The boot log names the wake cause.
+- On the owner's watch: before, forced `standby` woke after ~2 s (3 of 3); after, it stayed
+  asleep 5 min. Both board builds pass; host tests not run on this PC (no host compiler).
+- PWR still wakes it (owner's press, 2026-10-21).
+- Then, at the owner's choice, **light sleep only**: the watch no longer goes into standby
+  by itself (the 2 min idle check is gone), so every button works on its first press.
+  Console `standby` still does deep sleep. Off = hold PWR ~6 s (AXP2101 reg 0x27 on the
+  owner's watch: power-off hold 6000 ms); the hold starts a voice note at 1 s first.
+- Needs the owner: on battery, overnight idle drain in light sleep only (compare with the
+  ~35-40 mA before light sleep); after a PWR-6 s power-off, check the cut note is recovered
+  and queued at the next boot.
 
 ## Done on 2026-10-20: T-Watch Ultra idle power (light sleep and standby)
 

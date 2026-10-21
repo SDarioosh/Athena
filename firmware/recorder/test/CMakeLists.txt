@@ -20,9 +20,11 @@ add_library(recorder_pure STATIC
     ${FW}/main/font5x7.c
     ${FW}/main/textfb.c
     ${FW}/main/button_gesture.c
+    ${FW}/main/click_counter.c
     ${FW}/main/battery_guard.c
     ${FW}/main/power_samples.c
     ${FW}/boards/twatch_ultra/board/pcf85063a_codec.c
+    ${FW}/boards/twatch_s3/board/pcf8563_codec.c
 )
 # Pure modules of the BLE upload path (docs/twatch-ble-protocol.md), added when present.
 foreach(src ogg_opus.c chunk_queue.c ble_proto.c crc32.c)
@@ -30,14 +32,15 @@ foreach(src ogg_opus.c chunk_queue.c ble_proto.c crc32.c)
         target_sources(recorder_pure PRIVATE ${FW}/main/${src})
     endif()
 endforeach()
-target_include_directories(recorder_pure PUBLIC ${FW}/main ${FW}/boards/twatch_ultra/board)
+target_include_directories(recorder_pure PUBLIC ${FW}/main ${FW}/boards/twatch_ultra/board
+    ${FW}/boards/twatch_s3/board)
 if(UNIX)
     target_link_libraries(recorder_pure PUBLIC m) # libm: audio_stats.c, audio_dsp.c
 endif()
 
 enable_testing()
 set(TESTS test_audio_dsp test_audio_stats test_wav test_isotime test_textfb test_pcf85063a_codec
-    test_button_gesture test_battery_guard test_power_samples)
+    test_pcf8563_codec test_button_gesture test_click_counter test_battery_guard test_power_samples)
 foreach(t test_ogg_opus test_chunk_queue test_ble_proto test_crc32)
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${t}.c)
         list(APPEND TESTS ${t})

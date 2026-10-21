@@ -453,6 +453,11 @@ bool board_button_is_down(board_button_t button)
     return button == BOARD_BUTTON_BOOT && gpio_get_level(PIN_BOOT_BUTTON) == 0;
 }
 
+const char *board_button_hint(void)
+{
+    return "PWR: REC  2X BOOT: MUTE";
+}
+
 esp_err_t board_haptic_pulse(int count)
 {
     ESP_RETURN_ON_FALSE(s_have_haptic, ESP_ERR_NOT_SUPPORTED, TAG, "no haptics");
@@ -513,6 +518,16 @@ bool board_storage_card_present(void)
         return false;
     }
     return !high; /* card-detect switch pulls low when a card is in */
+}
+
+const char *board_storage_label(void)
+{
+    return "SD";
+}
+
+uint64_t board_storage_reserve_bytes(void)
+{
+    return 8ull * 1024 * 1024;
 }
 
 /* The recorder and console commands can use the card at the same time: count the users and

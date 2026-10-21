@@ -54,6 +54,12 @@ esp_err_t axp2101_chgled_off(void);
 esp_err_t axp2101_backup_charge_enable(int mv);
 /* Enable only the ADC channels we need: VBAT (bit 0) and the TS thermistor (bit 1). */
 esp_err_t axp2101_adc_enable(uint8_t channel_mask);
+/* For boards without a battery thermistor (T-Watch S3): the TS pin becomes an external fixed
+ * input that the charger ignores (reg 0x50, XPowersLib disableTSPinMeasure()). Without it
+ * the charger reads the open pin as a temperature fault and charges erratically. */
+esp_err_t axp2101_ts_pin_disable(void);
+/* Battery detection on (reg 0x68 bit 0, XPowersLib enableBattDetection()). */
+esp_err_t axp2101_battery_detect_enable(void);
 
 esp_err_t axp2101_read_battery(axp_battery_t *out);
 
@@ -64,6 +70,8 @@ esp_err_t axp2101_read_battery(axp_battery_t *out);
  *   bits[1:0] ONLEVEL:  hold time to power on, 128 ms / 512 ms / 1 s / 2 s
  * Set the PKEY_LONG time (1000, 1500, 2000 or 2500 ms); only bits[5:4] change. */
 esp_err_t axp2101_set_pkey_long_ms(int ms);
+/* Set the hardware power-off hold time (4000, 6000, 8000 or 10000 ms); only bits[3:2] change. */
+esp_err_t axp2101_set_pkey_off_ms(int ms);
 /* Read the three times back, in ms. */
 esp_err_t axp2101_get_pkey_times(int *long_irq_ms, int *off_ms, int *on_ms);
 
