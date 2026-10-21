@@ -150,8 +150,10 @@ notes, the flash queue, BLE sync and the console work as on the T-Watch S3. Diff
   | 2 presses | Mute / unmute |
   | 3 presses | Status screen |
   | 4 presses | BLE sync window for 2 minutes, to pair a phone |
+  | Tap the screen | Status screen (one per touch, however long the finger rests) |
 
-  No haptics: every action shows on the screen instead.
+  No haptics: every action shows on the screen instead. The tap comes from the CST226SE
+  touch chip's interrupt line (GPIO8); it also wakes the chip from light sleep.
 - **Mics: four INMP441** on the 30-pin header, two stereo pairs sharing one clock:
 
   | INMP441 | L/R | SD (data) | SCK | WS |

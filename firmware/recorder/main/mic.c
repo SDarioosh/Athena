@@ -86,7 +86,7 @@ static bool IRAM_ATTR on_overflow(i2s_chan_handle_t handle, i2s_event_data_t *ev
 {
     (void)handle;
     (void)event;
-    s_overflows[(intptr_t)ctx]++;
+    (*(volatile uint32_t *)ctx)++; /* ctx: its s_overflows[] entry (internal RAM, as IRAM-safe I2S wants) */
     return false;
 }
 
@@ -220,9 +220,9 @@ static esp_err_t init_i2s(board_mic_pins_t pins)
     i2s_std_config_t cfg = std_config(pins.clk_gpio, pins.ws_gpio, pins.data_gpio);
     ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(s_rx, &cfg), TAG, "i2s0 std");
     const i2s_event_callbacks_t cbs0 = {.on_recv_q_ovf = on_overflow};
-    i2s_channel_register_event_callback(s_rx, &cbs0, (void *)0);
+    i2s_channel_register_event_callback(s_rx, &cbs0, (void *)&s_overflows[0]);
     if (s_nports == 2) {
-        i2s_channel_register_event_callback(s_rx2, &cbs0, (void *)1);
+        i2s_channel_register_event_callback(s_rx2, &cbs0, (void *)&s_overflows[1]);
     }
     if (s_nports == 2) {
         /* Belt and braces: the clock pins stay inputs of I2S1 as well. */

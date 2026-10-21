@@ -10,7 +10,8 @@
  * switchable rails: only the AMOLED's own power IC has an enable pin (GPIO9).
  *
  * Buttons: BOOT (GPIO0, active low, pulled up on the board) is the only one the firmware
- * uses; RST resets the chip. No haptics, no buzzer, no RTC chip.
+ * uses; RST resets the chip. A tap on the touchscreen shows the status screen. No haptics,
+ * no buzzer, no RTC chip.
  *
  * Mic array: four INMP441 I2S mics on the 30-pin header (see "Mic array" below). */
 #pragma once
@@ -19,11 +20,11 @@
 #define PIN_I2C_SDA 6
 #define PIN_I2C_SCL 7
 #define I2C_ADDR_SY6970 0x6A
-#define I2C_ADDR_CST226 0x5A /* touch: not used */
+#define I2C_ADDR_CST226 0x5A /* touch: a tap shows the status screen */
 
 #define PIN_PMU_IRQ 5    /* SY6970 INT: a 256 us low pulse on a charger change (unused) */
-#define PIN_TOUCH_IRQ 8  /* unused */
-#define PIN_TOUCH_RST 17 /* unused, left Hi-Z */
+#define PIN_TOUCH_IRQ 8  /* CST226 INT: low while it has a touch report */
+#define PIN_TOUCH_RST 17 /* CST226 reset: low = reset */
 
 /* BOOT button: low = pressed. An RTC GPIO, so it also wakes the chip from deep sleep. */
 #define PIN_BUTTON 0

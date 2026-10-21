@@ -10,6 +10,7 @@
  *     3 clicks  -> BOOT short   status screen
  *     4 clicks  -> BOOT long    BLE sync window (pair a phone)
  *     hold ~1 s -> PWR long     voice note; a click or another hold ends it
+ *     tap the screen -> BOOT short  status screen (the touch chip's INT line)
  *   The board's slide switch is the power switch.
  * - Mics: four INMP441 on I2S (pins.h), mixed to mono in main/mic.c.
  * - No haptics: board_haptic_*() return ESP_ERR_NOT_SUPPORTED; every action still shows on
@@ -51,8 +52,18 @@ static board_button_cb_t s_button_cb;
 static void *s_button_ctx;
 static TaskHandle_t s_button_task;
 static bool s_have_charger;
+static bool s_have_touch;
+static i2c_dev_t s_touch;
 
 #define BUTTON_POLL_MS 10 /* only while the button is down or settling */
+/* Button-task notification bits */
+#define NOTE_BUTTON 0x01
+#define NOTE_TOUCH 0x02
+/* One tap = one status screen: while a finger stays on the glass the chip reports every
+ * ~10 ms, so after a tap the touch line is ignored for this long. */
+#define TOUCH_QUIET_MS 1500
+#define TOUCH_POLL_MS 50 /* while a finger stays on the glass */
+#define TOUCH_REPORT_LEN 28
 
 const char *board_name(void)
 {
@@ -149,9 +160,16 @@ void board_battery_limits(bg_limits_t *out)
 
 void board_log_expander(void)
 {
-    ESP_LOGI(TAG, "no I/O expander; BOOT (GPIO%d) %s, charger INT (GPIO%d) %s", PIN_BUTTON,
-             gpio_get_level(PIN_BUTTON) ? "up" : "DOWN", PIN_PMU_IRQ,
-             gpio_get_level(PIN_PMU_IRQ) ? "high" : "LOW");
+    ESP_LOGI(TAG, "no I/O expander; BOOT (GPIO%d) %s, charger INT (GPIO%d) %s, touch INT (GPIO%d) %s",
+             PIN_BUTTON, gpio_get_level(PIN_BUTTON) ? "up" : "DOWN", PIN_PMU_IRQ,
+             gpio_get_level(PIN_PMU_IRQ) ? "high" : "LOW", PIN_TOUCH_IRQ,
+             gpio_get_level(PIN_TOUCH_IRQ) ? "high" : "LOW");
+    if (s_have_touch) {
+        uint8_t r[8] = {0};
+        const esp_err_t err = i2c_reg_read(&s_touch, 0x00, r, sizeof(r));
+        ESP_LOGI(TAG, "touch report (%s): %02X %02X %02X %02X %02X %02X %02X %02X",
+                 esp_err_to_name(err), r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
+    }
 }
 
 /* ------------------------------------------------------------------ rtc ---- */
@@ -180,15 +198,55 @@ esp_err_t board_rtc_set(int64_t epoch)
 
 /* -------------------------------------------------------------- buttons ---- */
 
-static void IRAM_ATTR button_isr(void *arg)
+/* Both lines are level-low interrupts (and light-sleep wake sources). The ISR masks its line
+ * and wakes the task, which arms it again once it is high. arg = (pin << 8) | bit. */
+static void IRAM_ATTR line_isr(void *arg)
 {
-    (void)arg;
-    gpio_intr_disable(PIN_BUTTON);
+    const uint32_t v = (uint32_t)(uintptr_t)arg;
+    gpio_intr_disable((gpio_num_t)(v >> 8));
     BaseType_t woken = pdFALSE;
     if (s_button_task) {
-        vTaskNotifyGiveFromISR(s_button_task, &woken);
+        xTaskNotifyFromISR(s_button_task, v & 0xFF, eSetBits, &woken);
     }
     portYIELD_FROM_ISR(woken);
+}
+
+/* ------------------------------------------------------------------ touch ---- */
+
+/* CST226SE (I2C 0x5A): a touch report is 28 bytes from register 0x00; byte 6 is 0xAB when it
+ * is valid and byte 5 holds the number of points (SensorLib TouchDrvCST226, MIT). Reading it
+ * lets the chip release INT; no acknowledgement is needed. Coordinates aren't used: any touch
+ * is a tap. */
+static bool touch_read_tap(void)
+{
+    uint8_t r[TOUCH_REPORT_LEN];
+    if (i2c_reg_read(&s_touch, 0x00, r, sizeof(r)) != ESP_OK) {
+        return false;
+    }
+    return r[6] == 0xAB && (r[5] & 0x7F) > 0;
+}
+
+static esp_err_t touch_init(void)
+{
+    /* Reset (SensorLib: RST low, then high, 100 ms each; 20 ms low is enough). */
+    const gpio_config_t rst = {.pin_bit_mask = 1ULL << PIN_TOUCH_RST, .mode = GPIO_MODE_OUTPUT};
+    ESP_RETURN_ON_ERROR(gpio_config(&rst), TAG, "touch rst");
+    gpio_set_level(PIN_TOUCH_RST, 0);
+    vTaskDelay(pdMS_TO_TICKS(20));
+    gpio_set_level(PIN_TOUCH_RST, 1);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    ESP_RETURN_ON_FALSE(i2c_bus_probe(I2C_ADDR_CST226), ESP_ERR_NOT_FOUND, TAG, "no touch chip");
+    ESP_RETURN_ON_ERROR(i2c_bus_add(I2C_ADDR_CST226, &s_touch), TAG, "touch add");
+    const gpio_config_t irq = {
+        .pin_bit_mask = 1ULL << PIN_TOUCH_IRQ,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .intr_type = GPIO_INTR_LOW_LEVEL,
+    };
+    ESP_RETURN_ON_ERROR(gpio_config(&irq), TAG, "touch irq");
+    gpio_intr_disable(PIN_TOUCH_IRQ); /* armed by the button task */
+    ESP_RETURN_ON_ERROR(gpio_wakeup_enable(PIN_TOUCH_IRQ, GPIO_INTR_LOW_LEVEL), TAG, "touch wake");
+    return ESP_OK;
 }
 
 static void emit(board_button_t b, board_press_t p, const char *what)
@@ -229,20 +287,48 @@ static void button_task(void *arg)
     click_counter_t cc;
     click_counter_init(&cc);
     uint32_t last = now_ms();
+    bool touch_armed = false;
+    uint32_t touch_quiet_until = now_ms();
     for (;;) {
-        /* Released and settled: arm the level interrupt and sleep until a press or a click
-         * count is due (the chip light-sleeps meanwhile). Otherwise poll the level. */
+        uint32_t t = now_ms();
+        /* Released and settled: arm the level interrupt and sleep until a press, a touch or a
+         * click count is due (the chip light-sleeps meanwhile). Otherwise poll the level. */
         TickType_t wait = pdMS_TO_TICKS(BUTTON_POLL_MS);
         const bool down = gpio_get_level(PIN_BUTTON) == 0;
         if (!down && key_press_idle(&kp)) {
             gpio_intr_enable(PIN_BUTTON);
-            const uint32_t due = click_counter_wait_ms(&cc, now_ms());
+            uint32_t due = click_counter_wait_ms(&cc, t);
+            if (s_have_touch && !touch_armed) {
+                const uint32_t quiet =
+                    (int32_t)(touch_quiet_until - t) > 0 ? touch_quiet_until - t : 0;
+                due = quiet < due ? quiet : due;
+            }
             wait = due == UINT32_MAX ? portMAX_DELAY : pdMS_TO_TICKS(due) + 1;
         }
-        ulTaskNotifyTake(pdTRUE, wait);
+        /* The touch line: armed again once the quiet time after a tap is over and the finger
+         * is off the glass (the chip's report shows no point), so a resting finger is one
+         * tap. Until then, read the report every TOUCH_POLL_MS (which also lets INT go). */
+        if (s_have_touch && !touch_armed && (int32_t)(t - touch_quiet_until) >= 0) {
+            if (!touch_read_tap() && gpio_get_level(PIN_TOUCH_IRQ) == 1) {
+                touch_armed = true;
+                gpio_intr_enable(PIN_TOUCH_IRQ);
+            } else {
+                const TickType_t poll = pdMS_TO_TICKS(TOUCH_POLL_MS);
+                wait = wait < poll ? wait : poll;
+            }
+        }
+        uint32_t bits = 0;
+        xTaskNotifyWait(0, UINT32_MAX, &bits, wait);
         gpio_intr_disable(PIN_BUTTON);
 
-        const uint32_t t = now_ms();
+        t = now_ms();
+        if (bits & NOTE_TOUCH) {
+            touch_armed = false; /* the ISR masked it */
+            if (touch_read_tap()) {
+                emit(BOARD_BUTTON_BOOT, BOARD_PRESS_SHORT, "tap (status)");
+                touch_quiet_until = t + TOUCH_QUIET_MS;
+            }
+        }
         const uint32_t elapsed = t - last;
         last = t;
         int clicks = 0;
@@ -272,7 +358,18 @@ static esp_err_t buttons_init(void)
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         return err;
     }
-    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(PIN_BUTTON, button_isr, NULL), TAG, "button isr");
+    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(PIN_BUTTON, line_isr,
+                                             (void *)(uintptr_t)((PIN_BUTTON << 8) | NOTE_BUTTON)),
+                        TAG, "button isr");
+    if (touch_init() == ESP_OK) {
+        ESP_RETURN_ON_ERROR(gpio_isr_handler_add(PIN_TOUCH_IRQ, line_isr,
+                                                 (void *)(uintptr_t)((PIN_TOUCH_IRQ << 8) | NOTE_TOUCH)),
+                            TAG, "touch isr");
+        s_have_touch = true;
+        ESP_LOGI(TAG, "touch: a tap on the screen shows the status");
+    } else {
+        ESP_LOGW(TAG, "touch chip not found: tap-to-wake off");
+    }
     ESP_RETURN_ON_FALSE(xTaskCreate(button_task, "buttons", 4096, NULL, 6, &s_button_task) == pdPASS,
                         ESP_ERR_NO_MEM, TAG, "task");
     return ESP_OK;
@@ -293,7 +390,7 @@ bool board_button_is_down(board_button_t button)
 
 const char *board_button_hint(void)
 {
-    return "1X REC  2X MUTE  3X INFO  HOLD NOTE";
+    return "1X REC  2X MUTE  TAP INFO  HOLD NOTE";
 }
 
 esp_err_t board_haptic_pulse(int count)
@@ -445,9 +542,8 @@ esp_err_t board_init(void)
     ESP_RETURN_ON_ERROR(gpio_config(&en), TAG, "disp en");
     gpio_set_level(PIN_DISP_EN, 0);
 
-    /* Unused lines Hi-Z: SD card, touch reset/IRQ, panel TE. */
-    const int unused[] = {PIN_SD_CS, PIN_SD_MOSI, PIN_SD_SCK, PIN_SD_MISO, PIN_TOUCH_RST,
-                          PIN_TOUCH_IRQ, PIN_DISP_TE};
+    /* Unused lines Hi-Z: SD card, panel TE. */
+    const int unused[] = {PIN_SD_CS, PIN_SD_MOSI, PIN_SD_SCK, PIN_SD_MISO, PIN_DISP_TE};
     for (unsigned i = 0; i < sizeof(unused) / sizeof(unused[0]); i++) {
         hiz_pin(unused[i]);
     }
