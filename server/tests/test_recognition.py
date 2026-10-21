@@ -249,6 +249,32 @@ def test_pyannote_merges_speakers_across_runs():
     assert [x.name for x in labels] == ["Speaker 1", "Speaker 2", "Speaker 2"]
 
 
+def test_pyannote_keeps_speakers_of_one_run_apart():
+    """Two people on one body-worn mic can have similar voiceprints; pyannote's split
+    inside a run must survive, so the second person doesn't take the first one's name."""
+    from conftest import ToneEmbedder
+
+    from convo_server.diarize import EnrolledVoice, PieceRef
+    from convo_server.diarize_pyannote import PyannoteDiarizer
+
+    e = ToneEmbedder()
+    run = tone(300, 8)  # both "voices" embed the same
+    turns = [(0.0, 4.0, "SPEAKER_00"), (4.0, 8.0, "SPEAKER_01")]
+    d = PyannoteDiarizer(e, [EnrolledVoice("Hayden", e.embed(tone(300, 2)), False)],
+                         segmenter=lambda audio: turns)
+    labels, unnamed = d.diarize_runs([run], [PieceRef(0, 0.5, 3.5), PieceRef(0, 4.5, 7.5)])
+    assert sorted(x.name for x in labels) == ["Hayden", "Speaker 1"]  # two people, not one
+    assert list(unnamed) == ["Speaker 1"]
+
+
+def test_cluster_cannot_link():
+    from convo_server.diarize import cluster
+
+    x = np.array([[1, 0], [1, 0], [1, 0]], dtype=np.float32)
+    assert cluster(x, 0.5) == [0, 0, 0]
+    assert cluster(x, 0.5, cannot_link=[0, 0, 1]) == [0, 1, 0]
+
+
 # --------------------------------------------------------------- relabel & fixes
 def test_naming_relabels_the_same_voice_in_other_conversations(pipeline):
     from test_mcp import T0, call, process_two_speakers

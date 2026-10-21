@@ -115,6 +115,19 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-21: pyannote no longer merges two people into one
+
+- Bug: with `CONVO_DIARIZER=pyannote`, a two-person talk came out almost all under one
+  name. pyannote split the speakers, then their ECAPA voiceprints were clustered again
+  at `CONVO_SPEAKER_CLUSTER_THRESHOLD` (0.45); two voices on one body-worn mic often
+  score above that, so they merged and the merged voice matched one enrolled person.
+- Fix: speakers pyannote found in the same run are never merged
+  (`cluster(..., cannot_link=...)`); only speakers of different runs are joined by
+  voice. The log now says how many speakers pyannote heard per run.
+- Needs the owner: rerun a two-person recording on the server and check both names.
+  Conversations already processed keep their labels (audio is deleted after
+  transcription unless `CONVO_KEEP_AUDIO=true`); fix those with `reassign_line`.
+
 ## Done on 2026-10-21: Today insight and confirmed facts (hub: same branch in SDarioosh/Barvis)
 
 Phase 0 of the hub's personal-context plan (hub `docs/fork/personal-context.md`). Built by
