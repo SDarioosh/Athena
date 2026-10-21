@@ -1854,7 +1854,9 @@ static void refresh(pda_epd_kind_t kind)
 static void ui_task(void *arg)
 {
     (void)arg;
-    refresh(PDA_EPD_FULL);
+    /* pda_epd_init() left the panel as it was (the Asleep screen after a wake): one clean
+     * refresh, a single flash, draws every pixel of the first screen. */
+    refresh(PDA_EPD_CLEAN);
     for (;;) {
         pda_ev_t ev;
         if (!pda_app_wait_event(&ev, 3600 * 1000)) {
