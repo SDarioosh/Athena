@@ -308,6 +308,11 @@ class Store:
             # notes from voice notes ("create a note ..."): the note's title
             self._add_column("action_items", "note_title", "TEXT")
             self._conn.execute("PRAGMA user_version = 8")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 9:
+            # facts the owner told the hub to forget (status 'retired'): when and why
+            self._add_column("facts", "retired_at", "REAL")
+            self._add_column("facts", "retired_reason", "TEXT")
+            self._conn.execute("PRAGMA user_version = 9")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -646,33 +651,43 @@ class Store:
 
     def related_facts(self, conv_id: str, facts: list[dict[str, Any]],
                       limit: int = 15) -> list[dict[str, Any]]:
-        """Current facts of other conversations that may repeat or conflict with ``facts``:
-        same subject, or matching words."""
+        """Current and retired facts of other conversations that may repeat or conflict
+        with ``facts``: same subject, or matching words. Retired facts are offered too, so
+        a forgotten fact said again is linked "same" to it and stays hidden."""
         ids: dict[int, None] = {}
         subjects = {(f.get("subject") or "").strip().lower() for f in facts} - {""}
         for subj in subjects:
-            for r in self._q("SELECT id FROM facts WHERE status = 'current' AND"
-                             " conversation_id != ? AND lower(subject) = ?"
+            for r in self._q("SELECT id FROM facts WHERE status IN ('current', 'retired')"
+                             " AND conversation_id != ? AND lower(subject) = ?"
                              " ORDER BY id DESC LIMIT ?", (conv_id, subj, limit)):
                 ids[r["id"]] = None
         for f in facts:
             for hit in self.fts_search(f"{f.get('subject') or ''} {f['fact']}", limit=5):
                 if hit["kind"] == "fact" and hit["conversation_id"] != conv_id:
                     ids[int(hit["ref_id"])] = None
-        rows = [r for r in self.facts_by_id(ids) if r["status"] == "current"]
+        # retired facts are out of the search index: match their words here (few rows)
+        words = {w for f in facts for w in _norm(f"{f.get('subject') or ''} {f['fact']}").split()
+                 if w not in _STOPWORDS}
+        for r in self._q("SELECT id, subject, fact FROM facts WHERE status = 'retired'"
+                         " AND conversation_id != ?", (conv_id,)):
+            if words & set(_norm(f"{r['subject'] or ''} {r['fact']}").split()):
+                ids[r["id"]] = None
+        rows = [r for r in self.facts_by_id(ids) if r["status"] in ("current", "retired")]
         return rows[:limit]
 
     def link_fact(self, new_id: int, relation: str, existing_id: int) -> None:
         """Record that fact ``new_id`` repeats ("same") or updates ("updates") a known one.
 
         "same": the new row is dropped and its conversation becomes another source of
-        the known fact. "updates": the older of the two (by conversation time) is marked
-        superseded by the newer, so re-summarizing an old conversation can't overwrite
-        newer knowledge.
+        the known fact; a repeat of a retired fact so stays hidden. "updates": the older
+        of the two (by conversation time) is marked superseded by the newer, so
+        re-summarizing an old conversation can't overwrite newer knowledge. A newer fact
+        that updates a retired one is a new belief and is shown; the retired one stays
+        retired.
         """
         with self.tx() as c:
             rows = {r["id"]: r for r in c.execute(
-                "SELECT f.id, f.conversation_id, f.source_at, c.started_at FROM facts f"
+                "SELECT f.id, f.conversation_id, f.source_at, f.status, c.started_at FROM facts f"
                 " JOIN conversations c ON c.id = f.conversation_id WHERE f.id IN (?, ?)",
                 (new_id, existing_id))}
             if len(rows) != 2:
@@ -686,6 +701,8 @@ class Store:
                 c.execute("DELETE FROM facts WHERE id = ?", (new_id,))
             elif relation == "updates":
                 newer, older = (new, old) if new["started_at"] >= old["started_at"] else (old, new)
+                if older["status"] == "retired":  # forgotten: not part of any history
+                    return
                 c.execute("UPDATE facts SET status = 'superseded', superseded_by = ?"
                           " WHERE id = ?", (newer["id"], older["id"]))
                 # whatever the older one had replaced now points at the newer one
@@ -705,6 +722,24 @@ class Store:
             "SELECT s.*, c.title AS conversation_title, c.started_at AS conversation_at"
             " FROM fact_sources s JOIN conversations c ON c.id = s.conversation_id"
             " WHERE s.fact_id = ? ORDER BY c.started_at", (fact_id,))
+
+    def retire_fact(self, fact_id: int, reason: str = "") -> str | None:
+        """Forget a fact (the owner said it's wrong or private): status 'retired', out of
+        ``list_facts``, search and the conversation's facts. Returns "retired",
+        "already" (it was retired before) or None (no such fact).
+
+        It stays retired when its conversation is re-summarized, and a later "same" fact
+        becomes another source of it instead of a new fact. Facts it had replaced stay
+        replaced (they are older values of a belief the owner rejected).
+        """
+        with self.tx() as c:
+            row = c.execute("SELECT status FROM facts WHERE id = ?", (fact_id,)).fetchone()
+            if row is None:
+                return None
+            if row["status"] == "retired":
+                return "already"
+            _retire(c, fact_id, time.time(), reason.strip() or None)
+        return "retired"
 
     def search_segments(self, *, query: str | None = None, speaker: str | None = None,
                         since: float | None = None, until: float | None = None,
@@ -958,8 +993,8 @@ class Store:
             row[k] = json.loads(row[k])
         row["action_items"] = self._q(
             "SELECT * FROM action_items WHERE conversation_id = ? ORDER BY id", (conv_id,))
-        row["facts"] = self._q("SELECT * FROM facts WHERE conversation_id = ? ORDER BY id",
-                               (conv_id,))
+        row["facts"] = self._q("SELECT * FROM facts WHERE conversation_id = ?"
+                               " AND status != 'retired' ORDER BY id", (conv_id,))
         return row
 
     def list_conversations(self, *, since: float | None = None, until: float | None = None,
@@ -1338,11 +1373,20 @@ def _insert_fact(c: sqlite3.Connection, conv_id: str, subject: str | None, fact:
     return int(cur.lastrowid or 0)
 
 
+def _retire(c: sqlite3.Connection, fact_id: int, at: float | None,
+            reason: str | None) -> None:
+    """Mark a fact retired and take it out of search (index and embeddings)."""
+    c.execute("UPDATE facts SET status = 'retired', superseded_by = NULL, retired_at = ?,"
+              " retired_reason = ? WHERE id = ?", (at, reason, fact_id))
+    c.execute("DELETE FROM search_fts WHERE kind = 'fact' AND ref_id = ?", (str(fact_id),))
+    c.execute("DELETE FROM embeddings WHERE kind = 'fact' AND ref_id = ?", (str(fact_id),))
+
+
 def _knowledge(c: sqlite3.Connection, conv_id: str) -> dict[str, Any]:
     """What a re-summary must not lose: closed action items and the facts' links."""
     facts = [dict(r) for r in c.execute(
-        "SELECT id, subject, fact, source_at, status, superseded_by FROM facts"
-        " WHERE conversation_id = ? ORDER BY id", (conv_id,))]
+        "SELECT id, subject, fact, source_at, status, superseded_by, retired_at,"
+        " retired_reason FROM facts WHERE conversation_id = ? ORDER BY id", (conv_id,))]
     for f in facts:
         f["sources"] = [dict(r) for r in c.execute(
             "SELECT s.conversation_id, s.source_at FROM fact_sources s JOIN conversations v"
@@ -1387,8 +1431,14 @@ def _carry_over(c: sqlite3.Connection, conv_id: str, before: dict[str, Any],
             first, sources = sources[0], sources[1:]
             target = _insert_fact(c, first["conversation_id"], old["subject"], old["fact"],
                                   first["source_at"])
+        elif old["status"] == "retired":
+            # not said this time: keep the retired row, so a later re-summary that says it
+            # again still finds it retired
+            target = _insert_fact(c, conv_id, old["subject"], old["fact"], old["source_at"])
         else:
             continue
+        if old["status"] == "retired":
+            _retire(c, target, old["retired_at"], old["retired_reason"])
         if old["status"] == "superseded" and old["superseded_by"] and c.execute(
                 "SELECT 1 FROM facts WHERE id = ?", (old["superseded_by"],)).fetchone():
             c.execute("UPDATE facts SET status = 'superseded', superseded_by = ? WHERE id = ?",
