@@ -206,6 +206,9 @@ class Segment:
 
 ITEM_STATUSES = ("open", "done", "dismissed")
 ITEM_KINDS = ("task", "event", "reminder")
+# an action item that is a note the user asked a voice note to save; the hub files it
+# into its notes (update_action_item can change it to another kind, not make one)
+NOTE_ITEM = "note"
 UNSET: Any = object()  # "not given" for optional updates (None means "clear")
 
 
@@ -301,6 +304,10 @@ class Store:
             # the to-do list the user named for an item ("add milk to my shopping list")
             self._add_column("action_items", "list_name", "TEXT")
             self._conn.execute("PRAGMA user_version = 7")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 8:
+            # notes from voice notes ("create a note ..."): the note's title
+            self._add_column("action_items", "note_title", "TEXT")
+            self._conn.execute("PRAGMA user_version = 8")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -569,13 +576,13 @@ class Store:
                 cur = c.execute(
                     "INSERT INTO action_items (id, conversation_id, text, owner, due, due_date,"
                     " source_at, status, kind, due_time, duration_minutes, location,"
-                    " time_unclear, created_at, edited, list_name)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " time_unclear, created_at, edited, list_name, note_title)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (row["id"], conv_id, item["text"], item.get("owner"), item.get("due"),
                      row["due_date"], item.get("source_at"), row["status"], row["kind"],
                      row["due_time"], item.get("duration_minutes"), item.get("location"),
                      row["time_unclear"], row["created_at"], row["edited"],
-                     row["list_name"]))
+                     row["list_name"], item.get("note_title")))
                 c.execute("INSERT INTO search_fts VALUES ('action_item', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id, item["text"]))
             for fact in summary["facts"]:
@@ -996,15 +1003,22 @@ class Store:
             "SELECT id FROM conversations WHERE status = 'failed' AND updated_at <= ?"
             " ORDER BY updated_at, started_at", (before,))]
 
-    def list_action_items(self, status: str | None = "open") -> list[dict[str, Any]]:
+    def list_action_items(self, status: str | None = "open", *,
+                          notes: bool = True) -> list[dict[str, Any]]:
+        """Newest conversation first. ``notes=False`` leaves out note items (they are no
+        to-dos)."""
         sql = ("SELECT a.*, c.title AS conversation_title, c.started_at AS conversation_at,"
                " c.kind AS conversation_kind"
-               " FROM action_items a JOIN conversations c ON c.id = a.conversation_id")
-        params: tuple[Any, ...] = ()
+               " FROM action_items a JOIN conversations c ON c.id = a.conversation_id"
+               " WHERE 1=1")
+        params: list[Any] = []
         if status:
-            sql += " WHERE a.status = ?"
-            params = (status,)
-        return self._q(sql + " ORDER BY c.started_at DESC, a.id", params)
+            sql += " AND a.status = ?"
+            params.append(status)
+        if not notes:
+            sql += " AND a.kind IS NOT ?"
+            params.append(NOTE_ITEM)
+        return self._q(sql + " ORDER BY c.started_at DESC, a.id", tuple(params))
 
     def get_action_item(self, item_id: int) -> dict[str, Any] | None:
         return self._one(
@@ -1273,6 +1287,21 @@ def clean_list_name(value: str | None) -> str | None:
     for _ in range(2):
         name = _LIST_NOISE.sub("", name).strip()
     if not name or len(name) > 40 or name.lower() in _NO_LIST:
+        return None
+    return name
+
+
+_NOTES_NOISE = re.compile(r"^(?:my|the|our|a)\s+|\s+notes?$", re.IGNORECASE)
+
+
+def clean_notes_name(value: str | None) -> str | None:
+    """The notes a note goes into, as the user said them, without "my", "the" and a
+    trailing "notes" ("my Hardware notes" -> "Hardware"); None for plain "my notes",
+    nothing usable, or too long."""
+    name = re.sub(r"\s+", " ", (value or "").strip().strip(".\"'"))
+    for _ in range(2):
+        name = _NOTES_NOISE.sub("", name).strip()
+    if not name or len(name) > 40 or name.lower() in {"note", "notes", "none", "null"}:
         return None
     return name
 

@@ -233,7 +233,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                 "text": r["text"], "owner": r["owner"], "due": r["due"],
                 "due_date": r["due_date"], "due_time": r.get("due_time"),
                 "duration_minutes": r.get("duration_minutes"), "location": r.get("location"),
-                "list_name": r.get("list_name"),
+                "list_name": r.get("list_name"), "note_title": r.get("note_title"),
                 "time_unclear": bool(r.get("time_unclear")),
                 "conversation_id": r["conversation_id"],
                 "conversation_title": r["conversation_title"],
@@ -250,12 +250,15 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                                           "programs)")] = "text") -> str:
         """Action items from conversations and voice notes (default: open ones), newest
         first. Each is a task, an event (meeting, appointment) or a reminder, with its due
-        date and time of day if known, and the to-do list the user named for it."""
+        date and time of day if known, and the to-do list the user named for it. The JSON
+        format also lists notes the user asked a voice note to save (kind "note", with
+        note_title and, in list_name, the notes to add it to); the text format doesn't."""
         fmt = (format or "text").strip().lower()
         if fmt not in ("text", "json"):
             return "format must be text or json"
         a, b = window(since, until)
-        rows = store.list_action_items(None if status == "all" else status)
+        rows = store.list_action_items(None if status == "all" else status,
+                                       notes=fmt == "json")
         rows = [r for r in rows
                 if (a is None or r["conversation_at"] >= a)
                 and (b is None or r["conversation_at"] < b)
