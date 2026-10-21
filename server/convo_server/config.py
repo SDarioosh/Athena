@@ -150,6 +150,11 @@ class Settings(BaseSettings):
     mcp_token: str | None = None
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8001
+    # A fact is "confirmed" (list_facts confirmed=true; the hub copies these into its
+    # memory) once it was said in at least this many distinct conversations, on at least
+    # this many distinct dates in CONVO_TIMEZONE, and no newer fact has replaced it.
+    fact_confirm_sources: int = Field(default=3, ge=1)
+    fact_confirm_days: int = Field(default=2, ge=1)
 
     @property
     def base_url(self) -> str:
