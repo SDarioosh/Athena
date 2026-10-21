@@ -24,6 +24,7 @@ add_library(pda_pure STATIC
     ${FW}/main/pda_actions.c
     ${FW}/main/feed_store.c
     ${FW}/main/gesture.c
+    ${FW}/main/touch_idle.c
     ${FW}/main/ui_nav.c
     ${REC}/main/crc32.c
     ${REC}/main/isotime.c
@@ -31,7 +32,7 @@ add_library(pda_pure STATIC
 target_include_directories(pda_pure PUBLIC ${FW}/main ${REC}/main ${REC}/test)
 
 enable_testing()
-foreach(t test_pda_proto test_json test_feed test_outbox test_feed_store test_gesture test_ui_nav)
+foreach(t test_pda_proto test_json test_feed test_outbox test_feed_store test_gesture test_touch_idle test_ui_nav)
     add_executable(${t} ${t}.c)
     target_link_libraries(${t} pda_pure)
     add_test(NAME ${t} COMMAND ${t})
