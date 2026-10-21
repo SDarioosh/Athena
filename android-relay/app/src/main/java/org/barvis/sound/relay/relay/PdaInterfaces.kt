@@ -135,6 +135,26 @@ object NoTodos : TodosApi {
 }
 
 /**
+ * The hub's Today insight (`GET /api/codex/insight/today`, scope `insight:read`, plan §4.1),
+ * with the calendar's URL and token.
+ */
+interface InsightApi {
+    /**
+     * The hub's answer, a JSON object (the feed builder checks its shape). [ApiResult.Unsupported]
+     * for "no insight", with the reason: no insight yet (404), a hub without the route, a token
+     * without `insight:read` (403), another final 4xx, or an answer that isn't a JSON object.
+     * [ApiResult.Fail] for network errors, 5xx, 408/429 and 401, which fail the feed like the
+     * calendar's.
+     */
+    suspend fun today(): ApiResult<Map<String, Any?>>
+}
+
+/** Used when no Odysseus URL and token are set: the feed has no `insight`. */
+object NoInsight : InsightApi {
+    override suspend fun today() = ApiResult.Unsupported("Odysseus isn't set up in the relay settings")
+}
+
+/**
  * What the relay remembers per PDA between connections. The app persists it in
  * SharedPreferences; tests use [MemoryPdaMemory].
  */

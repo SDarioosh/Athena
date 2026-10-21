@@ -12,6 +12,7 @@ from barvis_relay import pda_actions as a
 from barvis_relay import pda_feed as f
 from barvis_relay import pda_sync as s
 from barvis_relay.pda_calendar import OdysseusCalendar
+from barvis_relay.pda_insight import OdysseusInsight
 from barvis_relay.pda_todos import OdysseusTodos
 from ody_fake import ODY_TOKEN, FakeOdysseus
 from pda_fakes import NOW, TOKEN, FakeApiServer, FakeT5
@@ -124,16 +125,16 @@ def test_cli_calendar_choice(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("ODYSSEUS_URL", raising=False)
     monkeypatch.delenv("ODYSSEUS_TOKEN", raising=False)
     assert isinstance(pda_relay.make_odysseus(args())[0], a.NoCalendar)
-    assert pda_relay.make_odysseus(args())[1] is None
+    assert pda_relay.make_odysseus(args())[1:] == (None, None)
     assert pda_relay.make_odysseus(args(odysseus_url="http://127.0.0.1:7010")) is None
     token = tmp_path / "ody"
     token.write_text(ODY_TOKEN + "\n")
-    c, todos = pda_relay.make_odysseus(args(odysseus_url="http://127.0.0.1:7010",
-                                            odysseus_token_file=token,
-                                            calendar_href="cal-caldav"))
+    c, todos, insight = pda_relay.make_odysseus(args(odysseus_url="http://127.0.0.1:7010",
+                                                     odysseus_token_file=token,
+                                                     calendar_href="cal-caldav"))
     assert isinstance(c, OdysseusCalendar) and c.calendar_href == "cal-caldav"
-    assert isinstance(todos, OdysseusTodos)
-    assert ODY_TOKEN not in repr(c) and ODY_TOKEN not in repr(todos)
+    assert isinstance(todos, OdysseusTodos) and isinstance(insight, OdysseusInsight)
+    assert all(ODY_TOKEN not in repr(x) for x in (c, todos, insight))
     monkeypatch.setenv("ODYSSEUS_TOKEN", ODY_TOKEN)
     assert isinstance(pda_relay.make_odysseus(args(odysseus_url="http://127.0.0.1:7010"))[0],
                       OdysseusCalendar)

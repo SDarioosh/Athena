@@ -65,6 +65,16 @@ def test_feed_todos(api_server, ody) -> None:
     assert get == "/api/codex/todos?format=json"
 
 
+def test_hub_reports_todo_and_goal_notes_as_checklists(ody) -> None:
+    # The hub's JSON route reports notes of type checklist, todo and goal all as
+    # "checklist" (plan §4.4), so the relay's type filter keeps them whatever their kind.
+    ody.notes = [{"id": f"n-{kind}", "title": kind, "type": "checklist", "label": kind,
+                  "pinned": False, "due_date": None,
+                  "items": [{"text": "Water the plants", "done": False}], "content": None}
+                 for kind in ("checklist", "todo", "goal")]
+    assert [n["id"] for n in f._todos(todos(ody))] == ["n-checklist", "n-todo", "n-goal"]
+
+
 def test_feed_todo_caps(ody) -> None:
     ody.notes = [{"id": f"n{k}", "title": "t" * 200, "type": "checklist", "pinned": False,
                   "due_date": "soon", "items": [{"text": f"item {j} " + "x" * 200, "done": False}

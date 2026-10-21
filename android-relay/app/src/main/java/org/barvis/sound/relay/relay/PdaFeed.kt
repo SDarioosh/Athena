@@ -81,7 +81,8 @@ sealed class FeedBuild {
  * PC relay's rules (plan §4.1 "How the PC relay builds it"). Pure Kotlin.
  *
  * A source that fails fails the build, except a digest 404 and a calendar that isn't set up
- * (or a hub without the calendar routes), which give no briefing and `"calendar": []`.
+ * (or a hub without the calendar routes), which give no briefing and `"calendar": []`, and
+ * todos or an insight this hub or token can't give (no `todos`, no `insight`).
  */
 class FeedBuilder(
     private val api: ConvoApi,
@@ -92,6 +93,7 @@ class FeedBuilder(
     private val maxBytes: Int = MAX_FEED_BYTES,
     private val log: RelayLog = RelayLog.NONE,
     private val todos: TodosApi = NoTodos,
+    private val insight: InsightApi = NoInsight,
 ) {
     private class Stop(val fail: FeedBuild.Fail) : Exception()
 
@@ -107,6 +109,10 @@ class FeedBuilder(
 
     /** Why the last build has no `todos` (plan §4.4), or null. */
     var todosNote: String? = null
+        private set
+
+    /** Why the last build has no `insight` (plan §4.1), or null. */
+    var insightNote: String? = null
         private set
 
     suspend fun build(): FeedBuild = try {
@@ -172,14 +178,29 @@ class FeedBuilder(
             is ApiResult.Fail -> throw Stop(FeedBuild.Fail(r.error, "Odysseus todos"))
         }
         if (notes != null) m["todos"] = notes
+
+        insightNote = null
+        val todayInsight = when (val r = insight.today()) {
+            is ApiResult.Ok -> insightSection(r.value, notes, events).also { if (it == null) insightNote = INSIGHT_MALFORMED }
+            is ApiResult.Unsupported -> {
+                insightNote = r.reason
+                null
+            }
+            is ApiResult.Fail -> throw Stop(FeedBuild.Fail(r.error, "Odysseus insight"))
+        }
+        insightNote?.let {
+            log.log(if (it == INSIGHT_NOT_YET) Level.INFO else Level.WARN, "Odysseus insight: $it; the feed has no insight")
+        }
+        if (todayInsight != null) m["insight"] = todayInsight
         // Not read by the PC relay or required by the firmware (plan §4.1: optional, left out
         // when there are none).
         val templateList = templates.map { it.trim().take(40) }.filter { it.isNotEmpty() }.distinct().take(12)
         if (templateList.isNotEmpty()) m["templates"] = templateList
 
         // Too big (§4.1): cut summaries, then drop the oldest conversations, then done
-        // checklist items, then the last action items, then the last unpinned checklists,
-        // then the last calendar entries.
+        // checklist items, then the whole insight, then the last action items, then the last
+        // unpinned checklists, then the last calendar entries. A kept insight loses the refs
+        // whose item was dropped.
         fun size() = FeedContent(m).render(0xFFFFFFFFL, now).size
         if (size() > maxBytes) {
             for (c in convs) c["summary"] = cut(c["summary"] as String?, SUMMARY_CUT)
@@ -189,6 +210,7 @@ class FeedBuilder(
                 when {
                     convs.isNotEmpty() -> convs.removeAt(convs.size - 1)
                     notes != null && dropLastDoneItem(notes) -> Unit
+                    m.containsKey("insight") -> m.remove("insight")
                     actions.isNotEmpty() -> actions.removeAt(actions.size - 1)
                     notes != null && notes.any { it["pinned"] != true } ->
                         notes.removeAt(notes.indexOfLast { it["pinned"] != true })
@@ -196,6 +218,8 @@ class FeedBuilder(
                     else -> break
                 }
             }
+            @Suppress("UNCHECKED_CAST")
+            (m["insight"] as MutableMap<String, Any?>?)?.let { pruneInsight(it, notes, events) }
             log.log(Level.INFO, "feed trimmed to ${size()} B (summaries cut, $steps entries dropped)")
         }
         return FeedContent(m)
@@ -214,6 +238,45 @@ class FeedBuilder(
                 }.toMutableList(),
             )
         }.toMutableList()
+
+    /**
+     * §4.1 `insight` from the hub's answer, or null if it is malformed (no `YYYY-MM-DD` date or
+     * no string headline). Keeps `date`, `headline` and each item's `ref` and `why`, and only refs
+     * that resolve in this feed: `todo:<note id>:<i>` in [notes], `event:<id>` in [events].
+     */
+    private fun insightSection(
+        raw: Map<String, Any?>,
+        notes: List<Map<String, Any?>>?,
+        events: List<Map<String, Any?>>,
+    ): MutableMap<String, Any?>? {
+        val date = raw["date"] as? String ?: return null
+        if (!ISO_DATE.matches(date)) return null
+        val headline = raw["headline"] as? String ?: return null
+        val refs = feedRefs(notes, events)
+        val out = linkedMapOf<String, Any?>("date" to date, "headline" to cut(headline, INSIGHT_HEADLINE_MAX))
+        for (key in INSIGHT_SECTIONS) {
+            out[key] = (raw[key] as? List<*> ?: emptyList<Any?>()).asSequence()
+                .mapNotNull { it as? Map<*, *> }
+                .filter { val ref = it["ref"]; ref is String && ref in refs }
+                .map { linkedMapOf<String, Any?>("ref" to it["ref"], "why" to ((it["why"] as? String)?.let { w -> cut(w, INSIGHT_WHY_MAX) } ?: "")) }
+                .take(INSIGHT_ITEMS_MAX).toMutableList()
+        }
+        return out
+    }
+
+    /** The refs an insight item may point at in this feed. */
+    private fun feedRefs(notes: List<Map<String, Any?>>?, events: List<Map<String, Any?>>): Set<String> {
+        val refs = HashSet<String>()
+        notes?.forEach { n -> (n["items"] as List<*>).forEach { refs += "todo:${n["id"]}:${(it as Map<*, *>)["i"]}" } }
+        events.forEach { refs += "event:${it["id"]}" }
+        return refs
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun pruneInsight(insight: MutableMap<String, Any?>, notes: List<Map<String, Any?>>?, events: List<Map<String, Any?>>) {
+        val refs = feedRefs(notes, events)
+        for (key in INSIGHT_SECTIONS) (insight[key] as MutableList<Map<String, Any?>>).removeAll { (it["ref"] as String) !in refs }
+    }
 
     /** Drops the last done item of the last checklist that has one; false if none is left. */
     @Suppress("UNCHECKED_CAST")
@@ -281,7 +344,14 @@ class FeedBuilder(
         const val MAX_TODO_NOTES = 20
         const val MAX_TODO_ITEMS = 40
         const val TODO_TEXT_MAX = 160
+        const val INSIGHT_HEADLINE_MAX = 200
+        const val INSIGHT_WHY_MAX = 80
+        const val INSIGHT_ITEMS_MAX = 5
+        val INSIGHT_SECTIONS = listOf("focus", "coming_up", "also")
+        const val INSIGHT_MALFORMED = "malformed insight answer"
+        const val INSIGHT_NOT_YET = "no insight yet"
         private val DATE = Regex("\\d{4}-\\d{2}-\\d{2}")
+        private val ISO_DATE = Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
         /** [text] as one line of at most [limit] characters, cut at a word with an ellipsis. */
         fun cut(text: String?, limit: Int): String {

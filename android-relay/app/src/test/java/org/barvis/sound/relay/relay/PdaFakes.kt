@@ -345,3 +345,28 @@ class FakeTodos(private val timeline: Timeline = Timeline()) : TodosApi {
         return ApiResult.Ok(true)
     }
 }
+
+/** A fictional Today insight (plan §4.1) whose refs point at [FakeTodos] and [FakeCalendar]. */
+class FakeInsight : InsightApi {
+    var answer: ApiResult<Map<String, Any?>> = ApiResult.Ok(demo())
+    var reads = 0
+
+    override suspend fun today(): ApiResult<Map<String, Any?>> {
+        reads++
+        return answer
+    }
+
+    companion object {
+        fun item(ref: Any?, why: Any?, title: String = "x") = linkedMapOf("ref" to ref, "why" to why, "title" to title)
+
+        fun demo(): MutableMap<String, Any?> = linkedMapOf(
+            "date" to "2026-10-20",
+            "generated" to "2026-10-20T05:30:00Z",
+            "headline" to "A light day: the dentist in the morning, then the groceries.",
+            "focus" to listOf(item("todo:n1:0", "Needed for breakfast tomorrow", "Milk"),
+                item("event:e1", "Bring the referral letter", "Dentist")),
+            "coming_up" to listOf(item("event:e2", "Book the train", "Holiday")),
+            "also" to listOf(item("todo:n2:0", "Before the weekend", "Call the plumber")),
+        )
+    }
+}

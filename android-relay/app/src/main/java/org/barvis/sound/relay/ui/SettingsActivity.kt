@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import org.barvis.sound.relay.R
 import org.barvis.sound.relay.net.HttpUploader
 import org.barvis.sound.relay.net.OdysseusCalendarClient
+import org.barvis.sound.relay.net.OdysseusInsightClient
 import org.barvis.sound.relay.net.OdysseusTodosClient
 import org.barvis.sound.relay.net.ServerUrl
 import org.barvis.sound.relay.relay.ApiResult
@@ -160,7 +161,12 @@ class SettingsActivity : Activity() {
                 is ApiResult.Unsupported -> getString(R.string.odysseus_todos_unsupported, r.reason)
                 is ApiResult.Fail -> getString(R.string.odysseus_todos_failed, FeedBuilder.describe(r.error))
             }
-            odyResult.text = getString(R.string.odysseus_test_result, cal, checklists)
+            val insight = when (val r = OdysseusInsightClient(c.base, { token }, log = RelayState.logger).today()) {
+                is ApiResult.Ok -> getString(R.string.odysseus_insight_ok)
+                is ApiResult.Unsupported -> getString(R.string.odysseus_insight_unsupported, r.reason)
+                is ApiResult.Fail -> getString(R.string.odysseus_insight_failed, FeedBuilder.describe(r.error))
+            }
+            odyResult.text = getString(R.string.odysseus_test_result, cal, checklists, insight)
         }
     }
 
