@@ -1,0 +1,6 @@
+## Board-layer dependencies (IDF component registry).
+dependencies:
+  idf: ">=5.4"
+  # CO5300 AMOLED driver (Apache-2.0), SPI/QSPI, from Espressif's registry. It also drives
+  # the T4-S3's RM690B0: same QSPI framing, our own init list (display.c).
+  espressif/esp_lcd_co5300: "^2.2.0"

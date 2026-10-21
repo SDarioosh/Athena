@@ -38,6 +38,20 @@ jobs:
           target: esp32s3
           path: firmware/recorder
           command: idf.py -DBOARD=twatch_ultra -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_ultra" build
+      - name: "idf.py build (ESP-IDF v5.5.2, esp32s3, board twatch_s3)"
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.2
+          target: esp32s3
+          path: firmware/recorder
+          command: idf.py -B build-s3 -DBOARD=twatch_s3 -DSDKCONFIG=build-s3/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_s3" build
+      - name: "idf.py build (ESP-IDF v5.5.2, esp32s3, board t4_s3)"
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.2
+          target: esp32s3
+          path: firmware/recorder
+          command: idf.py -B build-t4 -DBOARD=t4_s3 -DSDKCONFIG=build-t4/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.t4_s3" build
 
   firmware-t5-pda:
     runs-on: ubuntu-latest

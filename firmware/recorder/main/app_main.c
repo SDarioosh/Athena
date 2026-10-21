@@ -1,11 +1,12 @@
 /* odysseus-sound recorder (docs/t-watch-ultra-plan.md §8): recording sessions to Opus chunks
  * on the SD card, drained by a phone or PC relay over BLE (docs/twatch-ble-protocol.md).
  *
- * Power: the chip light-sleeps whenever every task is blocked (BLE keeps working). After
- * STANDBY_IDLE_MS with nothing to do (no session, no relay wanted or connected, screen
- * off, card unmounted, no USB power) it goes into standby: deep sleep until PWR is pressed
- * or USB power is plugged in. Waking is a reboot that keeps the mute state and shows the
- * status screen; the press that woke it does nothing else (it doesn't start a recording).
+ * Power: the chip light-sleeps whenever every task is blocked (BLE keeps working, every
+ * button works on its first press). It never goes into standby by itself: only the console
+ * `standby` puts it into deep sleep until PWR is pressed or USB power is plugged in. Waking
+ * is a reboot that keeps the mute state and shows the status screen; the press that woke
+ * it does nothing else (it doesn't start a recording). Holding PWR 6 s powers the watch off
+ * (the AXP2101 does it; a press powers it on).
  *
  * Boot: board bring-up with every unused rail off, RTC -> system clock, mic ready, chunk
  * queue rebuilt from the card, BLE (advertising only when there is something to sync), USB
@@ -61,7 +62,6 @@ static const char *TAG = "app";
 #define PASSKEY_ON_MS 30000 /* pairing code: the SMP timeout, pairing fails after it anyway */
 #define TEST_RECORDING_SECONDS 60
 #define BATTERY_LOG_PERIOD_MS 60000
-#define STANDBY_IDLE_MS (2 * 60 * 1000)
 #define BATTERY_CHECK_PERIOD_MS 15000 /* low-battery guard; it needs 2 low readings */
 #define FW_VERSION "0.2.0"
 
@@ -76,9 +76,15 @@ static esp_timer_handle_t s_screen_timer;
 static RTC_DATA_ATTR volatile bool s_muted;
 static volatile bool s_time_valid;
 static esp_err_t s_session_result; /* set by the session's done callback */
-static int64_t s_last_activity_ms; /* main task only */
 /* Event loop only. */
-typedef enum { SCREEN_OFF, SCREEN_STATUS, SCREEN_MESSAGE, SCREEN_NOTE, SCREEN_PAIRING } screen_t;
+typedef enum {
+    SCREEN_OFF,
+    SCREEN_STATUS,
+    SCREEN_MESSAGE,
+    SCREEN_NOTE,
+    SCREEN_PAIRING,
+    SCREEN_REC, /* the recording screen, on for the whole recording (some boards) */
+} screen_t;
 static screen_t s_screen;           /* what is on the panel while ui_is_shown() */
 static bool s_note_pending;         /* a note waits for the conversation session to end */
 static bool s_resume_conversation;  /* start a conversation session again after the note */
@@ -308,6 +314,10 @@ void app_print_status(void)
                s_resume_conversation ? " conversation resumes after the note" : "");
     }
     printf("screen: %s\n", ui_is_shown() ? "on" : "off");
+    if (mic_array_channels() > 0) {
+        printf("mics: mixing 0x%x of %d, %" PRIu32 " mic DMA buffers dropped since the mic started\n",
+               mic_array_mask(), mic_array_channels(), mic_overflows());
+    }
     printf("reset: %s, up %lld s\n", reset_reason_name(), (long long)(esp_timer_get_time() / 1000000));
     const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     printf("heap: internal %u KB free (lowest %u KB, largest block %u KB), PSRAM %u KB free\n",
@@ -369,6 +379,36 @@ static void show_note(uint32_t elapsed_s, bool restart_timer)
     if (restart_timer) {
         screen_timer_restart(MESSAGE_ON_MS);
     }
+}
+
+/* Boards that keep the screen on while recording (board_screen_on_while_recording()): true
+ * while a session or note records. */
+static bool rec_screen_wanted(void)
+{
+    return board_screen_on_while_recording() && session_rec_running();
+}
+
+/* The recording screen, until the recording ends (no timer). */
+static void show_rec(void)
+{
+    session_rec_state_t ss;
+    session_rec_get_state(&ss);
+    ui_rec_t r = {
+        .note = ss.kind == SESSION_KIND_NOTE,
+        .elapsed_s = ss.elapsed_s,
+        .mics_mixed = mic_array_channels() > 0 ? mic_mix_count(mic_array_mask()) : -1,
+        .battery_low = s_batt_low,
+        .stop_hint = "PRESS BOOT TO STOP",
+    };
+    bool simulated = false;
+    r.battery_known = app_battery_read(&r.battery, &simulated) == ESP_OK;
+    if (ui_show_recording(&r) != ESP_OK) {
+        ui_hide();
+        s_screen = SCREEN_OFF;
+        return;
+    }
+    esp_timer_stop(s_screen_timer);
+    s_screen = SCREEN_REC;
 }
 
 static void refresh_screen_if_shown(void)
@@ -478,7 +518,11 @@ static void start_conversation(bool quiet)
     if (!quiet) {
         board_haptic_pulse(1);
     }
-    show_message("RECORDING", quiet ? "RESUMED" : NULL);
+    if (board_screen_on_while_recording()) {
+        show_rec();
+    } else {
+        show_message("RECORDING", quiet ? "RESUMED" : NULL);
+    }
     ble_sync_kick();
 }
 
@@ -499,7 +543,11 @@ static void begin_note(void)
     }
     ESP_LOGI(TAG, "voice note started (1 buzz; max %d s, PWR press or hold stops it)", SESSION_REC_NOTE_MAX_S);
     board_haptic_pulse(1);
-    show_note(0, true);
+    if (board_screen_on_while_recording()) {
+        show_rec();
+    } else {
+        show_note(0, true);
+    }
     ble_sync_kick();
 }
 
@@ -668,7 +716,7 @@ static int64_t now_ms(void)
 }
 
 /* Why the watch can't go into standby now, or NULL if it can. */
-static const char *standby_blocker(bool forced)
+static const char *standby_blocker(void)
 {
     if (session_rec_running() || test_wav_running() || s_note_pending || s_resume_conversation) {
         return "recording";
@@ -685,26 +733,16 @@ static const char *standby_blocker(bool forced)
     if (board_storage_is_mounted()) {
         return "SD card in use";
     }
-    if (forced) {
-        return NULL;
-    }
-    board_battery_t b;
-    if (board_battery_read(&b) == ESP_OK && b.vbus) {
-        return "USB power"; /* charging, and the console stays usable */
-    }
     return NULL;
 }
 
-static void enter_standby(bool forced)
+/* Only on request (console `standby`): the watch never goes into standby by itself, so every
+ * button works at once (light sleep). */
+static void enter_standby(void)
 {
-    const char *why = standby_blocker(forced);
+    const char *why = standby_blocker();
     if (why) {
-        /* The automatic check runs once a minute while blocked: keep it out of the log. */
-        if (forced) {
-            ESP_LOGW(TAG, "no standby: %s", why);
-        } else {
-            ESP_LOGD(TAG, "no standby: %s", why);
-        }
+        ESP_LOGW(TAG, "no standby: %s", why);
         return;
     }
     /* The power log's RAM ring doesn't survive deep sleep: put it on the card first. */
@@ -720,6 +758,10 @@ static void enter_standby(bool forced)
     /* The BT controller asked for the main crystal through light sleep
      * (BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP); deep sleep would keep it running too. */
     esp_sleep_pd_config(ESP_PD_DOMAIN_XTAL, ESP_PD_OPTION_AUTO);
+    /* Automatic light sleep arms a timer wake before every light sleep and leaves it armed.
+     * Deep sleep would inherit it and wake after the last light sleep's length (0 s to a few
+     * minutes), boot and light the screen, every time. Only the board's sources may wake us. */
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
     esp_deep_sleep_start();
 }
 
@@ -783,7 +825,9 @@ static void handle(const app_event_t *ev)
         session_rec_get_state(&ss);
         s_rec_resume = ss.running && ss.kind == SESSION_KIND_CONVERSATION ? REC_RESUME_MAGIC : 0;
     }
-        if (ui_is_shown() && s_screen == SCREEN_NOTE && note_running()) {
+        if (rec_screen_wanted() && (s_screen == SCREEN_REC || !ui_is_shown())) {
+            show_rec(); /* also back on after anything turned the screen off */
+        } else if (ui_is_shown() && s_screen == SCREEN_NOTE && note_running()) {
             show_note((uint32_t)ev->arg, false);
         } else {
             refresh_screen_if_shown();
@@ -796,8 +840,12 @@ static void handle(const app_event_t *ev)
         session_done((session_rec_kind_t)(ev->arg >> 8), (session_rec_end_t)(ev->arg & 0xff));
         break;
     case APP_EV_SCREEN_TIMEOUT:
-        ui_hide();
-        s_screen = SCREEN_OFF;
+        if (rec_screen_wanted()) {
+            show_rec(); /* a status or message screen during a recording: back to it */
+        } else {
+            ui_hide();
+            s_screen = SCREEN_OFF;
+        }
         break;
     case APP_EV_RECORD:
         start_test_recording(ev->arg);
@@ -824,7 +872,7 @@ static void handle(const app_event_t *ev)
         break;
     }
     case APP_EV_STANDBY:
-        enter_standby(true);
+        enter_standby();
         break;
     }
 }
@@ -931,8 +979,11 @@ static void check_battery(void)
 void app_main(void)
 {
     const bool from_standby = esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED;
-    ESP_LOGI(TAG, "odysseus-sound recorder %s; reset reason: %s%s", FW_VERSION,
-             reset_reason_name(), from_standby ? " (woken from standby)" : "");
+    ESP_LOGI(TAG, "odysseus-sound recorder %s; reset reason: %s", FW_VERSION, reset_reason_name());
+    if (from_standby) {
+        /* EXT1 = the board's wake line (PWR, USB power); anything else is a bug. */
+        ESP_LOGI(TAG, "woken from standby, wake cause %d", (int)esp_sleep_get_wakeup_cause());
+    }
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -1012,20 +1063,13 @@ void app_main(void)
                   "screen, BOOT x2 = mute, BOOT held = BLE sync window; type `help` on the USB "
                   "console");
 
-    /* Wake only for events and the periodic work (battery guard, battery and power logs,
-     * standby check), so the chip can light sleep in between. */
+    /* Wake only for events and the periodic work (battery guard, battery and power logs),
+     * so the chip can light sleep in between. */
     int64_t last_batt = now_ms(), last_check = last_batt;
-    s_last_activity_ms = last_batt;
     for (;;) {
-        const int64_t now = now_ms();
-        int64_t wait = last_check + BATTERY_CHECK_PERIOD_MS - now;
-        const int64_t idle_left = s_last_activity_ms + STANDBY_IDLE_MS - now;
-        if (idle_left > 0 && idle_left < wait) {
-            wait = idle_left;
-        }
+        const int64_t wait = last_check + BATTERY_CHECK_PERIOD_MS - now_ms();
         app_event_t ev;
         if (xQueueReceive(s_events, &ev, pdMS_TO_TICKS(wait > 10 ? wait : 10)) == pdTRUE) {
-            s_last_activity_ms = now_ms();
             handle(&ev);
         }
         power_log_poll();
@@ -1036,9 +1080,6 @@ void app_main(void)
         if (now_ms() - last_batt >= BATTERY_LOG_PERIOD_MS) {
             last_batt = now_ms();
             log_battery();
-        }
-        if (now_ms() - s_last_activity_ms >= STANDBY_IDLE_MS) {
-            enter_standby(false); /* returns if something keeps the watch awake */
         }
     }
 }

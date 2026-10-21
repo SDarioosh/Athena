@@ -29,6 +29,22 @@ typedef struct {
     uint64_t sd_free_mb; /* valid when mounted */
 } ui_status_t;
 
+/* What the recording screen shows (boards with board_screen_on_while_recording()). */
+typedef struct {
+    bool note;            /* a voice note, else a conversation session */
+    uint32_t elapsed_s;
+    int mics_mixed;       /* -1: a single PDM mic (no count to show) */
+    board_battery_t battery;
+    bool battery_known;
+    bool battery_low;
+    const char *stop_hint; /* e.g. "PRESS BOOT TO STOP" */
+} ui_rec_t;
+
+/* The recording screen: "REC" (or "NOTE") in red, the running time large, the mics mixed,
+ * the battery, how to stop. Call it every second to update. It is dimmer than the other
+ * screens and moves its lines a few pixels every minute: an AMOLED showing the same frame
+ * for hours would burn in. */
+esp_err_t ui_show_recording(const ui_rec_t *r);
 /* Power the display on (if off) and draw the status. Safe to call repeatedly to refresh. */
 esp_err_t ui_show_status(const ui_status_t *s);
 /* The BLE pairing code (§3.1 of docs/twatch-ble-protocol.md), large, until ui_hide(). */

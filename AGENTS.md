@@ -45,7 +45,10 @@ the data path touches the cloud.**
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
   recording feasibility test app; see `zepp-app/README.md`.
 - `firmware/recorder/`: ESP-IDF 5.x firmware for our own recorders, one shared `main/`
-  and a board layer (`main/board.h`, `boards/twatch_ultra/board/`). Milestone 1
+  and a board layer (`main/board.h`, `boards/twatch_ultra/board/`, `boards/twatch_s3/board/`
+  for the LilyGO T-Watch S3: one button, recordings queued in flash; `boards/t4_s3/board/`
+  for the LilyGO T4-S3 conference recorder: one button, four INMP441 I2S mics; shared chip
+  drivers are in `boards/common/`). Milestone 1
   (bring-up test firmware for the T-Watch Ultra) is built, plus Opus recording sessions,
   the SD chunk queue and the BLE service; `tools/ble_relay.py` is the PC relay. See
   `firmware/recorder/README.md`.
@@ -203,7 +206,10 @@ the data path touches the cloud.**
   cmake --build build-host && ctest --test-dir build-host`
 - Recorder firmware build (ESP-IDF ≥ 5.4): `cd firmware/recorder && idf.py
   -DBOARD=twatch_ultra -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_ultra"
-  build`
+  build`; T-Watch S3: `idf.py -B build-s3 -DBOARD=twatch_s3 -DSDKCONFIG=build-s3/sdkconfig
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_s3" build`; T4-S3: `idf.py -B
+  build-t4 -DBOARD=t4_s3 -DSDKCONFIG=build-t4/sdkconfig
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.t4_s3" build`
 - PC BLE relay (no Bluetooth needed): `python -m pytest -q firmware/recorder/tools`
 - Android relay: `cd android-relay && ./gradlew assembleDebug test lint` (JDK 17+,
   Android SDK platform 35)
