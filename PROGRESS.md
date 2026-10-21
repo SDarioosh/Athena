@@ -146,7 +146,11 @@ parallel agents, one per stream, reviewed and merged by the orchestrator.
   (`build-pda-host/today_screens/*.png`, see `firmware/pda/README.md`). `idf.py build`
   (ESP-IDF 5.5.2) passes.
 - **Checks:** server 329 tests + ruff; relay 196 tests + ruff; PDA host 11/11; Android
-  build, 147 tests, lint.
+  build, 147 tests, lint. Sandbox stack (Qwen3-4B on CPU, both PRs): MCP 0.4.0 connected;
+  bakeoff `--only 1 4 16 21` **4/4** at the default thresholds (2/3 on 1, 4, 16 before);
+  the hub's insight placed 8/8 fictional candidates in 82 s. With every seed fact forced
+  into the hub's memory the model answered two questions from memory without a tool
+  call (2/4): a scoring question for the owner (hub PR).
 - **Follow-ups noticed:** Android feed trimming never drops pinned checklists or an
   emptied checklist, unlike the PC relay (pre-existing); a timed series stored in UTC
   gets a UTC date in its occurrence uid, so a near-midnight occurrence can open the
