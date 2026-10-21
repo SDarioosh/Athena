@@ -167,6 +167,41 @@ class PdaHttpTest {
         noLeak()
     }
 
+    @Test fun odysseusInsightClient() = runBlocking {
+        val t = FakeTransport { _, _ ->
+            HttpAnswer(200, """{"date": "2026-10-20", "generated": "2026-10-20T05:30:00Z", "headline": "A light day.",
+                "focus": [{"ref": "event:e1", "why": "Bring the letter", "title": "Dentist"}], "coming_up": [], "also": []}""")
+        }
+        val c = OdysseusInsightClient("http://hub.example.ts.net:7000/", { token }, t, log = { _, msg -> logs += msg })
+        val raw = (c.today() as ApiResult.Ok).value
+        assertEquals("A light day.", raw["headline"])
+        assertEquals("GET" to "http://hub.example.ts.net:7000/api/codex/insight/today", t.calls[0].first to t.calls[0].second)
+        assertEquals("Bearer $token", t.calls[0].third["Authorization"])
+
+        // "No insight": left out of the feed, with the PC relay's words.
+        val none = listOf(
+            HttpAnswer(404, """{"error": "no insight yet"}""") to OdysseusInsightClient.NOT_YET,
+            HttpAnswer(404, """{"detail": "Not Found"}""") to OdysseusInsightClient.OLD_HUB, // a hub without the route
+            HttpAnswer(405, """{"detail": "Method Not Allowed"}""") to OdysseusInsightClient.OLD_HUB,
+            HttpAnswer(403, """{"detail": "API token missing required scope: insight:read"}""") to "token lacks insight:read",
+            HttpAnswer(200, "Today you have a dentist appointment.") to OdysseusInsightClient.MALFORMED,
+            HttpAnswer(200, """["not", "an", "object"]""") to OdysseusInsightClient.MALFORMED,
+            HttpAnswer(400, """{"detail": "bad request"}""") to "Odysseus insight: HTTP 400",
+        )
+        for ((answer, why) in none) {
+            t.answer = { _, _ -> answer }
+            assertEquals(ApiResult.Unsupported(why), c.today())
+        }
+        // Failures fail the feed, like the calendar's.
+        t.answer = { _, _ -> HttpAnswer(503, "") }
+        assertTrue((c.today() as ApiResult.Fail).error is ServerResult.Transient)
+        t.answer = { _, _ -> throw IOException("connection refused") }
+        assertTrue((c.today() as ApiResult.Fail).error is ServerResult.Transient)
+        t.answer = { _, _ -> HttpAnswer(401, """{"error": "Invalid API token"}""") }
+        assertEquals(ApiResult.Fail(ServerResult.AuthRejected(401)), c.today())
+        noLeak()
+    }
+
     /** The real transport against a JDK server: method, headers, body, no redirects. */
     @Test fun urlConnectionTransport() = runBlocking {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)

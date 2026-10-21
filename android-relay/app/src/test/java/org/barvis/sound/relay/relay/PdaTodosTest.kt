@@ -56,6 +56,16 @@ class PdaTodosTest {
         assertEquals(listOf("calendar", "todos"), pda.feedJson().keys.toList().takeLast(2))
     }
 
+    @Test fun hubReportsTodoAndGoalNotesAsChecklists() {
+        // The hub's JSON route reports notes of type checklist, todo and goal all as
+        // "checklist" (plan §4.4), so the relay's type filter keeps them whatever their kind.
+        todos.notes.clear()
+        for (kind in listOf("checklist", "todo", "goal")) {
+            todos.notes += TodoNote("n-$kind", kind, "checklist", false, null, listOf(TodoItem("Water the plants", false)))
+        }
+        assertEquals(listOf("n-checklist", "n-todo", "n-goal"), notesOf(build(10_000_000).sections).map { it["id"] })
+    }
+
     @Test fun capsAtTwentyNotesAndFortyItems() {
         todos.notes.clear()
         repeat(25) { n ->
