@@ -14,7 +14,14 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import relevance_rules
 from .dates import resolve_due, resolve_time
-from .store import NOTE_ITEM, Segment, clean_list_name, clean_notes_name
+from .store import (
+    NOTE_ITEM,
+    Segment,
+    clean_list_name,
+    clean_notes_name,
+    is_explicit,
+    short_title,
+)
 
 log = logging.getLogger(__name__)
 
@@ -43,8 +50,10 @@ class ActionItem(BaseModel):
                                   description="The user's list it goes on, if they name one "
                                               "('add milk to my shopping list' -> 'shopping')")
     title: str | None = Field(default=None,
-                              description="For a note: a short title, e.g. 'Battery "
-                                          "dimensions'; else null")
+                              description="A short imperative summary, at most 60 "
+                                          "characters, e.g. 'Call the plumber about the "
+                                          "tap'; for a note, its title, e.g. 'Battery "
+                                          "dimensions'")
     at_seconds: int | None = Field(default=None,
                                    description="Offset in seconds where it was mentioned")
 
@@ -162,8 +171,12 @@ list the user wants it on if they name one, e.g. "add milk to my shopping list" 
 "Milk", list_name "shopping"; "put call the bank on my work to-do list" -> text "Call the \
 bank", list_name "work"; else null."""
 
-ACTION_KEYS = ("Keys: action_items[{{text, kind, owner, due, due_date, time, "
+ACTION_KEYS = ("Keys: action_items[{{text, title, kind, owner, due, due_date, time, "
                "duration_minutes, location, list_name, at_seconds}}].")
+
+# Both action prompts: every item's title.
+ITEM_RULES = """title: a short imperative summary of the item, at most 60 characters, \
+e.g. "Call the plumber about the tap"; never the whole sentence."""
 
 ACTIONS_SYSTEM = """You list the action items of one conversation. """ + COMMON + """
 The conversation happened on {date}.
@@ -171,6 +184,7 @@ An action item is something someone promised or was asked to do after this \
 conversation: a promise ("I'll send you the slides tonight"), a request ("can you water \
 the plants while I'm away?") or an appointment to keep. List every \
 one, small ones too; leave out things already done.
+""" + ITEM_RULES + """
 text: a task that starts with a verb and names who and what, e.g. "Send Sam the \
 slides" or "Water Lena's plants". Never copy the spoken sentence.
 owner: who should do it ("{owner}" for the user), if clear. due: the deadline in the \
@@ -214,7 +228,9 @@ themselves. """ + COMMON + """
 The note was recorded on {date}.
 action_items: things the note says the user wants or needs to do ("call the plumber", \
 "remember to buy milk", "I should email Bob"), appointments and meetings it \
-mentions, and things to be reminded of. Not vague wishes. text: imperative and \
+mentions, and things to be reminded of. Not vague wishes.
+""" + ITEM_RULES + """
+text: imperative and \
 self-contained ("Call the plumber about the leaking tap"). owner: "{owner}" unless the \
 note says someone else should do it. due: the deadline as said ("Friday"); due_date: \
 that deadline as YYYY-MM-DD counted from the note's date, or null if there is none. \
@@ -230,7 +246,7 @@ my hardware notes: the screen is 1.4 inch" -> text "The screen is 1.4 inch", tit
 "Screen size", list_name "hardware"; else null. A note has no due, time or owner. A plain \
 statement without such a command ("the wifi password is on the router") is no item, and \
 "remember to ..." is a task, not a note.
-""" + ACTION_KEYS.replace("list_name, at_seconds", "list_name, title, at_seconds")
+""" + ACTION_KEYS
 
 MERGE_SYSTEM = """You merge partial notes of ONE long conversation (given in order) into \
 a single set of notes with the same JSON shape. Deduplicate. Output JSON only."""
@@ -369,6 +385,7 @@ class Summarizer:
         out = to_storage(result, origin)
         out["kind"] = triage.kind
         self._resolve_due_dates(out, origin)
+        _mark_explicit(out["action_items"], None)
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
         return out
@@ -402,6 +419,7 @@ class Summarizer:
             if item["kind"] == NOTE_ITEM:  # a note is filed as it is: no date or time
                 item.update(due=None, due_date=None, due_time=None, time_unclear=False,
                             owner=None)
+        _mark_explicit(out["action_items"], _spoken(parts))
         return out
 
     def _resolve_due_dates(self, out: dict[str, Any], origin: float) -> None:
@@ -578,9 +596,9 @@ def _item_storage(a: ActionItem, source_at: float | None) -> dict[str, Any]:
     if kind == NOTE_ITEM:
         return _note_storage(a, text, source_at)
     text, list_ = _list_and_text(text, a.list_name)
-    return {"text": text, "kind": kind, "owner": a.owner, "due": a.due,
-            "due_date": _iso_date(a.due_date), "time": a.time,
-            "duration_minutes": duration if kind == "event" else None,
+    return {"text": text, "title": short_title(a.title, text), "kind": kind,
+            "owner": a.owner, "due": a.due, "due_date": _iso_date(a.due_date),
+            "time": a.time, "duration_minutes": duration if kind == "event" else None,
             "location": (a.location or "").strip() or None, "list_name": list_,
             "note_title": None, "source_at": source_at}
 
@@ -643,8 +661,9 @@ def _note_storage(a: ActionItem, text: str, source_at: float | None) -> dict[str
     text = _NOTE_COMMAND.sub("", text.strip()).strip(" :,-") or text.strip()
     text = re.sub(r"(?<!\.)\.$", "", text[:1].upper() + text[1:])  # a sentence's period
     title = re.sub(r"\s+", " ", (a.title or "").strip().strip(".\"'"))[:80] or None
-    return {"text": text, "kind": NOTE_ITEM, "owner": None, "due": None, "due_date": None,
-            "time": None, "duration_minutes": None, "location": None, "list_name": name,
+    return {"text": text, "title": short_title(title, text), "kind": NOTE_ITEM,
+            "owner": None, "due": None, "due_date": None, "time": None,
+            "duration_minutes": None, "location": None, "list_name": name,
             "note_title": title, "source_at": source_at}
 
 
@@ -704,6 +723,55 @@ def _notes_from_commands(items: list[dict[str, Any]], parts: list[str],
             note.pop("time", None)
             note["due_time"], note["time_unclear"] = None, False
             items.append(note)
+
+
+# the user asked for a to-do: "remind me", "todo", "to-do", "task:", "add a task", "add
+# ... to my ... list", "note that"
+_COMMAND_WORDS = re.compile(
+    r"\bremind\s+me\b|\breminder\b|\bto-?do\b|\bto\s+do\s+list\b|\btask\s*:"
+    r"|\b(?:add|create|make|new)\s+(?:a\s+)?(?:new\s+)?task\b|\bnote\s+that\b"
+    r"|\b(?:add|put|write)\b[^.!?]*\blist\b", re.IGNORECASE)
+_CLAUSE_END = re.compile(r";\s*|,?\s+(?:and|but)\s+(?:then\s+|also\s+)?|,\s+(?:then|also)\s+",
+                         re.IGNORECASE)
+
+
+def _spoken(parts: list[str]) -> list[tuple[str, str]]:
+    """Every clause of the transcript, with its sentence."""
+    out = []
+    for part in parts:
+        for line in part.splitlines():
+            m = _LINE.match(line.strip())
+            if not m:
+                continue
+            for sentence in _SENTENCE_END.split(m["text"]):
+                sentence = sentence.strip()
+                out += [(c.strip(), sentence) for c in _CLAUSE_END.split(sentence)
+                        if c.strip()]
+    return out
+
+
+def _said_in(text: str, spoken: list[tuple[str, str]]) -> tuple[str, str]:
+    """The clause and sentence an item was written from: the clause with most of the
+    item's words; empty strings when none has them."""
+    want = _content_words(text)
+    best, score = ("", ""), 0.0
+    for clause, sentence in spoken:
+        got = len(want & _content_words(clause)) / len(want) if want else 0.0
+        if got > score:
+            best, score = (clause, sentence), got
+    return best if score >= 0.6 else ("", "")
+
+
+def _mark_explicit(items: list[dict[str, Any]],
+                   spoken: list[tuple[str, str]] | None) -> None:
+    """``explicit``: the user asked for the item (a date or time, a named list, a
+    reminder, event or note, or in a voice note (``spoken``) a command word), so the hub
+    files it; the rest are suggestions."""
+    for item in items:
+        said = ""
+        if spoken is not None:
+            said = f"{item['text']}\n{_said_in(item['text'], spoken)[1]}"
+        item["explicit"] = is_explicit(item) or _COMMAND_WORDS.search(said) is not None
 
 
 def _dedupe(items: list[str]) -> list[str]:
