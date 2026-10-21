@@ -92,7 +92,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.5.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.6.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -346,14 +346,21 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if fmt == "json":
             owners, people = store.known_names()
             owners |= _OWNER_WORDS | {settings.owner_name.strip().lower()} - {""}
-            return json.dumps({"facts": [
-                {"id": f["id"], "subject": f["subject"] or "",
-                 "about": _about(f["subject"], owners, people), "fact": f["fact"],
-                 "times_said": f["times_said"], "days": f["days"],
-                 "first_said": f["first_said"], "last_said": f["last_said"],
-                 "confirmed": (f["times_said"] >= settings.fact_confirm_sources
-                               and f["days"] >= settings.fact_confirm_days),
-                 "link": fact_link(f)} for f in rows]}, ensure_ascii=False)
+            owner_id = store.owner_person_id() or store.person_id(settings.owner_name)
+
+            def fact_json(f: dict[str, Any]) -> dict[str, Any]:
+                about = _about(f["subject"], owners, people)
+                pid = (owner_id if about == "owner" else
+                       store.person_id(f["subject"] or "") if about == "person" else None)
+                return {"id": f["id"], "subject": f["subject"] or "", "about": about,
+                        "person_id": pid, "fact": f["fact"],
+                        "times_said": f["times_said"], "days": f["days"],
+                        "first_said": f["first_said"], "last_said": f["last_said"],
+                        "confirmed": (f["times_said"] >= settings.fact_confirm_sources
+                                      and f["days"] >= settings.fact_confirm_days),
+                        "link": fact_link(f)}
+
+            return json.dumps({"facts": [fact_json(f) for f in rows]}, ensure_ascii=False)
         lines = [header(len(rows), "confirmed facts" if confirmed else "facts")]
         for f in rows:
             lines.append(f"- [{f['subject']}] {f['fact']} (learned "
@@ -404,11 +411,18 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         return "\n".join(out)
 
     @mcp.tool(annotations=ro)
-    def list_people() -> str:
+    def list_people(format: Annotated[str, Field(  # noqa: A002
+            description="'text' (default) or 'json' (a JSON object with each person's "
+                        "stable id, for programs)")] = "text") -> str:
         """Speakers heard in transcripts (named, enrolled, and unnamed 'Speaker N' labels)
         and people mentioned in conversations."""
-        enrolled = {s["name"] for s in store.speakers()}
+        fmt = (format or "text").strip().lower()
+        if fmt not in ("text", "json"):
+            return "format must be text or json"
         spk = store.speaker_stats()
+        if fmt == "json":
+            return json.dumps({"people": _people_json(store, spk, when)}, ensure_ascii=False)
+        enrolled = {s["name"] for s in store.speakers()}
         out = ["Speakers:"]
         out += [f"- {s['name']}{' (owner)' if s['is_owner'] else ''}"
                 f"{' (voice known)' if s['name'] in enrolled else ''}: {s['lines']} lines in "
@@ -460,11 +474,20 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if _UNNAMED.match(new_name):  # would merge a person into an unnamed label
             return (f"{new_name!r} is not a name; give the person's real name "
                     "(reassign_line moves single lines).")
+        old_id, new_id = store.person_id(old_name), store.person_id(new_name)
         n, convs = store.rename_everywhere(old_name, new_name)
         if not n:
             return f"No lines by {old_name!r}. Known speakers: {_known(store)}."
-        return (f"Renamed {old_name} to {new_name} in {n} lines across {len(convs)} "
-                "conversations; their summaries will be redone.")
+        msg = (f"Renamed {old_name} to {new_name} in {n} lines across {len(convs)} "
+               "conversations; their summaries will be redone.")
+        pid = store.person_id(new_name)
+        if pid is None:
+            return msg
+        if old_id is not None and new_id is not None and old_id != new_id:
+            return msg + (f" {old_name} (person id {old_id}) is merged into {new_name}, "
+                          f"whose person id {pid} is kept.")
+        return msg + (f" The person id {pid} is kept." if old_id == pid
+                      else f" Person id {pid}.")
 
     @mcp.tool(annotations=rw)
     def reassign_line(line_id: Annotated[int, Field(
@@ -525,6 +548,27 @@ def _about(subject: str | None, owners: set[str], people: set[str]) -> str:
     if s in owners:
         return "owner"
     return "person" if s and s in people else "other"
+
+
+def _people_json(store: Store, speaker_stats: list[dict[str, Any]],
+                 when: Any) -> list[dict[str, Any]]:
+    """list_people(format="json"): every person not merged into another, in the text
+    mode's order (speakers by last heard, then people mentioned by last mention, then
+    people never seen, by name). Unnamed 'Speaker N' labels have no person row."""
+    rank: dict[int, int] = {}
+    names = [s["name"] for s in speaker_stats] + [p["name"] for p in store.mentioned_people()]
+    for name in names:
+        pid = store.person_id(name)
+        if pid is not None:
+            rank.setdefault(pid, len(rank))
+    people = sorted(store.people(), key=lambda p: (rank.get(p["id"], len(rank)),
+                                                   p["name"].lower()))
+    return [{"id": p["id"], "name": p["name"], "aliases": p["aliases"],
+             "is_owner": p["is_owner"], "has_voice": p["has_voice"],
+             "conversations": p["conversations"],
+             "first_seen": when(p["first_at"], "%Y-%m-%d") if p["first_at"] is not None else None,
+             "last_seen": when(p["last_at"], "%Y-%m-%d") if p["last_at"] is not None else None}
+            for p in people]
 
 
 _UNNAMED = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
