@@ -64,8 +64,8 @@ against LilyGO's `docs/pinmap.md` and examples (github.com/Xinyuan-LilyGO/T5S3-4
 | GT911 touch (0x5D, INT GPIO3, RST GPIO9) | taps on four corner targets | its raw frame is portrait (540 × 960): swap X/Y and flip Y gives the upright landscape panel, then the screen's portrait rotation is applied |
 | PCF8563 RTC (0x51, INT GPIO2), coin cell holder | kept the time over reboots | wall clock between phone connections |
 | BQ25896 charger (0x6B), BQ27220 fuel gauge (0x55) | 4.13–4.17 V, 93–99 %, USB, charging | battery %, charging state |
-| Buttons: BOOT (GPIO0), side button (PCA IO1_2, active low), RST | pressed by hand: BOOT short and long, side short | back, pairing window, clean refresh |
-| Front light (GPIO11, LED driver enable) | off | not used (daylight reading) |
+| Buttons: BOOT (GPIO0), side button (PCA IO1_2, active low), RST | pressed by hand: BOOT short and long, side short | BOOT: back, held 1 s = deep sleep (a BOOT press wakes it, EXT0); S3 button next to BOOT (silkscreen IO48, but read on PCA IO1_2; GPIO48 is CKV): front light on/off, held 1 s = sync mode (pairing window); the power button isn't readable |
+| Front light (GPIO11, LED driver enable) | PWM built, not yet on the board | LEDC 1 kHz; level on the Status screen (off, 25, 50, 100 %), off after 60 s idle and in sleep |
 | microSD (SPI, CS 12), LoRa SX1262 and GPS on the Pro | not touched | not used (§7) |
 
 - **The screen is portrait (owner's choice, 2026-10-20):** a logical 540 × 960 screen on

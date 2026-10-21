@@ -33,6 +33,7 @@ static int s_xmax = PDA_EPD_W, s_ymax = PDA_EPD_H;
 static char s_id[5];
 static volatile int64_t s_trace_until;
 static uint32_t s_reads, s_errors, s_gestures;
+static volatile bool s_asleep;
 
 static esp_err_t rd(uint16_t reg, uint8_t *buf, size_t len)
 {
@@ -96,6 +97,9 @@ static void touch_task(void *arg)
     int x = 0, y = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(POLL_MS));
+        if (s_asleep) {
+            continue;
+        }
         uint8_t st = 0;
         if (rd(REG_STATUS, &st, 1) != ESP_OK) {
             s_errors++;
@@ -172,6 +176,15 @@ esp_err_t touch_init(i2c_master_bus_handle_t bus, touch_cb_t cb, void *ctx)
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
+}
+
+void touch_sleep(void)
+{
+    s_asleep = true;
+    if (s_dev) {
+        vTaskDelay(pdMS_TO_TICKS(POLL_MS * 2)); /* let a poll in progress finish */
+        wr8(0x8040, 0x05); /* command register: screen off (sleep) */
+    }
 }
 
 void touch_trace(int ms)

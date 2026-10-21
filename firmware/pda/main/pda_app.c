@@ -39,6 +39,10 @@ static volatile int64_t s_last_touch_ms = -ACTIVE_MS;
 static volatile int64_t s_last_link_s;
 static volatile uint16_t s_ob_waiting;
 static volatile uint32_t s_feed_version;
+static volatile int s_light;              /* front light level, 0 = off */
+static volatile int s_light_on = 50;      /* the level the toggle turns on */
+static volatile bool s_lit;               /* the LEDs are on right now */
+static esp_timer_handle_t s_light_timer; /* turns the light off when idle */
 
 static void *psram_calloc(size_t n)
 {
@@ -394,10 +398,72 @@ int pda_app_set_time(int64_t epoch_ms, int16_t tz_min)
     return 0;
 }
 
+/* ---- front light ---- */
+
+static void light_on_for_a_while(void)
+{
+    if (!s_light_timer) {
+        return;
+    }
+    esp_timer_stop(s_light_timer);
+    t5_backlight_set(s_light);
+    s_lit = s_light > 0;
+    if (s_light > 0) {
+        esp_timer_start_once(s_light_timer, (uint64_t)PDA_LIGHT_IDLE_MS * 1000);
+    }
+}
+
+static void on_light_idle(void *arg)
+{
+    (void)arg;
+    t5_backlight_set(0);
+    s_lit = false;
+}
+
+int pda_app_light(void)
+{
+    return s_light;
+}
+
+void pda_app_set_light(int percent)
+{
+    percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+    if (percent != s_light) {
+        s_light = percent;
+        if (percent > 0) {
+            s_light_on = percent;
+        }
+        nvs_handle_t h;
+        if (nvs_open("pda", NVS_READWRITE, &h) == ESP_OK) {
+            nvs_set_u8(h, "light", (uint8_t)percent);
+            nvs_set_u8(h, "light_on", (uint8_t)s_light_on);
+            nvs_commit(h);
+            nvs_close(h);
+        }
+        ESP_LOGI(TAG, "front light %d%%", percent);
+    }
+    light_on_for_a_while();
+}
+
+void pda_app_light_toggle(void)
+{
+    if (s_light > 0 && !s_lit) {
+        light_on_for_a_while(); /* off for idleness: just back on */
+    } else {
+        pda_app_set_light(s_light > 0 ? 0 : s_light_on);
+    }
+}
+
+int pda_app_light_next(int percent)
+{
+    return percent <= 0 ? 25 : percent < 50 ? 50 : percent < 100 ? 100 : 0;
+}
+
 void pda_app_touch_activity(void)
 {
     const bool was = pda_app_user_active();
     s_last_touch_ms = esp_timer_get_time() / 1000;
+    light_on_for_a_while();
     if (!was) {
         ble_pda_kick(); /* status bit4 */
     }
@@ -479,8 +545,22 @@ esp_err_t pda_app_init(void)
         if (nvs_get_i16(h, "tz", &tz) == ESP_OK) {
             s_tz_min = tz;
         }
+        uint8_t light = 0;
+        if (nvs_get_u8(h, "light", &light) == ESP_OK) {
+            s_light = light > 100 ? 100 : light;
+        }
+        uint8_t on = 0;
+        if (nvs_get_u8(h, "light_on", &on) == ESP_OK && on > 0) {
+            s_light_on = on > 100 ? 100 : on;
+        }
         nvs_close(h);
     }
+
+    const esp_timer_create_args_t lt = {.callback = on_light_idle, .name = "light"};
+    if (esp_timer_create(&lt, &s_light_timer) != ESP_OK) {
+        s_light_timer = NULL;
+    }
+    light_on_for_a_while(); /* the saved level, for the first minute */
 
     int64_t t = 0;
     bool valid = false;
@@ -504,7 +584,7 @@ esp_err_t pda_app_init(void)
         }
         free(data);
     }
-    ESP_LOGI(TAG, "outbox: %d waiting, next id %08x; clock %s, UTC%+d min", s_outbox->n,
-             (unsigned)s_outbox->next_id, s_time_valid ? "valid" : "not set", s_tz_min);
+    ESP_LOGI(TAG, "outbox: %d waiting, next id %08x; clock %s, UTC%+d min; light %d%%", s_outbox->n,
+             (unsigned)s_outbox->next_id, s_time_valid ? "valid" : "not set", s_tz_min, s_light);
     return ESP_OK;
 }

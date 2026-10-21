@@ -14,8 +14,8 @@
 #define T5_RTC_INT 2
 #define T5_TOUCH_INT 3
 #define T5_TOUCH_RST 9
-#define T5_BOOT_BTN 0     /* active low; low at reset = download mode */
-#define T5_BACKLIGHT 11   /* front light LED driver enable (PWM); kept off */
+#define T5_BOOT_BTN 0     /* active low; low at reset = download mode; wakes deep sleep */
+#define T5_BACKLIGHT 11   /* front light LED driver enable (PWM, t5_backlight_set) */
 
 /* SD card / LoRa SPI: not used in v1 (plan §7: the feed never goes to the card). */
 #define T5_SD_CS 12

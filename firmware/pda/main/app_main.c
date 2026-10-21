@@ -5,8 +5,11 @@
  * the USB console. The phone (or the PC relay) pushes the feed and drains the outbox over
  * BLE; the T5 never talks to a server and holds no tokens.
  *
- * Buttons: BOOT short = back / Today, BOOT long = open the 2-minute pairing window,
- * side button = clean refresh. No Wi-Fi: never initialised, not linked. */
+ * Buttons: BOOT short = back / Today, BOOT held 1 s = deep sleep (a BOOT press wakes it),
+ * the S3 button next to BOOT (labelled IO48, on the PCA9535) short = front light on/off,
+ * held 1 s = sync mode (the 2-minute pairing window). The light's level is on the Status
+ * screen. The power button is hardware only. No Wi-Fi: never initialised, not
+ * linked. */
 #include <stdio.h>
 #include <sys/time.h>
 
@@ -102,6 +105,9 @@ void app_main(void)
         nvs_flash_init();
     }
     ESP_ERROR_CHECK(t5_board_init());
+    if (t5_board_woke_from_sleep()) {
+        ESP_LOGI(TAG, "woke from deep sleep (BOOT)");
+    }
     ESP_ERROR_CHECK(pda_epd_init(t5_board_i2c()));
     ESP_ERROR_CHECK(pda_app_init());
     if (touch_init(t5_board_i2c(), on_touch, NULL) != ESP_OK) {
