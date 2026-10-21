@@ -118,6 +118,27 @@ CREATE TABLE IF NOT EXISTS speakers (
     created_at REAL NOT NULL
 );
 
+-- One row per person (a speaker or someone named in a conversation): a stable id that
+-- survives renames, so the hub can link it to a contact. A rename keeps the id and keeps
+-- the old name as an alias; renaming onto an existing person merges the old row into it
+-- (merged_into). Names are unique among rows that are not merged.
+CREATE TABLE IF NOT EXISTS people (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE,
+    speaker_id INTEGER NULL REFERENCES speakers(id) ON DELETE SET NULL,
+    is_owner INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    merged_into INTEGER NULL REFERENCES people(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS people_name ON people(name) WHERE merged_into IS NULL;
+
+CREATE TABLE IF NOT EXISTS people_aliases (
+    person_id INTEGER NOT NULL REFERENCES people(id),
+    alias TEXT NOT NULL COLLATE NOCASE,
+    PRIMARY KEY (person_id, alias)
+);
+CREATE INDEX IF NOT EXISTS people_aliases_alias ON people_aliases(alias);
+
 CREATE TABLE IF NOT EXISTS embeddings (
     kind TEXT NOT NULL,                       -- conversation|fact|action_item
     ref_id TEXT NOT NULL,
@@ -313,6 +334,18 @@ class Store:
             self._add_column("facts", "retired_at", "REAL")
             self._add_column("facts", "retired_reason", "TEXT")
             self._conn.execute("PRAGMA user_version = 9")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 10:
+            # people with a stable id: one row per enrolled voice and per name mentioned
+            c = self._conn
+            for r in c.execute("SELECT id, name, is_owner, created_at FROM speakers"
+                               " ORDER BY is_owner DESC, id").fetchall():
+                _ensure_person(c, r["name"], r["id"], bool(r["is_owner"]), r["created_at"])
+            for r in c.execute(
+                    "SELECT p.name, MIN(c.started_at) AS first FROM conversation_people p"
+                    " JOIN conversations c ON c.id = p.conversation_id"
+                    " GROUP BY p.name ORDER BY first").fetchall():
+                _ensure_person(c, r["name"], created_at=r["first"])
+            c.execute("PRAGMA user_version = 10")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -596,6 +629,8 @@ class Store:
             fact_ids = _carry_over(c, conv_id, before, fact_ids)
             c.executemany("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
                           [(conv_id, p) for p in summary["people"]])
+            for p in summary["people"]:
+                _ensure_person(c, p)
             body = "\n".join([summary["title"], summary["summary"], *summary["key_points"],
                               " ".join(summary["topics"]), " ".join(summary["people"])])
             c.execute("INSERT INTO search_fts VALUES ('conversation', ?, ?, ?)",
@@ -840,7 +875,9 @@ class Store:
         owners: set[str] = set()
         people: set[str] = set()
         for r in self._q("SELECT name, is_owner FROM speakers"
-                         " UNION SELECT name, 0 FROM conversation_people"):
+                         " UNION SELECT name, 0 FROM conversation_people"
+                         " UNION SELECT name, 0 FROM people"
+                         " UNION SELECT alias, 0 FROM people_aliases"):
             name = (r["name"] or "").strip().lower()
             people.add(name)
             if r["is_owner"]:
@@ -929,7 +966,9 @@ class Store:
         """Rename a speaker in every conversation and merge their voice into ``new``.
 
         Returns (lines changed, conversation ids). Unnamed "Speaker N" labels are
-        per recording, so callers should only pass real names.
+        per recording, so callers should only pass real names. The person keeps their id
+        (``old`` becomes an alias); if ``new`` is already a person, the old person is
+        merged into that one, and the id of the name that already existed survives.
         """
         with self.tx() as c:
             convs = [r["conversation_id"] for r in c.execute(
@@ -937,8 +976,8 @@ class Store:
                 " COLLATE NOCASE AND conversation_id IS NOT NULL", (old,))]
             n = c.execute("UPDATE segments SET speaker = ?, is_owner = ? WHERE speaker = ?"
                           " COLLATE NOCASE", (new, _is_owner(c, new, old), old)).rowcount
-            c.execute("UPDATE OR REPLACE conversation_people SET name = ? WHERE name = ?",
-                      (new, old))
+            mentioned = c.execute("UPDATE OR REPLACE conversation_people SET name = ?"
+                                  " WHERE name = ?", (new, old)).rowcount
             src = c.execute("SELECT id, is_owner FROM speakers WHERE name = ? COLLATE NOCASE",
                             (old,)).fetchone()
             dst = c.execute("SELECT id FROM speakers WHERE name = ?", (new,)).fetchone()
@@ -949,8 +988,12 @@ class Store:
                           (dst["id"], src["id"]))
                 if src["is_owner"]:
                     c.execute("UPDATE speakers SET is_owner = 1 WHERE id = ?", (dst["id"],))
+                c.execute("UPDATE people SET speaker_id = NULL WHERE speaker_id = ?",
+                          (src["id"],))
                 c.execute("DELETE FROM speakers WHERE id = ?", (src["id"],))
                 _refresh_voiceprint(c, dst["id"])
+            if n or mentioned or src is not None:
+                _rename_person(c, old, new)
             _touch_conversations(c, convs, None)
         return n, convs
 
@@ -1157,6 +1200,7 @@ class Store:
                     " VALUES (?, 0, ?, ?)", (name, vec.tobytes(), time.time())).lastrowid
             else:
                 sid = row["id"]
+            _ensure_person(c, name, sid)
             c.execute("INSERT INTO voice_samples (speaker_id, embedding, source, created_at)"
                       " VALUES (?, ?, ?, ?)", (sid, _unit(embedding).tobytes(), source,
                                                time.time()))
@@ -1180,6 +1224,10 @@ class Store:
                 " embedding = excluded.embedding",
                 (name, int(is_owner), _unit(embedding).tobytes(), time.time()))
             sid = c.execute("SELECT id FROM speakers WHERE name = ?", (name,)).fetchone()["id"]
+            pid = _ensure_person(c, name, sid, is_owner)
+            if pid is not None and not is_owner:
+                c.execute("UPDATE people SET is_owner = 0 WHERE id = ? AND speaker_id = ?",
+                          (pid, sid))
             c.execute("DELETE FROM voice_samples WHERE speaker_id = ? AND source = ?",
                       (sid, source))
             now = time.time()
@@ -1208,6 +1256,69 @@ class Store:
         row = self._one("SELECT name FROM speakers WHERE is_owner = 1")
         return row["name"] if row else None
 
+    # ------------------------------------------------------------------ people
+    def ensure_person(self, name: str, speaker_id: int | None = None,
+                      is_owner: bool = False) -> int | None:
+        """The id of the person called ``name`` (name or alias, any case), created if new.
+
+        None for an empty name or an unnamed label ("Speaker 1"). ``speaker_id`` links an
+        enrolled voice when the person has none yet; ``is_owner`` makes them the owner.
+        """
+        with self.tx() as c:
+            return _ensure_person(c, name, speaker_id, is_owner)
+
+    def person_id(self, name: str) -> int | None:
+        """The id of the person with this name or alias (any case), following merges."""
+        with self._lock:
+            return _person_id(self._conn, name)
+
+    def owner_person_id(self) -> int | None:
+        row = self._one("SELECT id FROM people WHERE is_owner = 1 AND merged_into IS NULL")
+        return row["id"] if row else None
+
+    def people(self) -> list[dict[str, Any]]:
+        """Every person not merged into another: id, name, aliases, is_owner, has_voice,
+        conversations (distinct conversations they spoke in or were named in, under their
+        name or an alias), first_at and last_at (start of the first and last of those)."""
+        rows = self._q("SELECT id, name, is_owner, speaker_id IS NOT NULL AS has_voice,"
+                       " merged_into FROM people ORDER BY id")
+        survivor = {r["id"]: r["merged_into"] for r in rows}
+
+        def live(pid: int) -> int:
+            for _ in range(len(survivor)):
+                if survivor.get(pid) is None:
+                    break
+                pid = survivor[pid]
+            return pid
+
+        out = {r["id"]: {"id": r["id"], "name": r["name"], "aliases": [],
+                         "is_owner": bool(r["is_owner"]), "has_voice": bool(r["has_voice"]),
+                         "_convs": {}} for r in rows if r["merged_into"] is None}
+        by_name: dict[str, int] = {}
+        for r in sorted(rows, key=lambda r: r["merged_into"] is None):  # live names win
+            by_name[r["name"].lower()] = live(r["id"])
+        for r in self._q("SELECT person_id, alias FROM people_aliases ORDER BY alias"
+                         " COLLATE NOCASE"):
+            pid = live(r["person_id"])
+            by_name.setdefault(r["alias"].lower(), pid)
+            if pid in out and r["alias"].lower() != out[pid]["name"].lower():
+                out[pid]["aliases"].append(r["alias"])
+        for r in self._q(
+                "SELECT s.speaker AS name, c.id, c.started_at FROM segments s"
+                " JOIN conversations c ON c.id = s.conversation_id"
+                " GROUP BY s.speaker, c.id"
+                " UNION SELECT p.name, c.id, c.started_at FROM conversation_people p"
+                " JOIN conversations c ON c.id = p.conversation_id"):
+            pid = by_name.get((r["name"] or "").strip().lower())
+            if pid in out:
+                out[pid]["_convs"][r["id"]] = r["started_at"]
+        for p in out.values():
+            starts = p.pop("_convs").values()
+            p["conversations"] = len(starts)
+            p["first_at"] = min(starts, default=None)
+            p["last_at"] = max(starts, default=None)
+        return list(out.values())
+
 MAX_LEARNED_SAMPLES = 40  # per speaker, besides enrollment samples
 
 
@@ -1232,6 +1343,84 @@ def _is_owner(c: sqlite3.Connection, name: str, previous: str | None = None) -> 
     return int(row is not None)
 
 
+def _person_id(c: sqlite3.Connection, name: str | None) -> int | None:
+    """Resolve a name or alias (any case) to a person id, following ``merged_into``.
+    A person who is not merged wins over a merged one, a name over an alias."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    row = c.execute(
+        "SELECT id, merged_into FROM ("
+        " SELECT id, merged_into, 0 AS pri FROM people WHERE name = ?"
+        " UNION ALL SELECT p.id, p.merged_into, 1 FROM people_aliases a"
+        " JOIN people p ON p.id = a.person_id WHERE a.alias = ?)"
+        " ORDER BY merged_into IS NOT NULL, pri, id LIMIT 1", (name, name)).fetchone()
+    if row is None:
+        return None
+    pid, seen = row["id"], set()
+    while row is not None and row["merged_into"] is not None and pid not in seen:
+        seen.add(pid)
+        pid = row["merged_into"]
+        row = c.execute("SELECT id, merged_into FROM people WHERE id = ?", (pid,)).fetchone()
+    return pid
+
+
+def _ensure_person(c: sqlite3.Connection, name: str | None, speaker_id: int | None = None,
+                   is_owner: bool = False, created_at: float | None = None) -> int | None:
+    """Person id for ``name`` (see ``Store.ensure_person``); inserts a row if needed."""
+    name = (name or "").strip()
+    if not name or _PLACEHOLDER_SPEAKER.match(name):
+        return None
+    pid = _person_id(c, name)
+    if pid is None:
+        pid = c.execute("INSERT INTO people (name, created_at) VALUES (?, ?)",
+                        (name, created_at if created_at is not None else time.time())
+                        ).lastrowid
+    if speaker_id is not None:
+        c.execute("UPDATE people SET speaker_id = ? WHERE id = ? AND speaker_id IS NULL",
+                  (speaker_id, pid))
+    if is_owner:
+        c.execute("UPDATE people SET is_owner = (id = ?)", (pid,))
+    return pid
+
+
+def _add_alias(c: sqlite3.Connection, pid: int, alias: str | None) -> None:
+    alias = (alias or "").strip()
+    if alias and not _PLACEHOLDER_SPEAKER.match(alias):
+        c.execute("INSERT OR IGNORE INTO people_aliases SELECT id, ? FROM people"
+                  " WHERE id = ? AND name != ?", (alias, pid, alias))
+
+
+def _rename_person(c: sqlite3.Connection, old: str, new: str) -> None:
+    """``old`` is now called ``new`` (rename_everywhere): the person keeps their id and
+    ``old`` becomes an alias. If ``new`` is already another person, the old person is
+    merged into them (``merged_into``, aliases and voice move) and that id survives."""
+    src, dst = _person_id(c, old), _person_id(c, new)
+    if src is None:  # a name nobody had a row for: it becomes an alias of ``new``
+        src = dst if dst is not None else _ensure_person(c, new)
+        if src is None:
+            return
+    target = dst if dst is not None else src
+    if target != src:
+        before = c.execute("SELECT name, speaker_id, is_owner FROM people WHERE id = ?",
+                           (src,)).fetchone()
+        c.execute("UPDATE people SET merged_into = ? WHERE id = ? OR merged_into = ?",
+                  (target, src, src))
+        c.execute("INSERT OR IGNORE INTO people_aliases SELECT ?, alias FROM people_aliases"
+                  " WHERE person_id = ?", (target, src))
+        c.execute("DELETE FROM people_aliases WHERE person_id = ?", (src,))
+        c.execute("UPDATE people SET speaker_id = NULL, is_owner = 0 WHERE id = ?", (src,))
+        c.execute("UPDATE people SET speaker_id = COALESCE(speaker_id, ?),"
+                  " is_owner = MAX(is_owner, ?) WHERE id = ?",
+                  (before["speaker_id"], before["is_owner"], target))
+        _add_alias(c, target, before["name"])
+    current = c.execute("SELECT name FROM people WHERE id = ?", (target,)).fetchone()["name"]
+    c.execute("DELETE FROM people_aliases WHERE person_id = ? AND alias = ?", (target, new))
+    c.execute("UPDATE people SET name = ? WHERE id = ?", (new.strip(), target))
+    _add_alias(c, target, current)
+    _add_alias(c, target, old)
+
+
 def _touch_conversations(c: sqlite3.Connection, conv_ids: Iterable[str],
                          person: str | None) -> None:
     """Mark conversations for re-summary (speaker names changed); note who took part."""
@@ -1240,6 +1429,7 @@ def _touch_conversations(c: sqlite3.Connection, conv_ids: Iterable[str],
         if person and not _PLACEHOLDER_SPEAKER.match(person):
             c.execute("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
                       (conv_id, person))
+            _ensure_person(c, person)
         c.execute("UPDATE conversations SET status = 'pending', updated_at = ? WHERE id = ?",
                   (now, conv_id))
 

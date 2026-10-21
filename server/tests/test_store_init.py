@@ -31,4 +31,4 @@ def test_concurrent_open_of_a_fresh_database(tmp_path: Path) -> None:
             p.join(timeout=60)
     assert outcomes == ["ok"] * len(outcomes)
     assert Store(str(tmp_path / "convo0.db"))._conn.execute(
-        "PRAGMA user_version").fetchone()[0] == 9
+        "PRAGMA user_version").fetchone()[0] == 10
