@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-20 (round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-21 (finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -242,6 +242,18 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   `barvis-sound*` service names and `BARVIS_SOUND_*` vars, the Android app ID
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its UUID/tag macros, the Opus
   vendor string, the `barvis_relay` package, and all `convo` identifiers.
+
+## Done on 2026-10-21: finished T5 lists go away (hub: same branch in SDarioosh/Barvis)
+
+- Owner report: a checklist ticked off on the T5 stayed on its Tasks tab for good, fully
+  done, taking room from new lists.
+- Hub: an unpinned checklist with every item done and no change for 10 minutes is
+  archived (`src/checklist_auto_archive.py`, setting `FORK_CHECKLIST_ARCHIVE_MINUTES`,
+  `0`/`off` = off). It leaves the T5 at the next sync; no firmware or relay change. Pinned
+  lists stay, even finished or empty. An unarchived finished list is archived again after
+  10 minutes unless it has an open item (owner's choice). Plan: `docs/t5-pda-plan.md` §4.4.
+- Open for the owner: the hub PR's Server verification (tick off a test list on the T5,
+  see it leave after 10 minutes and the next sync).
 
 ## Done on 2026-10-20: faster transcript requests (hub: same branch in SDarioosh/Barvis)
 

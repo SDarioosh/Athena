@@ -545,6 +545,13 @@ conversations (`actions`) move into the conversation's detail screen (§5).
   shows it at once (struck through, or not); a second tap before the relay has listed the
   action deletes it, after that it queues the reverse. Nothing else is editable on the T5
   (no adding or renaming items, no plain notes).
+- **Finished lists leave on their own (hub, added 2026-10-21):** Odysseus archives an
+  unpinned checklist once every item is done and it hasn't changed for 10 minutes
+  (`FORK_CHECKLIST_ARCHIVE_MINUTES`, hub `src/checklist_auto_archive.py`). Archived notes
+  aren't in `GET /api/codex/todos`, so the list leaves the Tasks tab at the next sync; the
+  T5 and relays need no change. Untick an item within the 10 minutes to keep the list;
+  later, unarchive it on the website (it is archived again 10 minutes after that unless
+  it has an open item). Pinned lists stay, finished or empty.
 
 ## 5. Screens
 
