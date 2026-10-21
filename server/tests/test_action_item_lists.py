@@ -45,11 +45,19 @@ def test_note_items_get_their_list():
     # a list the text only mentions in passing is not a list to file on
     ("Check in on the waiting list", None, ("Check in on the waiting list", None)),
     ("Add Bob to the guest list", "guest", ("Bob", "guest")),
+    # no "my" / "the": still the named list
+    ("Add oil to shopping list", None, ("Oil", "shopping")),
+    ("Add soda to Shopping List.", None, ("Soda", "Shopping")),
+    ("Put batteries on hardware store list", None, ("Batteries", "hardware store")),
+    # without "the", a list name holds no "the" / "a": no list here
+    ("Add a reminder to check the list", None, ("Add a reminder to check the list", None)),
+    ("Add notes to a list", None, ("Add notes to a list", None)),
     # the model's list wins; a phrase naming another list stays in the text
     ("Add tape to the office list", "home", ("Add tape to the office list", "home")),
     # the general to-do list is no named list: a to-do of its own, as before
     ("Add a todo for calling the bank", None, ("Add a todo for calling the bank", None)),
     ("Put call the bank on my to-do list", None, ("Put call the bank on my to-do list", None)),
+    ("Add call the bank to to-do list", None, ("Add call the bank to to-do list", None)),
     ("Call the bank", "todos", ("Call the bank", None)),
 ])
 def test_list_phrase_in_text(text, said, want):

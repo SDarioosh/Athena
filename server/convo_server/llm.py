@@ -554,10 +554,13 @@ def _item_storage(a: ActionItem, source_at: float | None) -> dict[str, Any]:
             "source_at": source_at}
 
 
-# "... to my shopping list", "on the work to-do list": a list the user named
+# "... to my shopping list", "on the work to-do list", "to shopping list": a list the
+# user named. "my" / "the" is optional (speech and models drop it), so a name word is
+# never one ("add a reminder to check the list" names no list).
+_NAME_WORD = r"(?!(?:the|a|an|my|our|your|this|that)\b)[\w'&-]+"
 _LIST_PHRASE = re.compile(
-    r"\s*\b(?:to|on|onto|in|into|for)\s+(?:my|the|our)\s+"
-    r"(?P<name>[\w'&-]+(?:\s+[\w'&-]+){0,2}?)\s+(?:to-?do\s+|to\s+do\s+)?list\b",
+    r"\s*\b(?:to|on|onto|in|into|for)\s+(?:(?:my|the|our)\s+)?"
+    rf"(?P<name>{_NAME_WORD}(?:\s+{_NAME_WORD}){{0,2}}?)\s+(?:to-?do\s+|to\s+do\s+)?list\b",
     re.IGNORECASE)
 _ADD = re.compile(r"^(?:add|put|write(?:\s+down)?)\s+", re.IGNORECASE)
 
