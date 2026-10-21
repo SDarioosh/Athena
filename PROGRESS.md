@@ -130,10 +130,9 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   summarizer treats statements of intent, priority or decision as durable facts about the
   speaker, not action items; a code guard moves undated voice-note "should / need to / stop /
   focus on …" items without a command word to facts. Items get `title` (≤ 60 chars) and
-  `explicit` (date/time, list, reminder/event, or a command word) in the JSON. [module stream:
-  pending merge] MCP 0.7.0. The hub files only explicit voice-note items by default and puts
+  `explicit` (date/time, list, reminder/event, or a command word) in the JSON. MCP 0.7.0 (schema v11). The hub files only explicit voice-note items by default and puts
   undated ones on one "Voice notes" list.
-- Checks: [pending] server tests + ruff.
+- Checks: 415 server tests + ruff (people 376, then the action-item change).
 
 ## Done on 2026-10-21: forget propagates (hub: belief ledger, Phase 1 of personal context)
 
