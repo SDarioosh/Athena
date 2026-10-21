@@ -45,6 +45,10 @@ static const char *TAG = "ble";
 #define SEND_GIVE_UP_MS 5000
 #define SEND_BACKOFF_MAX_MS 32
 #define MSYS_RESERVE 8
+/* Not slower on purpose: android-relay scans with SCAN_MODE_LOW_POWER (about 0.5 s in every
+ * 5 s). At 1-1.25 s about every second scan window hears us, so "Sync T5 now" (a 60 s
+ * request) misses the T5 ~0.1 % of the time; at 2 s it would be ~3 %, and a due sync would
+ * take ~20 s instead of ~10 s to find it, to save one advertising event every 2 s. */
 #define ADV_ITVL_MIN 1600     /* 1000 ms */
 #define ADV_ITVL_MAX 2000     /* 1250 ms */
 #define ADV_FAST_ITVL_MIN 244 /* 152.5 ms, in the pairing window */
