@@ -1,5 +1,6 @@
-/* The T-Watch S3 has no SD card: storage is a FAT file system (with wear levelling) in the
- * "storage" partition of its 16 MB flash (partitions_twatch_s3.csv). */
+/* Storage in flash for boards that record without an SD card (T-Watch S3, T4-S3): a FAT
+ * file system (with wear levelling) in the "storage" partition of their 16 MB flash
+ * (partitions_twatch_s3.csv). */
 #pragma once
 
 #include <stdbool.h>

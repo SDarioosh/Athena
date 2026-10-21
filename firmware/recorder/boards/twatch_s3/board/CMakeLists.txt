@@ -3,7 +3,7 @@ idf_component_register(
     SRCS
         "board_twatch_s3.c"
         "display.c"
-        "flashfs.c"
+        "../../common/flashfs.c"
         "pcf8563.c"
         "pcf8563_codec.c"
         "../../../main/click_counter.c" # pure click counter, host-tested in test/

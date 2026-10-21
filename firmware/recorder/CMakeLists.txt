@@ -4,7 +4,10 @@
 # component named "board" under boards/<name>/board that implements main/board.h.
 #
 #   idf.py -DBOARD=twatch_ultra -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_ultra" build
-#   idf.py -B build-s3 -DBOARD=twatch_s3 -DSDKCONFIG=build-s3/sdkconfig #          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_s3" build
+#   idf.py -B build-s3 -DBOARD=twatch_s3 -DSDKCONFIG=build-s3/sdkconfig
+#          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_s3" build
+#   idf.py -B build-t4 -DBOARD=t4_s3 -DSDKCONFIG=build-t4/sdkconfig
+#          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.t4_s3" build
 cmake_minimum_required(VERSION 3.16)
 
 if(NOT DEFINED BOARD)

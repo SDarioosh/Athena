@@ -12,7 +12,11 @@
 
 static const char *TAG = "ui";
 
-#define BAND_H 48       /* rows per push: one text line at scale 5 (35 px) plus margin */
+#define BAND_H 48       /* rows of one text line at scale 5 (35 px) plus margin */
+/* A line is drawn in strips of this many rows, so the buffer stays small: 14 KB on the
+ * T4-S3's 450-px panel instead of 43 KB, which internal RAM can't spare while it records
+ * (four mics' DMA buffers, the session task and the Opus encoder). */
+#define STRIP_H 16
 #define BRIGHTNESS_PERCENT 60
 
 /* Text sizes. Large panels (T-Watch Ultra, 410 px wide): 30 px glyph pitch at scale 5, 13
@@ -26,7 +30,7 @@ static bool s_compact;
 
 static bool s_shown;
 static board_display_info_t s_info;
-static uint16_t *s_band; /* DISP width * BAND_H, DMA-capable internal RAM */
+static uint16_t *s_band; /* DISP width * STRIP_H, DMA-capable internal RAM */
 /* No light sleep while the panel is on: it is a few seconds, and the panel's own draw
  * dwarfs what sleeping would save. */
 static esp_pm_lock_handle_t s_pm_lock;
@@ -53,12 +57,17 @@ static esp_err_t push_line(int y, const char *text, int scale, uint16_t color)
     while (s_compact && scale > 1 && textfb_text_width(text, scale) > s_info.width) {
         scale--;
     }
-    textfb_t fb = {s_band, s_info.width, h};
-    textfb_clear(&fb, 0);
     const int w = textfb_text_width(text, scale);
     const int x = w < s_info.width ? (s_info.width - w) / 2 : 0;
-    textfb_draw(&fb, x, (h - 7 * scale) / 2, text, scale, color);
-    return board_display_draw(0, y, s_info.width, h, s_band);
+    const int text_y = (h - 7 * scale) / 2;
+    for (int o = 0; o < h; o += STRIP_H) {
+        const int sh = h - o < STRIP_H ? h - o : STRIP_H;
+        textfb_t fb = {s_band, s_info.width, sh};
+        textfb_clear(&fb, 0);
+        textfb_draw(&fb, x, text_y - o, text, scale, color); /* clipped to the strip */
+        ESP_RETURN_ON_ERROR(board_display_draw(0, y + o, s_info.width, sh, s_band), TAG, "draw");
+    }
+    return ESP_OK;
 }
 
 static void pick_layout(void)
@@ -71,10 +80,10 @@ static void pick_layout(void)
 
 static esp_err_t clear_screen(void)
 {
-    textfb_t fb = {s_band, s_info.width, BAND_H};
+    textfb_t fb = {s_band, s_info.width, STRIP_H};
     textfb_clear(&fb, 0);
-    for (int y = 0; y < s_info.height; y += BAND_H) {
-        const int h = (y + BAND_H <= s_info.height) ? BAND_H : s_info.height - y;
+    for (int y = 0; y < s_info.height; y += STRIP_H) {
+        const int h = (y + STRIP_H <= s_info.height) ? STRIP_H : s_info.height - y;
         ESP_RETURN_ON_ERROR(board_display_draw(0, y, s_info.width, h, s_band), TAG, "clear");
     }
     return ESP_OK;
@@ -94,7 +103,7 @@ static esp_err_t screen_begin(view_t view)
         ESP_RETURN_ON_ERROR(board_display_on(&s_info), TAG, "display on");
         pick_layout();
         if (!s_band) {
-            s_band = heap_caps_malloc((size_t)s_info.width * BAND_H * sizeof(uint16_t),
+            s_band = heap_caps_malloc((size_t)s_info.width * STRIP_H * sizeof(uint16_t),
                                       MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
             ESP_RETURN_ON_FALSE(s_band, ESP_ERR_NO_MEM, TAG, "band buffer");
         }

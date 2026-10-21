@@ -307,6 +307,10 @@ void app_print_status(void)
                s_resume_conversation ? " conversation resumes after the note" : "");
     }
     printf("screen: %s\n", ui_is_shown() ? "on" : "off");
+    if (mic_array_channels() > 0) {
+        printf("mics: mixing 0x%x of %d, %" PRIu32 " mic DMA buffers dropped since the mic started\n",
+               mic_array_mask(), mic_array_channels(), mic_overflows());
+    }
     printf("reset: %s, up %lld s\n", reset_reason_name(), (long long)(esp_timer_get_time() / 1000000));
     const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     printf("heap: internal %u KB free (lowest %u KB, largest block %u KB), PSRAM %u KB free\n",

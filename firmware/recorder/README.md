@@ -133,6 +133,61 @@ would otherwise sit in the new partitions). If `esptool` can't open the port, po
 watch off (hold the side key ~6 s), then press it again and retry; or open the back cover
 and use BOOT + RST (download mode) on versions that have them.
 
+## What it does (T4-S3 conference recorder)
+
+The same firmware on the LilyGO T4-S3 (2.41" AMOLED, `-DBOARD=t4_s3`, board layer
+`boards/t4_s3/board/`), as a table-top recorder with four INMP441 I2S mics. Sessions, voice
+notes, the flash queue, BLE sync and the console work as on the T-Watch S3. Differences:
+
+- **One button, BOOT** (RST only resets the chip). The slide switch is the power switch.
+  BOOT presses go through the same click counter as the T-Watch S3's side key
+  (`main/key_press.c` turns the GPIO level into presses, both host-tested):
+
+  | Action | Does |
+  |---|---|
+  | 1 press | Start or stop a recording session |
+  | Hold ~1 s | Start a voice note; a press or another hold ends it |
+  | 2 presses | Mute / unmute |
+  | 3 presses | Status screen |
+  | 4 presses | BLE sync window for 2 minutes, to pair a phone |
+
+  No haptics: every action shows on the screen instead.
+- **Mics: four INMP441** on the 30-pin header, two stereo pairs sharing one clock:
+
+  | INMP441 | L/R | SD (data) | SCK | WS |
+  |---|---|---|---|---|
+  | A-L | GND | GPIO41 | GPIO39 | GPIO40 |
+  | A-R | 3V3 | GPIO41 | GPIO39 | GPIO40 |
+  | B-L | GND | GPIO42 | GPIO39 | GPIO40 |
+  | B-R | 3V3 | GPIO42 | GPIO39 | GPIO40 |
+
+  Every mic: VDD to 3V3, GND to GND. I2S0 drives the clock and reads pair A; I2S1 reads
+  pair B as a slave on the same clock, so all four are sampled on the same edges (a mic
+  array; checked on the board: pair B stays in step). The firmware finds the mics that
+  answer each time the mic starts and mixes them to mono (average, `main/mic_mix.c`); a
+  missing mic is left out, so one to four mics all work. Console: `mics [s]` shows each
+  mic's level, `mics 0x<mask>` picks the mics mixed (bit 0 A-L ... bit 3 B-R), `mics auto`
+  goes back to every mic that answers. `level`, `gain` and `eq` work on the mix.
+- **No audio lost to flash writes**: the mic's reader task empties the I2S buffers into an
+  8 s ring in PSRAM, and the I2S interrupt keeps running while flash is written
+  (`CONFIG_I2S_ISR_IRAM_SAFE`). Measured: 74.9 s recorded in 74.9 s; the recorder fell up to
+  2.3 s behind while closing a chunk, the ring absorbed it. `status` shows lost buffers.
+- **Screen**: 450x600 RM690B0 AMOLED (QSPI, driven by `esp_lcd_co5300` with LilyGO's init
+  list). The UI draws in 16-row strips (a 14 KB buffer instead of 43 KB).
+- **Charger: SY6970** (I2C 0x6A): 512 mA charge current, watchdog off, ADC one-shot per read.
+  No fuel gauge: the percentage is estimated from the voltage. With the slide switch off the
+  battery is cut off and reads as absent.
+- **No RTC chip**: the time is the ESP32-S3's own clock (kept through sleep and resets, not
+  through the power switch). The phone sets it at every sync, or `time` on the console.
+- **Storage**: the flash partition, as on the T-Watch S3. The microSD slot isn't used yet.
+
+Build and flash (from `firmware/recorder`):
+
+```bash
+idf.py -B build-t4 -DBOARD=t4_s3 -DSDKCONFIG=build-t4/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.t4_s3" build
+idf.py -B build-t4 -p COM40 flash
+```
+
 ## Upload path (BLE)
 
 ```

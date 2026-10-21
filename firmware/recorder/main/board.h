@@ -2,8 +2,9 @@
  *
  * Everything the shared firmware needs from a board goes through this header: power
  * rails, battery, wall-clock time, buttons, haptics, display, storage and the mic pins.
- * Each board implements it in boards/<name>/board/: the T-Watch Ultra and the T-Watch S3
- * (one button, no SD card: storage is a FAT partition in its flash). The XIAO ESP32-S3
+ * Each board implements it in boards/<name>/board/: the T-Watch Ultra, the T-Watch S3
+ * (one button, no SD card: storage is a FAT partition in its flash) and the T4-S3
+ * conference recorder (one button, four I2S mics, no haptics, no RTC chip). The XIAO ESP32-S3
  * Sense pendant will implement a subset (no display, no rails) and return
  * ESP_ERR_NOT_SUPPORTED for what it lacks.
  *
@@ -63,9 +64,23 @@ typedef enum {
 /* Called from the board's button task, never from an ISR. Keep it short: post an event. */
 typedef void (*board_button_cb_t)(board_button_t button, board_press_t press, void *ctx);
 
+/* How the board's mics are wired. PDM: one mic, clk + data (T-Watch Ultra, T-Watch S3).
+ * I2S: standard (Philips) I2S mics such as the INMP441, 24-bit in 32-bit slots, in stereo
+ * pairs: both mics of a pair share one data line, one with L/R tied low (left slot), the
+ * other tied high (right slot). Every pair shares one bit clock and word select: I2S0
+ * drives them, I2S1 (the second pair, data2_gpio) listens to the same clock as a slave, so
+ * all four mics are sampled on the same edges (a mic array). data2_gpio = -1: one pair. */
+typedef enum {
+    BOARD_MIC_PDM = 0,
+    BOARD_MIC_I2S,
+} board_mic_kind_t;
+
 typedef struct {
-    int clk_gpio;
-    int data_gpio;
+    board_mic_kind_t kind;
+    int clk_gpio;   /* PDM clock, or the I2S bit clock (BCLK/SCK) */
+    int data_gpio;  /* PDM data, or the first pair's I2S data (SD) */
+    int ws_gpio;    /* I2S word select (WS/LRCL); unused for PDM */
+    int data2_gpio; /* I2S second pair's data, -1 if none; unused for PDM */
 } board_mic_pins_t;
 
 /* One peaking-EQ band that corrects the board's mic acoustics (port, case cavity). */
