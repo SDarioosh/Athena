@@ -36,7 +36,7 @@ typedef enum {
 /* Called from the button task; post an event and return. */
 typedef void (*t5_button_cb_t)(t5_button_t button, t5_press_t press, void *ctx);
 
-/* Bus, backlight off, LoRa/GPS rail off. Call first. Also undoes what deep sleep left on
+/* Bus, backlight off, LoRa/GPS rail off, automatic light sleep on. Call first. Also undoes what deep sleep left on
  * the pins (the BOOT pad as an RTC pin, the backlight pin held low). */
 esp_err_t t5_board_init(void);
 i2c_master_bus_handle_t t5_board_i2c(void);
@@ -47,6 +47,10 @@ esp_err_t t5_board_start_buttons(t5_button_cb_t cb, void *ctx);
 
 /* Which chips answer, for the console. */
 void t5_board_log_i2c(void);
+
+/* Power management (set up by t5_board_init): DFS 240/40 MHz with automatic light sleep,
+ * held off while the front light is lit or USB power is in. Console: the config and locks. */
+void t5_board_print_power(void);
 
 esp_err_t t5_battery_read(t5_battery_t *out);
 

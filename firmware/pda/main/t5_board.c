@@ -7,6 +7,7 @@
 #include "driver/ledc.h"
 #include "driver/rtc_io.h"
 #include "esp_log.h"
+#include "esp_pm.h"
 #include "esp_sleep.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -18,7 +19,15 @@ static const char *TAG = "board";
 
 #define I2C_HZ 400000
 #define I2C_TIMEOUT_MS 50
-#define BUTTON_POLL_MS 20
+/* Both buttons are polled: the side button sits on the PCA9535, whose INT line epdiy owns
+ * (GPIO38), and BOOT costs nothing extra in the same loop (no I2C). Every poll is a wake from
+ * light sleep and, for the side button, an I2C read, so this is the T5's main idle cost:
+ * 50 ms is 20 wakes a second instead of 50. A quick human press lasts 80-100 ms or more, so it
+ * still spans at least one poll; the 1 s long press is timed to within 50 ms. */
+#define BUTTON_POLL_MS 50
+/* USB power (BQ25896 power good) is checked this often; while it is there the T5 stays out
+ * of light sleep so the USB Serial/JTAG console keeps working. */
+#define USB_CHECK_MS 1000
 #define BUTTON_LONG_MS 1000
 #define BUTTON_TASK_STACK 3072
 /* Front light PWM. The XTAL clock keeps the frequency fixed while DFS changes the APB
@@ -41,6 +50,11 @@ static i2c_master_dev_handle_t s_pca, s_rtc, s_gauge, s_charger;
 static t5_button_cb_t s_cb;
 static void *s_cb_ctx;
 static bool s_bl_ready;
+/* ESP_PM_NO_LIGHT_SLEEP while the front light is lit (LEDC stops in light sleep) and while
+ * USB power is in (the USB Serial/JTAG console dies in light sleep). */
+static esp_pm_lock_handle_t s_light_lock, s_usb_lock;
+static bool s_light_held, s_usb_held;
+static portMUX_TYPE s_pm_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static esp_err_t add_dev(uint8_t addr, i2c_master_dev_handle_t *out)
 {
@@ -61,6 +75,95 @@ static esp_err_t reg_write8(i2c_master_dev_handle_t d, uint8_t reg, uint8_t val)
 {
     const uint8_t b[2] = {reg, val};
     return i2c_master_transmit(d, b, sizeof(b), I2C_TIMEOUT_MS);
+}
+
+/* ---- power management ---- */
+
+static void pm_hold(esp_pm_lock_handle_t lock, bool *held, bool want)
+{
+    if (!lock) {
+        return;
+    }
+    taskENTER_CRITICAL(&s_pm_mux);
+    if (*held != want) {
+        *held = want;
+        if (want) {
+            esp_pm_lock_acquire(lock);
+        } else {
+            esp_pm_lock_release(lock);
+        }
+    }
+    taskEXIT_CRITICAL(&s_pm_mux);
+}
+
+/* DFS 240/40 MHz as CONFIG_PM_DFS_INIT_AUTO set it, now with automatic light sleep. 40 MHz is
+ * safe: the LEDC and I2C run off the XTAL, an e-paper refresh holds CPU_FREQ_MAX (pda_epd.c,
+ * which also keeps light sleep out of the refresh), and the BLE controller holds its own APB
+ * lock while it works. */
+static esp_err_t light_sleep_config(bool on)
+{
+    const esp_pm_config_t pm = {
+        .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+        .min_freq_mhz = 40,
+        .light_sleep_enable = on,
+    };
+    return esp_pm_configure(&pm);
+}
+
+static bool usb_power(bool *vbus)
+{
+    uint8_t st = 0; /* BQ25896 REG0B: PG_STAT is bit 2 */
+    if (reg_read(s_charger, 0x0B, &st, 1) != ESP_OK) {
+        return false;
+    }
+    *vbus = (st & 0x04) != 0;
+    return true;
+}
+
+static void usb_power_update(void)
+{
+    bool vbus = false;
+    if (usb_power(&vbus) && vbus != s_usb_held) {
+        pm_hold(s_usb_lock, &s_usb_held, vbus);
+        ESP_LOGI(TAG, "USB power %s: light sleep %s", vbus ? "in" : "out",
+                 vbus ? "off (console stays up)" : "on");
+    }
+}
+
+static void power_init(void)
+{
+    if (esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "light", &s_light_lock) != ESP_OK ||
+        esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "usb", &s_usb_lock) != ESP_OK) {
+        ESP_LOGW(TAG, "PM locks unavailable: no light sleep");
+        return;
+    }
+    /* Without the power-good read the console's state is unknown: keep it up. */
+    bool vbus = true;
+    usb_power(&vbus);
+    pm_hold(s_usb_lock, &s_usb_held, vbus);
+    const esp_err_t err = light_sleep_config(true);
+    ESP_LOGI(TAG, "automatic light sleep %s; USB power %s",
+             err == ESP_OK ? "on" : esp_err_to_name(err),
+             vbus ? "in (no light sleep while it is)" : "out");
+}
+
+/* Before deep sleep: automatic light sleep leaves its timer wake-up armed (with the last
+ * light sleep's few ms) and the touch INT's GPIO wake-up on; either would end deep sleep at
+ * once. A timed deep-sleep wake must be armed after this. */
+static void light_sleep_off(void)
+{
+    light_sleep_config(false); /* also disables the timer wake-up source */
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+}
+
+void t5_board_print_power(void)
+{
+    esp_pm_config_t pm = {0};
+    esp_pm_get_configuration(&pm);
+    printf("power: CPU %d-%d MHz, automatic light sleep %s; kept awake by front light %s, USB %s\n",
+           pm.min_freq_mhz, pm.max_freq_mhz, pm.light_sleep_enable ? "on" : "off",
+           s_light_held ? "yes" : "no", s_usb_held ? "yes" : "no");
+    esp_pm_dump_locks(stdout);
 }
 
 esp_err_t t5_board_init(void)
@@ -146,6 +249,7 @@ esp_err_t t5_board_init(void)
         return err;
     }
     t5_board_log_i2c();
+    power_init();
     return ESP_OK;
 }
 
@@ -288,14 +392,21 @@ void t5_backlight_set(int percent)
         return;
     }
     percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+    if (percent > 0) {
+        pm_hold(s_light_lock, &s_light_held, true); /* the PWM stops in light sleep */
+    }
     ledc_set_duty(LEDC_LOW_SPEED_MODE, BL_CHANNEL, (uint32_t)(BL_MAX * percent / 100));
     ledc_update_duty(LEDC_LOW_SPEED_MODE, BL_CHANNEL);
+    if (percent == 0) {
+        pm_hold(s_light_lock, &s_light_held, false); /* duty 0: the pin stays low */
+    }
 }
 
 /* ---- deep sleep ---- */
 
 void t5_board_deep_sleep(void)
 {
+    light_sleep_off();
     /* Light off, and the pin held low through sleep: a floating EN would light the LEDs. */
     if (s_bl_ready) {
         ledc_stop(LEDC_LOW_SPEED_MODE, BL_CHANNEL, 0);
@@ -340,9 +451,14 @@ static void button_task(void *arg)
         st[b].down = t5_button_is_down((t5_button_t)b);
         st[b].long_sent = st[b].down;
     }
+    int64_t usb_checked = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
         const int64_t now = esp_timer_get_time() / 1000;
+        if (now - usb_checked >= USB_CHECK_MS) {
+            usb_checked = now;
+            usb_power_update();
+        }
         for (int b = 0; b < 2; b++) {
             const bool down = t5_button_is_down((t5_button_t)b);
             if (down && !st[b].down) {
