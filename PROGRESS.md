@@ -118,6 +118,37 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-22: the T5's offline Today plan follows the hub's weights (Phase 3, stream C)
+
+The hub learns a weight per checklist from the owner's outcomes on its Today page
+(hub `docs/fork/today-insight.md#weights`); the T5's rule-based Today plan (no insight for
+today) now orders each group by it.
+
+- **Relays (PC and Android, the same rules).** `GET /api/codex/insight/weights` (same
+  Odysseus token, scope `insight:read`) → feed key `weights` (`{"version": 1, "date",
+  "weights": {"list:<note id>": int}}`): only `list:` keys (id ≤ 150 bytes) with integer
+  values, clamped to [-6, 6], at most 32. Any failure (an older hub's 404, 403, network,
+  5xx, malformed) keeps the last good table: the PC relay in its `pda.json` (survives
+  restarts), the Android relay in its private preferences. Never fetched (or no Odysseus):
+  no key. Trimmed right after the `insight`.
+- **T5 firmware.** `feed.c` parses `weights` (unknown key prefixes, non-integers and other
+  versions ignored, clamped, ≤ 32, repeats once). `today_plan.c` applies them in the
+  rule-based plan only, integers only: DO FIRST to-dos by (-w, due date, feed order) then
+  today's events; COMING UP by (-w, date, time) with events at 0; ALSO pinned then undated,
+  each by (-w, feed order). A weight never moves an item to another group; with an insight
+  for today nothing changes. The rule order and the weight table are published in
+  `docs/t5-pda-plan.md` §5; §4.1 has the `weights` key.
+- **A fictional day** for both repos: `firmware/pda/test/fixtures/insight_eval_day.json`
+  (overdue, due today, coming up, pinned, undated, later and a shopping list, with known
+  weights and the expected order with and without them; the hub's insight eval uses the
+  same to-dos). Rendered: `build-pda-host/today_screens/today_rules_weights_*.png`.
+- **Checks:** PDA host tests 11/11 (ctest); PC relay 213 tests + ruff; `idf.py build`
+  (ESP-IDF 5.5.2) passes; Android `assembleDebug test lint` passes (167 tests).
+- **Needs real-device testing:** the T5 shows the reordered rule-based plan from a real
+  feed (a day without an insight, with the hub's weights); the PC relay and the phone carry
+  `weights` from the hub's test instance (and keep the last table when the route fails or
+  the hub is old); the phone keeps the table across an app restart.
+
 ## Done on 2026-10-22: shopping lists stay out of the daily digest
 
 - The daily digest no longer lists action items on a shopping-type list ("add milk to my
