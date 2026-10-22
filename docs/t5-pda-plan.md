@@ -125,9 +125,11 @@ against LilyGO's `docs/pinmap.md` and examples (github.com/Xinyuan-LilyGO/T5S3-4
   ("Cache disabled but cached memory region accessed", seen on the board).
   `CONFIG_SPIRAM_XIP_FROM_PSRAM` runs code and rodata from PSRAM, so flash writes don't
   disable the cache.
-- **Fonts:** Fira Sans 12 and 20 pt (SIL OFL), epdiy's pre-converted headers: ASCII,
-  Latin-1, general punctuation, arrows. The euro sign isn't in them and is drawn as "EUR";
-  other missing characters as "?".
+- **Fonts:** Fira Sans (SIL OFL): Regular 12 and 20 pt, epdiy's pre-converted headers
+  (ASCII, Latin-1, general punctuation, arrows); SemiBold 12, 20 and 32 pt, converted with
+  epdiy's `fontconvert.py` (Latin-1 and punctuation; 32 pt ASCII only). Characters a
+  SemiBold font lacks (arrows, ✓, ★, ▲) come from the Regular font of the nearest size.
+  The euro sign isn't in them and is drawn as "EUR"; other missing characters as "?".
 - **Sleep:** between events the T5 is in automatic light sleep (ESP-IDF PM, DFS 240/40 MHz;
   the BLE controller keeps the main crystal as its sleep clock). It stays awake during a
   refresh, while the front light is lit and while USB power is in (the USB console). Touch
@@ -587,9 +589,15 @@ conversations (`actions`) move into the conversation's detail screen (§5).
 
 ## 5. Screens
 
-Portrait, 540 × 960 (§1): a two-line header (title and clock; date, battery, sync and the
-outbox count), the content, a bottom row for the screen's buttons and the pager (▲ n/m ▼),
-and a tab bar of six (Today, Brief, Cal, Tasks, Talks, Status). Lists use the full width
+Portrait, 540 × 960 (§1): a two-line header (title and clock in SemiBold 20 pt; the date
+on the left, a battery icon with its percentage on the right, ↑n for actions waiting, and a
+note only when worth a look: "synced 3 h ago" after an hour without a sync, "no feed"), the content, a bottom row for the screen's buttons and the pager (▲ n/m ▼), and a
+tab bar of six plain labels (Today, Brief, Cal, Tasks, Talks, Status; the active one
+SemiBold with a bar under the top rule). Titles of items are SemiBold, their details
+Regular: weight, not grey, sets them apart (grey doesn't show on the panel). Tick boxes are
+round: a ring, filled black with a white tick when done. A tap that opens another screen
+draws a black frame around what was tapped with a fast black-and-white (DU) update first,
+so the tap shows before the slower full refresh. Lists use the full width
 with rows of two or three lines; the new-event form stacks the date, the time with ±15 min,
 a 3 × 4 grid of hour slots and the durations.
 
@@ -600,12 +608,15 @@ a 3 × 4 grid of hour slots and the durations.
 | **Calendar** | agenda, today to +7 days | tap an event for details; "+" opens the template picker |
 | **Tasks** | the owner's Odysseus checklists (§4.4): a heading per note (pinned first, with its due date), its items below | tap an item: done / not done (`todo_toggle`); without Odysseus: "No checklists. Set up Odysseus in the phone app" |
 | **Conversations** | the last 48 h, title, people, time | tap: summary and key points, then that conversation's suggested action items (`actions` with this `conv`); on those: tap done, long press dismiss, "→ calendar" when `due` is set; "transcript" → `fetch` |
-| **Status** | bond, phone last seen, outbox, feed version, battery, pairing window button | |
+| **Status** | PHONE (connected or last seen, phones paired, changes waiting), BATTERY (icon, %, charging), DETAILS (feed version and build time, clock and zone, screen rotation, firmware, BLE name, battery mV); the buttons | |
 
 - **Today as built (2026-10-21):**
   - **Sections:** INSIGHT (the hub's headline, wrapped, at most 3 lines), DO FIRST, COMING
-    UP, ALSO WORTH A LOOK. Each item takes two lines: the to-do text or event title (cut to
-    fit), then why it is there. To-dos have a tick box, events a filled mark and "›".
+    UP, ALSO WORTH A LOOK. Each item takes two lines: the to-do text or event title
+    (SemiBold, cut to fit), then why it is there, with a hairline between items. A left
+    column holds a to-do's round tick box, or an event's start time ("all day") with its
+    weekday under it when it isn't today; events end in "›" and their second line is the
+    hub's `why` and the place ("until 15:30" when there is neither).
     Empty sections are left out. The sections flow over pages (the pager, swipe up/down); a
     section that goes on to the next page repeats its heading with "(cont.)".
   - **With the hub's insight** (feed `insight`, §4.1, dated today): its items in the hub's
@@ -614,7 +625,7 @@ a 3 × 4 grid of hour slots and the durations.
     events still to come all end DO FIRST in time order, wherever the hub put them (with
     its `why` when it named them).
   - **Without one** (no key, or `date` isn't today), the same sections from rules, and
-    INSIGHT says "No insight for today yet: by date and time":
+    INSIGHT says "All caught up!" (with a small filled tick):
     - DO FIRST: open items of overdue checklists (oldest first, "overdue since
       2026-10-19"), then of those due today ("due today"), then today's events that aren't
       over (all-day first, "today, all day"; then "today 14:00");
@@ -628,10 +639,19 @@ a 3 × 4 grid of hour slots and the durations.
   - **Caps:** 5 items per section from the rules, the rest as "+n more ›" on the heading
     (to Cal when most of the rest are events, else Tasks). With the insight, DO FIRST holds
     the hub's 5 plus today's events, up to 8.
+  - **Nothing at all** (no item in any section): a big filled tick and "All caught up!"
+    (SemiBold 32 pt) in the middle of the page, "Nothing due and nothing on the calendar
+    for the next 7 days." under it; INSIGHT is left out unless the hub sent a headline.
   - **The digest** is on Brief only; the bottom row of Today says "Digest ready on Brief ›"
     when the feed has a briefing.
   - Code: `main/today_plan.c` (the plan, pure, `test/test_today_plan.c`), `main/ui_today.c`
-    (the drawing; rendered on the host by `test/test_ui_today.c`).
+    (the drawing), `main/ui_chrome.c` (header, tabs, headings, the Asleep screen); both
+    rendered on the host by `test/test_ui_today.c`.
+- **Asleep screen** (BOOT held 1 s, §2 "Sleep"): "Asleep" (SemiBold 32 pt), "since Tue 20
+  Oct 21:40", "Press BOOT to wake"; NEXT UP: the next event that hasn't ended, its title
+  and its full date and time (every line names its date, so nothing on it goes stale
+  overnight), or "Nothing on the calendar this week"; at the foot the battery at sleep and
+  "synced HH:MM", the only line a sync wake redraws (`ui_chrome_asleep_synced_area()`).
 - **Adding an event without a keyboard:**
   - From a suggested action item (in its conversation): "→ calendar" fills in the title from the item and the date from
     `due_date`. The user picks a time from a grid (morning slots, then +/− 15 min) and a
@@ -655,7 +675,9 @@ a 3 × 4 grid of hour slots and the durations.
 - **Refresh policy as built:** a new screen is a full (GC16) update; a change on the same
   screen (a pending mark, a page) a partial (GL16) one; the minute clock a partial that
   doesn't count; after 10 counted updates, and on the side button or "Clean refresh", a
-  clean refresh.
+  clean refresh. A new feed is a partial update; the phone's link only redraws Status; an
+  update whose drawing matches the panel is skipped and not counted, so a sync that brings
+  the same content leaves the screen alone.
 
 ## 6. Phone app and servers
 

@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-21 (T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-21 (T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -114,6 +114,44 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
+
+## Done on 2026-10-21: T5 interface polish (branch `feature/t5-ui-polish`)
+
+- **Owner request:** "All caught up!" instead of "No insight for today yet: by date and
+  time", then a more professional look. Done in firmware only; feed, relays and the server
+  are unchanged.
+- **Fonts:** Fira Sans SemiBold 12/20/32 pt added (OFL, epdiy's `fontconvert.py`); titles,
+  labels, buttons and the active tab are SemiBold, details Regular. `gfx.c` draws what a
+  SemiBold font lacks (arrows, ✓, ★, ▲) from the Regular font of the nearest size.
+- **Frame (`ui_chrome.c`, new):** header with title and clock, the date, a battery icon,
+  ↑n and a note only when worth a look ("syncing", "synced 3 h ago" after an hour, "no
+  feed"); plain tabs with a bar under the active one; one section heading for all screens.
+- **Today:** a time column for events (weekday under it when not today), round tick boxes,
+  hairlines between items; "All caught up!" with a small tick in INSIGHT; with nothing at
+  all, a big tick and "All caught up!" in the middle. The demo feed still fits one page.
+- **Other screens:** round ticks on Tasks and suggested action items, SemiBold titles on
+  Cal, Talks and conversation details, Status in PHONE / BATTERY / DETAILS sections with
+  plain wording, the pairing code in 32 pt.
+- **Asleep screen:** "Asleep", since when, NEXT UP (the next event with its full date, so
+  nothing goes stale overnight), the battery at sleep and "synced HH:MM" (still the only
+  line a sync wake redraws; a host test checks no other pixel changes). RTC layout bumped
+  to "PSL2".
+- **Tap feedback:** a tap that opens another screen frames what was tapped with a fast DU
+  update before the full refresh.
+- **Fewer refreshes on their own** (owner: "the screen refreshes on its own a lot"): every
+  15-minute sync redrew the screen 3-4 times (link up, the feed with a flashing full
+  update even when it drew the same, link down), and those counted towards the clean
+  flash after 10 updates. Now an update whose drawing matches the panel is skipped and
+  not counted (`epd` shows how many), a new feed is a partial update, the link only
+  redraws Status, and the header has no "syncing" note. On the T5: a redraw with nothing
+  changed was skipped. Still left: the minute clock's small header update.
+- **Not taken:** grey for secondary text (idea from the same request): grey didn't show on
+  the owner's panel on 2026-10-20 (README), so weight does that job instead.
+- **Checks:** PDA host 11/11 (also under AddressSanitizer), Today and Asleep rendered to
+  PNG; `idf.py build` passes (app 1.25 MB, 70 % of the partition free).
+- **Open for the owner (real T5):** flash and look at every tab, the Asleep screen and a
+  sync wake's synced line; whether the DU tap frame shows and clears cleanly; whether the
+  SemiBold text and the hairlines read well on the panel.
 
 ## Done on 2026-10-21: pyannote no longer merges two people into one
 
