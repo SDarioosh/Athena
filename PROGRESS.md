@@ -119,6 +119,31 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-22: occasional "REC ERROR" while recording on the T-Watch
+
+- Owner report: "REC ERROR" now and then while actively recording. Card write errors were
+  recovered (2026-10-19) and a session was meant to end only after 4 failures **in a row**,
+  but the count was reset only when a chunk closed (every 30 s). The relay reads and ACKs
+  chunks during a recording, and the card glitches after ACK deletes, so 4 separate,
+  recovered errors within one chunk ended the session. Now any audio page that reaches the
+  card resets the count (`session_rec.c`, `ogg_write`).
+- Also: an error while closing the last chunk at Stop:
+  the chunk was kept up to its last page with LAST, yet the watch buzzed 3x and showed
+  REC ERROR. Now that counts as a recovered write error (`write_retries`); REC ERROR only
+  when nothing was saved, the mic fails, or the card fails 4 times in a row.
+- `cq_end()`: when writing the closed chunk's record failed, the chunk stayed out of the
+  queue until the next boot and the next chunk reused its sequence number (the server could
+  drop one as a duplicate). It is now recovered at once, like a power cut.
+- **Checks:** `idf.py build` (twatch_s3, twatch_ultra); flashed on the owner's T-Watch
+  Ultra, which boots and reports `status` normally. Host tests not run on this PC (no
+  C compiler); CI runs them.
+- **Needs real-device testing:** record ~2 min with the phone relay connected and draining;
+  `status` shows `write_retries` > 0 when glitches happened, and no REC ERROR. `sd
+  failwrite 4` must still end the session (4 in a row). `sd failwrite 1`, then Stop within
+  ~1 s (before the next page is written), should end with the
+  normal stop screen, not REC ERROR; the session uploads with LAST. If REC ERROR still shows
+  up, run `status` over USB and note the session error it prints.
+
 ## Done on 2026-10-22: quick errands are not action items
 
 "I'll move my truck" said in passing became the suggested to-do "Walk truck to Shahyah's
