@@ -115,6 +115,14 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-22: shopping lists stay out of the daily digest
+
+- The daily digest no longer lists action items on a shopping-type list ("add milk to my
+  shopping list"). Lists in `CONVO_DIGEST_SKIP_LISTS` (default
+  `Shopping,Groceries,Grocery`, the same default as the hub's Today insight) are left out
+  before the digest model sees the items. They stay in `list_action_items` and on the T5.
+- Next: the owner rebuilds a digest on the server to check (Server verification in the PR).
+
 ## Done on 2026-10-21: pyannote no longer merges two people into one
 
 - Bug: with `CONVO_DIARIZER=pyannote`, a two-person talk came out almost all under one

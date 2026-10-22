@@ -178,3 +178,19 @@ def test_fallback_keeps_other_items_and_model_notes():
     dated = {"text": "Call the plumber", "kind": "task", "due": "Friday", "at_seconds": 0}
     items = note_items([dated], "Note that I should call the plumber. Call the plumber Friday")
     assert sorted(i["kind"] for i in items) == ["note", "task"]
+
+
+def test_shopping_list_items_stay_out_of_the_digest():
+    conv = {"id": "c1", "started_at": 1_760_000_000, "title": "Errands", "summary": "s",
+            "key_points": [], "people": [], "action_items": [
+                {"text": "Milk", "status": "open", "kind": "task", "list_name": "shopping"},
+                {"text": "Eggs", "status": "open", "kind": "task", "list_name": "Grocery List"},
+                {"text": "Call the bank", "status": "open", "kind": "task", "list_name": "work"},
+                {"text": "Book flights", "status": "open", "kind": "task", "list_name": None}]}
+    log: list = []
+    llm = LLMClient("http://x/v1", "m", transport=fake_llm_transport(log=log))
+    Summarizer(llm, "Me").digest("2025-10-09", [conv])
+    Summarizer(llm, "Me", digest_skip_lists="").digest("2025-10-09", [conv])
+    first, second = (json.loads(b["messages"][-1]["content"])[0]["action_items"] for b in log)
+    assert first == ["Call the bank", "Book flights"]
+    assert second == ["Milk", "Eggs", "Call the bank", "Book flights"]
