@@ -648,7 +648,14 @@ int cq_end(chunk_queue_t *q, uint32_t duration_ms, bool last)
     q->cur.state = CQ_STATE_CLOSED;
     err = write_record(q, &q->cur);
     if (err) {
-        return err; /* still "open" on the card: the next boot recovers it */
+        /* A card glitch (sdspi 0x108) usually passes at once. Recover the chunk now like a
+         * power cut, which writes the record again, so it is queued now and the next chunk
+         * gets the next sequence number. If that fails too, it is still "open" on the card
+         * and the next boot recovers it. */
+        uint32_t kept;
+        cq_boot_report_t rep = {0};
+        recover_open(q, q->cur, last, &kept, &rep);
+        return err;
     }
     return insert(q, &q->cur);
 }

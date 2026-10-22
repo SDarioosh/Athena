@@ -57,6 +57,7 @@ typedef struct {
     uint32_t prev_chunk_id; /* last closed chunk of this session, 0 if none */
     uint32_t chunk_packets;
     uint32_t skip_frames;  /* frames to read and drop before retrying the card */
+    int failures;          /* card write errors in a row: reset by a written audio page */
     esp_err_t write_err;   /* set by the Ogg write callback */
     uint64_t enc_total_us;
     int16_t frame[OPUS_ENC_FRAME_SAMPLES];
@@ -93,6 +94,14 @@ static int ogg_write(void *ctx, const void *data, size_t len)
     if (err != ESP_OK) {
         s->write_err = err;
         return -1;
+    }
+    if (s->chunk_packets > 0) {
+        /* An audio page reached the card (not just a header): the card works again, so the
+         * next error starts a new count. Without this the count only reset when a chunk
+         * closed, and 4 separate recovered errors within one 30 s chunk (the relay reads
+         * and ACKs chunks during a recording, and the card glitches after ACK deletes)
+         * ended the session with REC ERROR. */
+        s->failures = 0;
     }
     return 0;
 }
@@ -321,7 +330,6 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
              s->session_hex, s->time_unset ? " without a valid clock (TIME_UNSET)" : "");
 
     esp_err_t err = ESP_OK;
-    int failures = 0; /* card write errors in a row */
     if (card_full()) {
         *why = SESSION_END_CARD_FULL;
     }
@@ -350,8 +358,8 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
             const bool full = card_full();
             err = close_chunk(s, s->frame, full);
             if (err == ESP_OK) {
-                failures = 0;
-            } else if (!full && write_failed(s, err, &failures)) {
+                s->failures = 0;
+            } else if (!full && write_failed(s, err, &s->failures)) {
                 s->packets++; /* the frame is lost, but the clock goes on */
                 continue;
             } else {
@@ -366,7 +374,7 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
             err = open_chunk(s);
             if (err != ESP_OK) {
                 abandon_chunk(s, false); /* a header that half reached the card */
-                if (write_failed(s, err, &failures)) {
+                if (write_failed(s, err, &s->failures)) {
                     s->packets++; /* the frame is lost, but the clock goes on */
                     continue;
                 }
@@ -376,7 +384,7 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
         err = encode_frame(s);
         if (err != ESP_OK) {
             abandon_chunk(s, false);
-            if (write_failed(s, err, &failures)) {
+            if (write_failed(s, err, &s->failures)) {
                 s->packets++; /* the frame is lost, but the clock goes on */
                 continue;
             }
@@ -394,9 +402,21 @@ static esp_err_t run(session_t *s, session_rec_end_t *why)
 
     if (s->chunk_open) {
         /* Normal end (or a mic failure): the open chunk becomes the session's last. */
+        const uint32_t before = s->prev_chunk_id;
         const esp_err_t cerr = close_chunk(s, s_silence, true);
-        if (err == ESP_OK) {
-            err = cerr;
+        if (cerr != ESP_OK && err == ESP_OK) {
+            /* A card write error while closing at Stop (sdspi 0x108, now and then on the
+             * owner's watch). close_chunk() kept the chunk up to its last page with LAST, or
+             * gave LAST to the previous chunk: the recording is saved but for <= ~1 s at its
+             * end, like a write error mid-session. Only a session with nothing saved fails. */
+            const bool kept = s->prev_chunk_id != before;
+            if (kept || (before && chunk_store_set_last(before) == ESP_OK)) {
+                STATE_UPDATE(s_state.write_retries++);
+                ESP_LOGW(TAG, "card write failed at the end (%s): saved up to the last page",
+                         esp_err_to_name(cerr));
+            } else {
+                err = cerr;
+            }
         }
     }
     if (err != ESP_OK) {
