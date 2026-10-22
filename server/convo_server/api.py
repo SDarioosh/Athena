@@ -10,6 +10,8 @@ Read API (used by the knowledge-layer/MCP integration and for debugging):
     GET  /v1/action-items, PATCH /v1/action-items/{id}
     GET  /v1/digests/{date}, POST /v1/digests/{date}
     POST /v1/speakers/enroll
+Settings (the hub's settings page):
+    GET  /v1/settings/llm, PUT /v1/settings/llm {"model": name | null}
 Every /v1 route requires ``Authorization: Bearer <CONVO_INGEST_TOKEN>``.
 """
 
@@ -32,6 +34,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import audio as audio_mod
+from . import llm_settings
 from .config import Settings
 from .diarize import enroll_voice, load_voices
 from .links import render_conversation, transcript_link, verify
@@ -108,6 +111,10 @@ class EnrollJson(BaseModel):
     is_owner: bool = False
     codec: str = "opus"
     audio_b64: str = Field(max_length=MAX_ENROLL_BYTES * 4 // 3 + 4)
+
+
+class LlmSettingsPut(BaseModel):
+    model: str | None = Field(default=None, max_length=llm_settings.MAX_NAME)
 
 
 class ActionItemPatch(BaseModel):
@@ -404,6 +411,25 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     def speakers() -> dict[str, Any]:
         return {"speakers": [{"name": s["name"], "is_owner": s["is_owner"]}
                              for s in store.speakers()]}
+
+    # -------------------------------------------------------------- settings
+    def summary_llm() -> Any:
+        if pipeline.summarizer is None:
+            raise HTTPException(503, "summaries are off on this server")
+        return pipeline.summarizer.llm
+
+    @v1.get("/settings/llm")
+    def get_llm_settings() -> dict[str, Any]:
+        """The model that writes summaries, its default and what the LLM server lists."""
+        return llm_settings.describe(summary_llm(), store, settings)
+
+    @v1.put("/settings/llm")
+    def put_llm_settings(body: LlmSettingsPut) -> dict[str, Any]:
+        """Use another model for summaries from the next one on (null: the .env default)."""
+        try:
+            return llm_settings.set_model(summary_llm(), store, settings, body.model)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
 
     app.include_router(v1)
     return app

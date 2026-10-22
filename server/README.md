@@ -31,7 +31,12 @@ Requirements outside Python:
 - `ffmpeg` (decodes Opus/Ogg/anything)
 - whisper.cpp `whisper-server`, e.g.
   `whisper-server -m models/ggml-large-v3-turbo-q5_0.bin --port 8178 --host 127.0.0.1`
-- llama-server with an OpenAI-compatible API (`CONVO_LLM_BASE_URL`, `CONVO_LLM_MODEL`)
+- llama-server with an OpenAI-compatible API (`CONVO_LLM_BASE_URL`, `CONVO_LLM_MODEL`).
+  `CONVO_LLM_MODEL` is the default; the hub's settings page (Settings → AI Defaults →
+  Background & summaries) can pick another model the LLM server lists
+  (`PUT /v1/settings/llm {"model": name | null}`, stored in `convo.db`, used from the
+  next summary on; `null` goes back to `.env`). The LLM server's URL only comes from
+  `.env`.
 - optional: a second llama-server with `--embeddings` for semantic search
 
 The ECAPA speaker model is downloaded once from Hugging Face into `data/models/`
@@ -360,6 +365,7 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 | `GET /conversations`, `GET /conversations/{id}`, `GET /conversations/{id}/transcript` | the `/v1` routes, same query |
 | `GET /action-items`, `PATCH /action-items/{id}` | the `/v1` routes |
 | `GET /digests/{date}`, `POST /digests/{date}` | the `/v1` routes |
+| `GET /settings/llm`, `PUT /settings/llm` | the `/v1` routes (the hub's settings page: the summary model) |
 
 The read routes are for the phone relay's T5 sync when it is paired through Odysseus
 (Odysseus forwards them for a token with `sound:read` / `sound:write`); the MCP token can
