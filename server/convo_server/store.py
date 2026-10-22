@@ -1320,42 +1320,75 @@ class Store:
         with self.tx() as c:
             return _ensure_person(c, name, speaker_id, is_owner)
 
-    def person_id(self, name: str) -> int | None:
-        """The id of the person with this name or alias (any case), following merges."""
+    def person_id(self, name: str, owner_names: Iterable[str] = ()) -> int | None:
+        """The id of the person with this name or alias (any case), following merges.
+
+        A name in ``owner_names`` (the words that mean the owner, see
+        ``owner_person_id``) resolves to the owner's person when there is one.
+        """
+        if (name or "").strip().lower() in _lower(owner_names):
+            owner = self.owner_person_id(owner_names)
+            if owner is not None:
+                return owner
         with self._lock:
             return _person_id(self._conn, name)
 
-    def owner_person_id(self) -> int | None:
+    def owner_person_id(self, owner_names: Iterable[str] = ()) -> int | None:
+        """The owner's person: the one with the enrolled owner voice; without one, the
+        first person whose name or alias is in ``owner_names`` (the configured owner
+        name first, then words like "me"). This is the single source of the owner."""
         row = self._one("SELECT id FROM people WHERE is_owner = 1 AND merged_into IS NULL")
-        return row["id"] if row else None
+        if row is not None:
+            return row["id"]
+        with self._lock:
+            for name in owner_names:
+                pid = _person_id(self._conn, name)
+                if pid is not None:
+                    return pid
+        return None
 
-    def people(self) -> list[dict[str, Any]]:
+    def people(self, owner_names: Iterable[str] = ()) -> list[dict[str, Any]]:
         """Every person not merged into another: id, name, aliases, is_owner, has_voice,
         conversations (distinct conversations they spoke in or were named in, under their
-        name or an alias), first_at and last_at (start of the first and last of those)."""
+        name or an alias), first_at and last_at (start of the first and last of those).
+
+        ``is_owner`` is true for ``owner_person_id(owner_names)`` only; other people
+        called by an owner name ("Me" next to an enrolled owner "Sam") are listed as
+        that owner (their names become the owner's aliases), not as people of their own.
+        """
+        owner_names = tuple(owner_names)
+        owner = self.owner_person_id(owner_names)
         rows = self._q("SELECT id, name, is_owner, speaker_id IS NOT NULL AS has_voice,"
                        " merged_into FROM people ORDER BY id")
         survivor = {r["id"]: r["merged_into"] for r in rows}
+        with self._lock:
+            fold = {_person_id(self._conn, n) for n in owner_names} - {None, owner}
+        if owner is None:
+            fold = set()
 
         def live(pid: int) -> int:
             for _ in range(len(survivor)):
                 if survivor.get(pid) is None:
                     break
                 pid = survivor[pid]
-            return pid
+            return owner if pid in fold else pid
 
         out = {r["id"]: {"id": r["id"], "name": r["name"], "aliases": [],
-                         "is_owner": bool(r["is_owner"]), "has_voice": bool(r["has_voice"]),
-                         "_convs": {}} for r in rows if r["merged_into"] is None}
+                         "is_owner": r["id"] == owner, "has_voice": bool(r["has_voice"]),
+                         "_convs": {}}
+               for r in rows if r["merged_into"] is None and r["id"] not in fold}
         by_name: dict[str, int] = {}
         for r in sorted(rows, key=lambda r: r["merged_into"] is None):  # live names win
             by_name[r["name"].lower()] = live(r["id"])
-        for r in self._q("SELECT person_id, alias FROM people_aliases ORDER BY alias"
-                         " COLLATE NOCASE"):
-            pid = live(r["person_id"])
-            by_name.setdefault(r["alias"].lower(), pid)
-            if pid in out and r["alias"].lower() != out[pid]["name"].lower():
-                out[pid]["aliases"].append(r["alias"])
+        aliases = [(r["person_id"], r["alias"]) for r in self._q(
+            "SELECT person_id, alias FROM people_aliases")]
+        aliases += [(r["id"], r["name"]) for r in rows if r["id"] in fold]
+        for person_id, alias in sorted(aliases, key=lambda a: a[1].lower()):
+            pid = live(person_id)
+            by_name.setdefault(alias.lower(), pid)
+            if pid in out and alias.lower() not in (
+                    a.lower() for a in [out[pid]["name"], *out[pid]["aliases"]]):
+                out[pid]["aliases"].append(alias)
         for r in self._q(
                 "SELECT s.speaker AS name, c.id, c.started_at FROM segments s"
                 " JOIN conversations c ON c.id = s.conversation_id"
@@ -1394,6 +1427,10 @@ def _is_owner(c: sqlite3.Connection, name: str, previous: str | None = None) -> 
     row = c.execute("SELECT 1 FROM speakers WHERE is_owner = 1 AND (name = ? OR name = ?)",
                     (name, previous or name)).fetchone()
     return int(row is not None)
+
+
+def _lower(names: Iterable[str]) -> set[str]:
+    return {n.strip().lower() for n in names if n and n.strip()}
 
 
 def _person_id(c: sqlite3.Connection, name: str | None) -> int | None:

@@ -275,8 +275,8 @@ both formats. `list_facts(format="json")` returns current facts in the text mode
 owner, user, the user, `CONVO_OWNER_NAME` or the name of the enrolled owner voice;
 `person` when it is an enrolled speaker, a person named in a conversation or one of their
 former names (aliases, below); else `other`. `person_id` is the subject's person id (below) when `about` is `person`, and
-the owner's person id when it is `owner` (the enrolled owner voice's person, else the
-person called `CONVO_OWNER_NAME`); null for `other` or when no such person exists.
+the owner's person id when it is `owner` (the owner person, below); null for `other`
+or when no such person exists.
 `times_said` counts distinct conversations, `days` distinct local dates, and
 `first_said`/`last_said` are the first and last of those dates. `confirmed` is true when
 the fact meets the thresholds above, so a program can take every current fact with its
@@ -301,6 +301,11 @@ name):
              "last_seen": "2025-10-12"}]}
 ```
 
+The owner person is the one with the enrolled owner voice; without one, the person called
+`CONVO_OWNER_NAME`, else one called me, I, myself, owner, the owner, user or the user. Only
+that person has `"is_owner": true`, and owner facts carry its id. Next to an enrolled
+owner, a person called by one of those owner names ("Me" from summaries) is listed as
+the owner, with that name among the owner's aliases, not as a person of its own.
 `has_voice` means an enrolled or learned voice; `conversations` counts distinct
 conversations they spoke in or were named in (under their name or an alias), and
 `first_seen`/`last_seen` are the local dates (`CONVO_TIMEZONE`) of the first and last of

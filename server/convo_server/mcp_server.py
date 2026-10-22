@@ -354,7 +354,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if fmt == "json":
             owners, people = store.known_names()
             owners |= _OWNER_WORDS | {settings.owner_name.strip().lower()} - {""}
-            owner_id = store.owner_person_id() or store.person_id(settings.owner_name)
+            owner_id = store.owner_person_id(_owner_names(settings))
 
             def fact_json(f: dict[str, Any]) -> dict[str, Any]:
                 about = _about(f["subject"], owners, people)
@@ -429,7 +429,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             return "format must be text or json"
         spk = store.speaker_stats()
         if fmt == "json":
-            return json.dumps({"people": _people_json(store, spk, when)}, ensure_ascii=False)
+            return json.dumps({"people": _people_json(store, spk, when, _owner_names(settings))},
+                              ensure_ascii=False)
         enrolled = {s["name"] for s in store.speakers()}
         out = ["Speakers:"]
         out += [f"- {s['name']}{' (owner)' if s['is_owner'] else ''}"
@@ -546,7 +547,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
 
 
 # Subjects that mean the owner (the user) in a fact, besides the owner's own names.
-_OWNER_WORDS = {"me", "i", "myself", "owner", "the owner", "user", "the user"}
+_OWNER_WORD_ORDER = ("me", "i", "myself", "owner", "the owner", "user", "the user")
+_OWNER_WORDS = set(_OWNER_WORD_ORDER)
 
 
 def _about(subject: str | None, owners: set[str], people: set[str]) -> str:
@@ -558,18 +560,24 @@ def _about(subject: str | None, owners: set[str], people: set[str]) -> str:
     return "person" if s and s in people else "other"
 
 
-def _people_json(store: Store, speaker_stats: list[dict[str, Any]],
-                 when: Any) -> list[dict[str, Any]]:
+def _owner_names(settings: Settings) -> tuple[str, ...]:
+    """Names that mean the owner, in order: CONVO_OWNER_NAME, then the owner words."""
+    names = [settings.owner_name.strip(), *_OWNER_WORD_ORDER]
+    return tuple(dict.fromkeys(n for n in names if n))
+
+
+def _people_json(store: Store, speaker_stats: list[dict[str, Any]], when: Any,
+                 owner_names: tuple[str, ...]) -> list[dict[str, Any]]:
     """list_people(format="json"): every person not merged into another, in the text
     mode's order (speakers by last heard, then people mentioned by last mention, then
     people never seen, by name). Unnamed 'Speaker N' labels have no person row."""
     rank: dict[int, int] = {}
     names = [s["name"] for s in speaker_stats] + [p["name"] for p in store.mentioned_people()]
     for name in names:
-        pid = store.person_id(name)
+        pid = store.person_id(name, owner_names)
         if pid is not None:
             rank.setdefault(pid, len(rank))
-    people = sorted(store.people(), key=lambda p: (rank.get(p["id"], len(rank)),
+    people = sorted(store.people(owner_names), key=lambda p: (rank.get(p["id"], len(rank)),
                                                    p["name"].lower()))
     return [{"id": p["id"], "name": p["name"], "aliases": p["aliases"],
              "is_owner": p["is_owner"], "has_voice": p["has_voice"],
