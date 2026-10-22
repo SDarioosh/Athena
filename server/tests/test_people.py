@@ -236,3 +236,43 @@ def test_owner_name_setting_maps_to_the_owner_person(pipeline):
     (fact,) = json.loads(call(build_mcp(store, settings), "list_facts",
                               format="json"))["facts"]
     assert fact["about"] == "owner" and fact["person_id"] == store.person_id("Me")
+
+
+def owner_view(store: Store, settings) -> tuple[list[dict], list[dict]]:
+    mcp = build_mcp(store, settings)
+    people = json.loads(call(mcp, "list_people", format="json"))["people"]
+    facts = json.loads(call(mcp, "list_facts", format="json"))["facts"]
+    return people, facts
+
+
+def test_without_an_enrolled_owner_the_owner_name_person_is_the_owner(pipeline, tmp_path):
+    from convo_server.mcp_server import _owner_names
+
+    store = Store(tmp_path / "no-owner.db")  # nobody enrolled as the owner
+    say(store, "c0", T0, "Me", "Me prefers tea", people=("Me", "Alice"))
+    say(store, "c1", T0 + HOUR, "Alice", "Alice is vegetarian", people=("Alice",))
+    people, facts = owner_view(store, pipeline.settings)
+    me = store.person_id("Me")
+    assert [(p["name"], p["is_owner"]) for p in people] == [("Alice", False), ("Me", True)]
+    assert store.owner_person_id(_owner_names(pipeline.settings)) == me
+    assert {f["fact"]: f["person_id"] for f in facts} == {
+        "Me prefers tea": me, "Alice is vegetarian": store.person_id("Alice")}
+
+
+def test_owner_name_person_is_listed_as_the_enrolled_owner(pipeline, tmp_path):
+    from convo_server.mcp_server import _owner_names
+
+    store = Store(tmp_path / "sam.db")
+    store.put_speaker("Sam", voice(300), is_owner=True)
+    say(store, "c0", T0, "Me", "Me prefers tea", people=("Me", "Alice"))
+    say(store, "c1", T0 + HOUR, "i", "I work nights", people=("Alice",))
+    people, facts = owner_view(store, pipeline.settings)
+    sam = store.person_id("Sam")
+    owners = [p for p in people if p["is_owner"]]
+    assert [p["id"] for p in owners] == [sam]  # exactly one owner row
+    assert "Me" not in [p["name"] for p in people]  # no separate "Me" person
+    assert owners[0]["aliases"] == ["Me"] and owners[0]["conversations"] == 1
+    assert {f["person_id"] for f in facts if f["about"] == "owner"} == {sam}
+    names = _owner_names(pipeline.settings)
+    assert store.person_id("ME", names) == store.owner_person_id(names) == sam
+    assert store.person_id("Me") != sam  # the row itself is kept, only mapped
