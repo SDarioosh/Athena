@@ -168,6 +168,14 @@ CREATE TABLE IF NOT EXISTS fact_sources (
     PRIMARY KEY (fact_id, conversation_id)
 );
 
+-- Settings changed at run time (the hub's settings page): key -> JSON value. A row
+-- overrides the matching CONVO_* setting; no row means the .env value.
+CREATE TABLE IF NOT EXISTS module_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+
 -- Voice embeddings of unnamed speakers ("Speaker 1") per session, so naming a speaker
 -- later can also teach the diarizer that voice.
 CREATE TABLE IF NOT EXISTS speaker_candidates (
@@ -411,6 +419,23 @@ class Store:
     def _one(self, sql: str, params: Iterable[Any] = ()) -> dict[str, Any] | None:
         with self._lock:
             return _row(self._conn.execute(sql, tuple(params)).fetchone())
+
+    # ---------------------------------------------------------------- settings
+    def get_setting(self, key: str) -> Any:
+        """A run-time setting's value, or None when it isn't set (use the .env value)."""
+        row = self._one("SELECT value FROM module_settings WHERE key = ?", (key,))
+        return json.loads(row["value"]) if row else None
+
+    def set_setting(self, key: str, value: Any) -> None:
+        """Set a run-time setting; None removes it (back to the .env value)."""
+        with self.tx() as c:
+            if value is None:
+                c.execute("DELETE FROM module_settings WHERE key = ?", (key,))
+            else:
+                c.execute("INSERT INTO module_settings (key, value, updated_at) VALUES (?, ?, ?)"
+                          " ON CONFLICT(key) DO UPDATE SET value = excluded.value,"
+                          " updated_at = excluded.updated_at",
+                          (key, json.dumps(value), time.time()))
 
     # ---------------------------------------------------------------- sessions
     def get_session(self, session_id: str) -> dict[str, Any] | None:

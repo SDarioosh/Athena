@@ -8,7 +8,8 @@ second URL and token, the MCP HTTP app gets two plain HTTP routes:
     POST /sessions/{session_id}/end  same as /v1/sessions/{id}/end
 
 The phone relay's T5 sync, paired through Odysseus, also reads a few API routes the same
-way (:data:`READ_ROUTES`): the same paths without ``/v1``, same query, same JSON.
+way (:data:`READ_ROUTES`): the same paths without ``/v1``, same query, same JSON. The
+hub's settings page reads and sets the summary model through ``/settings/llm``.
 
 They are not MCP tools (the model never sees them) and sit behind the same ``BearerAuth``
 as ``/mcp``; the MCP token can already read all of this through the tools. Each request is
@@ -46,6 +47,9 @@ READ_ROUTES = [
     ("PATCH", "/action-items/{item_id}"),
     ("GET", "/digests/{date}"),
     ("POST", "/digests/{date}"),
+    # the hub's settings page: which model writes summaries
+    ("GET", "/settings/llm"),
+    ("PUT", "/settings/llm"),
 ]
 
 
@@ -138,7 +142,7 @@ def add_ingest_routes(mcp: Any, settings: Settings,
             params = [(k, v) for k, v in request.query_params.multi_items()
                       if k != "access_token"]
             kwargs: dict[str, Any] = {"params": params, "headers": dict(auth)}
-            if method in ("PATCH", "POST"):
+            if method in ("PATCH", "POST", "PUT"):
                 body = await request.body()
                 if len(body) > MAX_JSON_BYTES:
                     return _json(413, "request too large")

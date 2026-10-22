@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-22 (open loops: `with` on JSON action items, MCP 0.9.0; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-22 (open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -149,6 +149,18 @@ today) now orders each group by it.
   feed (a day without an insight, with the hub's weights); the PC relay and the phone carry
   `weights` from the hub's test instance (and keep the last table when the route fails or
   the hub is old); the phone keeps the table across an app restart.
+
+## Done on 2026-10-22: summary model chosen in the hub's settings
+
+- `GET`/`PUT /v1/settings/llm` (and the same paths on the MCP HTTP app, for the hub):
+  the model that writes summaries, `CONVO_LLM_MODEL` as the default, and the models the
+  LLM server lists. A chosen model is stored in `convo.db` (`module_settings`) and used
+  from the next summary on, also after a restart. Only the name changes; the LLM server's
+  URL stays in `.env`, so nothing can move summaries to another host. A name the server
+  doesn't list is refused.
+- Hub side: Settings → AI Defaults → "Background & summaries" (SDarioosh/odysseus-expanded).
+- Needs owner verification: pick the 35B model in the hub, check that the next summary's
+  request goes to it (llama-server log).
 
 ## Done on 2026-10-22: shopping lists stay out of the daily digest
 

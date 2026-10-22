@@ -291,6 +291,24 @@ class LLMClient:
                                   timeout=timeout, transport=transport)
         self.model = model
 
+    @property
+    def base_url(self) -> str:
+        return str(self._http.base_url).rstrip("/")
+
+    def models(self) -> list[str] | None:
+        """The model ids the LLM server lists (``GET /models``), or None when it can't say
+        (down, or no such route)."""
+        try:
+            resp = self._http.get("/models", timeout=5.0)
+            data = resp.json() if resp.status_code == 200 else None
+        except (httpx.HTTPError, ValueError):
+            return None
+        rows = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            return None
+        ids = [str(r["id"]) for r in rows if isinstance(r, dict) and r.get("id")]
+        return list(dict.fromkeys(ids))
+
     def structured(self, system: str, user: str, schema: type[BaseModel],
                    retries: int = 1) -> BaseModel:
         """Chat completion constrained to ``schema`` (llama-server json_schema grammar)."""
