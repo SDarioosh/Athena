@@ -7,10 +7,14 @@ second URL and token, the MCP HTTP app gets two plain HTTP routes:
     POST /ingest/chunk               same multipart fields and answer as /v1/ingest/chunk
     POST /sessions/{session_id}/end  same as /v1/sessions/{id}/end
 
+The phone relay's T5 sync, paired through Odysseus, also reads a few API routes the same
+way (:data:`READ_ROUTES`): the same paths without ``/v1``, same query, same JSON.
+
 They are not MCP tools (the model never sees them) and sit behind the same ``BearerAuth``
-as ``/mcp``. Each request is forwarded unchanged to this module's own ingest API with
-``CONVO_INGEST_TOKEN``, so there is one ingest code path and the ingest token (which also
-signs transcript links) never leaves the module.
+as ``/mcp``; the MCP token can already read all of this through the tools. Each request is
+forwarded unchanged to this module's own ingest API with ``CONVO_INGEST_TOKEN``, so there
+is one ingest code path and the ingest token (which also signs transcript links) never
+leaves the module.
 """
 
 from __future__ import annotations
@@ -30,6 +34,19 @@ MAX_BODY_BYTES = MAX_CHUNK_BYTES + 256 * 1024
 # A 30 s chunk is decoded and run through VAD before the API answers.
 TIMEOUT = httpx.Timeout(120.0, connect=5.0)
 _ANY_ADDRESS = {"", "0.0.0.0", "::", "[::]"}
+MAX_JSON_BYTES = 64 * 1024
+
+# (method, path on the MCP app); the API path is "/v1" + path ("/health" stays as it is).
+READ_ROUTES = [
+    ("GET", "/health"),
+    ("GET", "/conversations"),
+    ("GET", "/conversations/{conv_id}"),
+    ("GET", "/conversations/{conv_id}/transcript"),
+    ("GET", "/action-items"),
+    ("PATCH", "/action-items/{item_id}"),
+    ("GET", "/digests/{date}"),
+    ("POST", "/digests/{date}"),
+]
 
 
 def ingest_api_base(settings: Settings) -> str:
@@ -83,17 +100,20 @@ def add_ingest_routes(mcp: Any, settings: Settings,
     auth = {"Authorization": f"Bearer {settings.ingest_token}"}
 
     async def forward(path: str, **kwargs: Any) -> Any:
+        return await forward_method("POST", path, **kwargs)
+
+    async def forward_method(method: str, path: str, **kwargs: Any) -> Any:
         try:
             async with httpx.AsyncClient(base_url=base, transport=transport, timeout=TIMEOUT,
                                          follow_redirects=False) as client:
-                resp = await client.post(path, **kwargs)
+                resp = await client.request(method, path, **kwargs)
         except httpx.HTTPError as e:
             # Never log the request: its URL may carry ?access_token=.
             log.warning("ingest API at %s not reachable: %s", base, type(e).__name__)
             return _json(502, f"odysseus-sound's ingest API is not reachable at {base} "
                               "(is `convo-server serve` running?)")
         log.log(logging.WARNING if resp.status_code >= 500 else logging.DEBUG,
-                "ingest API answered %s for %s", resp.status_code, path.split("/")[2])
+                "ingest API answered %s for %s %s", resp.status_code, method, path)
         return _passthrough(resp)
 
     @mcp.custom_route("/ingest/chunk", methods=["POST"], include_in_schema=False)
@@ -106,6 +126,30 @@ def add_ingest_routes(mcp: Any, settings: Settings,
             return _json(413, "chunk too large")
         return await forward("/v1/ingest/chunk", content=body,
                              headers={**auth, "Content-Type": ctype})
+
+    def read_route(method: str, path: str) -> None:
+        async def handler(request: Any) -> Any:
+            from urllib.parse import quote
+
+            api_path = "/v1" + path if path != "/health" else path
+            for name, value in request.path_params.items():
+                api_path = api_path.replace("{" + name + "}", quote(str(value), safe=""))
+            # The caller's query minus its MCP token; the API gets the ingest token.
+            params = [(k, v) for k, v in request.query_params.multi_items()
+                      if k != "access_token"]
+            kwargs: dict[str, Any] = {"params": params, "headers": dict(auth)}
+            if method in ("PATCH", "POST"):
+                body = await request.body()
+                if len(body) > MAX_JSON_BYTES:
+                    return _json(413, "request too large")
+                kwargs["content"] = body
+                kwargs["headers"]["Content-Type"] = "application/json"
+            return await forward_method(method, api_path, **kwargs)
+
+        mcp.custom_route(path, methods=[method], include_in_schema=False)(handler)
+
+    for method, path in READ_ROUTES:
+        read_route(method, path)
 
     @mcp.custom_route("/sessions/{session_id}/end", methods=["POST"], include_in_schema=False)
     async def end_session(request: Any) -> Any:

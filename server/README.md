@@ -284,6 +284,14 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 |---|---|
 | `POST /ingest/chunk` | `POST /v1/ingest/chunk` (same multipart fields, same JSON answer) |
 | `POST /sessions/{session_id}/end` | `POST /v1/sessions/{id}/end` |
+| `GET /health` | `GET /health` (here behind the token) |
+| `GET /conversations`, `GET /conversations/{id}`, `GET /conversations/{id}/transcript` | the `/v1` routes, same query |
+| `GET /action-items`, `PATCH /action-items/{id}` | the `/v1` routes |
+| `GET /digests/{date}`, `POST /digests/{date}` | the `/v1` routes |
+
+The read routes are for the phone relay's T5 sync when it is paired through Odysseus
+(Odysseus forwards them for a token with `sound:read` / `sound:write`); the MCP token can
+read the same data through the tools anyway.
 
 Each request is forwarded unchanged to this module's own ingest API
 (`http://<CONVO_HOST>:<CONVO_PORT>`, `127.0.0.1` when `CONVO_HOST` is `0.0.0.0`) with

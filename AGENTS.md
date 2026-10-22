@@ -148,9 +148,10 @@ the data path touches the cloud.**
   `instructions`.
 - HTTP auth accepts `Authorization: Bearer` or `?access_token=` (`BearerAuth`); Odysseus
   can only use the query form.
-- The MCP HTTP app also has two plain HTTP upload routes, behind the same `BearerAuth`:
-  `POST /ingest/chunk` and `POST /sessions/{session_id}/end`
-  (`server/convo_server/ingest_relay.py`). They are **not MCP tools** (never register
+- The MCP HTTP app also has plain HTTP routes, behind the same `BearerAuth`
+  (`server/convo_server/ingest_relay.py`): uploads (`POST /ingest/chunk`,
+  `POST /sessions/{session_id}/end`) and the few API reads the relay's T5 sync uses
+  (`READ_ROUTES`: `/health`, conversations, transcript, action items, digests). They are **not MCP tools** (never register
   them as tools) and forward unchanged to the ingest API with `CONVO_INGEST_TOKEN`, which
   never leaves the module. So **the MCP token can add recordings**: Odysseus uses it for
   its call recorder and for phones paired through it. Their paths and the multipart

@@ -171,3 +171,37 @@ def test_access_log_hides_the_mcp_token():
     assert MCP_TOKEN not in record.getMessage()
     assert "access_token=***&x=1" in record.getMessage()
     assert _log_config()["handlers"]["access"]["filters"] == ["hide_access_token"]
+
+
+def test_read_routes_reach_the_api(relay, pipeline):
+    q = f"?access_token={MCP_TOKEN}"
+    assert relay.get(f"/health{q}").json() == {"ok": True}
+    assert relay.get("/health").status_code == 401  # behind the MCP token, unlike the API's
+    convs = relay.get(f"/conversations{q}&limit=5")
+    assert convs.status_code == 200 and convs.json()["conversations"] == []
+    assert relay.get(f"/action-items{q}&status=open").json() == {"action_items": []}
+    r = relay.get(f"/conversations/nope{q}")
+    assert r.status_code == 404 and r.json() == {"detail": "conversation not found"}
+    assert relay.get(f"/conversations/nope/transcript{q}").status_code == 404
+    assert relay.get(f"/digests/2025-10-09{q}").status_code == 404
+    r = relay.patch(f"/action-items/99{q}", json={"status": "done"})
+    assert r.status_code == 404 and r.json() == {"detail": "action item not found"}
+    assert relay.post(f"/digests/not-a-date{q}").status_code == 400
+
+
+def test_read_routes_drop_the_mcp_token_from_the_query(pipeline):
+    seen: list[httpx.Request] = []
+    c = mcp_client(pipeline, httpx.MockTransport(
+        lambda r: seen.append(r) or httpx.Response(200, json={"conversations": []})))
+    c.get(f"/conversations?since=5&access_token={MCP_TOKEN}&limit=2")
+    (req,) = seen
+    assert req.url.path == "/v1/conversations"
+    assert dict(req.url.params) == {"since": "5", "limit": "2"}
+    assert req.headers["authorization"] == f"Bearer {TOKEN}"
+
+
+def test_only_listed_routes_exist(relay):
+    q = f"?access_token={MCP_TOKEN}"
+    for path in ("/sessions", "/search", "/speakers", "/v1/conversations"):
+        assert relay.get(path + q).status_code in (404, 405), path
+    assert relay.delete(f"/action-items/1{q}").status_code == 405
