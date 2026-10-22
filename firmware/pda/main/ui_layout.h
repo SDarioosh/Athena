@@ -18,5 +18,7 @@
 #define LIST_W (W - 2 * MARGIN)
 #define PAGER_BTN 64
 #define TEXT (&FONT_TEXT)
+#define TEXT_B (&FONT_TEXT_B)
 #define BIG (&FONT_BIG)
+#define HUGE (&FONT_HUGE)
 #define LH 30                    /* FONT_TEXT line advance */

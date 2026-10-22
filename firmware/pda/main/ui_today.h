@@ -1,5 +1,6 @@
 /* The Today tab's content (docs/t5-pda-plan.md §5): INSIGHT, DO FIRST, COMING UP and ALSO
- * WORTH A LOOK from a today_plan_t, and the "Digest ready on Brief" line. ui_pda.c draws
+ * WORTH A LOOK from a today_plan_t ("All caught up!" when there is nothing), and the
+ * "Digest ready on Brief" line. ui_pda.c draws
  * the header, the pager and the tabs around it and turns the hit regions into actions.
  * Needs only gfx and the fonts, so the host tests can render it (test/test_ui_today.c). */
 #pragma once
@@ -32,6 +33,8 @@ typedef struct {
 typedef struct {
     const feed_t *f;
     const today_plan_t *plan;
+    int32_t today; /* local day (pda_local_day) and time zone, for the events' time column */
+    int tz_min;
     void (*todo_state)(void *ctx, int note, int item, ui_today_todo_t *out); /* NULL: the feed's */
     void (*hit)(void *ctx, EpdRect r, ui_today_hit_t kind, int32_t arg);
     void *ctx;

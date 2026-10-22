@@ -108,7 +108,8 @@ def main() -> int:
     llm = LLMClient(settings.llm_base_url, settings.llm_model, settings.llm_api_key,
                     settings.llm_timeout_seconds)
     pipeline = Pipeline(settings, store, EnergyVAD(),
-                        summarizer=Summarizer(llm, ME, timezone=settings.timezone))
+                        summarizer=Summarizer(llm, ME, timezone=settings.timezone,
+                                                      digest_skip_lists=settings.digest_skip_lists))
     failed = 0
     for key, start, device, lines in CONVERSATIONS:
         sid = f"demo-{key}"

@@ -7,6 +7,7 @@
 
 #include "epdiy.h"
 #include "esp_err.h"
+#include "ui_chrome.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,12 +30,9 @@ typedef enum {
 
 esp_err_t ui_pda_start(void);
 
-/* The Asleep screen into the framebuffer (no update): the "since" and "synced" lines may be
- * "". Drawn the same way every time, so a sync wake can redraw what the panel shows and
- * change only the synced line (pda_sleep.c). */
-void ui_pda_draw_asleep(const char *since, const char *synced);
-/* Where the synced line is, for a partial update. */
-EpdRect ui_pda_asleep_synced_area(void);
+/* The Asleep screen (ui_chrome_asleep()) into the framebuffer, no update: pda_sleep.c draws
+ * it again on a sync wake. */
+void ui_pda_draw_asleep(const ui_asleep_t *a);
 
 /* Console: show a transcript page by ref (from the cache, or queue a fetch). */
 void ui_pda_open(const char *ref);
