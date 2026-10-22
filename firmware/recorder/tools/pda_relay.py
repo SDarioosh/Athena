@@ -28,9 +28,10 @@ Sync once and exit (exit code 0 = everything delivered):
 
 The same URL and token also give the T5's Tasks tab the owner's Odysseus checklists
 (plan §4.4; the token needs todos:read and todos:write too) and the Today screen the hub's
-Today insight (plan §4.1; the token needs insight:read too). Without --odysseus-url and the
-token, calendar and checklist actions stay queued on the T5, the feed's calendar is empty
-and it has no todos and no insight.
+Today insight and its rule weights (plan §4.1, §5; the token needs insight:read too; the last
+good weights table is kept in the state dir's pda.json when a later fetch fails). Without
+--odysseus-url and the token, calendar and checklist actions stay queued on the T5, the
+feed's calendar is empty and it has no todos, no insight and no weights.
 
 Exit codes for --once/--list: 0 ok, 1 some actions still waiting, 2 retry later (server,
 link or T5 error), 3 token rejected / incompatible / bad settings, 4 T5 not found.
