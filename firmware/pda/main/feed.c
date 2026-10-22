@@ -205,6 +205,58 @@ static void parse_insight(ctx_t *c, feed_t *f)
     }
 }
 
+/* `weights` (§4.1, §5): the hub's learned rule weights, one per note. */
+static void parse_weights(ctx_t *c, feed_t *f)
+{
+    static const char PREFIX[] = "list:";
+    const size_t plen = sizeof(PREFIX) - 1;
+    const int o = json_get(&c->d, 0, "weights");
+    if (o < 0 || c->d.t[o].type != JSON_OBJ) {
+        return;
+    }
+    int64_t version = 1;
+    const int vi = json_get(&c->d, o, "version");
+    if (vi >= 0 && (!json_int(&c->d, vi, &version) || version != 1)) {
+        return; /* a table this firmware doesn't know */
+    }
+    const int w = json_get(&c->d, o, "weights");
+    if (w < 0 || c->d.t[w].type != JSON_OBJ) {
+        return;
+    }
+    for (int k = json_first(&c->d, w); k >= 0 && f->n_weights < FEED_MAX_WEIGHTS; k = json_next(&c->d, w, k)) {
+        const int len = json_str_len(&c->d, k);
+        if (len <= (int)plen || len > (int)(plen + FEED_WEIGHT_ID_MAX)) {
+            continue;
+        }
+        char key[sizeof(PREFIX) + FEED_WEIGHT_ID_MAX];
+        json_str(&c->d, k, key, sizeof(key));
+        int64_t v;
+        if (strncmp(key, PREFIX, plen) != 0 || !json_int(&c->d, k + 1, &v)) {
+            continue; /* another key (note_type:, event_type:, ...) or not an integer */
+        }
+        bool seen = false;
+        for (int j = 0; j < f->n_weights && !seen; j++) {
+            seen = strcmp(f->weights[j].note_id, key + plen) == 0;
+        }
+        const char *s = seen ? NULL : str(c, k);
+        if (!s) {
+            continue;
+        }
+        v = v < FEED_WEIGHT_MIN ? FEED_WEIGHT_MIN : v > FEED_WEIGHT_MAX ? FEED_WEIGHT_MAX : v;
+        f->weights[f->n_weights++] = (feed_weight_t){.note_id = s + plen, .w = (int8_t)v};
+    }
+}
+
+int feed_note_weight(const feed_t *f, const char *note_id)
+{
+    for (int i = 0; note_id && i < f->n_weights; i++) {
+        if (strcmp(f->weights[i].note_id, note_id) == 0) {
+            return f->weights[i].w;
+        }
+    }
+    return 0;
+}
+
 static int setup(ctx_t *c, const char *json, size_t len, json_tok_t **toks)
 {
     const int max = (int)(len / 2 + 16);
@@ -356,6 +408,7 @@ int feed_parse(const char *json, size_t len, feed_t *f)
     feed_sort_actions(f);
     feed_sort_events(f);
     parse_insight(&c, f); /* after the sort: it refers to events by index */
+    parse_weights(&c, f);
     free(toks);
     f->arena = c.arena;
     return 0;

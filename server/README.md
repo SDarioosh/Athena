@@ -247,7 +247,8 @@ conversation first, with no citation line:
   "conversation_id": "…", "conversation_title": "Errands", "conversation_kind": "note",
   "conversation_at": "2025-10-09T08:53:20+00:00",
   "created_at": "2025-10-09T08:55:02+00:00", "timezone": "Europe/Berlin",
-  "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=0"}]
+  "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=0",
+  "with": [{"id": 4, "name": "Greta"}, {"id": null, "name": "Tom"}]}]
 ```
 
 `title` is a short imperative summary of at most 60 characters ("Call the plumber about
@@ -261,6 +262,16 @@ files explicit items itself and offers the others as suggestions. An item the us
 gives a date, time, list or reminder/event kind with `update_action_item` becomes
 explicit; a re-summary keeps an item explicit. Both fields are also in `GET
 /v1/action-items` and `GET /v1/conversations/{id}`. The text listing is unchanged.
+
+`with` (MCP 0.9.0) lists the other people in the item's conversation, for the hub's
+open loops ("you told Greta you'd send the slides"): the named speakers of its lines
+(by first line) and the people its summary lists, each with their stable person `id`
+(following merges and aliases; `null` for a speaker with no person row yet) and current
+`name`. People whose name (or a name they appear under there) is a word of the item's
+text come first, then the rest by first appearance; no duplicates. Unnamed labels
+("Speaker 2", "Unknown") and the owner (owner lines, the owner's person and its aliases,
+`CONVO_OWNER_NAME`, words like "me") are never listed; it is `[]` when nobody else is
+there and for notes. It is only in the MCP JSON rows, not in the HTTP API.
 
 **Confirmed facts.** A fact is confirmed when no newer fact has replaced it and it was
 said in at least `CONVO_FACT_CONFIRM_SOURCES` (default 3) distinct conversations (its own

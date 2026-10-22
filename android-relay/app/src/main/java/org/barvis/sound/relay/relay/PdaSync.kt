@@ -99,7 +99,7 @@ class PdaSync(
     private var status: PdaStatus? = null
     private var t5FeedVersion = 0L
     private var lastCommandMs = 0L
-    private val feedBuilder = FeedBuilder(api, calendar, clock, zone, templates, log = log, todos = todos, insight = insight)
+    private val feedBuilder = FeedBuilder(api, calendar, clock, zone, templates, log = log, todos = todos, insight = insight, memory = memory)
     private val detailBuilder = DetailBuilder(api)
 
     private class DeviceProblem(message: String) : Exception(message)

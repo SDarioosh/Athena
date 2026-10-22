@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-22 (summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-22 (open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -41,6 +41,7 @@ _Last updated: 2026-10-22 (summary model chosen in the hub's settings; pairing t
 | 16 | Forget propagates (hub personal context, Phase 1): `retire_fact` write tool (destructive), retired facts hidden in every listing and kept hidden when said again or the conversation is re-summarized; `confirmed` per JSON fact row; MCP 0.5.0, 14 tools | **built, tested** (364 server tests); hub side (belief ledger, review page, notes source) on the same branch in SDarioosh/Barvis; **owner: Server verification** | `server/convo_server/{store,mcp_server}.py`, `server/tests/test_retire_fact.py` |
 | 17 | Personal context Phase 2 (module side): `people` with a stable id that survives renames and merges, `list_people format=json`, `person_id` on JSON facts (MCP 0.6.0); action items get `title` and `explicit`, and intentions/principles in voice notes become facts (decisions) instead of tasks (MCP 0.7.0) | **built, tested**; hub side on the hub's local `p2` branch; PR after Phase 1 merges; **owner: Server verification** | `server/convo_server/{store,mcp_server,llm}.py`, `server/tests/test_people.py` |
 | 18 | One-step pairing through Odysseus: the MCP HTTP server forwards uploads (`/ingest/chunk`, `/sessions/{id}/end`) and the T5's API reads to the ingest API (MCP 0.8.0), so the hub's call recorder and paired phones need only the `convo` MCP server; the Android relay pairs by scanning Odysseus's QR code (ZXing, on-device), stores the Odysseus URL and token, uploads and syncs the T5 through Odysseus (`/api/codex/sound/*`), picks the calendar from a list; direct mode stays as a fallback | **built and tested in the sandbox**, merged (PR #73); fix: the first APK crashed when opening the scanner (ZXing's `CaptureActivity` needs AndroidX), now our own `ScanActivity`; still failed on the owner's Galaxy Z Fold (Android 17) with no permission prompt, cause unknown (no Android 17 test target here): 0.2.1 asks for the camera first, reports scanner errors instead of crashing, opens `odysseus-pair:` links from the camera app (confirm before pairing) and shows the last crash to copy; server tests, relay `assembleDebug test lint` (159 tests), the relay's Kotlin pairing/upload/T5 clients against a real hub and module; **needs a real phone** (scan, pair over Tailscale, watch drain and T5 sync through Odysseus) and the owner's Server verification | `server/convo_server/ingest_relay.py`, `android-relay/` (`net/Pairing.kt`, `net/Routes.kt`), hub `src/call_recorder.py`, `src/phone_pairing.py` |
+| 19 | Open loops for the hub's Today insight (Phase 3, module side): `list_action_items` JSON rows gain `with` (the other people in the item's conversation, person ids, those the item names first; MCP 0.9.0, additive) | ✅ built and tested (`tests/test_item_with.py`); no open question for the owner | `server/convo_server/mcp_server.py`, `server/convo_server/store.py` (`conversation_participants`) |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -117,6 +118,37 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
+
+## Done on 2026-10-22: the T5's offline Today plan follows the hub's weights (Phase 3, stream C)
+
+The hub learns a weight per checklist from the owner's outcomes on its Today page
+(hub `docs/fork/today-insight.md#weights`); the T5's rule-based Today plan (no insight for
+today) now orders each group by it.
+
+- **Relays (PC and Android, the same rules).** `GET /api/codex/insight/weights` (same
+  Odysseus token, scope `insight:read`) → feed key `weights` (`{"version": 1, "date",
+  "weights": {"list:<note id>": int}}`): only `list:` keys (id ≤ 150 bytes) with integer
+  values, clamped to [-6, 6], at most 32. Any failure (an older hub's 404, 403, network,
+  5xx, malformed) keeps the last good table: the PC relay in its `pda.json` (survives
+  restarts), the Android relay in its private preferences. Never fetched (or no Odysseus):
+  no key. Trimmed right after the `insight`.
+- **T5 firmware.** `feed.c` parses `weights` (unknown key prefixes, non-integers and other
+  versions ignored, clamped, ≤ 32, repeats once). `today_plan.c` applies them in the
+  rule-based plan only, integers only: DO FIRST to-dos by (-w, due date, feed order) then
+  today's events; COMING UP by (-w, date, time) with events at 0; ALSO pinned then undated,
+  each by (-w, feed order). A weight never moves an item to another group; with an insight
+  for today nothing changes. The rule order and the weight table are published in
+  `docs/t5-pda-plan.md` §5; §4.1 has the `weights` key.
+- **A fictional day** for both repos: `firmware/pda/test/fixtures/insight_eval_day.json`
+  (overdue, due today, coming up, pinned, undated, later and a shopping list, with known
+  weights and the expected order with and without them; the hub's insight eval uses the
+  same to-dos). Rendered: `build-pda-host/today_screens/today_rules_weights_*.png`.
+- **Checks:** PDA host tests 11/11 (ctest); PC relay 213 tests + ruff; `idf.py build`
+  (ESP-IDF 5.5.2) passes; Android `assembleDebug test lint` passes (167 tests).
+- **Needs real-device testing:** the T5 shows the reordered rule-based plan from a real
+  feed (a day without an insight, with the hub's weights); the PC relay and the phone carry
+  `weights` from the hub's test instance (and keep the last table when the route fails or
+  the hub is old); the phone keeps the table across an app restart.
 
 ## Done on 2026-10-22: summary model chosen in the hub's settings
 

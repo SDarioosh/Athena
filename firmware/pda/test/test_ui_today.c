@@ -332,6 +332,21 @@ static void test_no_insight(void)
     feed_free(&feed);
 }
 
+/* The fictional day of insight_eval_day.json (shared with the hub's insight eval): the rules
+ * with the hub's weights, and the same day without them. */
+static void test_weights_day(void)
+{
+    load_feed("insight_eval_day.json");
+    CHECK(feed.n_weights > 0);
+    today_plan_for_today(&feed, TODAY, NOW, TZ, &plan);
+    CHECK(!plan.from_insight);
+    CHECK(render_all("today_rules_weights") >= 1);
+    feed.n_weights = 0;
+    today_plan_for_today(&feed, TODAY, NOW, TZ, &plan);
+    CHECK(render_all("today_rules_no_weights") >= 1);
+    feed_free(&feed);
+}
+
 /* Long texts: every line is cut to fit, the headline to three lines. */
 static void test_long_texts(void)
 {
@@ -402,6 +417,7 @@ int main(void)
     test_asleep();
     test_insight();
     test_no_insight();
+    test_weights_day();
     test_long_texts();
     return checks_done("test_ui_today");
 }

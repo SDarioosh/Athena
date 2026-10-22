@@ -234,7 +234,7 @@ def test_list_action_items_json(pipeline, note_mcp):
         "conversation_id": conv["id"], "conversation_title": "Plans for the week",
         "conversation_kind": "note", "conversation_at": "2025-10-09T08:53:20+00:00",
         "created_at": meet["created_at"], "timezone": "Europe/Berlin",
-        "link": meet["link"]}
+        "link": meet["link"], "with": []}
     assert meet["link"].startswith("http") and meet["link"].endswith(
         f"/view/{conv['id']}?sig={meet['link'].split('sig=')[1].split('#')[0]}#t=1")
     assert meet["created_at"].endswith("+00:00")

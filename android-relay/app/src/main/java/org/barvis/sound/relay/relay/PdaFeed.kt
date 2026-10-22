@@ -94,7 +94,11 @@ class FeedBuilder(
     private val log: RelayLog = RelayLog.NONE,
     private val todos: TodosApi = NoTodos,
     private val insight: InsightApi = NoInsight,
+    /** Keeps the hub's last good `weights` table (plan §5); null: kept in memory only. */
+    private val memory: PdaMemory? = null,
 ) {
+    private var weightsInMemory: String? = null
+
     private class Stop(val fail: FeedBuild.Fail) : Exception()
 
     private fun <T> need(r: ApiResult<T>, what: String): T = when (r) {
@@ -192,13 +196,14 @@ class FeedBuilder(
             log.log(if (it == INSIGHT_NOT_YET) Level.INFO else Level.WARN, "Odysseus insight: $it; the feed has no insight")
         }
         if (todayInsight != null) m["insight"] = todayInsight
+        weights()?.let { m["weights"] = it }
         // Not read by the PC relay or required by the firmware (plan §4.1: optional, left out
         // when there are none).
         val templateList = templates.map { it.trim().take(40) }.filter { it.isNotEmpty() }.distinct().take(12)
         if (templateList.isNotEmpty()) m["templates"] = templateList
 
         // Too big (§4.1): cut summaries, then drop the oldest conversations, then done
-        // checklist items, then the whole insight, then the last action items, then the last
+        // checklist items, then the whole insight, then the weights, then the last action items, then the last
         // unpinned checklists, then the last calendar entries. A kept insight loses the refs
         // whose item was dropped.
         fun size() = FeedContent(m).render(0xFFFFFFFFL, now).size
@@ -211,6 +216,7 @@ class FeedBuilder(
                     convs.isNotEmpty() -> convs.removeAt(convs.size - 1)
                     notes != null && dropLastDoneItem(notes) -> Unit
                     m.containsKey("insight") -> m.remove("insight")
+                    m.containsKey("weights") -> m.remove("weights")
                     actions.isNotEmpty() -> actions.removeAt(actions.size - 1)
                     notes != null && notes.any { it["pinned"] != true } ->
                         notes.removeAt(notes.indexOfLast { it["pinned"] != true })
@@ -223,6 +229,37 @@ class FeedBuilder(
             log.log(Level.INFO, "feed trimmed to ${size()} B (summaries cut, $steps entries dropped)")
         }
         return FeedContent(m)
+    }
+
+    /**
+     * The hub's `weights` table (plan §5), or the last good one when it can't be had now (any
+     * failure or a malformed answer); null if it was never fetched or Odysseus isn't set up.
+     */
+    private suspend fun weights(): Map<String, Any?>? {
+        if (insight === NoInsight) return null
+        val last = (memory?.lastWeights() ?: weightsInMemory)?.let {
+            try {
+                weightsSection(Json.parseObject(it)) // checked again
+            } catch (e: Json.ParseException) {
+                null
+            }
+        }
+        val why = when (val r = insight.weights()) {
+            is ApiResult.Ok -> {
+                val table = weightsSection(r.value)
+                if (table != null) {
+                    val json = Json.write(table)
+                    weightsInMemory = json
+                    if (memory != null && memory.lastWeights() != json) memory.weightsFetched(json)
+                    return table
+                }
+                WEIGHTS_MALFORMED
+            }
+            is ApiResult.Unsupported -> r.reason
+            is ApiResult.Fail -> describe(r.error)
+        }
+        log.log(Level.INFO, "Odysseus weights: $why; the feed keeps the last good table")
+        return last
     }
 
     /** §4.4: checklists with items, in the hub's order; 20 notes, 40 items each, items keep `i`. */
@@ -349,6 +386,34 @@ class FeedBuilder(
         const val INSIGHT_ITEMS_MAX = 5
         val INSIGHT_SECTIONS = listOf("focus", "coming_up", "also")
         const val INSIGHT_MALFORMED = "malformed insight answer"
+        const val WEIGHTS_MALFORMED = "malformed weights answer"
+        const val WEIGHTS_MAX = 32
+        const val WEIGHT_MIN = -6L
+        const val WEIGHT_MAX = 6L
+        const val WEIGHT_ID_MAX = 150 // UTF-8 bytes of a note id (the T5's limit)
+        const val WEIGHT_PREFIX = "list:"
+
+        /**
+         * §4.1 `weights` from the hub's answer, or null if it is malformed (`weights` not an
+         * object, a `version` other than 1). Keeps only `list:<note id>` keys with integer values,
+         * clamped to [-6, 6], at most 32 in the hub's order; a valid `date` is kept.
+         */
+        fun weightsSection(raw: Map<String, Any?>): Map<String, Any?>? {
+            val w = raw["weights"] as? Map<*, *> ?: return null
+            if (raw.containsKey("version") && raw["version"] != 1L) return null
+            val table = LinkedHashMap<String, Any?>()
+            for ((k, v) in w) {
+                if (table.size == WEIGHTS_MAX) break
+                if (k !is String || !k.startsWith(WEIGHT_PREFIX) || v !is Long) continue
+                val idBytes = k.substring(WEIGHT_PREFIX.length).toByteArray(Charsets.UTF_8).size
+                if (idBytes == 0 || idBytes > WEIGHT_ID_MAX) continue
+                table[k] = v.coerceIn(WEIGHT_MIN, WEIGHT_MAX)
+            }
+            val out = linkedMapOf<String, Any?>("version" to 1L)
+            (raw["date"] as? String)?.takeIf { ISO_DATE.matches(it) }?.let { out["date"] = it }
+            out["weights"] = table
+            return out
+        }
         const val INSIGHT_NOT_YET = "no insight yet"
         private val DATE = Regex("\\d{4}-\\d{2}-\\d{2}")
         private val ISO_DATE = Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}")

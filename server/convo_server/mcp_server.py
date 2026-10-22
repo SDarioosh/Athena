@@ -94,7 +94,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.8.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.9.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -231,8 +231,12 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         return transcript_link(settings, r["conversation_id"],
                                (r["source_at"] or r["conversation_at"]) - r["conversation_at"])
 
-    def item_json(r: dict[str, Any], mine_names: set[str]) -> dict[str, Any]:
+    def item_json(r: dict[str, Any], mine_names: set[str],
+                  participants: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         owner = (r["owner"] or "").strip().lower()
+        kind = r.get("kind") or "task"
+        others = [] if kind == "note" else _with(r["text"], participants.get(
+            r["conversation_id"], []))
         return {"id": r["id"], "status": r["status"], "kind": r.get("kind") or "task",
                 "mine": not owner or owner in mine_names,
                 "title": r.get("title") or short_title(r.get("note_title"), r["text"]),
@@ -247,7 +251,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                 "conversation_kind": r.get("conversation_kind"),
                 "conversation_at": _iso(r["conversation_at"]),
                 "created_at": _iso(r.get("created_at") or r["conversation_at"]),
-                "timezone": settings.timezone, "link": item_link(r)}
+                "timezone": settings.timezone, "link": item_link(r), "with": others}
 
     @mcp.tool(annotations=ro)
     def list_action_items(status: Annotated[str, Field(description="open, done, dismissed or all")]
@@ -263,7 +267,9 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         Each JSON row has mine: false when someone else owns the item (the hub leaves
         those out of the user's to-dos), a short title and explicit: true when the user
         asked for the item (a date or time, a named list, a reminder, event or note, or a
-        command such as "remind me" or "add a task"), false for one the summary only suggests."""
+        command such as "remind me" or "add a task"), false for one the summary only suggests.
+        Each JSON row also has with: the other people in the item's conversation, those
+        the item names first."""
         fmt = (format or "text").strip().lower()
         if fmt not in ("text", "json"):
             return "format must be text or json"
@@ -277,7 +283,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if fmt == "json":
             mine_names = store.known_names()[0] | _OWNER_WORDS | {
                 settings.owner_name.strip().lower()} - {""}
-            return json.dumps([item_json(r, mine_names) for r in rows], ensure_ascii=False)
+            participants = store.conversation_participants(
+                (r["conversation_id"] for r in rows), _owner_names(settings))
+            return json.dumps([item_json(r, mine_names, participants) for r in rows],
+                              ensure_ascii=False)
         lines = [header(len(rows), f"{status} action items")]
         for r in rows:
             lines.append(f"- #{r['id']} [{r['status']}] {_kind_word(r)}{r['text']}"
@@ -565,6 +574,18 @@ def _about(subject: str | None, owners: set[str], people: set[str]) -> str:
     if s in owners:
         return "owner"
     return "person" if s and s in people else "other"
+
+
+def _with(text: str, people: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """list_action_items JSON ``with``: the conversation's other people, those whose name
+    (any name they appear under) is a word in the item's text first, then the rest in
+    order of first appearance."""
+    def named(p: dict[str, Any]) -> bool:
+        return any(re.search(rf"(?<!\w){re.escape(n)}(?!\w)", text or "", re.IGNORECASE)
+                   for n in p["names"])
+
+    ranked = sorted(people, key=lambda p: not named(p))
+    return [{"id": p["id"], "name": p["name"]} for p in ranked]
 
 
 def _owner_names(settings: Settings) -> tuple[str, ...]:

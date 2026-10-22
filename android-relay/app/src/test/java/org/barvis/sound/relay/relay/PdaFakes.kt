@@ -351,9 +351,18 @@ class FakeInsight : InsightApi {
     var answer: ApiResult<Map<String, Any?>> = ApiResult.Ok(demo())
     var reads = 0
 
+    /** The weights route (plan §5); by default a hub without it. */
+    var weightsAnswer: ApiResult<Map<String, Any?>> = ApiResult.Unsupported("this Odysseus has no weights route (update the hub)")
+    var weightReads = 0
+
     override suspend fun today(): ApiResult<Map<String, Any?>> {
         reads++
         return answer
+    }
+
+    override suspend fun weights(): ApiResult<Map<String, Any?>> {
+        weightReads++
+        return weightsAnswer
     }
 
     companion object {

@@ -108,7 +108,7 @@ to the servers.
 
 ```
 paired:  Odysseus /api/codex/sound/{digests,conversations,action-items},
-         /api/codex/calendar/events, /api/codex/todos, /api/codex/insight/today (one ody_ token) → this app → BLE → T5
+         /api/codex/calendar/events, /api/codex/todos, /api/codex/insight/today and /weights (one ody_ token) → this app → BLE → T5
 direct:  odysseus-sound /v1/{digests,conversations,action-items} (ingest token)
          + the Odysseus routes above with an ody_ token
 ```
@@ -156,6 +156,12 @@ direct:  odysseus-sound /v1/{digests,conversations,action-items} (ingest token)
   token without `insight:read`, a hub without the route or a malformed answer leave it
   out (the status line says why, e.g. "insight: token lacks insight:read") and the rest
   syncs; a network error or 5xx fails the feed like the calendar's.
+- **Rule weights** (plan §4.1 `weights`, §5). The feed's `weights` is the hub's
+  `GET /api/codex/insight/weights` (same token and scope): only `list:<note id>` keys with
+  integers, clamped to [-6, 6], at most 32. Any failure (an older hub's 404, 403, network,
+  5xx, a malformed answer) keeps the last good table, saved in the app's private
+  preferences; never fetched, the key is left out. The T5 orders its rule-based Today plan
+  by them.
 
 Setup:
 
