@@ -104,9 +104,12 @@ _MINUTE_WORDS = {"oh five": 5, "o five": 5, "ten": 10, "fifteen": 15, "twenty": 
                  "forty five": 45, "fifty": 50, "fifty five": 55}
 _HOUR_RE = r"(" + "|".join(_HOUR_WORDS) + r"|\d{1,2})"
 _MIN_RE = r"(" + "|".join(sorted(_MINUTE_WORDS, key=len, reverse=True)) + r"|\d{2})"
-# "at 5 people" / "at one point" are not times
+# "at 5 people" / "at one point" / "by 14 mm" are not times
 _NOT_A_TIME = re.compile(r"\s*(point|of|percent|people|persons|minutes?|mins?|hours?|days?|"
-                         r"weeks?|months?|years?|times|items|things|euros?|dollars?|bucks)\b")
+                         r"weeks?|months?|years?|times|items|things|euros?|dollars?|bucks|"
+                         r"mm|cm|km|m|meters?|metres?|millimeters?|millimetres?|centimeters?|"
+                         r"centimetres?|inch(?:es)?|feet|foot|ft|kg|kilos?|grams?|g|lbs?|"
+                         r"pounds?|volts?|v|amps?|mah|ma|watts?|w|gb|mb|degrees?)\b")
 
 
 def _hour(token: str) -> int:

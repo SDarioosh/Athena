@@ -771,18 +771,36 @@ _ADD_TO_NOTES = re.compile(r"^(?:add|put|write(?:\s+down)?)\b", re.IGNORECASE)
 def _command_sentences(parts: list[str]) -> list[tuple[str, int]]:
     """Sentences that ask for a note ("create a note ...", "note that ...", "add to my
     hardware notes ..."), with the line's offset in seconds."""
+    sentences = [(_LEAD.sub("", sentence.strip()), int(m["at"]))
+                 for part in parts for line in part.splitlines()
+                 if (m := _LINE.match(line.strip()))
+                 for sentence in _SENTENCE_END.split(m["text"]) if sentence.strip()]
     out = []
-    for part in parts:
-        for line in part.splitlines():
-            m = _LINE.match(line.strip())
-            if not m:
-                continue
-            for sentence in _SENTENCE_END.split(m["text"]):
-                said = _LEAD.sub("", sentence.strip())
-                if _NOTE_COMMAND.match(said + " ") or (
-                        _ADD_TO_NOTES.match(said) and _NOTES_PHRASE.search(said)):
-                    out.append((said, int(m["at"])))
+    i = 0
+    while i < len(sentences):
+        said, at = sentences[i]
+        i += 1
+        if _command_only(said) and i < len(sentences):
+            # "Create a note. The battery is 13 mm wide.": the note is the next sentence
+            said = re.sub(r"^(add|put|write(?:\s+down)?)\s+(?:it|this|that)\b", r"\1",
+                          said.rstrip(" .!?:,-"), flags=re.IGNORECASE)
+            said = f"{said}: {sentences[i][0]}"
+            i += 1
+        if _NOTE_COMMAND.match(said + " ") or (
+                _ADD_TO_NOTES.match(said) and _NOTES_PHRASE.search(said)):
+            out.append((said, at))
     return out
+
+
+def _command_only(said: str) -> bool:
+    """A note command with nothing to note ("Create a note.", "Add to my hardware
+    notes."): the transcriber ended the sentence before the note."""
+    s = said.strip(" .!?:,-") + " "
+    if _ADD_TO_NOTES.match(s) and (m := _NOTES_PHRASE.search(s)):
+        rest = (s[:m.start()] + " " + s[m.end():]).strip(" ,.:-")
+        return re.fullmatch(r"(?:add|put|write(?:\s+down)?)?(?:\s+(?:it|this|that))?", rest,
+                            flags=re.IGNORECASE) is not None
+    return _NOTE_COMMAND.match(s) is not None and not _NOTE_COMMAND.sub("", s).strip()
 
 
 def _words(text: str) -> set[str]:
