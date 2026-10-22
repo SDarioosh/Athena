@@ -24,6 +24,10 @@
     <!-- Uploads to the owner's server on the LAN / Tailscale. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Scan the pairing QR code (ui/ScanActivity), only while that screen is open. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -57,13 +61,18 @@
             android:parentActivityName=".ui.MainActivity"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- ZXing's scanner for "Pair with Odysseus" (on-device; the camera is used only
-             while it is open, nothing is saved). Any orientation instead of landscape only. -->
+        <!-- "Pair with Odysseus" scanner: ZXing's camera view, decoded on the phone; the camera
+             is used only while it is open and nothing is saved. -->
+        <activity
+            android:name=".ui.ScanActivity"
+            android:exported="false"
+            android:label="@string/pair_scan" />
+
+        <!-- ZXing's own scanner needs AndroidX, which this app doesn't have (it crashed on
+             open); keep it out so nothing can start it. -->
         <activity
             android:name="com.journeyapps.barcodescanner.CaptureActivity"
-            android:screenOrientation="fullSensor"
-            tools:ignore="DiscouragedApi"
-            tools:replace="android:screenOrientation" />
+            tools:node="remove" />
 
         <service
             android:name=".service.RelayService"

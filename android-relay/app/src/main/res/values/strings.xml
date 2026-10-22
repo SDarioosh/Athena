@@ -79,6 +79,8 @@
     <string name="pair_failed">Pairing failed: %1$s</string>
     <string name="pair_state_paired">Paired with %1$s. Uploads and the T5 go through Odysseus. Pair again to replace this phone\'s token.</string>
     <string name="pair_state_direct">Uploads go straight to the odysseus-sound server (below). Pair to send them through Odysseus instead.</string>
+    <string name="pair_scan_hint">Point the camera at the code on Odysseus\' Pair a phone page</string>
+    <string name="pair_camera_denied">No camera permission. Paste the pairing link instead.</string>
     <string name="pair_scan_unavailable">No camera app could open the scanner. Paste the link instead.</string>
     <string name="through_odysseus">Send the watch\'s audio and the T5\'s data through Odysseus (paired). Off: straight to the odysseus-sound server below.</string>
     <string name="through_odysseus_needs_pairing">Pair with Odysseus first, or enter its URL and token in the PDA section.</string>

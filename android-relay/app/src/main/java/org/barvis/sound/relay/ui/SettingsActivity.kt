@@ -16,8 +16,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import com.journeyapps.barcodescanner.ScanIntentResult
-import com.journeyapps.barcodescanner.ScanOptions
 import org.barvis.sound.relay.R
 import org.barvis.sound.relay.net.HttpUploader
 import org.barvis.sound.relay.net.PairingClient
@@ -110,12 +108,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun scan() {
-        val intent = ScanOptions()
-            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-            .setPrompt(getString(R.string.pair_scan))
-            .setBeepEnabled(false)
-            .setOrientationLocked(false)
-            .createScanIntent(this)
+        val intent = Intent(this, ScanActivity::class.java)
         try {
             @Suppress("DEPRECATION") // framework Activity: no AndroidX result API here
             startActivityForResult(intent, REQ_SCAN)
@@ -129,7 +122,7 @@ class SettingsActivity : Activity() {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQ_SCAN) return
-        ScanIntentResult.parseActivityResult(resultCode, data).contents?.let { pair(it) }
+        if (resultCode == RESULT_OK) data?.getStringExtra(ScanActivity.EXTRA_TEXT)?.let { pair(it) }
     }
 
     /** Redeems a scanned or pasted pairing link and switches to "through Odysseus". */

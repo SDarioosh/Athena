@@ -185,7 +185,7 @@ line on the last sync (actions handled or waiting, feed sent or unchanged, calen
 | `INTERNET` | Upload to your server |
 | `RECEIVE_BOOT_COMPLETED` | Restart after a reboot, only if you turned that on |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Lets the app open the system "don't optimise" dialog; you decide |
-| `CAMERA` (from ZXing's scanner) | Scan the pairing QR code, only while the scanner is open; asked for the first time you tap **Scan pairing code**. Nothing is saved; pasting the link works without it |
+| `CAMERA` | Scan the pairing QR code, only while the scanner is open; asked for the first time you tap **Scan pairing code**. Nothing is saved; pasting the link works without it |
 
 ## Privacy
 
@@ -196,7 +196,8 @@ line on the last sync (actions handled or waiting, feed sent or unchanged, calen
   over the owner's machine (Odysseus forwards it to the module's MCP server); the module's
   ingest token never reaches the phone.
 - Pairing: the QR code holds no token, only the Odysseus URL and a single-use code that
-  expires after 10 minutes. The scanner is ZXing (Apache-2.0), decoding on the phone:
+  expires after 10 minutes. The scanner (`ui/ScanActivity`) is ZXing's camera view
+  (Apache-2.0), decoding on the phone:
   no Google Play services or ML Kit downloads, no network, no images kept. The app sends
   the code only to the URL in the QR code.
 - The token is encrypted with an AES-256-GCM key in the Android Keystore, never shown
@@ -232,7 +233,8 @@ app/src/main/java/org/barvis/sound/relay/
   service/    RelayService (foreground loop), PdaConnector (the PDA job), RelayState,
               Permissions, BootReceiver
   store/      Settings (SharedPreferences), TokenCipher (Keystore AES-GCM), PdaPrefs
-  ui/         MainActivity (status + log), SettingsActivity
+  ui/         MainActivity (status + log), SettingsActivity, ScanActivity (pairing QR;
+              not ZXing's CaptureActivity, which needs AndroidX and crashed)
 ```
 
 Unit tests (`app/src/test`) run on the JVM: the §8 test vectors byte for byte; a fake
