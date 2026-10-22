@@ -3,13 +3,15 @@
 Frontends (Hermes Agent, Odysseus, ...) connect over stdio (``convo-server mcp``) or
 Streamable HTTP with a bearer token (``convo-server mcp --http``). The SQLite store stays
 the source of truth; tools return compact text with a link to the transcript for every
-claim so the frontend's model can cite sources.
+claim so the frontend's model can cite sources. Over HTTP the same token can also upload
+recordings (``/ingest/chunk``, see ``ingest_relay.py``); those routes are not tools.
 """
 
 from __future__ import annotations
 
 import hmac
 import json
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
@@ -92,7 +94,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.7.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.8.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -692,6 +694,32 @@ class BearerAuth:
         await self.app(scope, receive, send)
 
 
+_ACCESS_TOKEN = re.compile(r"(access_token=)[^&\s\"]*")
+
+
+class HideAccessToken(logging.Filter):
+    """Masks ``?access_token=`` in uvicorn's access log lines (Odysseus sends the MCP
+    token in the URL)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(_ACCESS_TOKEN.sub(r"\1***", a) if isinstance(a, str) else a
+                                for a in record.args)
+        record.msg = _ACCESS_TOKEN.sub(r"\1***", str(record.msg))
+        return True
+
+
+def _log_config() -> dict[str, Any]:
+    import copy
+
+    from uvicorn.config import LOGGING_CONFIG
+
+    config = copy.deepcopy(LOGGING_CONFIG)
+    config.setdefault("filters", {})["hide_access_token"] = {"()": HideAccessToken}
+    config["handlers"]["access"]["filters"] = ["hide_access_token"]
+    return config
+
+
 def run(settings: Settings, store: Store, embedder: Embedder | None, http: bool) -> None:
     mcp = build_mcp(store, settings, embedder)
     if not http:
@@ -701,5 +729,9 @@ def run(settings: Settings, store: Store, embedder: Embedder | None, http: bool)
         raise SystemExit("set CONVO_MCP_TOKEN (>= 16 chars) to serve MCP over HTTP")
     import uvicorn
 
+    from .ingest_relay import add_ingest_routes
+
+    # Plain HTTP upload routes next to /mcp (not tools), forwarded to the ingest API.
+    add_ingest_routes(mcp, settings)
     app = BearerAuth(mcp.streamable_http_app(host=settings.mcp_host), settings.mcp_token)
-    uvicorn.run(app, host=settings.mcp_host, port=settings.mcp_port)
+    uvicorn.run(app, host=settings.mcp_host, port=settings.mcp_port, log_config=_log_config())

@@ -68,5 +68,26 @@
     <string name="odysseus_insight_ok">Today insight: available.</string>
     <string name="odysseus_insight_unsupported">Today insight: not available, %1$s.</string>
     <string name="odysseus_insight_failed">Today insight check failed: %1$s</string>
-    <string name="privacy_note">Audio goes only from the watch to this server. The token is encrypted on this phone and never shown, logged or backed up.</string>
+    <string name="two_lines">%1$s\n%2$s</string>
+    <string name="pair_heading">Pair with Odysseus</string>
+    <string name="pair_intro">In Odysseus open Conversations → Pair a phone and scan the code. The phone then uploads the watch\'s recordings and syncs the T5 through Odysseus: no server URLs or tokens to type.</string>
+    <string name="pair_scan">Scan pairing code</string>
+    <string name="pair_link">Or paste the pairing link</string>
+    <string name="pair_with_link">Pair with this link</string>
+    <string name="pair_working">Pairing with %1$s…</string>
+    <string name="pair_done">Paired with %1$s as \"%2$s\". Uploads and the T5 now go through Odysseus.</string>
+    <string name="pair_failed">Pairing failed: %1$s</string>
+    <string name="pair_state_paired">Paired with %1$s. Uploads and the T5 go through Odysseus. Pair again to replace this phone\'s token.</string>
+    <string name="pair_state_direct">Uploads go straight to the odysseus-sound server (below). Pair to send them through Odysseus instead.</string>
+    <string name="pair_scan_unavailable">No camera app could open the scanner. Paste the link instead.</string>
+    <string name="through_odysseus">Send the watch\'s audio and the T5\'s data through Odysseus (paired). Off: straight to the odysseus-sound server below.</string>
+    <string name="through_odysseus_needs_pairing">Pair with Odysseus first, or enter its URL and token in the PDA section.</string>
+    <string name="direct_heading">odysseus-sound server (direct, fallback)</string>
+    <string name="direct_intro">Only needed when uploads don\'t go through Odysseus.</string>
+    <string name="choose_calendar">Choose calendar…</string>
+    <string name="choose_calendar_title">Calendar for the T5\'s events</string>
+    <string name="choose_calendar_default">Odysseus\' default calendar</string>
+    <string name="choose_calendar_failed">Couldn\'t list calendars: %1$s</string>
+    <string name="choose_calendar_none">No calendars in Odysseus yet.</string>
+    <string name="privacy_note">Audio goes only from the watch to your own servers (Odysseus or odysseus-sound). Tokens are encrypted on this phone and never shown, logged or backed up. The camera is used only to scan the pairing code, on the phone; nothing is saved.</string>
 </resources>

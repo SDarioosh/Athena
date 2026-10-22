@@ -348,6 +348,34 @@ CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 convo-server mcp --http   # docker
 #   http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>
 ```
 
+**Uploads through the MCP server.** `convo-server mcp --http` also serves two plain HTTP
+routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
+`?access_token=`). They are not MCP tools, so no model ever sees them:
+
+| route | same as |
+|---|---|
+| `POST /ingest/chunk` | `POST /v1/ingest/chunk` (same multipart fields, same JSON answer) |
+| `POST /sessions/{session_id}/end` | `POST /v1/sessions/{id}/end` |
+| `GET /health` | `GET /health` (here behind the token) |
+| `GET /conversations`, `GET /conversations/{id}`, `GET /conversations/{id}/transcript` | the `/v1` routes, same query |
+| `GET /action-items`, `PATCH /action-items/{id}` | the `/v1` routes |
+| `GET /digests/{date}`, `POST /digests/{date}` | the `/v1` routes |
+
+The read routes are for the phone relay's T5 sync when it is paired through Odysseus
+(Odysseus forwards them for a token with `sound:read` / `sound:write`); the MCP token can
+read the same data through the tools anyway.
+
+Each request is forwarded unchanged to this module's own ingest API
+(`http://<CONVO_HOST>:<CONVO_PORT>`, `127.0.0.1` when `CONVO_HOST` is `0.0.0.0`) with
+`CONVO_INGEST_TOKEN`, so there is one ingest code path and the ingest token, which also
+signs transcript links, never leaves the module. The API's status and `detail` come back
+as they are; the body is capped like the API's (25 MB of audio); if `convo-server serve`
+isn't running the answer is 502 with a readable `detail`. Odysseus uses these routes to
+add recordings (its call recorder, phones paired through it) with the URL and token of
+the `convo` MCP server it already has. **The MCP token can therefore add recordings**:
+treat it like the ingest token, and keep the MCP port on loopback, the Docker bridge or
+Tailscale. uvicorn's access log shows `access_token=***` instead of the token.
+
 Use only a local model in whichever frontend reads this. Results contain your transcripts.
 
 ## Summaries
