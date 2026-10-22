@@ -3,7 +3,7 @@
  *
  * Draw into pda_epd_fb() with epdiy's drawing and font functions, then call
  * pda_epd_update(). The refresh policy lives here: a partial (non-flashing, GL16) update
- * of the changed area, a flashing (GC16) one for a new screen, and a clean one (flash
+ * of the changed area (also for a new screen, ui_pda.c), a flashing (GC16) one, and a clean one (flash
  * white, redraw every pixel) when asked and after every PDA_EPD_PARTIAL_LIMIT updates, to
  * clear ghosting. epdiy only drives pixels that changed, so only a clean update touches
  * the rest of the panel. Measured times are in docs/t5-pda-plan.md §1. */
@@ -45,7 +45,7 @@ extern "C" {
 
 typedef enum {
     PDA_EPD_PARTIAL, /* changed pixels, GL16, no flash */
-    PDA_EPD_FULL,    /* changed pixels, GC16, flashing: a new screen */
+    PDA_EPD_FULL,    /* changed pixels, GC16, flashing: after turning the screen 180° */
     PDA_EPD_CLEAN,   /* flash the panel white, then GC16 every pixel: clears ghosting */
 } pda_epd_kind_t;
 
@@ -87,7 +87,7 @@ pda_epd_kind_t pda_epd_update_area(EpdRect area);
 /* A small partial update that doesn't count towards the clean budget (the minute clock). */
 void pda_epd_update_light(EpdRect area);
 /* A fast black-and-white (DU) update of one area, not counted either: tap feedback, drawn
- * just before a new screen's full update repaints it. Only black and white come out right. */
+ * just before a new screen's update repaints it. Only black and white come out right. */
 void pda_epd_update_fast(EpdRect area);
 
 void pda_epd_get_stats(pda_epd_stats_t *out);

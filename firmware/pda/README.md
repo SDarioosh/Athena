@@ -199,8 +199,11 @@ python tools/pda_serial.py -p COM36 fb today.png
   Regular details), not grey, to set things apart.
 - The 2026-10-21 look (SemiBold fonts, plain tabs, round ticks, the time column, the new
   header, Status sections and Asleep screen) and the tap feedback (a black frame with a DU
-  update before a new screen): Today and Asleep checked as host renders only; Brief, Cal,
-  Tasks, Talks, Status and the DU flash not yet seen on the panel.
+  update before a new screen): every tab read back from the T5's framebuffer and drawn
+  right; the DU tap frame and the Asleep screen not yet looked at on the panel.
+- Tab and menu changes are partial (GL16) updates since 2026-10-21, with no flash (the
+  owner's choice); ghosting left by them until the next clean refresh (at most 10 counted
+  updates) not yet judged on the panel. Turning the screen 180° stays a full update.
 - Pairing being refused outside the window, re-pairing, and `ERROR mtu_too_small` (host
   tests only; Windows always negotiates 517).
 - The Service Changed indication from an Android phone (the GATT client is compiled in for

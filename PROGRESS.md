@@ -144,7 +144,11 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   line a sync wake redraws; a host test checks no other pixel changes). RTC layout bumped
   to "PSL2".
 - **Tap feedback:** a tap that opens another screen frames what was tapped with a fast DU
-  update before the full refresh.
+  update before the new screen's update.
+- **No flash on tab and menu changes** (owner's choice): a new screen is a partial update
+  like any other change; the clean refresh after 10 counted updates clears ghosting.
+  Turning the screen 180° stays a full update. On the T5: three tab changes, three
+  partial updates, no full one (still ~0.9 s each: no faster, just no flash).
 - **Fewer refreshes on their own** (owner: "the screen refreshes on its own a lot"): every
   15-minute sync redrew the screen 3-4 times (link up, the feed with a flashing full
   update even when it drew the same, link down), and those counted towards the clean

@@ -672,8 +672,10 @@ a 3 × 4 grid of hour slots and the durations.
 - **Swipes as built:** on a tab screen left/right = next/previous tab, up/down = page; in a
   detail screen right = back to the list, left = next page, then the next transcript part or
   the next item, nothing at the end (`ui_nav.c`, host-tested).
-- **Refresh policy as built:** a new screen is a full (GC16) update; a change on the same
-  screen (a pending mark, a page) a partial (GL16) one; the minute clock a partial that
+- **Refresh policy as built:** a new screen (tab, menu, detail) and a change on the same
+  screen (a pending mark, a page) are partial (GL16, no flash) updates (owner's choice,
+  2026-10-21: no flash on every tab change; ghosting is left to the clean refresh);
+  turning the screen 180° is a full (GC16) one; the minute clock a partial that
   doesn't count; after 10 counted updates, and on the side button or "Clean refresh", a
   clean refresh. A new feed is a partial update; the phone's link only redraws Status; an
   update whose drawing matches the panel is skipped and not counted, so a sync that brings

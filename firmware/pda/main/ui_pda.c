@@ -3,12 +3,12 @@
  * screen's buttons and the pager, and a tab bar. Each redraw paints the whole
  * framebuffer and records tap regions; epdiy then drives only the pixels that changed.
  *
- * Refresh policy (§5): a new screen is a full (flashing) update, a change on the same
- * screen (a pending mark, a page) a partial one, the minute clock a small partial that
- * doesn't count towards the ghosting budget; every PDA_EPD_PARTIAL_LIMIT updates and
- * "Clean refresh" on the Status screen give a clean refresh. A new feed is a partial update,
- * and an update that would change no pixel is skipped (pda_epd.c), so a sync with the
- * same content doesn't touch the panel.
+ * Refresh policy (§5): a new screen, a change on the same screen (a pending mark, a page)
+ * and a new feed are partial (non-flashing) updates; turning the screen 180° is a full
+ * one; the minute clock a small partial that doesn't count towards the ghosting budget.
+ * Every PDA_EPD_PARTIAL_LIMIT counted updates, and "Clean refresh" on the Status screen,
+ * give a clean refresh that clears ghosting. An update that would change no pixel is
+ * skipped (pda_epd.c), so a sync with the same content doesn't touch the panel.
  *
  * Buttons: BOOT short = back / Today, BOOT held 1 s = deep sleep (the "Asleep" screen
  * stays on the panel; a BOOT press wakes it, and it wakes on its own every 15 min to sync,
@@ -111,7 +111,7 @@ static struct {
     int64_t ev_from_item;
     hit_t hits[MAX_HITS];
     int n_hits;
-    bool screen_changed;
+    bool full_next;           /* the next refresh is a full (flashing) one: after a rotation */
 } ui = {.passkey = -1};
 
 const char *ui_screen_name(ui_screen_t s)
@@ -166,7 +166,6 @@ static void go(ui_screen_t s)
         }
         ui.screen = s;
         ui.page = 0;
-        ui.screen_changed = true;
     }
 }
 
@@ -1396,7 +1395,6 @@ static void act(const hit_t *h, bool is_long)
             char ref[PDA_REF_MAX];
             snprintf(ref, sizeof(ref), "%s", ui.detail->next);
             open_transcript(ref);
-            ui.screen_changed = true;
         }
         break;
     case A_PLUS:
@@ -1483,7 +1481,7 @@ static void act(const hit_t *h, bool is_long)
         break;
     case A_ROTATE:
         pda_epd_set_rotation(pda_epd_rotation() == 90 ? 270 : 90);
-        ui.screen_changed = true; /* everything moves: redraw as a new screen */
+        ui.full_next = true; /* every pixel moves: a flashing update clears the old image */
         break;
     case A_WIPE:
         if (is_long) {
@@ -1545,7 +1543,6 @@ static void on_swipe(gesture_kind_t k)
     case UI_NAV_ITEM:
         ui.sel = r.arg;
         ui.page = 0;
-        ui.screen_changed = true; /* a different item: a new screen */
         break;
     default:
         break;
@@ -1553,7 +1550,7 @@ static void on_swipe(gesture_kind_t k)
 }
 
 /* A tap that opens another screen: a black frame around what was tapped, shown at once
- * with a fast update, so the tap visibly landed before the slower full refresh (which
+ * with a fast update, so the tap visibly landed before the new screen's update (which
  * repaints it). Taps that change the screen in place get their own quick partial update. */
 static void press_feedback(const hit_t *h)
 {
@@ -1682,14 +1679,16 @@ static void go_to_sleep(int override_min)
     pda_sleep_enter(&a, override_min);
 }
 
-/* Redraw and push to the panel with the refresh policy. */
+/* Redraw and push to the panel with the refresh policy. A new screen is a partial update
+ * like any other change (no flash); the clean refresh every PDA_EPD_PARTIAL_LIMIT updates
+ * clears what ghosting builds up. */
 static void refresh(pda_epd_kind_t kind)
 {
     draw();
-    if (ui.screen_changed && kind == PDA_EPD_PARTIAL) {
+    if (ui.full_next && kind == PDA_EPD_PARTIAL) {
         kind = PDA_EPD_FULL;
     }
-    ui.screen_changed = false;
+    ui.full_next = false;
     pda_epd_update(kind);
 }
 
@@ -1725,7 +1724,7 @@ static void ui_task(void *arg)
                 ble_pda_open_window();
                 go(UI_STATUS);
                 toast("Sync mode for 2 minutes: sync or pair from the phone now");
-                refresh(PDA_EPD_FULL);
+                refresh(PDA_EPD_PARTIAL);
             } else if (b == T5_BUTTON_BOOT) {
                 go(ui.screen >= UI_CONV_DETAIL ? ui.back_to : UI_TODAY);
                 refresh(PDA_EPD_PARTIAL);
@@ -1768,7 +1767,7 @@ static void ui_task(void *arg)
             break;
         }
         case PDA_EV_REDRAW:
-            ui.screen_changed = true;
+            ui.full_next = true;
             refresh(ev.arg ? PDA_EPD_CLEAN : PDA_EPD_FULL);
             break;
         case PDA_EV_OPEN: {
