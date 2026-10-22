@@ -212,6 +212,14 @@ def test_list_action_items_text(pipeline, note_mcp):
     assert "[time unclear] — from" in call(note_mcp, "list_action_items")
 
 
+def test_list_action_items_json_mine_flag(pipeline, note_mcp):
+    pipeline.store._conn.execute(
+        "UPDATE action_items SET owner = 'Shahyah' WHERE text = 'Meet Jason'")
+    items = json.loads(call(note_mcp, "list_action_items", status="all", format="json"))
+    assert next(i for i in items if i["text"] == "Meet Jason")["mine"] is False
+    assert all(i["mine"] for i in items if i["text"] != "Meet Jason")
+
+
 def test_list_action_items_json(pipeline, note_mcp):
     out = call(note_mcp, "list_action_items", status="all", format="json")
     items = json.loads(out)  # nothing but the array
@@ -219,7 +227,7 @@ def test_list_action_items_json(pipeline, note_mcp):
     conv = conv_of(pipeline, "n1")
     assert meet == {
         "id": meet["id"], "status": "open", "kind": "event", "title": "Meet Jason",
-        "explicit": True, "text": "Meet Jason",
+        "mine": True, "explicit": True, "text": "Meet Jason",
         "owner": "Me", "due": "Wednesday", "due_date": "2025-10-15", "due_time": "12:00",
         "duration_minutes": None, "location": None, "list_name": None, "note_title": None,
         "time_unclear": False,
