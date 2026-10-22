@@ -10,12 +10,54 @@ static const char *const TAB_LABELS[UI_TABS] = {"Today", "Brief", "Cal", "Tasks"
 #define TITLE_Y 52 /* the title's and the clock's baseline */
 #define SUB_Y 88   /* the second line's */
 
+/* The clock in fixed slots: every digit (and the "-" of "--:--") centred in a slot as wide
+ * as the widest digit, the colon in its own. The font's digits differ in width, so plain
+ * right-aligned text moves every glyph when one digit changes ("09:41" -> "09:42") and
+ * the minute update redraws the whole clock. In slots, an unchanged digit keeps its
+ * pixels and epdiy drives only the digits that changed. */
+static int clock_slot_w(char c)
+{
+    static int digit_w;
+    if (!digit_w) {
+        char d[2] = "0";
+        for (char i = '0'; i <= '9'; i++) {
+            d[0] = i;
+            const int w = gfx_text_width(BIG, d);
+            digit_w = w > digit_w ? w : digit_w;
+        }
+    }
+    if ((c >= '0' && c <= '9') || c == '-') {
+        return digit_w;
+    }
+    const char s[2] = {c, 0};
+    return gfx_text_width(BIG, s);
+}
+
+static int clock_width(const char *s)
+{
+    int w = 0;
+    for (; *s; s++) {
+        w += clock_slot_w(*s);
+    }
+    return w;
+}
+
+static void clock_text(int x, int y, const char *s)
+{
+    for (; *s; s++) {
+        const int sw = clock_slot_w(*s);
+        const char c[2] = {*s, 0};
+        gfx_text(BIG, x + (sw - gfx_text_width(BIG, c)) / 2, y, c, GFX_INK);
+        x += sw;
+    }
+}
+
 void ui_chrome_header(const ui_header_t *h)
 {
     gfx_fill((EpdRect){0, 0, W, HEADER_H}, 0xFF);
-    const int cw = gfx_text_width(BIG, h->clock);
+    const int cw = clock_width(h->clock);
     gfx_text_fit(BIG, MARGIN, TITLE_Y, W - 2 * MARGIN - cw - 20, h->title, GFX_INK);
-    gfx_text(BIG, W - MARGIN - cw, TITLE_Y, h->clock, GFX_INK);
+    clock_text(W - MARGIN - cw, TITLE_Y, h->clock);
     /* right to left: battery, ↑n, note */
     int x = W - MARGIN;
     if (h->battery >= 0) {
