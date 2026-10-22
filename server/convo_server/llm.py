@@ -499,7 +499,8 @@ class Summarizer:
             return None  # someone else's to-do
         text = item["text"]
         clause, sentence = _said_in(text, spoken)
-        if _COMMAND_WORDS.search(text) or _COMMAND_WORDS.search(sentence):
+        if (_COMMAND_WORDS.search(text) or _COMMAND_WORDS.search(sentence)
+                or _after_list_header(text, spoken)):
             return None
         here = (text, clause)
         decided = any(_DECISION.search(x) for x in here) or (
@@ -881,6 +882,29 @@ def _said_in(text: str, spoken: list[tuple[str, str]]) -> tuple[str, str]:
     return best if score >= 0.6 else ("", "")
 
 
+# A sentence that starts a to-do list ("Create a to-do list.", "Make a to do list for
+# tomorrow.", "To-do list: ..."): the items said after it in the voice note are for it,
+# even when the transcriber ended the sentence before them.
+_LIST_HEADER = re.compile(
+    r"\b(?:create|make|start|begin|write|new)\s+(?:a\s+|my\s+|the\s+)?(?:new\s+)?"
+    r"(?:to-?do|to\s+do|task)s?\s+list\b|\b(?:to-?do|to\s+do|task)s?\s+list\s*:",
+    re.IGNORECASE)
+
+
+def _after_list_header(text: str, spoken: list[tuple[str, str]]) -> bool:
+    """Was the item said in or after a sentence that starts a to-do list? An item whose
+    words aren't found in the note counts too when the note has such a sentence (the
+    model reworded it)."""
+    header = next((i for i, (_, sentence) in enumerate(spoken)
+                   if _LIST_HEADER.search(sentence)), None)
+    if header is None:
+        return False
+    clause, sentence = _said_in(text, spoken)
+    if not clause:
+        return True
+    return any(i >= header for i, x in enumerate(spoken) if x == (clause, sentence))
+
+
 # Something done right now ("I'll move my truck right now", "I'll grab the keys real
 # quick"): nobody needs reminding of it (``_drop_errands``). Not "let me ...": "let me
 # check with my wife and get back to you" is a promise for later.
@@ -948,7 +972,8 @@ def _mark_explicit(items: list[dict[str, Any]],
         said = ""
         if spoken is not None:
             said = f"{item['text']}\n{_said_in(item['text'], spoken)[1]}"
-        item["explicit"] = is_explicit(item) or _COMMAND_WORDS.search(said) is not None
+        item["explicit"] = (is_explicit(item) or _COMMAND_WORDS.search(said) is not None
+                            or (spoken is not None and _after_list_header(item["text"], spoken)))
 
 
 def _dedupe(items: list[str]) -> list[str]:

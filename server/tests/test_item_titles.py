@@ -83,6 +83,34 @@ def test_explicit_in_voice_notes(said, item, explicit):
     assert got["explicit"] is explicit
 
 
+@pytest.mark.parametrize("said", [
+    "Create a to-do list and get Rock Talk ready for the meeting with the Meshtastic team.",
+    "Create a to do list. Get Rock Talk ready for the meeting with the Meshtastic team.",
+    "Okay, make a to-do list for tomorrow. Get Rock Talk ready for the Meshtastic meeting.",
+    "To-do list: get Rock Talk ready for the meeting with the Meshtastic team.",
+])
+def test_items_after_a_to_do_list_sentence_are_explicit(said):
+    (got,) = items_of([{"text": "Get Rock Talk ready for meeting with Meshtastic team"}], said)
+    assert got["explicit"] is True
+
+
+def test_list_sentence_covers_later_items_only():
+    items = items_of([{"text": "Call the plumber about the tap"},
+                      {"text": "Book the train to Leipzig"},
+                      {"text": "Email Bob about the invoice"}],
+                     "Call the plumber about the tap. Now make a to-do list. "
+                     "Book the train to Leipzig. I need to email Bob about the invoice.")
+    assert [(i["text"], i["explicit"]) for i in items] == [
+        ("Call the plumber about the tap", False), ("Book the train to Leipzig", True),
+        ("Email Bob about the invoice", True)]
+
+
+def test_lots_to_do_is_no_list_sentence():
+    (got,) = items_of([{"text": "Book the train to Leipzig"}],
+                      "I have a lot to do this week. Book the train to Leipzig.")
+    assert got["explicit"] is False
+
+
 def test_conversations_count_dates_lists_and_kinds_only():
     items = items_of([{"text": "Send Sam the slides", "due": "Friday"},
                       {"text": "Water Lena's plants"}],
