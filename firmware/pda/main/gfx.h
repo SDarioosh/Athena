@@ -25,6 +25,8 @@ int gfx_text_width(const EpdFont *f, const char *s);
 int gfx_text(const EpdFont *f, int x, int y, const char *s, uint8_t color);
 /* One line cut to max_w with "…". */
 int gfx_text_fit(const EpdFont *f, int x, int y, int max_w, const char *s, uint8_t color);
+/* White on black (an inverted button, the toast); returns the x after it. */
+int gfx_text_inv(const EpdFont *f, int x, int y, const char *s);
 /* Right-aligned at x_right. */
 void gfx_text_right(const EpdFont *f, int x_right, int y, const char *s, uint8_t color);
 /* Word-wrapped paragraph starting at baseline y, skipping the first skip_lines lines, at most
@@ -36,11 +38,25 @@ int gfx_wrap(const EpdFont *f, int x, int y, int w, const char *s, uint8_t color
  * (for strike-through). */
 int gfx_wrap_widths(int *out, int max);
 
+/* The Regular font that draws what a SemiBold one lacks (fonts.h), or NULL. */
+const EpdFont *gfx_fallback(const EpdFont *f);
+
 /* Line height of a font. */
 int gfx_line(const EpdFont *f);
 
 void gfx_strike(const EpdFont *f, int x, int y, int w);
-/* A framed button with a centred label; inverted = filled black. */
+/* A round tick box centred on (cx, cy): an open ring, or filled black with a white tick. */
+void gfx_check(int cx, int cy, int r, bool done);
+/* A filled dot (an event's mark). */
+void gfx_dot(int cx, int cy, int r);
+/* A battery icon GFX_BATTERY_W wide from x, centred on a FONT_TEXT line with baseline y,
+ * filled to percent. */
+#define GFX_BATTERY_W 29
+void gfx_battery_icon(int x, int y, int percent);
+/* The icon ending at x_right with its percentage left of it (FONT_TEXT; "+" when
+ * charging). Returns the x where the percentage starts. */
+int gfx_battery(int x_right, int y, int percent, bool charging);
+/* A framed button with a centred SemiBold label; inverted = filled black. */
 void gfx_button(EpdRect r, const char *label, bool inverted);
 void gfx_hline(int x, int y, int w, uint8_t color);
 void gfx_fill(EpdRect r, uint8_t color);

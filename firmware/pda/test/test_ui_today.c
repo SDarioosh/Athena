@@ -18,6 +18,7 @@
 #include "gfx.h"
 #include "pda_time.h"
 #include "today_plan.h"
+#include "ui_chrome.h"
 #include "ui_layout.h"
 #include "ui_today.h"
 
@@ -129,15 +130,13 @@ static void write_png(const char *name)
     free(raw);
 }
 
-/* ---- the frame around the content: a stand-in of ui_pda.c's header, pager and tabs ---- */
+/* ---- the frame around the content: ui_chrome.c's header and tabs, ui_pda.c's pager ---- */
 
 static void frame(int page, int pages)
 {
-    gfx_text(BIG, MARGIN, 48, "Today", GFX_INK);
-    gfx_text_right(BIG, W - MARGIN, 48, "09:00", GFX_INK);
-    gfx_text_fit(TEXT, MARGIN, 86, LIST_W, "Tue 20 Oct \xc2\xb7 87% \xc2\xb7 synced 2 min ago", GFX_INK);
-    gfx_hline(0, HEADER_H - 2, W, 0x00);
-    gfx_hline(0, HEADER_H - 1, W, 0x00);
+    const ui_header_t h = {.title = "Today", .clock = "09:00", .date = "Tue 20 Oct", .battery = 87,
+                           .note = "", .outbox = 0};
+    ui_chrome_header(&h);
     if (pages > 1) {
         const EpdRect down = {W - MARGIN - PAGER_BTN, ROW_Y, PAGER_BTN, ROW_H - 4};
         const EpdRect up = {down.x - 70 - PAGER_BTN, ROW_Y, PAGER_BTN, ROW_H - 4};
@@ -147,12 +146,7 @@ static void frame(int page, int pages)
         snprintf(pg, sizeof(pg), "%d/%d", page + 1, pages);
         gfx_text(TEXT, up.x + PAGER_BTN + (70 - gfx_text_width(TEXT, pg)) / 2, ROW_Y + 33, pg, GFX_INK);
     }
-    static const char *const tabs[6] = {"Today", "Brief", "Cal", "Tasks", "Talks", "Status"};
-    const int tw = W / 6;
-    gfx_hline(0, TAB_Y, W, 0x00);
-    for (int i = 0; i < 6; i++) {
-        gfx_button((EpdRect){i * tw + 4, TAB_Y + 6, tw - 8, TAB_H - 10}, tabs[i], i == 0);
-    }
+    ui_chrome_tabs(0, NULL, NULL);
 }
 
 /* Draws one page of the Today content; checks that ink and hit regions stay in the content
@@ -163,7 +157,8 @@ static int render(int *page)
     gfx_begin(fb);
     n_hits = 0;
     host_fb_outside = 0;
-    const ui_today_in_t in = {.f = &feed, .plan = &plan, .todo_state = todo_state, .hit = on_hit};
+    const ui_today_in_t in = {.f = &feed, .plan = &plan, .today = TODAY, .tz_min = TZ, .todo_state = todo_state,
+                              .hit = on_hit};
     const int pages = ui_today_draw(&in, page);
     CHECK_EQ(host_fb_outside, 0);
     int ink_out = 0;
@@ -362,8 +357,49 @@ static void test_long_texts(void)
     feed_free(&feed);
 }
 
+/* The Asleep screen (ui_chrome_asleep): a sync wake changes only the synced line, inside
+ * the area it updates; long titles stay on the panel. */
+static void test_asleep(void)
+{
+    ui_asleep_t a = {.battery = 64};
+    snprintf(a.since, sizeof(a.since), "since Tue 20 Oct 21:40");
+    snprintf(a.synced, sizeof(a.synced), "synced 21:35");
+    snprintf(a.next_when, sizeof(a.next_when), "Thu 22 Oct 09:00\xe2\x80\x93" "10:00");
+    snprintf(a.next_title, sizeof(a.next_title), "Dentist follow-up (Dr. Patel) and the insurance card");
+    static uint8_t before[HOST_FB_W * HOST_FB_H];
+    memset(fb, 0xFF, sizeof(fb));
+    gfx_begin(fb);
+    host_fb_outside = 0;
+    ui_chrome_asleep(&a);
+    CHECK_EQ(host_fb_outside, 0);
+    write_png("asleep.png");
+    memcpy(before, fb, sizeof(fb));
+    snprintf(a.synced, sizeof(a.synced), "synced 23:50");
+    memset(fb, 0xFF, sizeof(fb));
+    ui_chrome_asleep(&a);
+    const EpdRect r = ui_chrome_asleep_synced_area();
+    int changed = 0, outside = 0;
+    for (int y = 0; y < HOST_FB_H; y++) {
+        for (int x = 0; x < HOST_FB_W; x++) {
+            if (fb[y * HOST_FB_W + x] != before[y * HOST_FB_W + x]) {
+                changed++;
+                outside += !(x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height);
+            }
+        }
+    }
+    CHECK(changed > 0);
+    CHECK_EQ(outside, 0);
+    /* nothing coming up, battery unknown */
+    ui_asleep_t none = {.battery = -1};
+    memset(fb, 0xFF, sizeof(fb));
+    ui_chrome_asleep(&none);
+    CHECK_EQ(host_fb_outside, 0);
+    write_png("asleep_empty.png");
+}
+
 int main(void)
 {
+    test_asleep();
     test_insight();
     test_no_insight();
     test_long_texts();

@@ -44,6 +44,10 @@ int epd_write_string(const EpdFont *font, const char *string, int *cursor_x, int
 void epd_draw_hline(int x, int y, int length, uint8_t color, uint8_t *framebuffer);
 void epd_fill_rect(EpdRect rect, uint8_t color, uint8_t *framebuffer);
 void epd_draw_rect(EpdRect rect, uint8_t color, uint8_t *framebuffer);
+void epd_draw_pixel(int x, int y, uint8_t color, uint8_t *framebuffer);
+void epd_draw_line(int x0, int y0, int x1, int y1, uint8_t color, uint8_t *framebuffer);
+void epd_draw_circle(int x, int y, int r, uint8_t color, uint8_t *framebuffer);
+void epd_fill_circle(int x, int y, int r, uint8_t color, uint8_t *framebuffer);
 
 /* Host only: the image is HOST_FB_W x HOST_FB_H bytes, one per pixel (0 black .. 255
  * white), portrait as the UI draws it. Pixels drawn outside it are counted, not drawn. */

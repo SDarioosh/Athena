@@ -70,6 +70,7 @@ static void print_epd_stats(void)
     }
     printf("epd updates since clean: %d (clean after %d)\n", s.since_clean,
            PDA_EPD_PARTIAL_LIMIT);
+    printf("epd skipped (nothing changed): %" PRIu32 "\n", s.skipped);
 }
 
 static int bench_one(pda_epd_kind_t kind, const EpdRect *area, const char *what)
