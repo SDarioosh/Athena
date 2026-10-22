@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-22 (retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-22 (people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -39,6 +39,7 @@ _Last updated: 2026-10-22 (retire_fact for the hub's belief ledger; T5 interface
 | 14 | T5 E-Paper Pro PDA firmware (feed and outbox over BLE through the phone) | **milestones 0–3 built, on the owner's T5**: bring-up and refresh times, all screens from a fictional feed, touch and buttons by hand, BLE pairing, TIME, outbox drain/ack and feed PUT from a Windows PC; host tests in CI. Front light, BOOT-hold sleep, sync mode, automatic light sleep and timed sync wakes from deep sleep built and flashed; currents not measured yet. Still open: the PC relay and the Android `PdaSync` against the real T5, the server `PATCH` end to end, light sleep and power (milestone 5) | `firmware/pda/`, `docs/t5-pda-plan.md` |
 | 15 | Today insight: confirmed facts (`list_facts confirmed=true format=json`, MCP 0.4.0) for the hub's memory; relays put the hub's Today insight in the T5 feed; T5 Today tab shows it with a rule-based fallback (`today_plan.c`) | **built, tested, not on hardware** (PDA host tests, `idf.py build`, Android tests); hub side on the same branch in SDarioosh/Barvis; **owner: Server verification** (confirmed-fact counts, insight time on `qwen3.5-35b`, phone and T5 steps) | `server/convo_server/{store,mcp_server}.py`, `firmware/recorder/tools/barvis_relay/pda_insight.py`, `android-relay/`, `firmware/pda/main/{today_plan,ui_today}.c`, `docs/t5-pda-plan.md` §4.1, §5 |
 | 16 | Forget propagates (hub personal context, Phase 1): `retire_fact` write tool (destructive), retired facts hidden in every listing and kept hidden when said again or the conversation is re-summarized; `confirmed` per JSON fact row; MCP 0.5.0, 14 tools | **built, tested** (364 server tests); hub side (belief ledger, review page, notes source) on the same branch in SDarioosh/Barvis; **owner: Server verification** | `server/convo_server/{store,mcp_server}.py`, `server/tests/test_retire_fact.py` |
+| 17 | Personal context Phase 2 (module side): `people` with a stable id that survives renames and merges, `list_people format=json`, `person_id` on JSON facts (MCP 0.6.0); action items get `title` and `explicit`, and intentions/principles in voice notes become facts (decisions) instead of tasks (MCP 0.7.0) | **built, tested**; hub side on the hub's local `p2` branch; PR after Phase 1 merges; **owner: Server verification** | `server/convo_server/{store,mcp_server,llm}.py`, `server/tests/test_people.py` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -177,6 +178,23 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Needs the owner: rerun a two-person recording on the server and check both names.
   Conversations already processed keep their labels (audio is deleted after
   transcription unless `CONVO_KEEP_AUDIO=true`); fix those with `reassign_line`.
+
+## Done on 2026-10-21: people ids and explicit action items (hub: Phase 2 of personal context)
+
+- **People (2.1).** `people(id, name, speaker_id, is_owner, merged_into)` + `people_aliases`
+  (schema v10), backfilled from `speakers` and `conversation_people`. `ensure_person` runs
+  wherever a name appears. `rename_speaker_everywhere` keeps the id (the old name becomes an
+  alias) or merges into an existing person, whose id survives. `list_people(format="json")`:
+  `{"people": [{"id", "name", "aliases", "is_owner", "has_voice", "conversations",
+  "first_seen", "last_seen"}]}`; `list_facts` JSON rows gain `person_id`. MCP 0.6.0. The hub
+  maps a person id to a subject and lets the owner link it to an Odysseus contact.
+- **Explicit action items** (owner's request after four musings became four to-dos). The
+  summarizer treats statements of intent, priority or decision as durable facts about the
+  speaker, not action items; a code guard moves undated voice-note "should / need to / stop /
+  focus on …" items without a command word to facts. Items get `title` (≤ 60 chars) and
+  `explicit` (date/time, list, reminder/event, or a command word) in the JSON. MCP 0.7.0 (schema v11). The hub files only explicit voice-note items by default and puts
+  undated ones on one "Voice notes" list.
+- Checks: 415 server tests + ruff (people 376, then the action-item change).
 
 ## Done on 2026-10-21: forget propagates (hub: belief ledger, Phase 1 of personal context)
 

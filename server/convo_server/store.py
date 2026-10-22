@@ -118,6 +118,27 @@ CREATE TABLE IF NOT EXISTS speakers (
     created_at REAL NOT NULL
 );
 
+-- One row per person (a speaker or someone named in a conversation): a stable id that
+-- survives renames, so the hub can link it to a contact. A rename keeps the id and keeps
+-- the old name as an alias; renaming onto an existing person merges the old row into it
+-- (merged_into). Names are unique among rows that are not merged.
+CREATE TABLE IF NOT EXISTS people (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE,
+    speaker_id INTEGER NULL REFERENCES speakers(id) ON DELETE SET NULL,
+    is_owner INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    merged_into INTEGER NULL REFERENCES people(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS people_name ON people(name) WHERE merged_into IS NULL;
+
+CREATE TABLE IF NOT EXISTS people_aliases (
+    person_id INTEGER NOT NULL REFERENCES people(id),
+    alias TEXT NOT NULL COLLATE NOCASE,
+    PRIMARY KEY (person_id, alias)
+);
+CREATE INDEX IF NOT EXISTS people_aliases_alias ON people_aliases(alias);
+
 CREATE TABLE IF NOT EXISTS embeddings (
     kind TEXT NOT NULL,                       -- conversation|fact|action_item
     ref_id TEXT NOT NULL,
@@ -210,6 +231,31 @@ ITEM_KINDS = ("task", "event", "reminder")
 # into its notes (update_action_item can change it to another kind, not make one)
 NOTE_ITEM = "note"
 UNSET: Any = object()  # "not given" for optional updates (None means "clear")
+# an action item's title (the hub's to-do or note title) is at most this long
+TITLE_MAX = 60
+# kinds that are the user's own items, filed without asking: a reminder or event someone
+# asked for, a note the user asked a voice note to save
+EXPLICIT_KINDS = ("reminder", "event", NOTE_ITEM)
+
+
+def short_title(title: str | None, text: str | None) -> str:
+    """An action item's title: ``title`` (the model's or the user's), else the start of
+    its text; at most ``TITLE_MAX`` characters, cut at a word boundary, without a
+    sentence's closing period."""
+    t = re.sub(r"\s+", " ", (title or "").strip().strip("\"'")).strip()
+    if not t:
+        t = re.sub(r"\s+", " ", (text or "").strip())
+    if len(t) > TITLE_MAX:
+        head = t[:TITLE_MAX + 1]
+        t = head.rsplit(" ", 1)[0] if " " in head else t[:TITLE_MAX]
+    return t.rstrip(" .,;:-") or t
+
+
+def is_explicit(item: dict[str, Any]) -> bool:
+    """The item says when or where it goes: a date, a time, a named list, or a kind the
+    user asks for (reminder, event, note). The summarizer also counts command words."""
+    return bool(item.get("due_date") or item.get("due_time") or item.get("list_name")
+                or item.get("kind") in EXPLICIT_KINDS)
 
 
 def _valid_date(value: str) -> bool:
@@ -313,6 +359,30 @@ class Store:
             self._add_column("facts", "retired_at", "REAL")
             self._add_column("facts", "retired_reason", "TEXT")
             self._conn.execute("PRAGMA user_version = 9")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 10:
+            # people with a stable id: one row per enrolled voice and per name mentioned
+            c = self._conn
+            for r in c.execute("SELECT id, name, is_owner, created_at FROM speakers"
+                               " ORDER BY is_owner DESC, id").fetchall():
+                _ensure_person(c, r["name"], r["id"], bool(r["is_owner"]), r["created_at"])
+            for r in c.execute(
+                    "SELECT p.name, MIN(c.started_at) AS first FROM conversation_people p"
+                    " JOIN conversations c ON c.id = p.conversation_id"
+                    " GROUP BY p.name ORDER BY first").fetchall():
+                _ensure_person(c, r["name"], created_at=r["first"])
+            c.execute("PRAGMA user_version = 10")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 11:
+            # every action item has a short title, and says whether the user asked for it
+            # (a date, time, list, reminder/event/note or a command word) or it is only a
+            # suggestion; older rows: their text's start, and explicit by date/list/kind
+            c = self._conn
+            self._add_column("action_items", "title", "TEXT")
+            self._add_column("action_items", "explicit", "INTEGER NOT NULL DEFAULT 0")
+            for r in map(dict, c.execute("SELECT * FROM action_items").fetchall()):
+                c.execute("UPDATE action_items SET title = ?, explicit = ? WHERE id = ?",
+                          (short_title(r.get("note_title"), r["text"]),
+                           int(is_explicit(r)), r["id"]))
+            c.execute("PRAGMA user_version = 11")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -576,18 +646,21 @@ class Store:
                        "kind": item.get("kind") or "task", "due_date": item.get("due_date"),
                        "due_time": item.get("due_time"),
                        "time_unclear": int(bool(item.get("time_unclear"))), "edited": 0,
-                       "list_name": item.get("list_name")}
+                       "list_name": item.get("list_name"),
+                       "title": short_title(item.get("title"), item["text"])}
+                row["explicit"] = int(bool(item.get("explicit")) or is_explicit(row))
                 row.update(_same_item(before["items"], item))
                 cur = c.execute(
                     "INSERT INTO action_items (id, conversation_id, text, owner, due, due_date,"
                     " source_at, status, kind, due_time, duration_minutes, location,"
-                    " time_unclear, created_at, edited, list_name, note_title)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " time_unclear, created_at, edited, list_name, note_title, title,"
+                    " explicit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (row["id"], conv_id, item["text"], item.get("owner"), item.get("due"),
                      row["due_date"], item.get("source_at"), row["status"], row["kind"],
                      row["due_time"], item.get("duration_minutes"), item.get("location"),
                      row["time_unclear"], row["created_at"], row["edited"],
-                     row["list_name"], item.get("note_title")))
+                     row["list_name"], item.get("note_title"), row["title"],
+                     row["explicit"]))
                 c.execute("INSERT INTO search_fts VALUES ('action_item', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id, item["text"]))
             for fact in summary["facts"]:
@@ -596,6 +669,8 @@ class Store:
             fact_ids = _carry_over(c, conv_id, before, fact_ids)
             c.executemany("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
                           [(conv_id, p) for p in summary["people"]])
+            for p in summary["people"]:
+                _ensure_person(c, p)
             body = "\n".join([summary["title"], summary["summary"], *summary["key_points"],
                               " ".join(summary["topics"]), " ".join(summary["people"])])
             c.execute("INSERT INTO search_fts VALUES ('conversation', ?, ?, ?)",
@@ -840,7 +915,9 @@ class Store:
         owners: set[str] = set()
         people: set[str] = set()
         for r in self._q("SELECT name, is_owner FROM speakers"
-                         " UNION SELECT name, 0 FROM conversation_people"):
+                         " UNION SELECT name, 0 FROM conversation_people"
+                         " UNION SELECT name, 0 FROM people"
+                         " UNION SELECT alias, 0 FROM people_aliases"):
             name = (r["name"] or "").strip().lower()
             people.add(name)
             if r["is_owner"]:
@@ -929,7 +1006,9 @@ class Store:
         """Rename a speaker in every conversation and merge their voice into ``new``.
 
         Returns (lines changed, conversation ids). Unnamed "Speaker N" labels are
-        per recording, so callers should only pass real names.
+        per recording, so callers should only pass real names. The person keeps their id
+        (``old`` becomes an alias); if ``new`` is already a person, the old person is
+        merged into that one, and the id of the name that already existed survives.
         """
         with self.tx() as c:
             convs = [r["conversation_id"] for r in c.execute(
@@ -937,8 +1016,8 @@ class Store:
                 " COLLATE NOCASE AND conversation_id IS NOT NULL", (old,))]
             n = c.execute("UPDATE segments SET speaker = ?, is_owner = ? WHERE speaker = ?"
                           " COLLATE NOCASE", (new, _is_owner(c, new, old), old)).rowcount
-            c.execute("UPDATE OR REPLACE conversation_people SET name = ? WHERE name = ?",
-                      (new, old))
+            mentioned = c.execute("UPDATE OR REPLACE conversation_people SET name = ?"
+                                  " WHERE name = ?", (new, old)).rowcount
             src = c.execute("SELECT id, is_owner FROM speakers WHERE name = ? COLLATE NOCASE",
                             (old,)).fetchone()
             dst = c.execute("SELECT id FROM speakers WHERE name = ?", (new,)).fetchone()
@@ -949,8 +1028,12 @@ class Store:
                           (dst["id"], src["id"]))
                 if src["is_owner"]:
                     c.execute("UPDATE speakers SET is_owner = 1 WHERE id = ?", (dst["id"],))
+                c.execute("UPDATE people SET speaker_id = NULL WHERE speaker_id = ?",
+                          (src["id"],))
                 c.execute("DELETE FROM speakers WHERE id = ?", (src["id"],))
                 _refresh_voiceprint(c, dst["id"])
+            if n or mentioned or src is not None:
+                _rename_person(c, old, new)
             _touch_conversations(c, convs, None)
         return n, convs
 
@@ -1069,12 +1152,14 @@ class Store:
     def update_action_item(self, item_id: int, *, status: str | None = None,
                            kind: str | None = None, due_date: str | None = UNSET,
                            due_time: str | None = UNSET,
-                           list_name: str | None = UNSET) -> dict[str, Any] | None:
-        """Change an item's status, kind, due date, time of day or to-do list (``None``
-        clears a date, time or list, ``UNSET`` leaves it). Raises ``ValueError`` for bad
-        values; returns the updated item, or None if there is none with that id. A changed
-        kind, date, time or list survives re-summaries; setting the time also clears
-        ``time_unclear``."""
+                           list_name: str | None = UNSET,
+                           title: str | None = UNSET) -> dict[str, Any] | None:
+        """Change an item's status, kind, due date, time of day, to-do list or title
+        (``None`` clears a date, time or list and gives the title back from the text,
+        ``UNSET`` leaves it). Raises ``ValueError`` for bad values; returns the updated
+        item, or None if there is none with that id. A changed kind, date, time, list or
+        title survives re-summaries; setting the time also clears ``time_unclear``. An
+        item the user gives a date, time, list or reminder/event kind becomes explicit."""
         sets: dict[str, Any] = {}
         if status is not None:
             if status not in ITEM_STATUSES:
@@ -1102,14 +1187,25 @@ class Store:
                     raise ValueError("list_name must be a short list name like 'shopping' "
                                      "(or 'none' to clear it)")
             sets["list_name"] = list_name
+        if title is not UNSET:
+            sets["title"] = title  # resolved below: the text is needed for a cleared one
         if not sets:
-            raise ValueError("nothing to change: give status, kind, due_date, due_time or "
-                             "list_name")
+            raise ValueError("nothing to change: give status, kind, due_date, due_time, "
+                             "list_name or title")
         if sets.keys() - {"status"}:
             sets["edited"] = 1
         with self.tx() as c:
+            if "title" in sets:
+                r = c.execute("SELECT text FROM action_items WHERE id = ?",
+                              (item_id,)).fetchone()
+                sets["title"] = short_title(title, r["text"] if r else "")
             n = c.execute(f"UPDATE action_items SET {', '.join(f'{k} = ?' for k in sets)}"
                           " WHERE id = ?", (*sets.values(), item_id)).rowcount
+            if n:
+                r = c.execute("SELECT kind, due_date, due_time, list_name FROM action_items"
+                              " WHERE id = ?", (item_id,)).fetchone()
+                if is_explicit(dict(r)):
+                    c.execute("UPDATE action_items SET explicit = 1 WHERE id = ?", (item_id,))
         return self.get_action_item(item_id) if n else None
 
     # ------------------------------------------------------------------ search
@@ -1157,6 +1253,7 @@ class Store:
                     " VALUES (?, 0, ?, ?)", (name, vec.tobytes(), time.time())).lastrowid
             else:
                 sid = row["id"]
+            _ensure_person(c, name, sid)
             c.execute("INSERT INTO voice_samples (speaker_id, embedding, source, created_at)"
                       " VALUES (?, ?, ?, ?)", (sid, _unit(embedding).tobytes(), source,
                                                time.time()))
@@ -1180,6 +1277,10 @@ class Store:
                 " embedding = excluded.embedding",
                 (name, int(is_owner), _unit(embedding).tobytes(), time.time()))
             sid = c.execute("SELECT id FROM speakers WHERE name = ?", (name,)).fetchone()["id"]
+            pid = _ensure_person(c, name, sid, is_owner)
+            if pid is not None and not is_owner:
+                c.execute("UPDATE people SET is_owner = 0 WHERE id = ? AND speaker_id = ?",
+                          (pid, sid))
             c.execute("DELETE FROM voice_samples WHERE speaker_id = ? AND source = ?",
                       (sid, source))
             now = time.time()
@@ -1208,6 +1309,102 @@ class Store:
         row = self._one("SELECT name FROM speakers WHERE is_owner = 1")
         return row["name"] if row else None
 
+    # ------------------------------------------------------------------ people
+    def ensure_person(self, name: str, speaker_id: int | None = None,
+                      is_owner: bool = False) -> int | None:
+        """The id of the person called ``name`` (name or alias, any case), created if new.
+
+        None for an empty name or an unnamed label ("Speaker 1"). ``speaker_id`` links an
+        enrolled voice when the person has none yet; ``is_owner`` makes them the owner.
+        """
+        with self.tx() as c:
+            return _ensure_person(c, name, speaker_id, is_owner)
+
+    def person_id(self, name: str, owner_names: Iterable[str] = ()) -> int | None:
+        """The id of the person with this name or alias (any case), following merges.
+
+        A name in ``owner_names`` (the words that mean the owner, see
+        ``owner_person_id``) resolves to the owner's person when there is one.
+        """
+        if (name or "").strip().lower() in _lower(owner_names):
+            owner = self.owner_person_id(owner_names)
+            if owner is not None:
+                return owner
+        with self._lock:
+            return _person_id(self._conn, name)
+
+    def owner_person_id(self, owner_names: Iterable[str] = ()) -> int | None:
+        """The owner's person: the one with the enrolled owner voice; without one, the
+        first person whose name or alias is in ``owner_names`` (the configured owner
+        name first, then words like "me"). This is the single source of the owner."""
+        row = self._one("SELECT id FROM people WHERE is_owner = 1 AND merged_into IS NULL")
+        if row is not None:
+            return row["id"]
+        with self._lock:
+            for name in owner_names:
+                pid = _person_id(self._conn, name)
+                if pid is not None:
+                    return pid
+        return None
+
+    def people(self, owner_names: Iterable[str] = ()) -> list[dict[str, Any]]:
+        """Every person not merged into another: id, name, aliases, is_owner, has_voice,
+        conversations (distinct conversations they spoke in or were named in, under their
+        name or an alias), first_at and last_at (start of the first and last of those).
+
+        ``is_owner`` is true for ``owner_person_id(owner_names)`` only; other people
+        called by an owner name ("Me" next to an enrolled owner "Sam") are listed as
+        that owner (their names become the owner's aliases), not as people of their own.
+        """
+        owner_names = tuple(owner_names)
+        owner = self.owner_person_id(owner_names)
+        rows = self._q("SELECT id, name, is_owner, speaker_id IS NOT NULL AS has_voice,"
+                       " merged_into FROM people ORDER BY id")
+        survivor = {r["id"]: r["merged_into"] for r in rows}
+        with self._lock:
+            fold = {_person_id(self._conn, n) for n in owner_names} - {None, owner}
+        if owner is None:
+            fold = set()
+
+        def live(pid: int) -> int:
+            for _ in range(len(survivor)):
+                if survivor.get(pid) is None:
+                    break
+                pid = survivor[pid]
+            return owner if pid in fold else pid
+
+        out = {r["id"]: {"id": r["id"], "name": r["name"], "aliases": [],
+                         "is_owner": r["id"] == owner, "has_voice": bool(r["has_voice"]),
+                         "_convs": {}}
+               for r in rows if r["merged_into"] is None and r["id"] not in fold}
+        by_name: dict[str, int] = {}
+        for r in sorted(rows, key=lambda r: r["merged_into"] is None):  # live names win
+            by_name[r["name"].lower()] = live(r["id"])
+        aliases = [(r["person_id"], r["alias"]) for r in self._q(
+            "SELECT person_id, alias FROM people_aliases")]
+        aliases += [(r["id"], r["name"]) for r in rows if r["id"] in fold]
+        for person_id, alias in sorted(aliases, key=lambda a: a[1].lower()):
+            pid = live(person_id)
+            by_name.setdefault(alias.lower(), pid)
+            if pid in out and alias.lower() not in (
+                    a.lower() for a in [out[pid]["name"], *out[pid]["aliases"]]):
+                out[pid]["aliases"].append(alias)
+        for r in self._q(
+                "SELECT s.speaker AS name, c.id, c.started_at FROM segments s"
+                " JOIN conversations c ON c.id = s.conversation_id"
+                " GROUP BY s.speaker, c.id"
+                " UNION SELECT p.name, c.id, c.started_at FROM conversation_people p"
+                " JOIN conversations c ON c.id = p.conversation_id"):
+            pid = by_name.get((r["name"] or "").strip().lower())
+            if pid in out:
+                out[pid]["_convs"][r["id"]] = r["started_at"]
+        for p in out.values():
+            starts = p.pop("_convs").values()
+            p["conversations"] = len(starts)
+            p["first_at"] = min(starts, default=None)
+            p["last_at"] = max(starts, default=None)
+        return list(out.values())
+
 MAX_LEARNED_SAMPLES = 40  # per speaker, besides enrollment samples
 
 
@@ -1232,6 +1429,88 @@ def _is_owner(c: sqlite3.Connection, name: str, previous: str | None = None) -> 
     return int(row is not None)
 
 
+def _lower(names: Iterable[str]) -> set[str]:
+    return {n.strip().lower() for n in names if n and n.strip()}
+
+
+def _person_id(c: sqlite3.Connection, name: str | None) -> int | None:
+    """Resolve a name or alias (any case) to a person id, following ``merged_into``.
+    A person who is not merged wins over a merged one, a name over an alias."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    row = c.execute(
+        "SELECT id, merged_into FROM ("
+        " SELECT id, merged_into, 0 AS pri FROM people WHERE name = ?"
+        " UNION ALL SELECT p.id, p.merged_into, 1 FROM people_aliases a"
+        " JOIN people p ON p.id = a.person_id WHERE a.alias = ?)"
+        " ORDER BY merged_into IS NOT NULL, pri, id LIMIT 1", (name, name)).fetchone()
+    if row is None:
+        return None
+    pid, seen = row["id"], set()
+    while row is not None and row["merged_into"] is not None and pid not in seen:
+        seen.add(pid)
+        pid = row["merged_into"]
+        row = c.execute("SELECT id, merged_into FROM people WHERE id = ?", (pid,)).fetchone()
+    return pid
+
+
+def _ensure_person(c: sqlite3.Connection, name: str | None, speaker_id: int | None = None,
+                   is_owner: bool = False, created_at: float | None = None) -> int | None:
+    """Person id for ``name`` (see ``Store.ensure_person``); inserts a row if needed."""
+    name = (name or "").strip()
+    if not name or _PLACEHOLDER_SPEAKER.match(name):
+        return None
+    pid = _person_id(c, name)
+    if pid is None:
+        pid = c.execute("INSERT INTO people (name, created_at) VALUES (?, ?)",
+                        (name, created_at if created_at is not None else time.time())
+                        ).lastrowid
+    if speaker_id is not None:
+        c.execute("UPDATE people SET speaker_id = ? WHERE id = ? AND speaker_id IS NULL",
+                  (speaker_id, pid))
+    if is_owner:
+        c.execute("UPDATE people SET is_owner = (id = ?)", (pid,))
+    return pid
+
+
+def _add_alias(c: sqlite3.Connection, pid: int, alias: str | None) -> None:
+    alias = (alias or "").strip()
+    if alias and not _PLACEHOLDER_SPEAKER.match(alias):
+        c.execute("INSERT OR IGNORE INTO people_aliases SELECT id, ? FROM people"
+                  " WHERE id = ? AND name != ?", (alias, pid, alias))
+
+
+def _rename_person(c: sqlite3.Connection, old: str, new: str) -> None:
+    """``old`` is now called ``new`` (rename_everywhere): the person keeps their id and
+    ``old`` becomes an alias. If ``new`` is already another person, the old person is
+    merged into them (``merged_into``, aliases and voice move) and that id survives."""
+    src, dst = _person_id(c, old), _person_id(c, new)
+    if src is None:  # a name nobody had a row for: it becomes an alias of ``new``
+        src = dst if dst is not None else _ensure_person(c, new)
+        if src is None:
+            return
+    target = dst if dst is not None else src
+    if target != src:
+        before = c.execute("SELECT name, speaker_id, is_owner FROM people WHERE id = ?",
+                           (src,)).fetchone()
+        c.execute("UPDATE people SET merged_into = ? WHERE id = ? OR merged_into = ?",
+                  (target, src, src))
+        c.execute("INSERT OR IGNORE INTO people_aliases SELECT ?, alias FROM people_aliases"
+                  " WHERE person_id = ?", (target, src))
+        c.execute("DELETE FROM people_aliases WHERE person_id = ?", (src,))
+        c.execute("UPDATE people SET speaker_id = NULL, is_owner = 0 WHERE id = ?", (src,))
+        c.execute("UPDATE people SET speaker_id = COALESCE(speaker_id, ?),"
+                  " is_owner = MAX(is_owner, ?) WHERE id = ?",
+                  (before["speaker_id"], before["is_owner"], target))
+        _add_alias(c, target, before["name"])
+    current = c.execute("SELECT name FROM people WHERE id = ?", (target,)).fetchone()["name"]
+    c.execute("DELETE FROM people_aliases WHERE person_id = ? AND alias = ?", (target, new))
+    c.execute("UPDATE people SET name = ? WHERE id = ?", (new.strip(), target))
+    _add_alias(c, target, current)
+    _add_alias(c, target, old)
+
+
 def _touch_conversations(c: sqlite3.Connection, conv_ids: Iterable[str],
                          person: str | None) -> None:
     """Mark conversations for re-summary (speaker names changed); note who took part."""
@@ -1240,6 +1519,7 @@ def _touch_conversations(c: sqlite3.Connection, conv_ids: Iterable[str],
         if person and not _PLACEHOLDER_SPEAKER.match(person):
             c.execute("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
                       (conv_id, person))
+            _ensure_person(c, person)
         c.execute("UPDATE conversations SET status = 'pending', updated_at = ? WHERE id = ?",
                   (now, conv_id))
 
@@ -1344,7 +1624,8 @@ def clean_notes_name(value: str | None) -> str | None:
 def _same_item(before: list[dict[str, Any]], item: dict[str, Any]) -> dict[str, Any]:
     """What a re-summarized action item keeps from the matching old one (and takes it
     out of ``before``): its id (the hub files items by id), status, when it was first
-    stored, and the kind, date, time and list if the user changed them."""
+    stored, whether it was explicit, and the kind, date, time, list and title if the user
+    changed them."""
     # the same text first (a similar item said nearby must not take its row); then
     # closed or edited ones: they are what the user would lose
     text = _norm(item["text"])
@@ -1358,9 +1639,11 @@ def _same_item(before: list[dict[str, Any]], item: dict[str, Any]) -> dict[str, 
     before.remove(old)
     keep = {"id": old["id"], "status": old["status"],
             "created_at": old["created_at"] or time.time()}
+    if old["explicit"]:  # the hub filed it as the user's: it stays that
+        keep["explicit"] = 1
     if old["edited"]:
         keep.update({k: old[k] for k in ("kind", "due_date", "due_time", "time_unclear",
-                                         "list_name", "edited")})
+                                         "list_name", "title", "edited")})
     return keep
 
 
@@ -1397,7 +1680,8 @@ def _knowledge(c: sqlite3.Connection, conv_id: str) -> dict[str, Any]:
     return {
         "items": [dict(r) for r in c.execute(
             "SELECT id, text, source_at, status, created_at, kind, due_date, due_time,"
-            " time_unclear, list_name, edited FROM action_items WHERE conversation_id = ?"
+            " time_unclear, list_name, title, explicit, edited FROM action_items"
+            " WHERE conversation_id = ?"
             " ORDER BY id",
             (conv_id,))],
         "facts": facts,
