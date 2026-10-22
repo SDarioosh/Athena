@@ -259,6 +259,15 @@ def short_title(title: str | None, text: str | None) -> str:
     return t.rstrip(" .,;:-") or t
 
 
+# "Shahyah's" / "James'": a possessive the summary model left on a name
+_POSSESSIVE = re.compile(r"(?<=\w)['’]s$|(?<=s)['’]$", re.IGNORECASE)
+
+
+def person_name(name: str) -> str:
+    """A person's name without a possessive ending: "Ana's" -> "Ana", "James'" -> "James"."""
+    return _POSSESSIVE.sub("", name.strip())
+
+
 def is_explicit(item: dict[str, Any]) -> bool:
     """The item says when or where it goes: a date, a time, a named list, or a kind the
     user asks for (reminder, event, note). The summarizer also counts command words."""
@@ -391,6 +400,27 @@ class Store:
                           (short_title(r.get("note_title"), r["text"]),
                            int(is_explicit(r)), r["id"]))
             c.execute("PRAGMA user_version = 11")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 12:
+            # names the summary model saved with a possessive ("Shahyah's") become the
+            # name ("Shahyah"); a person of that name already there absorbs them
+            c = self._conn
+            names = {r[0] for r in c.execute(
+                "SELECT name FROM conversation_people UNION SELECT name FROM people"
+                " WHERE merged_into IS NULL")}
+            for old in sorted(n for n in names if person_name(n) != n and person_name(n)):
+                new = person_name(old)
+                c.execute("UPDATE OR REPLACE conversation_people SET name = ? WHERE name = ?",
+                          (new, old))
+                for r in c.execute("SELECT id, people FROM conversations WHERE people LIKE ?",
+                                   (f"%{old}%",)).fetchall():
+                    people = json.loads(r["people"])
+                    fixed = list(dict.fromkeys(new if p == old else p for p in people))
+                    if fixed != people:
+                        c.execute("UPDATE conversations SET people = ? WHERE id = ?",
+                                  (json.dumps(fixed), r["id"]))
+                if _person_id(c, old) is not None:
+                    _rename_person(c, old, new)
+            c.execute("PRAGMA user_version = 12")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}

@@ -20,6 +20,7 @@ from .store import (
     clean_list_name,
     clean_notes_name,
     is_explicit,
+    person_name,
     short_title,
 )
 
@@ -181,7 +182,10 @@ priority, principle or decision ("I should focus on X before Y", "stop prioritiz
 "we decided to ...", "from now on ...") is NOT an action item: it is a durable fact about \
 the speaker, listed with the facts, not here. A vague wish with nothing concrete to act \
 on ("figure out how it could use less battery") is not an action item either, unless it \
-has a time, a named list or a command word ("remind me", "to-do", "add a task").
+has a time, a named list or a command word ("remind me", "to-do", "add a task"). \
+Something done during the conversation or right after it, that nobody needs reminding \
+of, is NOT an action item either: a quick errand or bit of logistics ("I'll move my \
+truck", "let me grab my keys", "I'll get the door", "I'm going to park first").
 title: a short imperative summary of the item, at most 60 characters, e.g. "Call the \
 plumber about the tap"; never the whole sentence."""
 
@@ -189,11 +193,13 @@ ACTIONS_SYSTEM = """You list the action items of one conversation. """ + COMMON 
 The conversation happened on {date}.
 An action item is something someone promised or was asked to do after this \
 conversation: a promise ("I'll send you the slides tonight"), a request ("can you water \
-the plants while I'm away?") or an appointment to keep. List every \
-one, small ones too; leave out things already done.
+the plants while I'm away?") or an appointment to keep. List each one the user \
+would want to be reminded of later, small promises to someone too ("I'll text you the \
+address tonight"); leave out things already done.
 """ + ITEM_RULES + """
 text: a task that starts with a verb and names who and what, e.g. "Send Sam the \
-slides" or "Water Lena's plants". Never copy the spoken sentence.
+slides" or "Water Lena's plants". Never copy the spoken sentence, but keep the verb \
+the speaker used ("I'll move the car" -> "Move the car", never "Drive the car").
 owner: who should do it ("{owner}" for the user), if clear. due: the deadline in the \
 words used ("Monday", "March 3"), or null; due_date: that deadline as YYYY-MM-DD \
 counted from the conversation date, or null. at_seconds: the bracketed number of the line \
@@ -420,6 +426,7 @@ class Summarizer:
         out = to_storage(result, origin)
         out["kind"] = triage.kind
         self._resolve_due_dates(out, origin)
+        _drop_errands(out, _spoken(parts), _lines(parts), origin)
         _mark_explicit(out["action_items"], None)
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
@@ -455,6 +462,7 @@ class Summarizer:
                 item.update(due=None, due_date=None, due_time=None, time_unclear=False,
                             owner=None)
         spoken = _spoken(parts)
+        _drop_errands(out, spoken, _lines(parts), origin)
         self._intentions_to_facts(out, spoken)
         _mark_explicit(out["action_items"], spoken)
         return out
@@ -654,7 +662,8 @@ def to_storage(s: ConversationSummary, origin: float) -> dict[str, Any]:
         "summary": s.summary.strip(),
         "key_points": [k.strip() for k in s.key_points if k.strip()],
         "topics": _dedupe(s.topics),
-        "people": [p for p in _dedupe(s.people) if not _PLACEHOLDER.match(p)],
+        "people": [p for p in _dedupe([person_name(p) for p in s.people])
+                   if not _PLACEHOLDER.match(p)],
         "action_items": [_item_storage(a, at(a.at_seconds)) for a in s.action_items],
         "facts": [{"subject": f.subject, "fact": f.fact, "source_at": at(f.at_seconds)}
                   for f in s.facts],
@@ -870,6 +879,52 @@ def _said_in(text: str, spoken: list[tuple[str, str]]) -> tuple[str, str]:
         if got > score:
             best, score = (clause, sentence), got
     return best if score >= 0.6 else ("", "")
+
+
+# Something done right now ("I'll move my truck right now", "I'll grab the keys real
+# quick"): nobody needs reminding of it (``_drop_errands``). Not "let me ...": "let me
+# check with my wife and get back to you" is a promise for later.
+_IMMEDIATE = re.compile(
+    r"\b(?:right\s+now|right\s+away|real\s+(?:quick|fast)|in\s+a\s+(?:sec(?:ond)?|minute|"
+    r"moment|jiffy)|(?:one|just\s+a)\s+(?:sec(?:ond)?|minute|moment))\b", re.IGNORECASE)
+
+
+def _lines(parts: list[str]) -> dict[int, str]:
+    """The transcript's lines by offset (seconds from the conversation start)."""
+    out: dict[int, str] = {}
+    for part in parts:
+        for line in part.splitlines():
+            m = _LINE.match(line.strip())
+            if m:
+                out.setdefault(int(m["at"]), m["text"])
+    return out
+
+
+def _drop_errands(out: dict[str, Any], spoken: list[tuple[str, str]],
+                  lines: dict[int, str], origin: float) -> None:
+    """Leave out quick errands done right away ("I'll move my truck right now", "I'll
+    grab the keys real quick"): small models list them as to-dos even
+    though the prompts say not to. Only an undated task without a list or command word
+    whose own clause says it happens now; the clause is found by the item's words, else
+    the line it cites (models reword: "move my truck" became "Walk truck to ...")."""
+    keep = []
+    for item in out["action_items"]:
+        if (item["kind"] != "task" or item.get("due_date") or item.get("due_time")
+                or item.get("list_name") or _COMMAND_WORDS.search(item["text"])):
+            keep.append(item)
+            continue
+        clause, sentence = _said_in(item["text"], spoken)
+        if not clause and item.get("source_at") is not None:
+            line = lines.get(int(round(item["source_at"] - origin)), "")
+            clauses = [c.strip() for x in _SENTENCE_END.split(line)
+                       for c in _CLAUSE_END.split(x.strip()) if c.strip()]
+            # only a line of one clause: never guess which of several the item is
+            clause, sentence = (clauses[0] if len(clauses) == 1 else ""), line
+        if clause and _IMMEDIATE.search(clause) and not _COMMAND_WORDS.search(sentence):
+            log.info("dropped a quick errand: %r (%r)", item["text"], clause)
+            continue
+        keep.append(item)
+    out["action_items"] = keep
 
 
 def _intent_fact(text: str, decided: bool) -> str:
