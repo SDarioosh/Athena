@@ -147,11 +147,20 @@ interface InsightApi {
      * calendar's.
      */
     suspend fun today(): ApiResult<Map<String, Any?>>
+
+    /**
+     * The hub's rule weights for the T5's rule-based Today plan (`GET /api/codex/insight/weights`,
+     * same scope, plan §5): `{"version": 1, "date", "weights": {"list:<note id>": int}}`. Anything
+     * but [ApiResult.Ok] (an older hub's 404, 403, network errors, 5xx, a non-object answer) keeps
+     * the last good table; a weights failure never fails the feed.
+     */
+    suspend fun weights(): ApiResult<Map<String, Any?>> = ApiResult.Unsupported("no weights route")
 }
 
-/** Used when no Odysseus URL and token are set: the feed has no `insight`. */
+/** Used when no Odysseus URL and token are set: the feed has no `insight` and no `weights`. */
 object NoInsight : InsightApi {
     override suspend fun today() = ApiResult.Unsupported("Odysseus isn't set up in the relay settings")
+    override suspend fun weights() = ApiResult.Unsupported("Odysseus isn't set up in the relay settings")
 }
 
 /**
@@ -171,6 +180,11 @@ interface PdaMemory {
     fun createdEvent(actionKey: String): String?
 
     fun eventCreated(actionKey: String, uid: String, nowMs: Long)
+
+    /** The hub's last good `weights` table (plan §5) as compact JSON, or null: never fetched. */
+    fun lastWeights(): String?
+
+    fun weightsFetched(json: String)
 }
 
 class MemoryPdaMemory : PdaMemory {
@@ -185,5 +199,10 @@ class MemoryPdaMemory : PdaMemory {
     @Synchronized override fun createdEvent(actionKey: String) = created[actionKey]
     @Synchronized override fun eventCreated(actionKey: String, uid: String, nowMs: Long) {
         created[actionKey] = uid
+    }
+    var weights: String? = null
+    @Synchronized override fun lastWeights() = weights
+    @Synchronized override fun weightsFetched(json: String) {
+        weights = json
     }
 }

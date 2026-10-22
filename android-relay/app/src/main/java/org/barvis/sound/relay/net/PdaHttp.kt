@@ -264,8 +264,9 @@ class OdysseusTodosClient(
 }
 
 /**
- * The hub's Today insight through `/api/codex/insight/today` (plan §4.1), with the same URL and
- * token as the calendar (scope `insight:read`). The reasons are the PC relay's words.
+ * The hub's Today insight through `/api/codex/insight/today` (plan §4.1), and its rule weights
+ * through `/api/codex/insight/weights` (plan §5), with the same URL and token as the calendar
+ * (scope `insight:read`). The reasons are the PC relay's words.
  */
 class OdysseusInsightClient(
     baseUrl: String,
@@ -295,8 +296,25 @@ class OdysseusInsightClient(
         }
     }
 
+    override suspend fun weights(): ApiResult<Map<String, Any?>> {
+        val a = c.call("GET", WEIGHTS) ?: return ApiResult.Fail(c.networkError())
+        return when (a.code) {
+            200 -> try {
+                ApiResult.Ok(Json.parseObject(a.body))
+            } catch (e: Json.ParseException) {
+                ApiResult.Unsupported(WEIGHTS_MALFORMED)
+            }
+            404, 405 -> ApiResult.Unsupported(WEIGHTS_OLD_HUB)
+            403 -> ApiResult.Unsupported(NO_SCOPE)
+            else -> ApiResult.Fail(HttpUploader.classify(a.code, a.body, needOkField = false))
+        }
+    }
+
     companion object {
         const val INSIGHT = "/api/codex/insight/today"
+        const val WEIGHTS = "/api/codex/insight/weights"
+        const val WEIGHTS_OLD_HUB = "this Odysseus has no weights route (update the hub)"
+        const val WEIGHTS_MALFORMED = FeedBuilder.WEIGHTS_MALFORMED
         const val NOT_YET = FeedBuilder.INSIGHT_NOT_YET
         const val NO_SCOPE = "token lacks insight:read"
         const val OLD_HUB = "this Odysseus has no insight route (update the hub)"
