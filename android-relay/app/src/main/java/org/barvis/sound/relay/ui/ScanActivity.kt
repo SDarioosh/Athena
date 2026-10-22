@@ -21,8 +21,8 @@ import org.barvis.sound.relay.R
  * ZXing's camera view (no AndroidX) and the framework permission API.
  */
 class ScanActivity : Activity() {
-    private lateinit var scanner: DecoratedBarcodeView
-    private var started = false
+    private var scanner: DecoratedBarcodeView? = null
+    private var granted = false
 
     private val callback = BarcodeCallback { result ->
         val text = result.text ?: return@BarcodeCallback
@@ -32,12 +32,10 @@ class ScanActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        scanner = DecoratedBarcodeView(this)
-        scanner.decoderFactory = DefaultDecoderFactory(listOf(BarcodeFormat.QR_CODE))
-        scanner.setStatusText(getString(R.string.pair_scan_hint))
-        setContentView(scanner)
+        // Ask for the camera before building the camera view, so a problem in the view can
+        // never hide the permission prompt.
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            started = true
+            granted = true
         } else {
             requestPermissions(arrayOf(Manifest.permission.CAMERA), REQ_CAMERA)
         }
@@ -47,7 +45,7 @@ class ScanActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_CAMERA) return
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            started = true // onResume, which follows the permission dialog, starts the camera
+            granted = true // onResume, which follows the permission dialog, starts the camera
         } else {
             Toast.makeText(this, R.string.pair_camera_denied, Toast.LENGTH_LONG).show()
             setResult(RESULT_CANCELED)
@@ -57,21 +55,40 @@ class ScanActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (started) startScanning()
-    }
-
-    private fun startScanning() {
-        scanner.decodeSingle(callback)
-        scanner.resume()
+        if (!granted || isFinishing) return
+        try {
+            val view = scanner ?: DecoratedBarcodeView(this).also {
+                it.decoderFactory = DefaultDecoderFactory(listOf(BarcodeFormat.QR_CODE))
+                it.setStatusText(getString(R.string.pair_scan_hint))
+                setContentView(it)
+                scanner = it
+            }
+            view.decodeSingle(callback)
+            view.resume()
+        } catch (e: Throwable) {
+            fail(e)
+        }
     }
 
     override fun onPause() {
         super.onPause()
-        scanner.pause()
+        try {
+            scanner?.pause()
+        } catch (e: Throwable) {
+            // Closing anyway; nothing to show.
+        }
+    }
+
+    /** Back to Settings with what went wrong, instead of crashing the app. */
+    private fun fail(e: Throwable) {
+        val what = e.javaClass.simpleName + (e.message?.let { ": ${it.take(200)}" } ?: "")
+        setResult(RESULT_CANCELED, Intent().putExtra(EXTRA_ERROR, what))
+        finish()
     }
 
     companion object {
         const val EXTRA_TEXT = "scan_text"
+        const val EXTRA_ERROR = "scan_error"
         private const val REQ_CAMERA = 7
     }
 }

@@ -65,7 +65,10 @@ on the branch you run it from. These are debug-signed builds for sideloading.
    check the address the phone should use (its Tailscale address, for example
    `https://odysseus.<tailnet>.ts.net` or `http://100.x.y.z:7000`) and tap **Show pairing
    code**. In the app open **Settings → Scan pairing code** and point the camera at it (or
-   copy the link from that page and use **Pair with this link**). That's all: the app gets
+   copy the link from that page and use **Pair with this link**). The phone's own camera
+   app works too: scan the code there and open (or copy) the `odysseus-pair:` link; the
+   relay's Settings opens with it filled in and shows which Odysseus it is for. It never
+   pairs from a link without your tap, because any app can open such a link. That's all: the app gets
    its own Odysseus token (named "Phone relay <date>", scopes `sound:ingest`, `sound:read`,
    `sound:write`, `calendar:read`, `calendar:write`, `todos:read`, `todos:write`,
    `insight:read`), stores it encrypted, and from then on sends the watch's audio and the
@@ -172,6 +175,9 @@ Setup:
 
 The main screen shows a **PDA** section: the T5's firmware, battery and outbox, and one
 line on the last sync (actions handled or waiting, feed sent or unchanged, calendar notes).
+
+If the app crashes, the next start shows the error with a **Copy** button
+(`store/CrashLog.kt`: exception types, messages and stack frames, kept only on the phone).
 
 ## Permissions and why
 

@@ -35,6 +35,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
+        android:name=".RelayApp"
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -67,6 +68,22 @@
             android:name=".ui.ScanActivity"
             android:exported="false"
             android:label="@string/pair_scan" />
+
+        <!-- odysseus-pair: links (the phone's camera app scanning the pairing QR code). Only
+             fills in Settings; the owner confirms before anything is sent. -->
+        <activity
+            android:name=".ui.PairLinkActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="odysseus-pair" />
+            </intent-filter>
+        </activity>
 
         <!-- ZXing's own scanner needs AndroidX, which this app doesn't have (it crashed on
              open); keep it out so nothing can start it. -->
