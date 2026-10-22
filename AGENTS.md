@@ -151,7 +151,9 @@ the data path touches the cloud.**
 - The MCP HTTP app also has plain HTTP routes, behind the same `BearerAuth`
   (`server/convo_server/ingest_relay.py`): uploads (`POST /ingest/chunk`,
   `POST /sessions/{session_id}/end`) and the few API reads the relay's T5 sync uses
-  (`READ_ROUTES`: `/health`, conversations, transcript, action items, digests). They are **not MCP tools** (never register
+  (`READ_ROUTES`: `/health`, conversations, transcript, action items, digests), plus
+  `GET`/`PUT /settings/llm` for the hub's settings page (which model writes summaries;
+  only the model name, never `CONVO_LLM_BASE_URL`). They are **not MCP tools** (never register
   them as tools) and forward unchanged to the ingest API with `CONVO_INGEST_TOKEN`, which
   never leaves the module. So **the MCP token can add recordings**: Odysseus uses it for
   its call recorder and for phones paired through it. Their paths and the multipart

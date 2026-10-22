@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from . import llm_settings
 from .config import Settings, get_settings
 from .diarize import Diarizer, EcapaEmbedder, load_voices
 from .llm import LLMClient, Summarizer
@@ -85,6 +86,7 @@ def build_pipeline(settings: Settings) -> Pipeline:
     store = Store(settings.db_path)
     llm = LLMClient(settings.llm_base_url, settings.llm_model, settings.llm_api_key,
                     settings.llm_timeout_seconds)
+    llm_settings.apply_stored(llm, store)  # a model chosen in the hub's settings
     embedder = (OpenAIEmbedder(settings.embed_base_url, settings.embed_model)
                 if settings.embed_base_url else None)
     return Pipeline(settings, store, make_vad(settings.vad_backend, settings),
