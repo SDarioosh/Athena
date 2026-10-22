@@ -148,6 +148,13 @@ the data path touches the cloud.**
   `instructions`.
 - HTTP auth accepts `Authorization: Bearer` or `?access_token=` (`BearerAuth`); Odysseus
   can only use the query form.
+- The MCP HTTP app also has two plain HTTP upload routes, behind the same `BearerAuth`:
+  `POST /ingest/chunk` and `POST /sessions/{session_id}/end`
+  (`server/convo_server/ingest_relay.py`). They are **not MCP tools** (never register
+  them as tools) and forward unchanged to the ingest API with `CONVO_INGEST_TOKEN`, which
+  never leaves the module. So **the MCP token can add recordings**: Odysseus uses it for
+  its call recorder and for phones paired through it. Their paths and the multipart
+  fields are part of the contract like a tool's arguments.
 - `list_action_items` and `list_facts` take `format="json"` for programs (the hub's
   jobs). `list_facts(confirmed=true)` keeps only confirmed facts: current, said in
   ≥ `CONVO_FACT_CONFIRM_SOURCES` (3) distinct conversations on ≥
