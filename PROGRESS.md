@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-22 (quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-22 ("Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -118,6 +118,23 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
+
+## Done on 2026-10-22: "Create a to-do list." covers the items after it
+
+- Owner report: a voice note "Create a to-do list and get Rock Talk ready for the meeting
+  with the Meshtastic team" stayed under "Not filed yet" in the hub. The command word only
+  counted when it was in the same sentence as the item; when the transcriber ends the
+  sentence after "Create a to do list.", the next item was a suggestion, not explicit.
+- Now a sentence that starts a to-do list ("create/make/start a to-do list", "to-do list:")
+  makes every item said in or after it in the same voice note explicit, and keeps those
+  items from being turned into intention facts. Items said before it are unchanged; "a lot
+  to do" is no list sentence. Tests: `server/tests/test_item_titles.py`.
+- Already stored items keep their flag; file such an item with "Add to to-dos" on the hub's
+  page. No MCP change.
+- Hub side of the same report: the hub's "Module Action Items" task, which files explicit
+  items, failed every run until hub PR #65 (re-seal built-in task authority). Items it
+  missed are still unseen and are filed on its first good run after that is deployed.
+- Open: needs a real voice note on the server (Server verification in the PR).
 
 ## Done on 2026-10-22: occasional "REC ERROR" while recording on the T-Watch
 
