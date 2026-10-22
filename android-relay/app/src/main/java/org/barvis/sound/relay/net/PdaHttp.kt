@@ -139,51 +139,57 @@ internal class JsonClient(
     }
 }
 
-/** The odysseus-sound HTTP API (server/convo_server/api.py). The token is never logged. */
+/**
+ * The odysseus-sound HTTP API (server/convo_server/api.py), directly or through Odysseus
+ * ([routes]: the same paths under `/api/codex/sound` and the same JSON). The token is never
+ * logged.
+ */
 class ConvoHttpApi(
     baseUrl: String,
     token: () -> String,
     transport: HttpTransport = UrlConnectionTransport(),
     log: RelayLog = RelayLog.NONE,
+    private val routes: Routes = Routes.DIRECT,
 ) : ConvoApi {
-    private val c = JsonClient(baseUrl, token, transport, log, "odysseus-sound")
+    private val c = JsonClient(baseUrl, token, transport, log, routes.name)
+    private val p = routes.prefix
 
     override suspend fun health(): ServerResult {
-        val a = c.call("GET", "/health", auth = false) ?: return c.networkError()
+        val a = c.call("GET", routes.health, auth = routes.healthNeedsToken) ?: return c.networkError()
         return HttpUploader.classify(a.code, a.body)
     }
 
     override suspend fun digest(date: String): ApiResult<Map<String, Any?>> {
         require(DATE.matches(date)) { "bad date" }
-        return c.obj("/v1/digests/$date")
+        return c.obj("$p/digests/$date")
     }
 
     override suspend fun conversations(sinceEpochS: Long, limit: Int): ApiResult<List<Map<String, Any?>>> =
-        list(c.obj("/v1/conversations?since=$sinceEpochS&limit=$limit"), "conversations")
+        list(c.obj("$p/conversations?since=$sinceEpochS&limit=$limit"), "conversations")
 
     override suspend fun openActionItems(): ApiResult<List<Map<String, Any?>>> =
-        list(c.obj("/v1/action-items?status=open"), "action_items")
+        list(c.obj("$p/action-items?status=open"), "action_items")
 
     override suspend fun conversation(id: String): ApiResult<Map<String, Any?>> =
-        c.obj("/v1/conversations/${JsonClient.enc(id)}")
+        c.obj("$p/conversations/${JsonClient.enc(id)}")
 
     override suspend fun transcript(id: String): ApiResult<Map<String, Any?>> =
-        c.obj("/v1/conversations/${JsonClient.enc(id)}/transcript")
+        c.obj("$p/conversations/${JsonClient.enc(id)}/transcript")
 
     override suspend fun setActionItemStatus(id: Long, status: String): ServerResult {
-        val a = c.call("PATCH", "/v1/action-items/$id", json = mapOf("status" to status)) ?: return c.networkError()
+        val a = c.call("PATCH", "$p/action-items/$id", json = mapOf("status" to status)) ?: return c.networkError()
         return HttpUploader.classify(a.code, a.body)
     }
 
     override suspend fun makeDigest(date: String): ServerResult {
         require(DATE.matches(date)) { "bad date" }
-        val a = c.call("POST", "/v1/digests/$date", json = emptyMap<String, Any?>()) ?: return c.networkError()
+        val a = c.call("POST", "$p/digests/$date", json = emptyMap<String, Any?>()) ?: return c.networkError()
         return HttpUploader.classify(a.code, a.body, needOkField = false)
     }
 
     private fun list(r: ApiResult<Map<String, Any?>>, key: String): ApiResult<List<Map<String, Any?>>> = when (r) {
         is ApiResult.Ok -> if (r.value[key] is List<*>) ApiResult.Ok(r.value.objects(key))
-            else ApiResult.Fail(ServerResult.Transient("odysseus-sound answer has no \"$key\""))
+            else ApiResult.Fail(ServerResult.Transient("${routes.name} answer has no \"$key\""))
         is ApiResult.Fail -> r
         is ApiResult.Unsupported -> r
     }
@@ -356,6 +362,23 @@ class OdysseusCalendarClient(
             else ApiResult.Fail(HttpUploader.classify(a.code, a.body, needOkField = false))
     }
 
+    /**
+     * The token owner's calendars (`GET /api/codex/calendars`, scope `calendar:read`), for
+     * Settings' "Choose calendar". Unsupported on a hub without the route.
+     */
+    suspend fun calendars(): ApiResult<List<CalendarChoice>> {
+        val a = c.call("GET", CALENDARS) ?: return ApiResult.Fail(c.networkError())
+        if (a.code == 404 || a.code == 405) return ApiResult.Unsupported("this Odysseus can't list calendars (update the hub)")
+        return when (val r = c.objOf(a)) {
+            is ApiResult.Ok -> ApiResult.Ok(r.value.objects("calendars").mapNotNull { cal ->
+                val href = cal.str("href") ?: return@mapNotNull null
+                CalendarChoice(href, cal.str("name") ?: href, cal.str("source") ?: "")
+            })
+            is ApiResult.Fail -> r
+            is ApiResult.Unsupported -> r
+        }
+    }
+
     /** "Not supported" rather than a guess: the route is missing, or the hub has no calendar. */
     private fun unsupported(a: HttpAnswer): ApiResult.Unsupported? = when {
         a.code == 404 || a.code == 405 -> notThere()
@@ -369,5 +392,11 @@ class OdysseusCalendarClient(
 
     private companion object {
         const val EVENTS = "/api/codex/calendar/events"
+        const val CALENDARS = "/api/codex/calendars"
     }
+}
+
+/** One of the owner's Odysseus calendars; [id] is what `calendar_href` takes. */
+data class CalendarChoice(val id: String, val name: String, val source: String) {
+    val label: String get() = if (source == "caldav") "$name (CalDAV)" else name
 }

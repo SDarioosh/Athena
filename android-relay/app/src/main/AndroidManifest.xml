@@ -57,6 +57,14 @@
             android:parentActivityName=".ui.MainActivity"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- ZXing's scanner for "Pair with Odysseus" (on-device; the camera is used only
+             while it is open, nothing is saved). Any orientation instead of landscape only. -->
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:screenOrientation="fullSensor"
+            tools:ignore="DiscouragedApi"
+            tools:replace="android:screenOrientation" />
+
         <service
             android:name=".service.RelayService"
             android:exported="false"

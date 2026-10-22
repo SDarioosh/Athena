@@ -17,8 +17,8 @@ import java.net.URL
 import java.security.SecureRandom
 
 /**
- * Talks to the owner's odysseus-sound server (server/convo_server/api.py) with
- * [HttpURLConnection]. Only [baseUrl] is ever contacted; redirects are not followed so the
+ * Talks to the owner's odysseus-sound server (server/convo_server/api.py), directly or through
+ * Odysseus ([routes]), with [HttpURLConnection]. Only [baseUrl] is ever contacted; redirects are not followed so the
  * token can't be sent anywhere else. The token is read from [token] per request and never
  * logged. Timeouts stay below the watch's 30 s idle disconnect (§7.2): an upload that is
  * cut off just gets uploaded again next time and answered `duplicate`.
@@ -29,26 +29,27 @@ class HttpUploader(
     private val log: RelayLog = RelayLog.NONE,
     private val connectTimeoutMs: Int = 10_000,
     private val readTimeoutMs: Int = 25_000,
+    private val routes: Routes = Routes.DIRECT,
 ) : Uploader {
     private val base = baseUrl.trimEnd('/')
 
-    override suspend fun health(): ServerResult = request("GET", "/health", auth = false).also {
-        log.log(Level.INFO, "GET /health -> ${describe(it)}")
+    override suspend fun health(): ServerResult = request("GET", routes.health, auth = routes.healthNeedsToken).also {
+        log.log(Level.INFO, "GET ${routes.health} -> ${describe(it)}")
     }
 
     /** Settings "test connection": validates the token with a cheap authenticated read. */
     suspend fun checkToken(): ServerResult =
-        request("GET", "/v1/sessions?limit=1", auth = true, needOkField = false).also {
-            log.log(Level.INFO, "GET /v1/sessions?limit=1 -> ${describe(it)}")
+        request("GET", routes.tokenCheck, auth = true, needOkField = false).also {
+            log.log(Level.INFO, "GET ${routes.tokenCheck} -> ${describe(it)}")
         }
 
     override suspend fun upload(chunk: ChunkUpload): ServerResult {
         val boundary = "----barvis" + ByteArray(12).also { SecureRandom().nextBytes(it) }
             .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
         val body = multipart(boundary, chunk)
-        val r = request("POST", "/v1/ingest/chunk", auth = true,
+        val r = request("POST", routes.chunk, auth = true,
             body = body, contentType = "multipart/form-data; boundary=$boundary")
-        log.log(Level.INFO, "POST /v1/ingest/chunk session ${chunk.sessionId} seq ${chunk.sequence}" +
+        log.log(Level.INFO, "POST ${routes.chunk} session ${chunk.sessionId} seq ${chunk.sequence}" +
             (if (chunk.kind != null) " kind ${chunk.kind}" else "") + " " +
             "(${chunk.audio.size} B) -> ${describe(r)}")
         return r
@@ -56,8 +57,9 @@ class HttpUploader(
 
     override suspend fun endSession(sessionId: String): ServerResult {
         require(SESSION_ID.matches(sessionId)) { "bad session id" }
-        val r = request("POST", "/v1/sessions/$sessionId/end", auth = true, body = ByteArray(0))
-        log.log(Level.INFO, "POST /v1/sessions/$sessionId/end -> ${describe(r)}")
+        val path = routes.end(sessionId)
+        val r = request("POST", path, auth = true, body = ByteArray(0))
+        log.log(Level.INFO, "POST $path -> ${describe(r)}")
         return r
     }
 

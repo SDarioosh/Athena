@@ -44,9 +44,9 @@ class PdaConnector(private val context: Context, private val settings: Settings)
     val schedule = PdaSchedule({ settings.pdaSyncMinutes * 60_000L }, { settings.pdaAutoSync })
 
     /** One sync with [device]; returns how long the relay loop should pause afterwards. */
-    suspend fun sync(device: BluetoothDevice, serverBase: String): Long {
+    suspend fun sync(device: BluetoothDevice, server: Settings.Target): Long {
         RelayState.update { it.copy(phase = Phase.PDA_SYNC, detail = "", pdaLine = "Syncing…") }
-        val outcome = connectAndSync(device, serverBase)
+        val outcome = connectAndSync(device, server)
         val now = System.currentTimeMillis()
         val next = schedule.after(outcome, now)
         fun retry(text: String) = if (schedule.isAuto) ". Retry in $text" else ". Tap Sync T5 now to try again"
@@ -99,7 +99,7 @@ class PdaConnector(private val context: Context, private val settings: Settings)
             settings.odysseusCalendarId.ifBlank { null }, log = log)
     }
 
-    private suspend fun connectAndSync(device: BluetoothDevice, serverBase: String): PdaOutcome {
+    private suspend fun connectAndSync(device: BluetoothDevice, server: Settings.Target): PdaOutcome {
         val client = GattClient(context, device, log, PdaGatt.PROFILE)
         try {
             client.connect()
@@ -117,7 +117,7 @@ class PdaConnector(private val context: Context, private val settings: Settings)
             log.log(Level.INFO, "PDA connected, MTU $mtu")
             val sync = PdaSync(
                 link = link,
-                api = ConvoHttpApi(serverBase, { settings.token() }, log = log),
+                api = ConvoHttpApi(server.base, server.token, log = log, routes = server.routes),
                 calendar = calendar(),
                 memory = settings.pdaMemory,
                 deviceKey = device.address,

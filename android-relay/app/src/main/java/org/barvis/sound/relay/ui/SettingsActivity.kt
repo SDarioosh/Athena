@@ -1,6 +1,9 @@
 package org.barvis.sound.relay.ui
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -13,8 +16,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import com.journeyapps.barcodescanner.ScanIntentResult
+import com.journeyapps.barcodescanner.ScanOptions
 import org.barvis.sound.relay.R
 import org.barvis.sound.relay.net.HttpUploader
+import org.barvis.sound.relay.net.PairingClient
+import org.barvis.sound.relay.net.PairingLink
+import org.barvis.sound.relay.net.Routes
 import org.barvis.sound.relay.net.OdysseusCalendarClient
 import org.barvis.sound.relay.net.OdysseusInsightClient
 import org.barvis.sound.relay.net.OdysseusTodosClient
@@ -29,7 +37,10 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/** Server URL, token (stored encrypted, never shown), test connection, start on boot. */
+/**
+ * Pair with Odysseus (scan or paste the code), or the direct server URL and token (stored
+ * encrypted, never shown); test connection, start on boot, the T5 section.
+ */
 class SettingsActivity : Activity() {
     private lateinit var settings: Settings
     private lateinit var url: EditText
@@ -64,6 +75,123 @@ class SettingsActivity : Activity() {
         findViewById<Button>(R.id.save).setOnClickListener { save() }
         findViewById<Button>(R.id.test).setOnClickListener { test() }
         initPda()
+        initPairing()
+    }
+
+    // ------------------------------------------------------------- pairing
+
+    private lateinit var pairState: TextView
+    private lateinit var pairLink: EditText
+    private lateinit var pairResult: TextView
+    private lateinit var throughOdysseus: CheckBox
+
+    private fun initPairing() {
+        pairState = findViewById(R.id.pair_state)
+        pairLink = findViewById(R.id.pair_link)
+        pairResult = findViewById(R.id.pair_result)
+        throughOdysseus = findViewById(R.id.through_odysseus)
+        throughOdysseus.isChecked = settings.throughOdysseus
+        throughOdysseus.setOnCheckedChangeListener { box, checked ->
+            if (checked && !settings.hasOdysseusToken && odyToken.text.isBlank()) {
+                box.isChecked = false
+                pairResult.setText(R.string.through_odysseus_needs_pairing)
+            }
+        }
+        findViewById<Button>(R.id.pair_scan).setOnClickListener { scan() }
+        findViewById<Button>(R.id.pair_paste).setOnClickListener { pair(pairLink.text.toString()) }
+        findViewById<Button>(R.id.choose_calendar).setOnClickListener { chooseCalendar() }
+        showPairState()
+    }
+
+    private fun showPairState() {
+        val paired = settings.throughOdysseus && settings.hasOdysseusToken
+        pairState.text = if (paired) getString(R.string.pair_state_paired, settings.odysseusUrl)
+            else getString(R.string.pair_state_direct)
+    }
+
+    private fun scan() {
+        val intent = ScanOptions()
+            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            .setPrompt(getString(R.string.pair_scan))
+            .setBeepEnabled(false)
+            .setOrientationLocked(false)
+            .createScanIntent(this)
+        try {
+            @Suppress("DEPRECATION") // framework Activity: no AndroidX result API here
+            startActivityForResult(intent, REQ_SCAN)
+        } catch (e: ActivityNotFoundException) {
+            pairResult.setText(R.string.pair_scan_unavailable)
+        }
+    }
+
+    @Deprecated("Framework Activity result callback")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_SCAN) return
+        ScanIntentResult.parseActivityResult(resultCode, data).contents?.let { pair(it) }
+    }
+
+    /** Redeems a scanned or pasted pairing link and switches to "through Odysseus". */
+    private fun pair(text: String) {
+        val link = when (val r = PairingLink.parse(text)) {
+            is PairingLink.Result.Ok -> r.link
+            is PairingLink.Result.Invalid -> {
+                pairResult.text = getString(R.string.pair_failed, r.reason)
+                return
+            }
+        }
+        pairResult.text = withWarning(getString(R.string.pair_working, link.base), link.warning)
+        scope.launch {
+            when (val r = PairingClient().redeem(link)) {
+                is PairingClient.Result.Ok -> {
+                    settings.savePairing(r.paired.base, r.paired.token)
+                    pairLink.text.clear()
+                    odyUrl.setText(r.paired.base)
+                    odyToken.text.clear()
+                    odyTokenState.setText(R.string.odysseus_token_saved)
+                    throughOdysseus.isChecked = true
+                    pairResult.text = withWarning(getString(R.string.pair_done, r.paired.base, r.paired.name), link.warning)
+                    showPairState()
+                    RelayState.logger.log(org.barvis.sound.relay.relay.Level.INFO, "paired with Odysseus at ${r.paired.base}")
+                }
+                is PairingClient.Result.Failed -> pairResult.text = getString(R.string.pair_failed, r.reason)
+            }
+        }
+    }
+
+    private fun withWarning(text: String, warning: String?): String =
+        if (warning == null) text else getString(R.string.two_lines, text, warning)
+
+    private fun chooseCalendar() {
+        val c = ServerUrl.check(odyUrl.text.toString())
+        val typed = odyToken.text.toString().trim()
+        val token = if (typed.isEmpty()) settings.odysseusToken() else typed
+        if (c !is ServerUrl.Check.Ok || token.isEmpty()) {
+            odyResult.setText(R.string.odysseus_not_set)
+            return
+        }
+        odyResult.text = getString(R.string.testing)
+        scope.launch {
+            when (val r = OdysseusCalendarClient(c.base, { token }, log = RelayState.logger).calendars()) {
+                is ApiResult.Ok -> {
+                    odyResult.text = ""
+                    if (r.value.isEmpty()) {
+                        odyResult.setText(R.string.choose_calendar_none)
+                        return@launch
+                    }
+                    val labels = listOf(getString(R.string.choose_calendar_default)) + r.value.map { it.label }
+                    AlertDialog.Builder(this@SettingsActivity)
+                        .setTitle(R.string.choose_calendar_title)
+                        .setItems(labels.toTypedArray()) { _, which ->
+                            odyCalendar.setText(if (which == 0) "" else r.value[which - 1].id)
+                        }
+                        .show()
+                }
+                is ApiResult.Unsupported -> odyResult.text = getString(R.string.choose_calendar_failed, r.reason)
+                is ApiResult.Fail -> odyResult.text = getString(R.string.choose_calendar_failed, FeedBuilder.describe(r.error))
+            }
+        }
     }
 
     // ------------------------------------------------------------------ T5 PDA
@@ -175,6 +303,10 @@ class SettingsActivity : Activity() {
         super.onDestroy()
     }
 
+    private companion object {
+        const val REQ_SCAN = 41
+    }
+
     private fun updateWarning() {
         val text = when (val c = ServerUrl.check(url.text.toString())) {
             is ServerUrl.Check.Ok -> c.warning
@@ -185,37 +317,56 @@ class SettingsActivity : Activity() {
     }
 
     private fun save() {
-        val c = ServerUrl.check(url.text.toString())
-        if (c !is ServerUrl.Check.Ok) {
-            result.text = (c as ServerUrl.Check.Invalid).reason
+        val raw = url.text.toString()
+        val base = if (raw.isBlank()) "" else when (val c = ServerUrl.check(raw)) {
+            is ServerUrl.Check.Ok -> c.base
+            is ServerUrl.Check.Invalid -> {
+                result.text = c.reason
+                return
+            }
+        }
+        if (base.isEmpty() && !throughOdysseus.isChecked) {
+            result.text = ServerUrl.check(raw).let { (it as? ServerUrl.Check.Invalid)?.reason ?: "" }
             return
         }
         savePda()?.let {
             result.text = it
             return
         }
-        settings.serverUrl = c.base
+        settings.serverUrl = base
         val t = token.text.toString().trim()
         if (t.isNotEmpty()) settings.setToken(t)
         token.text.clear()
         tokenState.setText(if (settings.hasToken) R.string.token_saved_hint else R.string.token_hint)
+        settings.uploadMode = if (throughOdysseus.isChecked && settings.hasOdysseusToken) Settings.MODE_ODYSSEUS
+            else Settings.MODE_DIRECT
+        throughOdysseus.isChecked = settings.throughOdysseus
         settings.startOnBoot = boot.isChecked
         settings.tokenRejected = false
         result.text = getString(R.string.saved)
-        RelayState.logger.log(org.barvis.sound.relay.relay.Level.INFO, "settings saved (server ${c.base})")
+        showPairState()
+        val where = if (settings.throughOdysseus) "through Odysseus ${settings.odysseusUrl}" else "server $base"
+        RelayState.logger.log(org.barvis.sound.relay.relay.Level.INFO, "settings saved ($where)")
     }
 
+    /** Tests what the relay would use: through Odysseus when that is ticked, else direct. */
     private fun test() {
-        val c = ServerUrl.check(url.text.toString())
+        val odysseus = throughOdysseus.isChecked
+        val c = ServerUrl.check((if (odysseus) odyUrl else url).text.toString())
         if (c !is ServerUrl.Check.Ok) {
             result.text = (c as ServerUrl.Check.Invalid).reason
             return
         }
-        val typed = token.text.toString().trim()
+        val typed = (if (odysseus) odyToken else token).text.toString().trim()
         result.text = getString(R.string.testing)
         scope.launch {
-            val stored = if (typed.isEmpty()) settings.token() else typed
-            val up = HttpUploader(c.base, { stored }, RelayState.logger)
+            val stored = if (typed.isNotEmpty()) typed else if (odysseus) settings.odysseusToken() else settings.token()
+            val routes = if (odysseus) Routes.ODYSSEUS else Routes.DIRECT
+            val up = HttpUploader(c.base, { stored }, RelayState.logger, routes = routes)
+            if (odysseus && stored.isEmpty()) {
+                result.setText(R.string.test_no_token)
+                return@launch
+            }
             val health = up.health()
             if (health !is ServerResult.Ok) {
                 result.text = getString(R.string.test_unreachable, HttpUploader.describe(health))

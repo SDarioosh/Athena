@@ -102,7 +102,7 @@ class MainActivity : Activity() {
             RelayService.stop(this)
             return
         }
-        if (settings.serverUrl.isBlank() || !settings.hasToken) {
+        if (settings.target() == null) {
             startActivity(Intent(this, SettingsActivity::class.java))
             return
         }

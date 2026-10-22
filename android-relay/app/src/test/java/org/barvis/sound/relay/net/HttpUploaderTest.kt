@@ -104,6 +104,38 @@ class HttpUploaderTest {
         assertArrayEquals(audio, parts.getValue("audio").second)
     }
 
+    private fun throughOdysseus() = HttpUploader(base, { token }, log = { _, m -> logs += m },
+        connectTimeoutMs = 2000, readTimeoutMs = 2000, routes = Routes.ODYSSEUS)
+
+    @Test fun throughOdysseusUsesTheHubRoutes() = runBlocking {
+        val up = throughOdysseus()
+        assertEquals(ServerResult.Ok(duplicate = false), up.upload(chunk()))
+        answer = { 200 to """{"ok": true, "stop": true}""" }
+        assertEquals(ServerResult.Ok(), up.endSession("3f9a0c11d2e4b507"))
+        answer = { 200 to """{"ok": true}""" }
+        assertEquals(ServerResult.Ok(), up.health())
+        assertEquals(ServerResult.Ok(), up.checkToken())
+        assertEquals(listOf("/api/codex/sound/chunk", "/api/codex/sound/sessions/3f9a0c11d2e4b507/end",
+            "/api/codex/sound/health", "/api/codex/sound/health"), requests.map { it.path })
+        // Every call carries the token there, health included (it checks the token and the module).
+        assertTrue(requests.all { it.headers["authorization"] == listOf("Bearer $token") })
+        val parts = parseMultipart(requests[0].headers.getValue("content-type").single(), requests[0].body)
+        assertEquals("ogg", String(parts.getValue("codec").second, Charsets.UTF_8))
+        assertArrayEquals(audio, parts.getValue("audio").second)
+    }
+
+    @Test fun throughOdysseusKeepsTheErrorRules() = runBlocking {
+        val up = throughOdysseus()
+        answer = { 403 to """{"detail": "API token missing required scope: sound:ingest"}""" }
+        assertEquals(ServerResult.AuthRejected(403), up.upload(chunk()))
+        // Odysseus can't reach odysseus-sound: retry later, never a token problem.
+        answer = { 502 to """{"detail": "odysseus-sound is not reachable"}""" }
+        assertTrue(up.upload(chunk()) is ServerResult.Transient)
+        answer = { 400 to """{"detail": "codec must be one of ['ogg', 'opus']"}""" }
+        val r = up.upload(chunk())
+        assertTrue(r is ServerResult.Rejected && r.code == 400 && r.detail.contains("codec"))
+    }
+
     @Test fun duplicateIsOk() = runBlocking {
         answer = { 200 to """{"ok": true, "stop": false, "duplicate": true}""" }
         assertEquals(ServerResult.Ok(duplicate = true), uploader().upload(chunk()))
