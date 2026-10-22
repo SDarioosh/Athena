@@ -168,8 +168,11 @@ the data path touches the cloud.**
   note) and `explicit` (true when the item has a date or time, a named list, kind
   reminder/event/note, or the voice note used a command word such as "remind me" or "add a
   task"), so the hub files explicit items itself and offers the rest as suggestions;
-  `update_action_item` can set `title` (MCP 0.7.0, additive). Intentions, priorities,
-  principles and decisions are facts about the owner, not action items.
+  `update_action_item` can set `title` (MCP 0.7.0, additive). Each row also has `with`
+  (MCP 0.9.0, additive): `[{id, name}]` of the other people in its conversation (named
+  speakers and summary people, owner left out, those the item names first; `[]` for
+  notes). Intentions, priorities, principles and decisions are facts about the owner, not
+  action items.
 - People have a stable id (`people` table) that survives renames, so the hub can link a
   person here to one of its contacts. `list_people(format="json")` returns
   `{"people": [{id, name, aliases, is_owner, has_voice, conversations, first_seen,

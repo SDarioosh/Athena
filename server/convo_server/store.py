@@ -1347,6 +1347,61 @@ class Store:
                     return pid
         return None
 
+    def conversation_participants(self, conv_ids: Iterable[str],
+                                  owner_names: Iterable[str] = ()
+                                  ) -> dict[str, list[dict[str, Any]]]:
+        """For each conversation, the people in it other than the owner, in order of
+        first appearance: named speakers of its lines (by first line), then the people
+        its summary lists. Each is ``{"id", "name", "names"}``: the person's id (following
+        merges; None for a name with no person row), their current name, and every name
+        they appear under here (for matching against text). Unnamed labels ("Speaker 2",
+        "Unknown") are skipped, and so is the owner: owner lines, the owner's person (see
+        ``owner_person_id``), its aliases, and any name in ``owner_names``. One pass for
+        the whole set; names are resolved once each."""
+        conv_ids = list(dict.fromkeys(conv_ids))
+        out: dict[str, list[dict[str, Any]]] = {cid: [] for cid in conv_ids}
+        if not conv_ids:
+            return out
+        owner_names = tuple(owner_names)
+        owner = self.owner_person_id(owner_names)
+        marks = ",".join("?" * len(conv_ids))
+        rows = self._q(
+            "SELECT conversation_id AS conv, speaker AS name, MIN(started_at) AS first,"
+            " 0 AS src FROM segments WHERE is_owner = 0 AND conversation_id IN"
+            f" ({marks}) GROUP BY conversation_id, speaker COLLATE NOCASE"
+            " UNION ALL SELECT conversation_id, name, rowid, 1 FROM conversation_people"
+            f" WHERE conversation_id IN ({marks}) ORDER BY 1, 4, 3", [*conv_ids, *conv_ids])
+        skip = _lower(owner_names) | {r["name"].strip().lower() for r in self._q(
+            "SELECT name FROM speakers WHERE is_owner = 1")}
+        if owner is not None:
+            skip |= {r["name"].strip().lower() for r in self._q(
+                "SELECT name FROM people WHERE id = ? UNION SELECT alias FROM people_aliases"
+                " WHERE person_id = ?", (owner, owner))}
+        resolved: dict[str, tuple[int | None, str]] = {}
+        with self._lock:
+            for r in rows:
+                key = (r["name"] or "").strip().lower()
+                if key in resolved or not key or key in skip or _PLACEHOLDER_SPEAKER.match(key):
+                    continue
+                pid = _person_id(self._conn, r["name"])
+                row = (self._conn.execute("SELECT name FROM people WHERE id = ?", (pid,))
+                       .fetchone() if pid is not None else None)
+                resolved[key] = (pid, row["name"] if row else r["name"].strip())
+        for r in rows:
+            key = (r["name"] or "").strip().lower()
+            if key not in resolved or resolved[key][0] == owner and owner is not None:
+                continue
+            pid, name = resolved[key]
+            entries = out[r["conv"]]
+            same = next((e for e in entries if (e["id"] == pid if pid is not None
+                                                else e["name"].lower() == key)), None)
+            if same is None:
+                entries.append({"id": pid, "name": name, "names": [name]})
+                same = entries[-1]
+            if r["name"].strip().lower() not in (n.lower() for n in same["names"]):
+                same["names"].append(r["name"].strip())
+        return out
+
     def people(self, owner_names: Iterable[str] = ()) -> list[dict[str, Any]]:
         """Every person not merged into another: id, name, aliases, is_owner, has_voice,
         conversations (distinct conversations they spoke in or were named in, under their
