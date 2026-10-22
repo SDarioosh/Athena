@@ -78,7 +78,7 @@ def test_lists_tools(mcp):
         "search_transcripts", "search_conversations", "get_conversation", "get_transcript",
         "list_action_items", "update_action_item", "list_facts", "get_daily_digest",
         "list_people", "name_speaker", "rename_speaker_everywhere", "reassign_line",
-        "list_unnamed_speakers"}
+        "list_unnamed_speakers", "retire_fact"}
 
 
 AGENTS_MD = Path(__file__).resolve().parents[2] / "AGENTS.md"
@@ -114,7 +114,7 @@ def test_tool_annotations_match_contract(mcp):
             return (await client.list_tools()).tools
 
     contract = contract_table()
-    assert len(contract) == 13  # the table parsed: 9 read-only + 4 write tools
+    assert len(contract) == 14  # the table parsed: 9 read-only + 5 write tools
     tools = {t.name: t.annotations for t in asyncio.run(go())}
     assert set(tools) == set(contract), (
         f"not in the AGENTS.md table: {sorted(set(tools) - set(contract))}; "
@@ -128,6 +128,8 @@ def test_tool_annotations_match_contract(mcp):
             assert a.read_only_hint is False, f"{name} must be readOnlyHint: false"
             assert a.destructive_hint is (kind == "rwd"), (
                 f"{name} must be destructiveHint: {kind == 'rwd'}")
+            assert a.idempotent_hint is True and a.open_world_hint is False, name
+    assert contract["retire_fact"] == "rwd"
 
 
 def test_what_did_x_say_on_date(pipeline, mcp):

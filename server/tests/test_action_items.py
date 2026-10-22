@@ -118,7 +118,7 @@ def test_migration_v5_to_v6_makes_old_items_tasks(tmp_path):
     path = tmp_path / "old.db"
     old_v5_db(path)
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 8
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 9
     (item,) = store.list_action_items()
     assert item["kind"] == "task" and item["due_date"] == "2025-10-10"
     assert item["due_time"] is None and item["time_unclear"] == 0
