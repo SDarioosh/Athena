@@ -26,7 +26,7 @@ the feed in and takes the actions out over BLE: the glance protocol of plan §3.
 | `main/outbox.*`, `pda_actions.*` | persistent action queue, action JSON (pure) |
 | `main/feed_store.*` | atomic feed swap, 20-entry detail cache (pure) |
 | `main/pda_app.*` | state: feed, outbox, pending / failed lists, clock; the BLE store |
-| `main/ui_pda.*`, `gfx.*`, `fonts.*` | the screens of plan §5; text layout; Fira Sans 12/20 (OFL, `main/fonts/`) |
+| `main/ui_pda.*`, `ui_chrome.*`, `gfx.*`, `fonts.*` | the screens of plan §5; the header, tabs, headings and Asleep screen; text layout, round ticks, the battery icon; Fira Sans Regular 12/20 and SemiBold 12/20/32 (OFL, `main/fonts/`) |
 | `main/today_plan.*`, `ui_today.*`, `ui_layout.h` | the Today tab: the plan from the hub's insight or from rules (pure), its drawing (gfx only, rendered on the host), the screens' geometry |
 | `main/pda_console.*`, `pda_cmds.c` | USB console |
 | `test/` | host tests (no ESP-IDF needed) |
@@ -98,10 +98,11 @@ host stand-in for epdiy (`test/host/`) and writes the pages to
   ±15 min, duration or all day → Add. Queued events show grey until the next feed.
 - **Talks:** tap a conversation for its summary; "Transcript" shows the cached page or
   queues a `fetch`; "Next part" follows the page's `next`.
-- **Status:** phone, bonds, outbox, feed version, clock, battery; "Pair a phone",
-  "Clean refresh", "Wipe cache (hold)".
+- **Status:** PHONE (connected or last seen, phones paired, changes waiting), BATTERY, and
+  DETAILS (feed version, clock, screen, firmware, BLE name, battery mV); "Pair a phone",
+  "Clean refresh", "Turn 180°", "Light", "Wipe cache (hold)".
 - **Buttons:** BOOT short = back / Today; BOOT held 1 s = sleep (deep sleep, an "Asleep"
-  screen stays on the panel; press BOOT to wake, which restarts the firmware and redraws
+  screen stays on the panel with the next event, its date and the battery at sleep; press BOOT to wake, which restarts the firmware and redraws
   Today with one clean refresh, a single flash); the button next to BOOT (LilyGO's S3, labelled IO48 on the board, read through
   the PCA9535 IO1_2; GPIO48 itself is the e-paper's CKV line) short = front light on/off,
   held 1 s = sync mode (the 2-minute pairing window with fast advertising, so a phone
@@ -194,7 +195,15 @@ python tools/pda_serial.py -p COM36 fb today.png
   of partial updates is untested.
 - Grey doesn't show on the owner's panel (2026-10-20): grey text and lines were invisible
   on the PDA screens, so the UI draws only black and white (`GFX_FAINT` and `GFX_PENDING`
-  are black in `main/gfx.h`). Use layout, labels and marks, not grey, to set things apart.
+  are black in `main/gfx.h`). Use layout, labels, marks and font weight (SemiBold titles,
+  Regular details), not grey, to set things apart.
+- The 2026-10-21 look (SemiBold fonts, plain tabs, round ticks, the time column, the new
+  header, Status sections and Asleep screen) and the tap feedback (a black frame with a DU
+  update before a new screen): every tab read back from the T5's framebuffer and drawn
+  right; the DU tap frame and the Asleep screen not yet looked at on the panel.
+- Tab and menu changes are partial (GL16) updates since 2026-10-21, with no flash (the
+  owner's choice); ghosting left by them until the next clean refresh (at most 10 counted
+  updates) not yet judged on the panel. Turning the screen 180° stays a full update.
 - Pairing being refused outside the window, re-pairing, and `ERROR mtu_too_small` (host
   tests only; Windows always negotiates 517).
 - The Service Changed indication from an Android phone (the GATT client is compiled in for

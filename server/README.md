@@ -342,6 +342,9 @@ small local model does better on narrow questions):
    are left out of the text `list_action_items`, the digest and `GET /v1/action-items`
    (add `?include_notes=true`); the JSON listing has them. Odysseus files each into its
    notes (a note of its own, or a line on the named notes) and marks it done here.
+   Items on a shopping-type list (`list_name` in `CONVO_DIGEST_SKIP_LISTS`, default
+   `Shopping,Groceries,Grocery`, any case) are left out of the daily digest too; they
+   stay in `list_action_items`.
 4. **Facts**, then a **linking** call against related known facts (same subject or
    matching words): a repeat becomes another source of the known fact; a changed value
    replaces the older one (by conversation time, so re-summarizing an old conversation

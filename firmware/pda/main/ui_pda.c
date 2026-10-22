@@ -3,10 +3,12 @@
  * screen's buttons and the pager, and a tab bar. Each redraw paints the whole
  * framebuffer and records tap regions; epdiy then drives only the pixels that changed.
  *
- * Refresh policy (§5): a new screen is a full (flashing) update, a change on the same
- * screen (a pending mark, a page) a partial one, the minute clock a small partial that
- * doesn't count towards the ghosting budget; every PDA_EPD_PARTIAL_LIMIT updates and
- * "Clean refresh" on the Status screen give a clean refresh.
+ * Refresh policy (§5): a new screen, a change on the same screen (a pending mark, a page)
+ * and a new feed are partial (non-flashing) updates; turning the screen 180° is a full
+ * one; the minute clock a small partial that doesn't count towards the ghosting budget.
+ * Every PDA_EPD_PARTIAL_LIMIT counted updates, and "Clean refresh" on the Status screen,
+ * give a clean refresh that clears ghosting. An update that would change no pixel is
+ * skipped (pda_epd.c), so a sync with the same content doesn't touch the panel.
  *
  * Buttons: BOOT short = back / Today, BOOT held 1 s = deep sleep (the "Asleep" screen
  * stays on the panel; a BOOT press wakes it, and it wakes on its own every 15 min to sync,
@@ -37,6 +39,7 @@
 #include "t5_board.h"
 #include "today_plan.h"
 #include "touch_gt911.h"
+#include "ui_chrome.h"
 #include "ui_layout.h"
 #include "ui_nav.h"
 #include "ui_today.h"
@@ -56,7 +59,6 @@ static const char *const SCREEN_NAMES[UI_SCREEN_COUNT] = {
     "today", "briefing", "calendar", "actions", "talks", "status",
     "conversation", "transcript", "event", "templates", "new-event",
 };
-static const char *const TAB_LABELS[6] = {"Today", "Brief", "Cal", "Tasks", "Talks", "Status"};
 static const char *const DEFAULT_TEMPLATES[] = {"Call", "Meeting", "Reminder"};
 
 typedef enum {
@@ -109,7 +111,7 @@ static struct {
     int64_t ev_from_item;
     hit_t hits[MAX_HITS];
     int n_hits;
-    bool screen_changed;
+    bool full_next;           /* the next refresh is a full (flashing) one: after a rotation */
 } ui = {.passkey = -1};
 
 const char *ui_screen_name(ui_screen_t s)
@@ -164,68 +166,57 @@ static void go(ui_screen_t s)
         }
         ui.screen = s;
         ui.page = 0;
-        ui.screen_changed = true;
     }
 }
 
 /* ---- header, tabs, pager ---- */
 
+/* The header's note: only what is worth a look (the Status screen has the rest). */
+#define SYNC_STALE_S 3600 /* four missed 15-minute syncs */
+
 static void draw_header(const char *title)
 {
-    gfx_fill((EpdRect){0, 0, W, HEADER_H}, 0xFF);
-    char clock[16] = "--:--", date[24] = "";
+    char clock[16] = "--:--", date[24] = "", note[48] = "";
     if (pda_app_time_valid()) {
         pda_fmt_date(pda_app_now(), tz(), date, sizeof(date));
         pda_fmt_hm(pda_app_now(), tz(), clock, sizeof(clock));
     }
-    const int cw = gfx_text_width(BIG, clock);
-    gfx_text_fit(BIG, MARGIN, 48, W - 2 * MARGIN - cw - 20, title, GFX_INK);
-    gfx_text(BIG, W - MARGIN - cw, 48, clock, GFX_INK);
     t5_battery_t b;
-    char batt[24] = "";
-    if (t5_battery_read(&b) == ESP_OK && b.percent >= 0) {
-        snprintf(batt, sizeof(batt), "%d%%%s", b.percent, b.charging ? "+" : "");
-    }
-    char sync[48];
+    const bool batt = t5_battery_read(&b) == ESP_OK && b.percent >= 0;
     const int64_t last = ble_pda_last_sync();
     const feed_t *f = pda_app_feed();
-    if (ble_pda_is_connected()) {
-        snprintf(sync, sizeof(sync), "phone connected");
-    } else if (last > 0 && pda_app_time_valid()) {
-        char age[24];
-        pda_fmt_age(pda_app_now() - last, age, sizeof(age));
-        snprintf(sync, sizeof(sync), "synced %s", age);
-    } else if (f && pda_app_time_valid() && f->generated > 0) {
-        char age[24];
-        pda_fmt_age(pda_app_now() - f->generated, age, sizeof(age));
-        snprintf(sync, sizeof(sync), "feed %s", age);
-    } else {
-        snprintf(sync, sizeof(sync), f ? "feed loaded" : "no feed");
+    /* nothing on a sync's connect and disconnect, so a sync doesn't redraw the screen
+     * (the Status screen says "Connected") */
+    if (!f) {
+        snprintf(note, sizeof(note), "no feed");
+    } else if (pda_app_time_valid()) {
+        const int64_t at = last > 0 ? last : f->generated;
+        if (at > 0 && pda_app_now() - at > SYNC_STALE_S) {
+            char age[24];
+            pda_fmt_age(pda_app_now() - at, age, sizeof(age));
+            snprintf(note, sizeof(note), "synced %s", age);
+        }
     }
-    const int ob = pda_app_outbox_count();
-    char line[160];
-    snprintf(line, sizeof(line), "%s \xc2\xb7 %s \xc2\xb7 %s", date, batt, sync);
-    if (ob > 0) {
-        char obs[16];
-        snprintf(obs, sizeof(obs), "\xe2\x86\x91%d", ob); /* ↑n: actions waiting for the phone */
-        gfx_text_right(TEXT, W - MARGIN, 86, obs, GFX_INK);
-        gfx_text_fit(TEXT, MARGIN, 86, W - 2 * MARGIN - 60, line, GFX_INK);
-    } else {
-        gfx_text_fit(TEXT, MARGIN, 86, W - 2 * MARGIN, line, GFX_INK);
-    }
-    gfx_hline(0, HEADER_H - 2, W, 0x00);
-    gfx_hline(0, HEADER_H - 1, W, 0x00);
+    const ui_header_t h = {
+        .title = title,
+        .clock = clock,
+        .date = date,
+        .battery = batt ? b.percent : -1,
+        .charging = batt && b.charging,
+        .note = note,
+        .outbox = pda_app_outbox_count(),
+    };
+    ui_chrome_header(&h);
 }
 
-static EpdRect header_area(void)
+static void tab_hit(void *ctx, EpdRect r, int tab)
 {
-    return (EpdRect){0, 0, W, HEADER_H};
+    (void)ctx;
+    hit(r, A_TAB, tab);
 }
 
 static void draw_tabs(void)
 {
-    const int tw = W / 6;
-    gfx_hline(0, TAB_Y, W, 0x00);
     ui_screen_t active = ui.screen;
     if (active >= UI_CONV_DETAIL) {
         active = active == UI_CONV_DETAIL || active == UI_TRANSCRIPT ? UI_CONVERSATIONS
@@ -233,11 +224,7 @@ static void draw_tabs(void)
                      ? UI_CALENDAR
                      : UI_TODAY;
     }
-    for (int i = 0; i < 6; i++) {
-        const EpdRect r = {i * tw + 4, TAB_Y + 6, tw - 8, TAB_H - 10};
-        gfx_button(r, TAB_LABELS[i], (int)active == i);
-        hit((EpdRect){i * tw, TAB_Y, tw, TAB_H}, A_TAB, i);
-    }
+    ui_chrome_tabs((int)active, tab_hit, NULL);
 }
 
 static void draw_toast(void)
@@ -247,12 +234,7 @@ static void draw_toast(void)
     }
     const EpdRect r = {MARGIN, ROW_Y - 50, W - 2 * MARGIN, 44};
     gfx_fill(r, 0x00);
-    EpdFontProperties p = epd_font_properties_default();
-    p.fg_color = 0xF;
-    p.bg_color = 0x0;
-    p.fallback_glyph = '?';
-    int x = r.x + 12, y = r.y + 31;
-    epd_write_string(TEXT, ui.toast, &x, &y, pda_epd_fb(), &p);
+    gfx_text_inv(TEXT_B, r.x + 14, r.y + 31, ui.toast);
     ui.toast[0] = 0; /* shown once */
 }
 
@@ -370,9 +352,9 @@ static int pw_pages(const pw_t *pw)
 static void draw_no_feed(void)
 {
     int y = TOP + 60;
-    gfx_text(BIG, MARGIN + 20, y, "No feed yet", GFX_INK);
+    gfx_text(BIG, MARGIN, y, "No feed yet", GFX_INK);
     y += 60;
-    gfx_wrap(TEXT, MARGIN + 20, y, W - 2 * MARGIN - 40,
+    gfx_wrap(TEXT, MARGIN, y, LIST_W,
              "Pair a phone on the Status screen (or hold the button next to BOOT for a second). The phone sends the "
              "briefing, conversations, action items and calendar when it syncs. For a test, load "
              "the demo feed over USB: tools/pda_serial.py put test/fixtures/feed_demo.json",
@@ -446,8 +428,8 @@ static void draw_today(const feed_t *f)
     static today_plan_t plan; /* UI task only */
     const int64_t now = now_s();
     today_plan_for_today(f, pda_local_day(now, tz()), now, tz(), &plan);
-    const ui_today_in_t in = {.f = f, .plan = &plan, .todo_state = today_todo_state, .hit = today_hit,
-                              .ctx = (void *)f};
+    const ui_today_in_t in = {.f = f, .plan = &plan, .today = pda_local_day(now, tz()), .tz_min = tz(),
+                              .todo_state = today_todo_state, .hit = today_hit, .ctx = (void *)f};
     clamp_page(ui_today_draw(&in, &ui.page));
     draw_pager();
 }
@@ -465,7 +447,7 @@ static void draw_briefing(const feed_t *f)
     } else {
         char d[48];
         snprintf(d, sizeof(d), "Digest of %s", f->brief_date ? f->brief_date : "?");
-        pw_para(&pw, TEXT, d, GFX_FAINT, 0);
+        pw_para(&pw, TEXT_B, d, GFX_FAINT, 0);
         pw_para(&pw, TEXT, f->brief_text, GFX_INK, 0);
         pw_gap(&pw);
         for (int i = 0; i < f->n_highlights; i++) {
@@ -585,15 +567,17 @@ static void draw_calendar(const feed_t *f)
         if (r->header) {
             char d[24];
             pda_fmt_day(r->day, d, sizeof(d));
-            gfx_text(TEXT, MARGIN, y, d, GFX_FAINT);
-            gfx_hline(MARGIN + gfx_text_width(TEXT, d) + 10, y - 8, LIST_W - gfx_text_width(TEXT, d) - 10, 0x00);
+            const int dw = gfx_text_width(TEXT_B, d);
+            gfx_text(TEXT_B, MARGIN, y, d, GFX_INK);
+            gfx_hline(MARGIN + dw + 12, y - 9, LIST_W - dw - 12, 0x00);
+            gfx_hline(MARGIN + dw + 12, y - 8, LIST_W - dw - 12, 0x00);
             y += LH + 6;
         } else if (r->ev >= 0) {
             const feed_event_t *e = &f->events[r->ev];
             char when[32];
             fmt_event_when(e, when, sizeof(when), false);
             gfx_text(TEXT, MARGIN + 10, y, when, GFX_INK);
-            gfx_text_fit(TEXT, MARGIN + 170, y, LIST_W - 170, e->title, GFX_INK);
+            gfx_text_fit(TEXT_B, MARGIN + 170, y, LIST_W - 170, e->title, GFX_INK);
             const int rh = (e->where ? 2 * LH : LH) + 6;
             if (e->where) {
                 gfx_text_fit(TEXT, MARGIN + 170, y + LH, LIST_W - 170, e->where, GFX_FAINT);
@@ -653,19 +637,20 @@ static void draw_action_row(const feed_action_t *a, int idx, int y, int32_t toda
     const bool pending_close = p && strcmp(p->info.status, "open") != 0;
     const pda_failed_t *fail = failed_item(a->id);
     const uint8_t color = pending_close ? GFX_PENDING : GFX_INK;
-    const EpdRect box = {MARGIN, y - 22, 28, 28};
-    gfx_frame(box, 0x00);
-    if (pending_close) {
-        gfx_text(TEXT, box.x + 5, y + 1, strcmp(p->info.status, "done") == 0 ? "\xe2\x9c\x93" : "\xc3\x97",
-                 GFX_PENDING); /* ✓ or × */
+    /* a round tick: filled when done, a × in the ring when dismissed */
+    const bool is_done = pending_close && strcmp(p->info.status, "done") == 0;
+    gfx_check(MARGIN + 14, y - 8, 14, is_done);
+    if (pending_close && !is_done) {
+        const int xw = gfx_text_width(TEXT_B, "\xc3\x97");
+        gfx_text(TEXT_B, MARGIN + 14 - xw / 2, y + 1, "\xc3\x97", GFX_PENDING); /* × */
     }
     const int tx = MARGIN + 42, tw = LIST_W - 42;
-    gfx_wrap(TEXT, tx, y, tw, a->text, color, 0, 2);
+    gfx_wrap(TEXT_B, tx, y, tw, a->text, color, 0, 2);
     if (pending_close) {
         int wl[2];
         const int nw = gfx_wrap_widths(wl, 2);
         for (int l = 0; l < nw; l++) {
-            gfx_strike(TEXT, tx, y + l * LH, wl[l]);
+            gfx_strike(TEXT_B, tx, y + l * LH, wl[l]);
         }
     }
     const int my = y + 2 * LH;
@@ -797,11 +782,7 @@ static void draw_tasks(const feed_t *f)
         const pda_failed_t *fail = failed_todo(note->id, it->i);
         const bool done = pt ? pt->info.done : it->done;
         const uint8_t color = pt ? GFX_PENDING : done ? GFX_FAINT : GFX_INK;
-        const EpdRect box = {MARGIN + 10, y - 22, 28, 28};
-        gfx_frame(box, 0x00);
-        if (done) {
-            gfx_text(TEXT, box.x + 5, y + 1, "\xe2\x9c\x93", pt ? GFX_PENDING : GFX_INK); /* ✓ */
-        }
+        gfx_check(MARGIN + 2 + 14, y - 8, 14, done);
         gfx_wrap(TEXT, TASK_TEXT_X, y, TASK_TEXT_W, it->text, color, 0, row->lines);
         if (done) {
             int wl[3];
@@ -839,7 +820,7 @@ static void draw_conversations(const feed_t *f)
     }
     for (int i = ui.page * per_page; i < f->n_conv && i < (ui.page + 1) * per_page; i++) {
         const feed_conv_t *c = &f->conv[i];
-        const int lines = gfx_wrap(TEXT, MARGIN, y, LIST_W, c->title, GFX_INK, 0, 2);
+        const int lines = gfx_wrap(TEXT_B, MARGIN, y, LIST_W, c->title, GFX_INK, 0, 2);
         char meta[200] = "", when[48] = "";
         if (c->at) {
             char d[24], t[12];
@@ -852,7 +833,7 @@ static void draw_conversations(const feed_t *f)
             m += (size_t)snprintf(meta + m, sizeof(meta) - m, "%s%s", k == 0 ? (m ? " \xc2\xb7 " : "") : ", ",
                                   c->people[k]);
         }
-        gfx_text_fit(TEXT, MARGIN + 20, y + (lines > 1 ? 2 : 1) * LH, LIST_W - 20, meta, GFX_FAINT);
+        gfx_text_fit(TEXT, MARGIN, y + (lines > 1 ? 2 : 1) * LH, LIST_W, meta, GFX_FAINT);
         hit((EpdRect){0, y - 30, W, row_h}, A_CONV, i);
         y += row_h;
         gfx_hline(MARGIN, y - 36, LIST_W, 0x00);
@@ -870,7 +851,7 @@ static void draw_conv_detail(const feed_t *f)
     const feed_conv_t *c = &f->conv[ui.sel];
     draw_header("Conversation");
     pw_t pw = pw_begin(MARGIN, TOP + 26, LIST_W, lines_from(TOP + 26));
-    pw_para(&pw, TEXT, c->title, GFX_INK, 0);
+    pw_para(&pw, TEXT_B, c->title, GFX_INK, 0);
     char meta[200] = "";
     size_t m = 0;
     if (c->at) {
@@ -901,7 +882,7 @@ static void draw_conv_detail(const feed_t *f)
         }
         if (!any) {
             pw_gap(&pw);
-            pw_para(&pw, TEXT, "SUGGESTED ACTION ITEMS \xc2\xb7 tap: done \xc2\xb7 hold: dismiss", GFX_FAINT, 0);
+            pw_para(&pw, TEXT_B, "SUGGESTED ACTION ITEMS \xc2\xb7 tap: done \xc2\xb7 hold: dismiss", GFX_FAINT, 0);
             pw.line++; /* room above the first checkbox */
             any = true;
         }
@@ -1014,7 +995,7 @@ static void draw_event(const feed_t *f)
 static void draw_templates(const feed_t *f)
 {
     draw_header("New event");
-    gfx_text(TEXT, MARGIN, TOP + 26, "Pick a title:", GFX_FAINT);
+    gfx_text(TEXT_B, MARGIN, TOP + 26, "Pick a title:", GFX_FAINT);
     const int n = f && f->n_templates ? f->n_templates : (int)(sizeof(DEFAULT_TEMPLATES) / sizeof(DEFAULT_TEMPLATES[0]));
     const int cols = 2, bw = (W - 2 * MARGIN - (cols - 1) * 12) / cols, bh = 80;
     for (int i = 0; i < n && i < 12; i++) {
@@ -1106,63 +1087,77 @@ static void draw_new_event(void)
 static void draw_status(const feed_t *f)
 {
     draw_header("Status");
-    int y = TOP + 26;
+    /* PHONE and BATTERY in plain words; DETAILS for the technical lines */
     char line[200];
+    int top = TOP;
+    ui_chrome_heading(top, "PHONE", NULL);
+    int y = top + UI_HEADING_H + 24;
     const int64_t link = pda_app_last_link_s();
     if (ble_pda_is_connected()) {
-        snprintf(line, sizeof(line), "Phone: connected");
+        snprintf(line, sizeof(line), "Connected");
     } else if (link > 0 && pda_app_time_valid()) {
         char age[24];
         pda_fmt_age(pda_app_now() - link, age, sizeof(age));
-        snprintf(line, sizeof(line), "Phone: last seen %s", age);
+        snprintf(line, sizeof(line), "Last seen %s", age);
     } else {
-        snprintf(line, sizeof(line), "Phone: not seen since boot");
+        snprintf(line, sizeof(line), "Not seen since the T5 started");
+    }
+    gfx_text(TEXT_B, MARGIN, y, line, GFX_INK);
+    y += LH;
+    const int bonds = ble_pda_bond_count();
+    snprintf(line, sizeof(line), bonds == 0 ? "No phone paired yet" : bonds == 1 ? "1 phone paired" : "%d phones paired",
+             bonds);
+    gfx_text(TEXT, MARGIN, y, line, GFX_INK);
+    y += LH;
+    const int ob = pda_app_outbox_count();
+    if (ob == 0) {
+        snprintf(line, sizeof(line), "Nothing waiting to sync");
+    } else {
+        snprintf(line, sizeof(line), "%d change%s waiting for the next sync", ob, ob == 1 ? "" : "s");
     }
     gfx_text(TEXT, MARGIN, y, line, GFX_INK);
-    y += LH;
-    snprintf(line, sizeof(line), "Paired phones: %d", ble_pda_bond_count());
-    gfx_text(TEXT, MARGIN, y, line, GFX_INK);
-    y += LH;
-    snprintf(line, sizeof(line), "Outbox: %d waiting", pda_app_outbox_count());
-    gfx_text(TEXT, MARGIN, y, line, GFX_INK);
-    y += LH;
+
+    top = y + 16;
+    ui_chrome_heading(top, "BATTERY", NULL);
+    y = top + UI_HEADING_H + 24;
+    t5_battery_t b;
+    if (t5_battery_read(&b) == ESP_OK && b.present) {
+        snprintf(line, sizeof(line), "%d%%%s%s", b.percent, b.charging ? ", charging" : "",
+                 b.vbus && !b.charging ? ", on USB" : "");
+        gfx_battery_icon(MARGIN, y, b.percent);
+        gfx_text(TEXT_B, MARGIN + GFX_BATTERY_W + 12, y, line, GFX_INK);
+    } else {
+        gfx_text(TEXT_B, MARGIN, y, "Unknown", GFX_INK);
+    }
+
+    top = y + 16;
+    ui_chrome_heading(top, "DETAILS", NULL);
+    y = top + UI_HEADING_H + 24;
     if (f) {
         char d[24] = "?", t[12] = "";
         if (f->generated) {
             pda_fmt_date(f->generated, tz(), d, sizeof(d));
             pda_fmt_hm(f->generated, tz(), t, sizeof(t));
         }
-        snprintf(line, sizeof(line), "Feed: version %" PRIu32, f->version);
-        gfx_text_fit(TEXT, MARGIN, y, LIST_W, line, GFX_INK);
-        y += LH;
-        snprintf(line, sizeof(line), "   built %s %s%s%s%s", d, t, f->tz ? " (" : "", f->tz ? f->tz : "",
-                 f->tz ? ")" : "");
+        snprintf(line, sizeof(line), "Feed %" PRIu32 ", built %s %s%s%s%s", f->version, d, t, f->tz ? " (" : "",
+                 f->tz ? f->tz : "", f->tz ? ")" : "");
     } else {
-        snprintf(line, sizeof(line), "Feed: none");
+        snprintf(line, sizeof(line), "No feed");
     }
     gfx_text_fit(TEXT, MARGIN, y, LIST_W, line, GFX_INK);
     y += LH;
     const int z = tz() < 0 ? -tz() : tz();
-    snprintf(line, sizeof(line), "Clock: %s, UTC%c%02d:%02d", pda_app_time_valid() ? "set" : "not set",
-             tz() < 0 ? '-' : '+', z / 60, z % 60);
-    gfx_text(TEXT, MARGIN, y, line, GFX_INK);
+    snprintf(line, sizeof(line), "Clock %s, UTC%c%02d:%02d \xc2\xb7 screen %d\xc2\xb0",
+             pda_app_time_valid() ? "set" : "not set", tz() < 0 ? '-' : '+', z / 60, z % 60, pda_epd_rotation());
+    gfx_text_fit(TEXT, MARGIN, y, LIST_W, line, GFX_INK);
     y += LH;
-    t5_battery_t b;
+    snprintf(line, sizeof(line), "Firmware %s \xc2\xb7 BLE odysseus-pda", PDA_FW_VERSION);
+    gfx_text_fit(TEXT, MARGIN, y, LIST_W, line, GFX_INK);
     if (t5_battery_read(&b) == ESP_OK && b.present) {
-        snprintf(line, sizeof(line), "Battery: %d%%, %d mV%s%s", b.percent, b.millivolts,
-                 b.charging ? ", charging" : "", b.vbus ? ", USB" : "");
-    } else {
-        snprintf(line, sizeof(line), "Battery: unknown");
+        y += LH;
+        snprintf(line, sizeof(line), "Battery %d mV \xc2\xb7 board t5_epaper_pro", b.millivolts);
+        gfx_text_fit(TEXT, MARGIN, y, LIST_W, line, GFX_INK);
     }
-    gfx_text(TEXT, MARGIN, y, line, GFX_INK);
-    y += LH;
-    snprintf(line, sizeof(line), "Screen: portrait %d\xc2\xb0", pda_epd_rotation());
-    gfx_text(TEXT, MARGIN, y, line, GFX_INK);
-    y += LH;
-    snprintf(line, sizeof(line), "Firmware %s, board t5_epaper_pro", PDA_FW_VERSION);
-    gfx_text_fit(TEXT, MARGIN, y, LIST_W, line, GFX_FAINT);
-    y += LH;
-    gfx_text(TEXT, MARGIN, y, "BLE name odysseus-pda", GFX_FAINT);
 
     /* buttons, two per row above the bottom row, wipe in the bottom row */
     const int bw = (W - 2 * MARGIN - 12) / 2, bh = ROW_H - 4;
@@ -1205,13 +1200,11 @@ static void draw_passkey(void)
     gfx_fill(r, 0xFF);
     gfx_frame(r, 0x00);
     gfx_frame((EpdRect){r.x + 4, r.y + 4, r.width - 8, r.height - 8}, 0x00);
-    gfx_text(TEXT, r.x + 30, r.y + 50, "Pairing code: type it on the phone", GFX_INK);
+    gfx_text(TEXT_B, r.x + 30, r.y + 50, "Pairing code: type it on the phone", GFX_INK);
     char code[16];
     snprintf(code, sizeof(code), "%03" PRId32 " %03" PRId32, ui.passkey / 1000, ui.passkey % 1000);
-    /* the big font, drawn twice offset by a pixel for weight */
-    const int cw = gfx_text_width(BIG, code);
-    gfx_text(BIG, r.x + (r.width - cw) / 2, r.y + 150, code, GFX_INK);
-    gfx_text(BIG, r.x + (r.width - cw) / 2 + 1, r.y + 150, code, GFX_INK);
+    const int cw = gfx_text_width(HUGE, code);
+    gfx_text(HUGE, r.x + (r.width - cw) / 2, r.y + 160, code, GFX_INK);
     gfx_text(TEXT, r.x + 30, r.y + 220, "Only shown while the pairing window is open.", GFX_FAINT);
 }
 
@@ -1402,7 +1395,6 @@ static void act(const hit_t *h, bool is_long)
             char ref[PDA_REF_MAX];
             snprintf(ref, sizeof(ref), "%s", ui.detail->next);
             open_transcript(ref);
-            ui.screen_changed = true;
         }
         break;
     case A_PLUS:
@@ -1489,7 +1481,7 @@ static void act(const hit_t *h, bool is_long)
         break;
     case A_ROTATE:
         pda_epd_set_rotation(pda_epd_rotation() == 90 ? 270 : 90);
-        ui.screen_changed = true; /* everything moves: redraw as a new screen */
+        ui.full_next = true; /* every pixel moves: a flashing update clears the old image */
         break;
     case A_WIPE:
         if (is_long) {
@@ -1551,11 +1543,50 @@ static void on_swipe(gesture_kind_t k)
     case UI_NAV_ITEM:
         ui.sel = r.arg;
         ui.page = 0;
-        ui.screen_changed = true; /* a different item: a new screen */
         break;
     default:
         break;
     }
+}
+
+/* A tap that opens another screen: a black frame around what was tapped, shown at once
+ * with a fast update, so the tap visibly landed before the new screen's update (which
+ * repaints it). Taps that change the screen in place get their own quick partial update. */
+static void press_feedback(const hit_t *h)
+{
+    switch ((action_t)h->act) {
+    case A_TAB:
+    case A_OPEN:
+    case A_CONV:
+    case A_EVENT:
+    case A_BACK:
+    case A_TRANSCRIPT:
+    case A_NEXT_PAGE:
+    case A_PLUS:
+    case A_TEMPLATE:
+    case A_ADD:
+        break;
+    default:
+        return;
+    }
+    if (h->act == A_TAB && (ui_screen_t)h->arg == ui.screen) {
+        return; /* already there: nothing happens */
+    }
+    EpdRect r = h->r;
+    if (r.x < 0) {
+        r.width += r.x;
+        r.x = 0;
+    }
+    if (r.x + r.width > W) {
+        r.width = W - r.x;
+    }
+    if (r.width < 8 || r.height < 8) {
+        return;
+    }
+    gfx_begin(pda_epd_fb());
+    gfx_frame(r, 0x00);
+    gfx_frame((EpdRect){r.x + 2, r.y + 2, r.width - 4, r.height - 4}, 0x00);
+    pda_epd_update_fast(r);
 }
 
 static void on_gesture(gesture_kind_t k, int x, int y)
@@ -1573,6 +1604,9 @@ static void on_gesture(gesture_kind_t k, int x, int y)
     for (int i = ui.n_hits - 1; i >= 0; i--) {
         const EpdRect *r = &ui.hits[i].r;
         if (x >= r->x && x < r->x + r->width && y >= r->y && y < r->y + r->height) {
+            if (k == GESTURE_TAP) {
+                press_feedback(&ui.hits[i]);
+            }
             act(&ui.hits[i], k == GESTURE_LONG);
             return;
         }
@@ -1587,61 +1621,74 @@ static void on_detail_arrived(uint32_t ref_crc)
     }
 }
 
-/* The "synced HH:MM" line, the only part a sync wake redraws. */
-#define ASLEEP_SYNCED_Y (H / 2 + 95)
-
-void ui_pda_draw_asleep(const char *since, const char *synced)
+void ui_pda_draw_asleep(const ui_asleep_t *a)
 {
     gfx_begin(pda_epd_fb());
     pda_epd_clear_fb();
-    const char *title = "Asleep";
-    gfx_text(BIG, (W - gfx_text_width(BIG, title)) / 2, H / 2 - 60, title, GFX_INK);
-    const char *hint = "Press BOOT to wake";
-    gfx_text(TEXT, (W - gfx_text_width(TEXT, hint)) / 2, H / 2, hint, GFX_INK);
-    if (since[0]) {
-        gfx_text(TEXT, (W - gfx_text_width(TEXT, since)) / 2, H / 2 + 50, since, GFX_INK);
-    }
-    if (synced[0]) {
-        gfx_text(TEXT, (W - gfx_text_width(TEXT, synced)) / 2, ASLEEP_SYNCED_Y, synced, GFX_INK);
-    }
+    ui_chrome_asleep(a);
 }
 
-EpdRect ui_pda_asleep_synced_area(void)
-{
-    /* FONT_TEXT: ascender 24, descender 7; clear of the "since" line 45 px above. */
-    return (EpdRect){0, ASLEEP_SYNCED_Y - 26, W, 36};
-}
-
-/* Deep sleep (BOOT held, or the console): an "Asleep" screen that stays on the panel, then
+/* Deep sleep (BOOT held, or the console): an "Asleep" screen that stays on the panel (when,
+ * the next event and the battery, ui_chrome_asleep()), then
  * sleep until a BOOT press, with sync wakes in between (pda_sleep.c). override_min: as
  * pda_sleep_enter(). Waking is a reset (app_main again), so this doesn't return. */
 static void go_to_sleep(int override_min)
 {
     ESP_LOGI(TAG, "going to sleep");
-    char since[PDA_SLEEP_LINE_MAX] = "", synced[PDA_SLEEP_LINE_MAX] = "";
+    static ui_asleep_t a; /* UI task only */
+    memset(&a, 0, sizeof(a));
+    a.battery = -1;
+    t5_battery_t b;
+    if (t5_battery_read(&b) == ESP_OK && b.present && b.percent >= 0) {
+        a.battery = (int8_t)b.percent;
+    }
     if (pda_app_time_valid()) {
         char d[24], t[12];
         pda_fmt_date(pda_app_now(), tz(), d, sizeof(d));
         pda_fmt_hm(pda_app_now(), tz(), t, sizeof(t));
-        snprintf(since, sizeof(since), "since %s %s", d, t);
-        pda_sleep_synced_line(ble_pda_last_sync(), synced, sizeof(synced));
+        snprintf(a.since, sizeof(a.since), "since %s %s", d, t);
+        pda_sleep_synced_line(ble_pda_last_sync(), a.synced, sizeof(a.synced));
     }
+    /* the next event that hasn't ended, with its full date */
+    pda_app_lock();
+    const feed_t *f = pda_app_feed();
+    const int64_t now = now_s();
+    int best = -1;
+    int64_t best_key = INT64_MAX;
+    for (int i = 0; f && i < f->n_events; i++) {
+        const feed_event_t *e = &f->events[i];
+        if (!event_upcoming(e, now)) {
+            continue;
+        }
+        const int64_t key = e->all_day ? (int64_t)e->start_day * 86400 - tz() * 60 : e->start;
+        if (key < best_key) {
+            best_key = key;
+            best = i;
+        }
+    }
+    if (best >= 0) {
+        fmt_event_when(&f->events[best], a.next_when, sizeof(a.next_when), true);
+        snprintf(a.next_title, sizeof(a.next_title), "%s", f->events[best].title);
+    }
+    pda_app_unlock();
     ui.n_hits = 0;
-    ui_pda_draw_asleep(since, synced);
+    ui_pda_draw_asleep(&a);
     pda_epd_update(PDA_EPD_CLEAN); /* the image stays for hours: no ghosting */
     touch_sleep();
     pda_app_lock(); /* no feed or outbox change from the BLE task from here on */
-    pda_sleep_enter(since, synced, override_min);
+    pda_sleep_enter(&a, override_min);
 }
 
-/* Redraw and push to the panel with the refresh policy. */
+/* Redraw and push to the panel with the refresh policy. A new screen is a partial update
+ * like any other change (no flash); the clean refresh every PDA_EPD_PARTIAL_LIMIT updates
+ * clears what ghosting builds up. */
 static void refresh(pda_epd_kind_t kind)
 {
     draw();
-    if (ui.screen_changed && kind == PDA_EPD_PARTIAL) {
+    if (ui.full_next && kind == PDA_EPD_PARTIAL) {
         kind = PDA_EPD_FULL;
     }
-    ui.screen_changed = false;
+    ui.full_next = false;
     pda_epd_update(kind);
 }
 
@@ -1677,7 +1724,7 @@ static void ui_task(void *arg)
                 ble_pda_open_window();
                 go(UI_STATUS);
                 toast("Sync mode for 2 minutes: sync or pair from the phone now");
-                refresh(PDA_EPD_FULL);
+                refresh(PDA_EPD_PARTIAL);
             } else if (b == T5_BUTTON_BOOT) {
                 go(ui.screen >= UI_CONV_DETAIL ? ui.back_to : UI_TODAY);
                 refresh(PDA_EPD_PARTIAL);
@@ -1690,7 +1737,9 @@ static void ui_task(void *arg)
             go_to_sleep((int)ev.arg);
             break;
         case PDA_EV_FEED:
-            refresh(PDA_EPD_FULL);
+            /* the same screen with new content: a partial update, nothing at all when
+             * the feed draws the same (the relay rebuilds it on every sync) */
+            refresh(PDA_EPD_PARTIAL);
             break;
         case PDA_EV_DETAIL:
             on_detail_arrived((uint32_t)ev.arg);
@@ -1707,16 +1756,18 @@ static void ui_task(void *arg)
             refresh(PDA_EPD_PARTIAL);
             break;
         case PDA_EV_LINK:
-            refresh(PDA_EPD_PARTIAL);
+            if (ui.screen == UI_STATUS) {
+                refresh(PDA_EPD_PARTIAL); /* only Status shows the link */
+            }
             break;
         case PDA_EV_TICK: {
             /* The minute clock: only the header changes; it doesn't count as a partial. */
             draw();
-            pda_epd_update_light(header_area());
+            pda_epd_update_light(ui_chrome_header_area());
             break;
         }
         case PDA_EV_REDRAW:
-            ui.screen_changed = true;
+            ui.full_next = true;
             refresh(ev.arg ? PDA_EPD_CLEAN : PDA_EPD_FULL);
             break;
         case PDA_EV_OPEN: {

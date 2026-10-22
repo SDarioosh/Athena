@@ -48,7 +48,7 @@ endforeach()
 find_package(ZLIB)
 if(ZLIB_FOUND)
     add_executable(test_ui_today test_ui_today.c host/epdiy_host.c
-        ${FW}/main/gfx.c ${FW}/main/fonts.c ${FW}/main/ui_today.c)
+        ${FW}/main/gfx.c ${FW}/main/fonts.c ${FW}/main/ui_today.c ${FW}/main/ui_chrome.c)
     # host/ first: its epdiy.h stands in for the component's
     target_include_directories(test_ui_today BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/host)
     target_link_libraries(test_ui_today pda_pure ZLIB::ZLIB)

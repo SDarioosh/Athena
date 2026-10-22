@@ -18,7 +18,7 @@
 
 static const char *TAG = "sleep";
 
-#define RTC_MAGIC 0x50534c31u /* "PSL1" */
+#define RTC_MAGIC 0x50534c32u /* "PSL2": the screen as a ui_asleep_t */
 #define POLL_MS 100
 #define BOOT_DEBOUNCE_MS 60
 /* The backstop fires this long after the plan's own hard cap: only if the wake loop is
@@ -39,8 +39,7 @@ typedef struct {
     uint32_t wakes, resleeps, syncs, feeds, misses, crashes, backstops;
     int64_t last_wake_s;
     int32_t last_awake_ms;
-    char since[PDA_SLEEP_LINE_MAX];
-    char synced[PDA_SLEEP_LINE_MAX];
+    ui_asleep_t screen;
 } rtc_state_t;
 
 static RTC_NOINIT_ATTR rtc_state_t s_rtc;
@@ -53,8 +52,11 @@ static void rtc_check(void)
         memset(&s_rtc, 0, sizeof(s_rtc));
         s_rtc.magic = RTC_MAGIC;
     }
-    s_rtc.since[PDA_SLEEP_LINE_MAX - 1] = '\0';
-    s_rtc.synced[PDA_SLEEP_LINE_MAX - 1] = '\0';
+    ui_asleep_t *a = &s_rtc.screen;
+    a->since[sizeof(a->since) - 1] = '\0';
+    a->synced[sizeof(a->synced) - 1] = '\0';
+    a->next_when[sizeof(a->next_when) - 1] = '\0';
+    a->next_title[sizeof(a->next_title) - 1] = '\0';
 }
 
 static int64_t now_ms(void)
@@ -91,11 +93,10 @@ static void sleep_until(int64_t target_s)
     t5_board_deep_sleep(target_s ? sleep_plan_sleep_us(&CFG, clock_s(), target_s) : 0);
 }
 
-void pda_sleep_enter(const char *since, const char *synced, int override_min)
+void pda_sleep_enter(const ui_asleep_t *screen, int override_min)
 {
     rtc_check();
-    snprintf(s_rtc.since, sizeof(s_rtc.since), "%s", since);
-    snprintf(s_rtc.synced, sizeof(s_rtc.synced), "%s", synced);
+    s_rtc.screen = *screen;
     if (override_min < 0) {
         ESP_LOGI(TAG, "no sync wakes this time");
         sleep_until(0);
@@ -134,13 +135,13 @@ static void on_backstop(void *arg)
 }
 
 /* A new feed came: change the synced line on the panel, nothing else. The panel shows the
- * Asleep screen as ui_pda_draw_asleep() drew it with the stored lines; draw that again,
+ * Asleep screen as ui_pda_draw_asleep() drew it from the stored screen; draw that again,
  * tell epdiy it is what the panel shows, draw the new line and update just its area. */
 static void show_synced(int64_t bye_s)
 {
     char line[PDA_SLEEP_LINE_MAX];
     pda_sleep_synced_line(bye_s, line, sizeof(line));
-    if (!pda_app_time_valid() || !line[0] || strcmp(line, s_rtc.synced) == 0) {
+    if (!pda_app_time_valid() || !line[0] || strcmp(line, s_rtc.screen.synced) == 0) {
         return;
     }
     const esp_err_t err = pda_epd_init(t5_board_i2c());
@@ -148,11 +149,11 @@ static void show_synced(int64_t bye_s)
     if (err != ESP_OK) {
         return;
     }
-    ui_pda_draw_asleep(s_rtc.since, s_rtc.synced);
+    ui_pda_draw_asleep(&s_rtc.screen);
     pda_epd_mark_shown();
-    ui_pda_draw_asleep(s_rtc.since, line);
-    pda_epd_update_light(ui_pda_asleep_synced_area());
-    snprintf(s_rtc.synced, sizeof(s_rtc.synced), "%s", line);
+    snprintf(s_rtc.screen.synced, sizeof(s_rtc.screen.synced), "%s", line);
+    ui_pda_draw_asleep(&s_rtc.screen);
+    pda_epd_update_light(ui_chrome_asleep_synced_area());
     ESP_LOGI(TAG, "Asleep screen: \"%s\"", line);
 }
 

@@ -129,11 +129,15 @@ def window(audio: np.ndarray, start: float, end: float,
     return audio[int(a * sr): int(b * sr)]
 
 
-def cluster(embeddings: np.ndarray, threshold: float) -> list[int]:
+def cluster(embeddings: np.ndarray, threshold: float,
+            cannot_link: list[int] | None = None) -> list[int]:
     """Average-linkage agglomerative clustering; returns a cluster id per row.
 
     Keeps the sum of pairwise similarities between clusters, so a merge updates one row
     and column instead of recomputing every pair (fast enough for thousands of pieces).
+
+    ``cannot_link`` (one group id per row): two clusters that hold rows of the same group
+    are never merged.
     """
     n = len(embeddings)
     if n == 0:
@@ -144,11 +148,17 @@ def cluster(embeddings: np.ndarray, threshold: float) -> list[int]:
     active = np.ones(n, dtype=bool)
     members: list[list[int]] = [[i] for i in range(n)]
     upper = np.triu(np.ones((n, n), dtype=bool), k=1)
+    groups = [{g} for g in cannot_link] if cannot_link is not None else None
     while active.sum() > 1:
         idx = np.flatnonzero(active)  # a cluster sits at its first member's row
         k = idx.size
         mean = sums[np.ix_(idx, idx)] / np.outer(sizes[idx], sizes[idx])
         mean[~upper[:k, :k]] = -np.inf
+        if groups is not None:
+            for i in range(k):
+                for j in range(i + 1, k):
+                    if groups[idx[i]] & groups[idx[j]]:
+                        mean[i, j] = -np.inf
         i, j = divmod(int(np.argmax(mean)), k)  # first best pair, as the pairwise loop
         if mean[i, j] < threshold:
             break
@@ -158,6 +168,8 @@ def cluster(embeddings: np.ndarray, threshold: float) -> list[int]:
         sizes[a] += sizes[b]
         active[b] = False
         members[a].extend(members[b])
+        if groups is not None:
+            groups[a] |= groups[b]
     labels = [0] * n
     # number clusters by first appearance so labels are stable/readable
     for cid, a in enumerate(np.flatnonzero(active)):

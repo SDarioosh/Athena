@@ -145,3 +145,55 @@ void epd_draw_rect(EpdRect r, uint8_t color, uint8_t *fb)
         px(fb, r.x + r.width - 1, y, shade(color));
     }
 }
+
+void epd_draw_pixel(int x, int y, uint8_t color, uint8_t *fb)
+{
+    px(fb, x, y, shade(color));
+}
+
+/* Bresenham */
+void epd_draw_line(int x0, int y0, int x1, int y1, uint8_t color, uint8_t *fb)
+{
+    const int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    const int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    for (;;) {
+        px(fb, x0, y0, shade(color));
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        const int e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+/* Pixels whose centre is within r + 0.5 of (x, y): filled, or the outline only. */
+static void circle(int x, int y, int r, uint8_t color, uint8_t *fb, bool fill)
+{
+    const int out = (2 * r + 1) * (2 * r + 1), in = (2 * r - 1) * (2 * r - 1);
+    for (int dy = -r; dy <= r; dy++) {
+        for (int dx = -r; dx <= r; dx++) {
+            const int d = 4 * (dx * dx + dy * dy);
+            if (d <= out && (fill || d > in)) {
+                px(fb, x + dx, y + dy, shade(color));
+            }
+        }
+    }
+}
+
+void epd_draw_circle(int x, int y, int r, uint8_t color, uint8_t *fb)
+{
+    circle(x, y, r, color, fb, false);
+}
+
+void epd_fill_circle(int x, int y, int r, uint8_t color, uint8_t *fb)
+{
+    circle(x, y, r, color, fb, true);
+}
