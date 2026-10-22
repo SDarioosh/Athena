@@ -412,8 +412,51 @@ static void test_asleep(void)
     write_png("asleep_empty.png");
 }
 
+/* The header with this clock; the x range of the pixels that differ from before (none: -1). */
+static void header_diff(const char *before_clock, const char *clock, int *x0, int *x1)
+{
+    static uint8_t before[HOST_FB_W * HOST_FB_H];
+    ui_header_t h = {.title = "Today", .clock = before_clock, .date = "Tue 20 Oct", .battery = 87,
+                     .note = "", .outbox = 0};
+    memset(fb, 0xFF, sizeof(fb));
+    gfx_begin(fb);
+    ui_chrome_header(&h);
+    memcpy(before, fb, sizeof(fb));
+    h.clock = clock;
+    ui_chrome_header(&h);
+    *x0 = -1;
+    *x1 = -1;
+    for (int y = 0; y < HOST_FB_H; y++) {
+        for (int x = 0; x < HOST_FB_W; x++) {
+            if (fb[y * HOST_FB_W + x] != before[y * HOST_FB_W + x]) {
+                CHECK(y < HEADER_H);
+                *x0 = *x0 < 0 || x < *x0 ? x : *x0;
+                *x1 = x > *x1 ? x : *x1;
+            }
+        }
+    }
+}
+
+/* The minute update redraws only the digits that changed: an unchanged digit keeps its
+ * pixels even when the new one is wider or narrower ("1" -> "2"). */
+static void test_clock_digits_stay(void)
+{
+    int a0, a1, b0, b1, c0, c1;
+    header_diff("09:41", "09:42", &a0, &a1); /* the last digit only */
+    header_diff("09:41", "09:51", &b0, &b1); /* the minute's tens only */
+    CHECK(a0 >= 0 && b0 >= 0);
+    CHECK(b1 < a0);
+    header_diff("09:59", "10:00", &c0, &c1); /* every digit */
+    CHECK(c0 < b0);
+    header_diff("--:--", "09:00", &c0, &c1);
+    CHECK(c0 >= 0);
+    header_diff("09:41", "09:41", &c0, &c1);
+    CHECK_EQ(c0, -1);
+}
+
 int main(void)
 {
+    test_clock_digits_stay();
     test_asleep();
     test_insight();
     test_no_insight();

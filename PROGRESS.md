@@ -119,6 +119,18 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-22: the T5's minute clock redraws only the digits that changed
+
+- Owner report: every minute the whole clock in the T5's header refreshed. epdiy already
+  drives only changed pixels, but the clock was right-aligned text in a proportional font,
+  so a digit of another width ("09:41" -> "09:42") moved every glyph.
+- `ui_chrome.c` now draws the clock in fixed slots (each digit centred in a slot as wide
+  as the widest digit, the colon in its own), so unchanged digits keep their pixels.
+- **Checks:** new host test `test_clock_digits_stay` (fails on the old layout, passes now),
+  the rest of `test_ui_today`; `idf.py build`.
+- **Needs real-device testing:** flash the T5 and watch a minute change (and 09:59 ->
+  10:00): only the changed digits should redraw.
+
 ## Done on 2026-10-22: the T5's offline Today plan follows the hub's weights (Phase 3, stream C)
 
 The hub learns a weight per checklist from the owner's outcomes on its Today page

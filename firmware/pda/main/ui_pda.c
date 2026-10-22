@@ -1761,7 +1761,9 @@ static void ui_task(void *arg)
             }
             break;
         case PDA_EV_TICK: {
-            /* The minute clock: only the header changes; it doesn't count as a partial. */
+            /* The minute clock: only the header changes; it doesn't count as a partial.
+             * The clock's digits sit in fixed slots (ui_chrome.c), so epdiy drives only
+             * the digits that changed. */
             draw();
             pda_epd_update_light(ui_chrome_header_area());
             break;
