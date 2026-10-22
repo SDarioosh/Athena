@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-22 (pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-22 (pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -38,7 +38,9 @@ _Last updated: 2026-10-22 (pairing through Odysseus: uploads on the MCP HTTP ser
 | 13 | Speaker recognition (PR #24) and focused summaries (PR #25): measured in the sandbox, bugs fixed, two improvements | PRs open, **owner: Server verification** | SDarioosh/barvis-sound#31 (recognition), SDarioosh/barvis-sound#38 (insights) |
 | 14 | T5 E-Paper Pro PDA firmware (feed and outbox over BLE through the phone) | **milestones 0–3 built, on the owner's T5**: bring-up and refresh times, all screens from a fictional feed, touch and buttons by hand, BLE pairing, TIME, outbox drain/ack and feed PUT from a Windows PC; host tests in CI. Front light, BOOT-hold sleep, sync mode, automatic light sleep and timed sync wakes from deep sleep built and flashed; currents not measured yet. Still open: the PC relay and the Android `PdaSync` against the real T5, the server `PATCH` end to end, light sleep and power (milestone 5) | `firmware/pda/`, `docs/t5-pda-plan.md` |
 | 15 | Today insight: confirmed facts (`list_facts confirmed=true format=json`, MCP 0.4.0) for the hub's memory; relays put the hub's Today insight in the T5 feed; T5 Today tab shows it with a rule-based fallback (`today_plan.c`) | **built, tested, not on hardware** (PDA host tests, `idf.py build`, Android tests); hub side on the same branch in SDarioosh/Barvis; **owner: Server verification** (confirmed-fact counts, insight time on `qwen3.5-35b`, phone and T5 steps) | `server/convo_server/{store,mcp_server}.py`, `firmware/recorder/tools/barvis_relay/pda_insight.py`, `android-relay/`, `firmware/pda/main/{today_plan,ui_today}.c`, `docs/t5-pda-plan.md` §4.1, §5 |
-| 16 | One-step pairing through Odysseus: the MCP HTTP server forwards uploads (`/ingest/chunk`, `/sessions/{id}/end`) and the T5's API reads to the ingest API (MCP 0.5.0), so the hub's call recorder and paired phones need only the `convo` MCP server; the Android relay pairs by scanning Odysseus's QR code (ZXing, on-device), stores the Odysseus URL and token, uploads and syncs the T5 through Odysseus (`/api/codex/sound/*`), picks the calendar from a list; direct mode stays as a fallback | **built and tested in the sandbox**: server tests, relay `assembleDebug test lint` (156 tests), the relay's Kotlin pairing/upload/T5 clients against a real hub and module; **needs a real phone** (scan, pair over Tailscale, watch drain and T5 sync through Odysseus) and the owner's Server verification | `server/convo_server/ingest_relay.py`, `android-relay/` (`net/Pairing.kt`, `net/Routes.kt`), hub `src/call_recorder.py`, `src/phone_pairing.py` |
+| 16 | Forget propagates (hub personal context, Phase 1): `retire_fact` write tool (destructive), retired facts hidden in every listing and kept hidden when said again or the conversation is re-summarized; `confirmed` per JSON fact row; MCP 0.5.0, 14 tools | **built, tested** (364 server tests); hub side (belief ledger, review page, notes source) on the same branch in SDarioosh/Barvis; **owner: Server verification** | `server/convo_server/{store,mcp_server}.py`, `server/tests/test_retire_fact.py` |
+| 17 | Personal context Phase 2 (module side): `people` with a stable id that survives renames and merges, `list_people format=json`, `person_id` on JSON facts (MCP 0.6.0); action items get `title` and `explicit`, and intentions/principles in voice notes become facts (decisions) instead of tasks (MCP 0.7.0) | **built, tested**; hub side on the hub's local `p2` branch; PR after Phase 1 merges; **owner: Server verification** | `server/convo_server/{store,mcp_server,llm}.py`, `server/tests/test_people.py` |
+| 18 | One-step pairing through Odysseus: the MCP HTTP server forwards uploads (`/ingest/chunk`, `/sessions/{id}/end`) and the T5's API reads to the ingest API (MCP 0.8.0), so the hub's call recorder and paired phones need only the `convo` MCP server; the Android relay pairs by scanning Odysseus's QR code (ZXing, on-device), stores the Odysseus URL and token, uploads and syncs the T5 through Odysseus (`/api/codex/sound/*`), picks the calendar from a list; direct mode stays as a fallback | **built and tested in the sandbox**: server tests, relay `assembleDebug test lint` (156 tests), the relay's Kotlin pairing/upload/T5 clients against a real hub and module; **needs a real phone** (scan, pair over Tailscale, watch drain and T5 sync through Odysseus) and the owner's Server verification | `server/convo_server/ingest_relay.py`, `android-relay/` (`net/Pairing.kt`, `net/Routes.kt`), hub `src/call_recorder.py`, `src/phone_pairing.py` |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done in this round
@@ -177,6 +179,45 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Needs the owner: rerun a two-person recording on the server and check both names.
   Conversations already processed keep their labels (audio is deleted after
   transcription unless `CONVO_KEEP_AUDIO=true`); fix those with `reassign_line`.
+
+## Done on 2026-10-21: people ids and explicit action items (hub: Phase 2 of personal context)
+
+- **People (2.1).** `people(id, name, speaker_id, is_owner, merged_into)` + `people_aliases`
+  (schema v10), backfilled from `speakers` and `conversation_people`. `ensure_person` runs
+  wherever a name appears. `rename_speaker_everywhere` keeps the id (the old name becomes an
+  alias) or merges into an existing person, whose id survives. `list_people(format="json")`:
+  `{"people": [{"id", "name", "aliases", "is_owner", "has_voice", "conversations",
+  "first_seen", "last_seen"}]}`; `list_facts` JSON rows gain `person_id`. MCP 0.6.0. The hub
+  maps a person id to a subject and lets the owner link it to an Odysseus contact.
+- **Explicit action items** (owner's request after four musings became four to-dos). The
+  summarizer treats statements of intent, priority or decision as durable facts about the
+  speaker, not action items; a code guard moves undated voice-note "should / need to / stop /
+  focus on …" items without a command word to facts. Items get `title` (≤ 60 chars) and
+  `explicit` (date/time, list, reminder/event, or a command word) in the JSON. MCP 0.7.0 (schema v11). The hub files only explicit voice-note items by default and puts
+  undated ones on one "Voice notes" list.
+- Checks: 415 server tests + ruff (people 376, then the action-item change).
+
+## Done on 2026-10-21: forget propagates (hub: belief ledger, Phase 1 of personal context)
+
+Module side of Phase 1 (hub `docs/fork/personal-context.md`, `docs/fork/beliefs.md`). The hub
+now keeps a belief ledger between sources and its memory: every current fact goes in as
+evidence, only confirmed beliefs reach memory, and the owner can confirm, correct or forget a
+belief on a review page. Forgetting must not come back on the next hourly reconcile, so:
+
+- **`retire_fact(fact_id, reason="")`** (write, `destructiveHint: true`, idempotent):
+  `status='retired'` with `retired_at` and `retired_reason` (schema v9). Retired facts leave
+  `list_facts` (both formats), search (FTS row and embedding removed), `get_conversation`
+  and the read API. A later "same" link to a retired fact keeps it hidden (the repeat becomes
+  another source of the retired fact; the linker is now offered retired facts as candidates
+  so that link can happen). An "updates" link to a retired fact shows the newer fact and
+  leaves the old one retired. Re-summarizing the conversation re-applies the retirement by
+  matching the fact text. Facts a retired fact had replaced stay hidden.
+- **`confirmed` per JSON row** of `list_facts format=json` (the module's thresholds), so the
+  hub can take all current facts and promote them itself.
+- MCP version 0.5.0, 14 tools; `AGENTS.md` and `server/README.md` tables updated.
+- Fact ids change when a conversation is re-summarized; the hub treats "No fact #N." from
+  `retire_fact` as done and reconciles by the facts returned, not by old ids.
+- Checks: 364 server tests + ruff.
 
 ## Done on 2026-10-21: Today insight and confirmed facts (hub: same branch in SDarioosh/Barvis)
 
@@ -1107,6 +1148,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 ## Next
 
+- **Owner: forget propagates** (this branch's PR, Server verification): forget one belief on the
+  hub's `/beliefs` page on the test instance and confirm the fact is gone from `/sound what facts
+  do you know about …` and stays gone after the next hourly run.
 - **Owner: Today insight end to end** (this branch's PR, Server verification): confirmed-fact
   counts at the default thresholds, one insight on `qwen3.5-35b` (time), the phone relay with
   a token that has `insight:read`, the T5 Today tab (look, tick, taps) on the real panel.

@@ -118,7 +118,7 @@ def test_migration_v5_to_v6_makes_old_items_tasks(tmp_path):
     path = tmp_path / "old.db"
     old_v5_db(path)
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 8
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 11
     (item,) = store.list_action_items()
     assert item["kind"] == "task" and item["due_date"] == "2025-10-10"
     assert item["due_time"] is None and item["time_unclear"] == 0
@@ -218,7 +218,8 @@ def test_list_action_items_json(pipeline, note_mcp):
     meet = next(i for i in items if i["text"] == "Meet Jason")
     conv = conv_of(pipeline, "n1")
     assert meet == {
-        "id": meet["id"], "status": "open", "kind": "event", "text": "Meet Jason",
+        "id": meet["id"], "status": "open", "kind": "event", "title": "Meet Jason",
+        "explicit": True, "text": "Meet Jason",
         "owner": "Me", "due": "Wednesday", "due_date": "2025-10-15", "due_time": "12:00",
         "duration_minutes": None, "location": None, "list_name": None, "note_title": None,
         "time_unclear": False,
@@ -273,7 +274,7 @@ def test_tool_arguments_and_annotations(note_mcp):
     assert set(lst.input_schema["properties"]) == {"status", "person", "since", "until",
                                                   "format"}
     assert set(upd.input_schema["properties"]) == {"item_id", "status", "kind", "due_date",
-                                                  "due_time", "list_name"}
+                                                  "due_time", "list_name", "title"}
     assert upd.input_schema.get("required") == ["item_id"]
     assert lst.annotations.read_only_hint is True
     assert upd.annotations.read_only_hint is False and upd.annotations.destructive_hint is False

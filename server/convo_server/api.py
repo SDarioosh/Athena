@@ -83,6 +83,7 @@ def _conv_out(c: dict[str, Any], settings: Settings) -> dict[str, Any]:
     for item in out.get("action_items", []):
         item["created_at"] = iso(item.get("created_at"))
         item["time_unclear"] = bool(item.get("time_unclear"))
+        item["explicit"] = bool(item.get("explicit"))
     return out
 
 
@@ -110,12 +111,14 @@ class EnrollJson(BaseModel):
 
 
 class ActionItemPatch(BaseModel):
-    """Every field optional; ``null`` for due_date / due_time / list_name clears it."""
+    """Every field optional; ``null`` for due_date / due_time / list_name clears it
+    (``null`` for title gives it back from the text)."""
     status: str | None = None
     kind: str | None = None
     due_date: str | None = None
     due_time: str | None = None
     list_name: str | None = None
+    title: str | None = None
 
 
 REJECTED_KEEP = 20  # undecodable uploads kept for debugging, newest first
@@ -307,6 +310,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
             r["source_at"], r["conversation_at"] = iso(r["source_at"]), iso(r["conversation_at"])
             r["created_at"] = iso(r.get("created_at"))
             r["time_unclear"] = bool(r.get("time_unclear"))
+            r["explicit"] = bool(r.get("explicit"))
             r["timezone"] = settings.timezone
         return {"action_items": rows}
 
@@ -318,7 +322,8 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
                 item_id, status=body.status, kind=body.kind,
                 due_date=body.due_date if "due_date" in given else UNSET,
                 due_time=body.due_time if "due_time" in given else UNSET,
-                list_name=body.list_name if "list_name" in given else UNSET)
+                list_name=body.list_name if "list_name" in given else UNSET,
+                title=body.title if "title" in given else UNSET)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         if item is None:
