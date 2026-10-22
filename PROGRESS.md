@@ -115,6 +115,14 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-22: shopping lists stay out of the daily digest
+
+- The daily digest no longer lists action items on a shopping-type list ("add milk to my
+  shopping list"). Lists in `CONVO_DIGEST_SKIP_LISTS` (default
+  `Shopping,Groceries,Grocery`, the same default as the hub's Today insight) are left out
+  before the digest model sees the items. They stay in `list_action_items` and on the T5.
+- Next: the owner rebuilds a digest on the server to check (Server verification in the PR).
+
 ## Done on 2026-10-21: T5 interface polish (branch `feature/t5-ui-polish`)
 
 - **Owner request:** "All caught up!" instead of "No insight for today yet: by date and
@@ -124,8 +132,7 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   labels, buttons and the active tab are SemiBold, details Regular. `gfx.c` draws what a
   SemiBold font lacks (arrows, ✓, ★, ▲) from the Regular font of the nearest size.
 - **Frame (`ui_chrome.c`, new):** header with title and clock, the date, a battery icon,
-  ↑n and a note only when worth a look ("syncing", "synced 3 h ago" after an hour, "no
-  feed"); plain tabs with a bar under the active one; one section heading for all screens.
+  ↑n and a note only when worth a look ("synced 3 h ago" after an hour, "no feed"); plain tabs with a bar under the active one; one section heading for all screens.
 - **Today:** a time column for events (weekday under it when not today), round tick boxes,
   hairlines between items; "All caught up!" with a small tick in INSIGHT; with nothing at
   all, a big tick and "All caught up!" in the middle. The demo feed still fits one page.
@@ -1173,6 +1180,8 @@ Still open:
   Wi-Fi at home, transcript QR, auto-blank, languages). New: should the phone send a POSIX
   time zone (`tz_posix`) in the feed, so times after a DST change are right? And how does
   the real panel look to you (contrast, VCOM 1560 mV, ghosting after a day)?
+- Android app: `docs/android-app-plan.md` (Odysseus WebView shell + the relay in one app).
+  Owner decisions in its §10: repo layout, app ID/label, how native, tokens, distribution.
 - Odysseus fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.
 - The remaining XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, extra parts, microSD). They wait until XIAO work

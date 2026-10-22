@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     language: str = "en"
     timezone: str = "UTC"  # IANA name used for daily digests, e.g. Europe/Berlin
     run_worker: bool = True  # background thread: finalize idle sessions, process, digest
+    # To-do lists left out of the daily digest (comma list, any case, with or without
+    # "list"): a shopping list is not news for the day.
+    digest_skip_lists: str = "Shopping,Groceries,Grocery"
 
     # Speech-to-text model: "whisper" (whisper.cpp, below) or "parakeet" (Parakeet TDT
     # 0.6B v3 in-process via sherpa-onnx, extra `parakeet`; being measured against whisper).
