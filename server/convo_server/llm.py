@@ -316,13 +316,17 @@ class Summarizer:
 
     def __init__(self, llm: LLMClient, owner_name: str = "Me",
                  max_chars_per_call: int = 120_000, timezone: str = "UTC",
-                 min_words: int = 3) -> None:
+                 min_words: int = 3,
+                 digest_skip_lists: str = "Shopping,Groceries,Grocery") -> None:
         self.llm = llm
         self.owner = owner_name
         self.max_chars = max_chars_per_call
         self.tz = ZoneInfo(timezone)
         # fewer words than this in the whole conversation: discarded without a model call
         self.min_words = min_words
+        # action items on these lists stay out of the daily digest
+        self.digest_skip_lists = {n.lower() for n in map(clean_list_name,
+                                  digest_skip_lists.split(",")) if n}
 
     def summarize(self, segments: list[Segment], kind: str | None = None) -> dict[str, Any]:
         """Return a storage-ready dict (absolute ``source_at`` timestamps).
@@ -476,7 +480,8 @@ class Summarizer:
             "people": c["people"],
             "action_items": [a["text"] for a in c.get("action_items", [])
                              if a.get("status", "open") == "open"
-                             and a.get("kind") != NOTE_ITEM],
+                             and a.get("kind") != NOTE_ITEM
+                             and not self._skipped_list(a.get("list_name"))],
             **({"voice_note": True} if c.get("kind") == "note" else {}),
         } for c in conversations]
         result = self.llm.structured(DIGEST_SYSTEM.format(date=date), json.dumps(notes),
@@ -485,6 +490,10 @@ class Summarizer:
         out["date"] = date
         out["conversation_ids"] = [c["id"] for c in conversations]
         return out
+
+    def _skipped_list(self, list_name: str | None) -> bool:
+        name = clean_list_name(list_name)
+        return bool(name) and name.lower() in self.digest_skip_lists
 
 
 _STOP_WORDS = """a an the and or but of to in on at by for with from about as is are was
