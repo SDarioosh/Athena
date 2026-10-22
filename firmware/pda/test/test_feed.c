@@ -192,6 +192,71 @@ static void test_insight_fixture(void)
     feed_free(&feed);
 }
 
+/* `weights` (§4.1, §5): only list: keys with integers, clamped, 32 at most, repeats once;
+ * a bad table or version is ignored, never fatal. */
+static void test_weights(void)
+{
+    char id150[151], id151[152], js[8192];
+    memset(id150, 'a', 150);
+    id150[150] = 0;
+    memset(id151, 'b', 151);
+    id151[151] = 0;
+    snprintf(js, sizeof(js),
+             "{\"v\":1,\"version\":1,\"weights\":{\"version\":1,\"date\":\"2026-10-20\",\"weights\":{"
+             "\"list:n1\":2,\"list:n2\":-1,\"list:big\":9,\"list:small\":-12,\"list:huge\":99999999999999,"
+             "\"list:frac\":1.5,\"list:exp\":1e1,\"list:str\":\"3\",\"list:t\":true,\"list:nul\":null,"
+             "\"list:obj\":{\"w\":1},\"note_type:checklist\":2,\"event_type:work\":1,\"importance:high\":1,"
+             "\"LIST:n3\":1,\"list:\":4,\"list:%s\":3,\"list:%s\":3,\"list:n1\":5,\"list:a:b\":-2,"
+             "\"list:\\u00fc\":1}}}",
+             id150, id151);
+    CHECK_EQ(feed_parse(js, strlen(js), &feed), 0);
+    CHECK_EQ(feed.n_weights, 8);
+    CHECK_EQ(feed_note_weight(&feed, "n1"), 2); /* the first n1, not the repeat */
+    CHECK_EQ(feed_note_weight(&feed, "n2"), -1);
+    CHECK_EQ(feed_note_weight(&feed, "big"), 6);
+    CHECK_EQ(feed_note_weight(&feed, "small"), -6);
+    CHECK_EQ(feed_note_weight(&feed, "huge"), 6);
+    CHECK_EQ(feed_note_weight(&feed, id150), 3);
+    CHECK_EQ(feed_note_weight(&feed, id151), 0);
+    CHECK_EQ(feed_note_weight(&feed, "a:b"), -2);
+    CHECK_EQ(feed_note_weight(&feed, "\xc3\xbc"), 1);
+    CHECK_EQ(feed_note_weight(&feed, "frac"), 0);
+    CHECK_EQ(feed_note_weight(&feed, "str"), 0);
+    CHECK_EQ(feed_note_weight(&feed, "checklist"), 0);
+    CHECK_EQ(feed_note_weight(&feed, "n3"), 0);
+    CHECK_EQ(feed_note_weight(&feed, ""), 0);
+    CHECK_EQ(feed_note_weight(&feed, NULL), 0);
+    feed_free(&feed);
+
+    /* at most 32 */
+    size_t n = (size_t)snprintf(js, sizeof(js), "{\"v\":1,\"version\":1,\"weights\":{\"weights\":{");
+    for (int i = 0; i < 40; i++) {
+        n += (size_t)snprintf(js + n, sizeof(js) - n, "%s\"list:n%d\":%d", i ? "," : "", i, i % 13 - 6);
+    }
+    snprintf(js + n, sizeof(js) - n, "}}}");
+    CHECK_EQ(feed_parse(js, strlen(js), &feed), 0);
+    CHECK_EQ(feed.n_weights, FEED_MAX_WEIGHTS);
+    CHECK_EQ(feed_note_weight(&feed, "n31"), 31 % 13 - 6);
+    CHECK_EQ(feed_note_weight(&feed, "n32"), 0);
+    feed_free(&feed);
+
+    /* ignored: another version, weights not an object, no weights key at all */
+    static const char *const bad[] = {
+        "{\"v\":1,\"version\":1,\"weights\":{\"version\":2,\"weights\":{\"list:n1\":2}}}",
+        "{\"v\":1,\"version\":1,\"weights\":{\"version\":\"1\",\"weights\":{\"list:n1\":2}}}",
+        "{\"v\":1,\"version\":1,\"weights\":{\"weights\":[\"list:n1\",2]}}",
+        "{\"v\":1,\"version\":1,\"weights\":[{\"list:n1\":2}]}",
+        "{\"v\":1,\"version\":1,\"weights\":{\"list:n1\":2}}",
+        "{\"v\":1,\"version\":1}",
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        CHECK_EQ(feed_parse(bad[i], strlen(bad[i]), &feed), 0);
+        CHECK_EQ(feed.n_weights, 0);
+        CHECK_EQ(feed_note_weight(&feed, "n1"), 0);
+        feed_free(&feed);
+    }
+}
+
 static void test_insight_tolerance(void)
 {
     /* refs by the hub's `i` (with gaps), note ids with ':', caps, bad refs and items */
@@ -358,6 +423,7 @@ int main(void)
     test_fixture();
     test_insight_fixture();
     test_insight_tolerance();
+    test_weights();
     test_tolerance();
     test_details();
     return checks_done("test_feed");

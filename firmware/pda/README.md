@@ -73,7 +73,10 @@ cmake -S firmware/pda/test -B build-pda-host && cmake --build build-pda-host && 
 host stand-in for epdiy (`test/host/`) and writes the pages to
 `build-pda-host/today_screens/*.png`: `today_insight_*` (with the hub's insight),
 `today_insight_ticked_p1` (a to-do ticked on the T5), `today_rules_*` and
-`today_rules_busy_*` (no insight: the rules), `today_empty_p1`, `today_long_p1`.
+`today_rules_busy_*` (no insight: the rules), `today_rules_weights_*` and
+`today_rules_no_weights_*` (the fictional day of `test/fixtures/insight_eval_day.json`, shared
+with the hub's insight eval, with and without the hub's rule weights), `today_empty_p1`,
+`today_long_p1`.
 
 ## Use
 
@@ -85,7 +88,7 @@ host stand-in for epdiy (`test/host/`) and writes the pages to
   FIRST, COMING UP, ALSO WORTH A LOOK, each item with the hub's reason), else the same
   sections from rules over the checklists and the calendar (overdue, due today, today's
   events; the next 7 days; pinned, then undated; shopping lists without a due date left
-  out). Tap a to-do to tick it (as on Tasks), an event for its details; "Digest ready on
+  out), each group ordered by the hub's learned weight per checklist (feed `weights`) first. Tap a to-do to tick it (as on Tasks), an event for its details; "Digest ready on
   Brief ›" opens the digest. Plan §5 "Today as built" has the rules.
 - **Tasks:** the owner's Odysseus checklists (feed `todos`, plan §4.4), a heading per note
   (★ pinned, due date on the right), done items struck through. Tap an item: done / not

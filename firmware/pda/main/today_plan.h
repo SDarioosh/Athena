@@ -5,16 +5,20 @@
  * same struct, so the screen has one way to draw it. Pure C; host-tested
  * (test/test_today_plan.c).
  *
- * Rules (no insight for today):
- * - DO FIRST: open items of overdue checklists (oldest due date first), then of the ones
- *   due today, then today's events that aren't over (all-day first, then by time);
- * - COMING UP: events and items of checklists due on the next 7 days, by date and time;
- * - ALSO WORTH A LOOK: items of pinned checklists not listed above, then of undated ones;
+ * Rules (no insight for today), the hub's published rule order (plan §5). w is the hub's
+ * learned weight of the item's note (feed `weights`, -6..6, 0 without one; events 0); a
+ * weight only reorders items within their group, never moves one to another group, and
+ * equal keys keep the feed's order:
+ * - DO FIRST: open items of overdue checklists and of the ones due today, by (-w, due
+ *   date, feed order), then today's events that aren't over (all-day first, then by time);
+ * - COMING UP: events and items of checklists due on the next 7 days, by (-w, date, time);
+ * - ALSO WORTH A LOOK: items of pinned checklists not listed above by (-w, feed order),
+ *   then of undated ones by (-w, feed order);
  * - done items and events that are over are left out, and so are shopping lists (a title
  *   of Shopping, Groceries or Grocery, with or without " list", any case) without a due
  *   date; at most TODAY_PLAN_CAP items per section, the rest counted in `more`.
  *
- * With the insight: its sections in the hub's order, without items that are done, events
+ * With the insight: its sections in the hub's order (the weights aren't used), without items that are done, events
  * that are over and repeats. Today's timed events that are still to come all go to the end
  * of DO FIRST in time order (with the hub's reason when it named them), wherever the hub
  * put them. */
