@@ -50,6 +50,7 @@ class MainActivity : Activity() {
         pda = findViewById(R.id.pda)
         counters = findViewById(R.id.counters)
         lastError = findViewById(R.id.last_error)
+        showCrash()
         logView = findViewById(R.id.log)
         toggle = findViewById(R.id.toggle)
         battery = findViewById(R.id.battery)
@@ -134,6 +135,20 @@ class MainActivity : Activity() {
         } catch (e: android.content.ActivityNotFoundException) {
             startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         }
+    }
+
+    /** The last crash, if any, to copy and send (store/CrashLog.kt). */
+    private fun showCrash() {
+        val report = org.barvis.sound.relay.store.CrashLog.take(this) ?: return
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.crash_title)
+            .setMessage(report)
+            .setPositiveButton(R.string.crash_copy) { _, _ ->
+                val cm = getSystemService(android.content.ClipboardManager::class.java)
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("crash", report))
+            }
+            .setNegativeButton(R.string.crash_close, null)
+            .show()
     }
 
     private fun render(s: RelaySnapshot) {

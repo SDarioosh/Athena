@@ -16,8 +16,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import com.journeyapps.barcodescanner.ScanIntentResult
-import com.journeyapps.barcodescanner.ScanOptions
 import org.barvis.sound.relay.R
 import org.barvis.sound.relay.net.HttpUploader
 import org.barvis.sound.relay.net.PairingClient
@@ -101,6 +99,7 @@ class SettingsActivity : Activity() {
         findViewById<Button>(R.id.pair_paste).setOnClickListener { pair(pairLink.text.toString()) }
         findViewById<Button>(R.id.choose_calendar).setOnClickListener { chooseCalendar() }
         showPairState()
+        offerLink(intent)
     }
 
     private fun showPairState() {
@@ -110,12 +109,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun scan() {
-        val intent = ScanOptions()
-            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-            .setPrompt(getString(R.string.pair_scan))
-            .setBeepEnabled(false)
-            .setOrientationLocked(false)
-            .createScanIntent(this)
+        val intent = Intent(this, ScanActivity::class.java)
         try {
             @Suppress("DEPRECATION") // framework Activity: no AndroidX result API here
             startActivityForResult(intent, REQ_SCAN)
@@ -129,7 +123,33 @@ class SettingsActivity : Activity() {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQ_SCAN) return
-        ScanIntentResult.parseActivityResult(resultCode, data).contents?.let { pair(it) }
+        if (resultCode == RESULT_OK) {
+            data?.getStringExtra(ScanActivity.EXTRA_TEXT)?.let { pair(it) }
+        } else {
+            data?.getStringExtra(ScanActivity.EXTRA_ERROR)?.let {
+                pairResult.text = getString(R.string.pair_scan_failed, it)
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        offerLink(intent)
+    }
+
+    /**
+     * A link from [PairLinkActivity] (another app opened it): fill it in and say which
+     * Odysseus it is for. Pairing waits for the owner's tap.
+     */
+    private fun offerLink(intent: Intent?) {
+        val text = intent?.getStringExtra(EXTRA_PAIR_LINK) ?: return
+        intent.removeExtra(EXTRA_PAIR_LINK)
+        pairLink.setText(text)
+        pairResult.text = when (val r = PairingLink.parse(text)) {
+            is PairingLink.Result.Ok -> withWarning(getString(R.string.pair_confirm, r.link.base), r.link.warning)
+            is PairingLink.Result.Invalid -> getString(R.string.pair_failed, r.reason)
+        }
     }
 
     /** Redeems a scanned or pasted pairing link and switches to "through Odysseus". */
@@ -303,8 +323,9 @@ class SettingsActivity : Activity() {
         super.onDestroy()
     }
 
-    private companion object {
-        const val REQ_SCAN = 41
+    companion object {
+        const val EXTRA_PAIR_LINK = "pair_link"
+        private const val REQ_SCAN = 41
     }
 
     private fun updateWarning() {
