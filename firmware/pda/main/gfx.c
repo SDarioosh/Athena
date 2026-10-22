@@ -1,5 +1,6 @@
 #include "gfx.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "fonts.h"
@@ -46,12 +47,31 @@ static uint32_t utf8_next(const char **s)
     return cp;
 }
 
+const EpdFont *gfx_fallback(const EpdFont *f)
+{
+    if (f == &FONT_TEXT_B) {
+        return &FONT_TEXT;
+    }
+    if (f == &FONT_BIG || f == &FONT_HUGE) {
+        return &FONT_BIG_REGULAR;
+    }
+    return NULL;
+}
+
+/* The font that draws cp: f, else its fallback; NULL if neither has it. */
+static const EpdFont *font_for(const EpdFont *f, uint32_t cp)
+{
+    if (epd_get_glyph(f, cp)) {
+        return f;
+    }
+    const EpdFont *fb = gfx_fallback(f);
+    return fb && epd_get_glyph(fb, cp) ? fb : NULL;
+}
+
 static int glyph_w(const EpdFont *f, uint32_t cp)
 {
-    const EpdGlyph *g = epd_get_glyph(f, cp);
-    if (!g) {
-        g = epd_get_glyph(f, '?');
-    }
+    const EpdFont *ff = font_for(f, cp);
+    const EpdGlyph *g = ff ? epd_get_glyph(ff, cp) : epd_get_glyph(f, '?');
     return g ? g->advance_x : 0;
 }
 
@@ -78,7 +98,7 @@ static const char *translit(const EpdFont *f, const char *s, char *out, size_t c
         const char *start = p;
         const uint32_t cp = utf8_next(&p);
         const char *rep = NULL;
-        if (cp >= 0x80 && !epd_get_glyph(f, cp)) {
+        if (cp >= 0x80 && !font_for(f, cp)) {
             rep = subst(cp);
             if (!rep) {
                 rep = "?";
@@ -122,6 +142,40 @@ int gfx_line(const EpdFont *f)
     return f->advance_y;
 }
 
+/* Draw buf (already transliterated) in runs: characters f lacks come from its fallback. */
+static void draw_runs(const EpdFont *f, int x, int y, const char *buf, uint8_t fg, uint8_t bg)
+{
+    EpdFontProperties p = epd_font_properties_default();
+    p.fg_color = fg;
+    p.bg_color = bg;
+    p.fallback_glyph = '?';
+    int cx = x;
+    const char *q = buf;
+    while (*q) {
+        const char *start = q;
+        const char *t = q;
+        const EpdFont *rf = font_for(f, utf8_next(&t));
+        if (!rf) {
+            rf = f;
+        }
+        q = t;
+        while (*q) {
+            const char *u = q;
+            const EpdFont *nf = font_for(f, utf8_next(&u));
+            if ((nf ? nf : f) != rf) {
+                break;
+            }
+            q = u;
+        }
+        char run[LINE_MAX_BYTES + 1];
+        const size_t n = (size_t)(q - start);
+        memcpy(run, start, n);
+        run[n] = 0;
+        int cy = y;
+        epd_write_string(rf, run, &cx, &cy, s_fb, &p);
+    }
+}
+
 int gfx_text(const EpdFont *f, int x, int y, const char *s, uint8_t color)
 {
     if (!s || !*s) {
@@ -136,13 +190,19 @@ int gfx_text(const EpdFont *f, int x, int y, const char *s, uint8_t color)
             buf[i] = ' ';
         }
     }
-    EpdFontProperties p = epd_font_properties_default();
-    p.fg_color = color & 0xF;
-    p.bg_color = 0xF;
-    p.fallback_glyph = '?';
-    int cx = x, cy = y;
-    epd_write_string(f, buf, &cx, &cy, s_fb, &p);
+    draw_runs(f, x, y, buf, color & 0xF, 0xF);
     return x + width_n(f, buf, n);
+}
+
+int gfx_text_inv(const EpdFont *f, int x, int y, const char *s)
+{
+    if (!s || !*s) {
+        return x;
+    }
+    char buf[LINE_MAX_BYTES + 1];
+    translit(f, s, buf, sizeof(buf));
+    draw_runs(f, x, y, buf, 0xF, 0x0);
+    return x + width_n(f, buf, strlen(buf));
 }
 
 /* Bytes of s that fit in max_w (whole code points). */
@@ -336,17 +396,65 @@ void gfx_button(EpdRect r, const char *label, bool inverted)
         gfx_fill(r, 0xFF);
         gfx_frame(r, 0x00);
     }
-    const EpdFont *f = &FONT_TEXT;
+    const EpdFont *f = &FONT_TEXT_B;
     const int tw = gfx_text_width(f, label);
     const int ty = r.y + (r.height + f->ascender + f->descender) / 2;
     if (inverted) {
-        EpdFontProperties p = epd_font_properties_default();
-        p.fg_color = 0xF;
-        p.bg_color = 0x0;
-        p.fallback_glyph = '?';
-        int cx = r.x + (r.width - tw) / 2, cy = ty;
-        epd_write_string(f, label, &cx, &cy, s_fb, &p);
+        gfx_text_inv(f, r.x + (r.width - tw) / 2, ty, label);
     } else {
         gfx_text(f, r.x + (r.width - tw) / 2, ty, label, GFX_INK);
     }
+}
+
+/* A thick stroke: the line drawn at offsets 0..w-1 across it. */
+static void stroke(int x0, int y0, int x1, int y1, int w, uint8_t color)
+{
+    for (int i = 0; i < w; i++) {
+        epd_draw_line(x0, y0 + i, x1, y1 + i, color, s_fb);
+    }
+}
+
+void gfx_check(int cx, int cy, int r, bool done)
+{
+    if (done) {
+        epd_fill_circle(cx, cy, r, 0x00, s_fb);
+        /* a white tick: short leg down to the left, long leg up to the right */
+        const int ax = cx - r / 2, ay = cy, bx = cx - r / 8, by = cy + r * 3 / 8;
+        const int ex = cx + r / 2 + 1, ey = cy - r * 3 / 8;
+        const int w = r >= 24 ? r / 5 : 3;
+        stroke(ax, ay - w / 2, bx, by - w / 2, w, 0xFF);
+        stroke(bx, by - w / 2, ex, ey - w / 2, w, 0xFF);
+    } else {
+        epd_draw_circle(cx, cy, r, 0x00, s_fb);
+        epd_draw_circle(cx, cy, r - 1, 0x00, s_fb);
+    }
+}
+
+void gfx_dot(int cx, int cy, int r)
+{
+    epd_fill_circle(cx, cy, r, 0x00, s_fb);
+}
+
+void gfx_battery_icon(int x, int y, int percent)
+{
+    /* the body 26x14 and a tip on its right, its middle 7 px above the baseline y */
+    const int bw = 26, bh = 14, top = y - 7 - bh / 2;
+    gfx_fill((EpdRect){x + bw, top + 4, 3, bh - 8}, 0x00);
+    gfx_frame((EpdRect){x, top, bw, bh}, 0x00);
+    const int p = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+    const int fw = (bw - 6) * p / 100;
+    if (fw > 0) {
+        gfx_fill((EpdRect){x + 3, top + 3, fw, bh - 6}, 0x00);
+    }
+}
+
+int gfx_battery(int x_right, int y, int percent, bool charging)
+{
+    const int x = x_right - GFX_BATTERY_W;
+    gfx_battery_icon(x, y, percent);
+    char t[16];
+    snprintf(t, sizeof(t), "%s%d%%", charging ? "+" : "", percent < 0 ? 0 : percent > 100 ? 100 : percent);
+    const int tw = gfx_text_width(&FONT_TEXT, t);
+    gfx_text(&FONT_TEXT, x - 6 - tw, y, t, GFX_INK);
+    return x - 6 - tw;
 }
