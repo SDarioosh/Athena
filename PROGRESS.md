@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-22 (open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-22 (quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -118,6 +118,26 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
+
+## Done on 2026-10-22: quick errands are not action items
+
+"I'll move my truck" said in passing became the suggested to-do "Walk truck to Shahyah's
+house", shown in the hub's Today insight "with Shahyah's".
+
+- Prompts: something done during the conversation or right after it that nobody needs
+  reminding of ("I'll move my truck", "let me grab my keys") is not an action item; the
+  conversation prompt no longer says "small ones too" (small promises for later still
+  count) and keeps the speaker's verb.
+- Code drops what small models still list: an undated task with no list or command word
+  whose clause says it happens now ("right now", "real quick", "in a minute"); found by
+  the item's words, or by the one-clause line it cites when the model reworded it.
+- People's names lose a possessive ("Shahyah's" -> "Shahyah") in new summaries; schema
+  v12 fixes the names already stored once (the person keeps their id, the old spelling
+  is an alias; an existing person of that name absorbs it).
+- Hub side: a "Not a task" button on Today's open loops dismisses the item here
+  (`update_action_item`), so it doesn't come back.
+- **Owner: Server verification** (PR): the possessive count before and after, and a
+  fictional "I'll move my truck right now" conversation.
 
 ## Done on 2026-10-22: the T5's minute clock redraws only the digits that changed
 
