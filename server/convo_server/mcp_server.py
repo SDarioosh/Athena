@@ -229,8 +229,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         return transcript_link(settings, r["conversation_id"],
                                (r["source_at"] or r["conversation_at"]) - r["conversation_at"])
 
-    def item_json(r: dict[str, Any]) -> dict[str, Any]:
+    def item_json(r: dict[str, Any], mine_names: set[str]) -> dict[str, Any]:
+        owner = (r["owner"] or "").strip().lower()
         return {"id": r["id"], "status": r["status"], "kind": r.get("kind") or "task",
+                "mine": not owner or owner in mine_names,
                 "title": r.get("title") or short_title(r.get("note_title"), r["text"]),
                 "explicit": bool(r.get("explicit")),
                 "text": r["text"], "owner": r["owner"], "due": r["due"],
@@ -256,9 +258,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         date and time of day if known, and the to-do list the user named for it. The JSON
         format also lists notes the user asked a voice note to save (kind "note", with
         note_title and, in list_name, the notes to add it to); the text format doesn't.
-        Each JSON row has a short title and explicit: true when the user asked for the
-        item (a date or time, a named list, a reminder, event or note, or a command such
-        as "remind me" or "add a task"), false for one the summary only suggests."""
+        Each JSON row has mine: false when someone else owns the item (the hub leaves
+        those out of the user's to-dos), a short title and explicit: true when the user
+        asked for the item (a date or time, a named list, a reminder, event or note, or a
+        command such as "remind me" or "add a task"), false for one the summary only suggests."""
         fmt = (format or "text").strip().lower()
         if fmt not in ("text", "json"):
             return "format must be text or json"
@@ -270,7 +273,9 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                 and (b is None or r["conversation_at"] < b)
                 and (not person or person.lower() in (r["owner"] or "").lower())]
         if fmt == "json":
-            return json.dumps([item_json(r) for r in rows], ensure_ascii=False)
+            mine_names = store.known_names()[0] | _OWNER_WORDS | {
+                settings.owner_name.strip().lower()} - {""}
+            return json.dumps([item_json(r, mine_names) for r in rows], ensure_ascii=False)
         lines = [header(len(rows), f"{status} action items")]
         for r in rows:
             lines.append(f"- #{r['id']} [{r['status']}] {_kind_word(r)}{r['text']}"
