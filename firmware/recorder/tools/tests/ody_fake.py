@@ -1,6 +1,6 @@
 """A fake Odysseus: the calendar's token routes (/api/codex/calendar/events, plan §6), the
-todos (/api/codex/todos, §4.4) and the Today insight (/api/codex/insight/today, §4.1) over
-HTTP. Fictional data only."""
+todos (/api/codex/todos, §4.4), the Today insight (/api/codex/insight/today, §4.1) and its
+rule weights (/api/codex/insight/weights) over HTTP. Fictional data only."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ ODY_TOKEN = "ody_fictional-calendar-token-7010"
 EVENTS = "/api/codex/calendar/events"
 TODOS = "/api/codex/todos"
 INSIGHT = "/api/codex/insight/today"
+WEIGHTS = "/api/codex/insight/weights"
 
 
 def demo_notes() -> list[dict[str, Any]]:
@@ -71,6 +72,10 @@ class FakeOdysseus:
         # "json", "none" (404 no insight yet), "forbidden" (403), "missing" (a hub without
         # the route: FastAPI's 404), "text" (200, not JSON) or "error" (503)
         self.insight_mode = "json"
+        self.weights: Any = {"version": 1, "date": "2026-10-20",
+                             "weights": {"list:n-trip": 2, "list:n-groceries": -1}}
+        # like insight_mode; the default "missing" is a hub without the route (404)
+        self.weights_mode = "missing"
         self._n = 2
         ody = self
 
@@ -123,6 +128,13 @@ class FakeOdysseus:
                     "missing": (404, {"detail": "Not Found"}),
                     "text": (200, "Today you have a dentist appointment."),
                     "error": (503, {"detail": "busy"})}[self.insight_mode]
+        if method == "GET" and path == WEIGHTS:
+            return {"json": (200, self.weights),
+                    "forbidden": (403, {"detail": "API token missing required scope: "
+                                                  "insight:read"}),
+                    "missing": (404, {"detail": "Not Found"}),
+                    "text": (200, "weights"),
+                    "error": (503, {"detail": "busy"})}[self.weights_mode]
         if method == "GET" and path == EVENTS:
             return 200, {"events": sorted(self.events.values(), key=lambda e: e["dtstart"])}
         if method == "POST" and path == EVENTS:

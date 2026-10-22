@@ -5,6 +5,7 @@
 
 #include "check.h"
 #include "feed.h"
+#include "json.h"
 #include "pda_time.h"
 #include "today_plan.h"
 
@@ -348,6 +349,165 @@ static void test_caps(void)
     feed_free(&feed);
 }
 
+/* Section s matches the fixture's `<key>.<name>` list (the hub's insight eval reads the same). */
+static void check_fixture_sec(int line, const char *js, size_t len, const char *key, const char *name, int s)
+{
+    json_tok_t *toks = malloc(sizeof(json_tok_t) * (len / 2 + 16));
+    const int n = json_parse(js, len, toks, (int)(len / 2 + 16));
+    CHECK(n > 0);
+    const json_doc_t d = {.js = js, .t = toks, .n = n};
+    const int arr = json_get(&d, json_get(&d, 0, key), name);
+    const char *want[TODAY_PLAN_MAX];
+    char buf[TODAY_PLAN_MAX][160];
+    int k = 0;
+    for (int i = json_first(&d, arr); i >= 0 && k < TODAY_PLAN_MAX; i = json_next(&d, arr, i)) {
+        json_str(&d, i, buf[k], sizeof(buf[k]));
+        want[k] = buf[k];
+        k++;
+    }
+    CHECK(k > 0);
+    check_sec(line, s, want, k);
+    free(toks);
+}
+
+/* The weights reorder the rules within a group, never across groups (§5). The fixture
+ * "insight_eval_day.json" is a fictional day (Tue 20 Oct, 09:00 in Berlin), shared with the
+ * hub's insight eval:
+ * - overdue: Tax papers (due Sat 17, one done item, w 0), Birthday gift for Lena (Mon 19, w +2);
+ * - due today: Car (w -3), Bills (w 0); the stand-up at 09:30 is today's only event;
+ * - next 7 days: Office party (Thu 22, w -2), Weekend trip (Fri 23, w +1), the dentist on
+ *   Wed 21 and yoga on Thu 22 (events: w 0);
+ * - pinned: House (two items, w -1), Garden (w +3), Shopping list (w +6, but a shopping list
+ *   without a date: never on Today);
+ * - undated: Reading (w 0), Learn Spanish (w +2);
+ * - later: Mom's birthday (due 8 Nov, w +6: still not on Today). */
+static void test_weights_fixture(void)
+{
+    size_t len;
+    char *js = load("insight_eval_day.json", &len);
+    CHECK_EQ(feed_parse(js, len, &feed), 0);
+    CHECK_EQ(feed.n_weights, 9);
+    today_plan_for_today(&feed, TODAY, NOW, TZ, &plan);
+    CHECK(!plan.from_insight);
+    /* the gift (+2) before the receipts (0, older); the bills (0) before the car (-3);
+     * to-dos still all before today's events */
+    SEC(TODAY_DO_FIRST, "Order the book for Lena", "Find the 2025 receipts", "Pay the electricity bill",
+        "Book the car service", "Team stand-up");
+    REASON(TODAY_DO_FIRST, 0, "overdue since 2026-10-19");
+    REASON(TODAY_DO_FIRST, 3, "due today");
+    /* the tent (+1) first, the events (0) by date and time, the balloons (-2) last */
+    SEC(TODAY_COMING_UP, "Pack the tent", "Dentist check-up", "Yoga class", "Buy balloons");
+    REASON(TODAY_COMING_UP, 0, "due Fri 23 Oct");
+    /* pinned: Garden (+3) before House (-1), whose items keep their order; then undated */
+    SEC(TODAY_ALSO, "Plant the tulip bulbs", "Fix the garden gate", "Clean the gutters", "Practise twenty minutes",
+        "Return the library book");
+    REASON(TODAY_ALSO, 2, "pinned");
+    REASON(TODAY_ALSO, 3, "no date");
+    check_fixture_sec(__LINE__, js, len, "expected", "do_first", TODAY_DO_FIRST);
+    check_fixture_sec(__LINE__, js, len, "expected", "coming_up", TODAY_COMING_UP);
+    check_fixture_sec(__LINE__, js, len, "expected", "also", TODAY_ALSO);
+    for (int s = 0; s < TODAY_SECTIONS; s++) {
+        CHECK_EQ(plan.sec[s].more, 0);
+    }
+
+    /* without the weights: the old rules */
+    feed.n_weights = 0;
+    today_plan_build(&feed, TODAY, NOW, TZ, &plan);
+    SEC(TODAY_DO_FIRST, "Find the 2025 receipts", "Order the book for Lena", "Book the car service",
+        "Pay the electricity bill", "Team stand-up");
+    SEC(TODAY_COMING_UP, "Dentist check-up", "Buy balloons", "Yoga class", "Pack the tent");
+    SEC(TODAY_ALSO, "Fix the garden gate", "Clean the gutters", "Plant the tulip bulbs", "Return the library book",
+        "Practise twenty minutes");
+    check_fixture_sec(__LINE__, js, len, "expected_without_weights", "do_first", TODAY_DO_FIRST);
+    check_fixture_sec(__LINE__, js, len, "expected_without_weights", "coming_up", TODAY_COMING_UP);
+    check_fixture_sec(__LINE__, js, len, "expected_without_weights", "also", TODAY_ALSO);
+    feed_free(&feed);
+    free(js);
+}
+
+/* Small inline feeds: never across groups, ties keep feed order, the cap keeps the highest,
+ * garbage weights are the old behaviour, and an insight for today ignores them. */
+static void test_weights_edges(void)
+{
+    const char *base =
+        "{\"v\":1,\"version\":1,"
+        "\"calendar\":[{\"id\":\"t\",\"title\":\"Today 15\",\"start\":\"2026-10-20T13:00:00Z\"},"
+        "{\"id\":\"w\",\"title\":\"Wed 11\",\"start\":\"2026-10-21T09:00:00Z\"}],"
+        "\"todos\":["
+        "{\"id\":\"a\",\"due\":\"2026-10-19\",\"items\":[{\"i\":0,\"text\":\"a0\"},{\"i\":1,\"text\":\"a1\"}]},"
+        "{\"id\":\"b\",\"due\":\"2026-10-20\",\"items\":[{\"i\":0,\"text\":\"b0\"}]},"
+        "{\"id\":\"c\",\"due\":\"2026-10-21\",\"items\":[{\"i\":0,\"text\":\"c0\"}]},"
+        "{\"id\":\"d\",\"items\":[{\"i\":0,\"text\":\"d0\"}]},"
+        "{\"id\":\"e\",\"items\":[{\"i\":0,\"text\":\"e0\"}]},"
+        "{\"id\":\"f\",\"items\":[{\"i\":0,\"text\":\"f0\"}]}]%s}";
+    char js[2048];
+
+    /* no weights, and garbage ones: the old order */
+    static const char *const garbage[] = {
+        "",
+        ",\"weights\":{\"version\":1,\"weights\":{}}",
+        ",\"weights\":{\"version\":1,\"weights\":{\"note_type:checklist\":6,\"list:e\":\"6\","
+        "\"list:f\":2.5,\"list:x\":6,\"list:b\":true}}",
+        ",\"weights\":{\"version\":3,\"weights\":{\"list:b\":6}}",
+        ",\"weights\":\"list:b=6\"",
+    };
+    for (size_t g = 0; g < sizeof(garbage) / sizeof(garbage[0]); g++) {
+        snprintf(js, sizeof(js), base, garbage[g]);
+        parse(js);
+        today_plan_build(&feed, TODAY, NOW, TZ, &plan);
+        SEC(TODAY_DO_FIRST, "a0", "a1", "b0", "Today 15");
+        SEC(TODAY_COMING_UP, "c0", "Wed 11");
+        SEC(TODAY_ALSO, "d0", "e0", "f0");
+        feed_free(&feed);
+    }
+
+    /* the most and least: within the group only; ties (e and f at +2) keep feed order;
+     * a +6 to-do due tomorrow stays in COMING UP, a -6 overdue one stays in DO FIRST,
+     * and today's event stays after every DO FIRST to-do; an event's weight is always 0 */
+    snprintf(js, sizeof(js), base,
+             ",\"weights\":{\"version\":1,\"weights\":{\"list:c\":6,\"list:a\":-6,\"list:f\":2,\"list:e\":2,"
+             "\"list:t\":6,\"list:w\":6}}");
+    parse(js);
+    today_plan_build(&feed, TODAY, NOW, TZ, &plan);
+    SEC(TODAY_DO_FIRST, "b0", "a0", "a1", "Today 15");
+    SEC(TODAY_COMING_UP, "c0", "Wed 11");
+    SEC(TODAY_ALSO, "e0", "f0", "d0");
+    /* a negative weight puts a to-do after the events of a later day */
+    feed.weights[0].w = -1; /* list:c */
+    today_plan_build(&feed, TODAY, NOW, TZ, &plan);
+    SEC(TODAY_COMING_UP, "Wed 11", "c0");
+
+    /* with an insight for today the hub's order stands, weights or not */
+    feed_free(&feed);
+    snprintf(js, sizeof(js), base,
+             ",\"weights\":{\"weights\":{\"list:b\":6,\"list:d\":6}},"
+             "\"insight\":{\"date\":\"2026-10-20\",\"focus\":[{\"ref\":\"todo:a:1\"},{\"ref\":\"todo:b:0\"}],"
+             "\"also\":[{\"ref\":\"todo:f:0\"},{\"ref\":\"todo:d:0\"}]}");
+    parse(js);
+    today_plan_for_today(&feed, TODAY, NOW, TZ, &plan);
+    CHECK(plan.from_insight);
+    SEC(TODAY_DO_FIRST, "a1", "b0", "Today 15");
+    SEC(TODAY_ALSO, "f0", "d0");
+    feed_free(&feed);
+}
+
+/* The cap keeps the highest weights: 7 undated items, the two weighted last ones first. */
+static void test_weights_cap(void)
+{
+    char js[2048];
+    size_t n = (size_t)snprintf(js, sizeof(js), "{\"v\":1,\"version\":1,\"todos\":[");
+    for (int i = 0; i < 7; i++) {
+        n += (size_t)snprintf(js + n, sizeof(js) - n, "%s{\"id\":\"u%d\",\"items\":[{\"i\":0,\"text\":\"u%d\"}]}",
+                              i ? "," : "", i, i);
+    }
+    snprintf(js + n, sizeof(js) - n, "],\"weights\":{\"weights\":{\"list:u6\":1,\"list:u5\":1}}}");
+    parse(js);
+    today_plan_build(&feed, TODAY, NOW, TZ, &plan);
+    SEC(TODAY_ALSO, "u5", "u6", "u0", "u1", "u2");
+    CHECK_EQ(plan.sec[TODAY_ALSO].more, 2);
+    feed_free(&feed);
+}
+
 int main(void)
 {
     test_shopping();
@@ -357,5 +517,8 @@ int main(void)
     test_insight();
     test_insight_edges();
     test_caps();
+    test_weights_fixture();
+    test_weights_edges();
+    test_weights_cap();
     return checks_done("test_today_plan");
 }

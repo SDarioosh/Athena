@@ -10,6 +10,13 @@
 
 `pda_feed` checks the answer's shape and keeps only refs that resolve in the feed. Same
 token, URL and request rules as the calendar (`OdysseusCalendar`, `Uploader`).
+
+- Weights: `GET /api/codex/insight/weights` (same scope) -> `{"version": 1, "date",
+  "weights": {"list:<note id>": <int -6..6>}}` (`{}` weights when none), the hub's learned
+  rule weights for the T5's rule-based Today plan (§5). `weights()` returns the answer, or
+  None for any failure at all (404 from an older hub, 403, network errors, 5xx, a 200 that
+  isn't a JSON object): the caller then keeps its last good table, so a weights failure
+  never fails the feed.
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ from .uploader import SKIP, Uploader, UploadError
 log = logging.getLogger("barvis_relay.pda")
 
 INSIGHT = "/api/codex/insight/today"
+WEIGHTS = "/api/codex/insight/weights"
 
 # Why the feed has no `insight` (the same words as the Android relay's)
 NOT_YET = "no insight yet"
@@ -33,6 +41,9 @@ MALFORMED = "malformed insight answer"
 class Insight(Protocol):
     def today(self) -> dict[str, Any] | None:
         """The hub's answer, or None if there is no insight to show (logged)."""
+
+    def weights(self) -> dict[str, Any] | None:
+        """The hub's weights answer, or None if it can't be had now (logged)."""
 
 
 class OdysseusInsight(Uploader):
@@ -48,6 +59,16 @@ class OdysseusInsight(Uploader):
                 raise
             log.log(logging.INFO if why == NOT_YET else logging.WARNING,
                     "Odysseus insight: %s; the feed has no insight", why)
+            return None
+
+    def weights(self) -> dict[str, Any] | None:
+        try:
+            return self._request("GET", WEIGHTS)
+        except UploadError as e:
+            why = "this Odysseus has no weights route (update the hub)" if e.status == 404 \
+                else (reason(e) or str(e))
+            log.log(logging.INFO if e.status == 404 else logging.WARNING,
+                    "Odysseus weights: %s; the feed keeps the last good table", why)
             return None
 
 

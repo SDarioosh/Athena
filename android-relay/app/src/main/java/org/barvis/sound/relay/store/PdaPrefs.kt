@@ -5,7 +5,8 @@ import org.barvis.sound.relay.relay.PdaMemory
 
 /**
  * [PdaMemory] in private SharedPreferences (not backed up, like the rest). Holds the last feed
- * hash and version per T5 and the `cal_add` dedupe table, kept for [KEEP_MS].
+ * hash and version per T5, the `cal_add` dedupe table, kept for [KEEP_MS], and the hub's last
+ * good rule-weights table (one for all T5s: it comes from the hub).
  */
 class PdaPrefs(context: Context) : PdaMemory {
     private val p = context.getSharedPreferences("pda", Context.MODE_PRIVATE)
@@ -29,6 +30,12 @@ class PdaPrefs(context: Context) : PdaMemory {
             if (nowMs - at > KEEP_MS) edit.remove(k)
         }
         edit.putString("cal:$actionKey", "$uid|$nowMs").apply()
+    }
+
+    @Synchronized override fun lastWeights(): String? = p.getString("weights", null)
+
+    @Synchronized override fun weightsFetched(json: String) {
+        p.edit().putString("weights", json).apply()
     }
 
     private companion object {

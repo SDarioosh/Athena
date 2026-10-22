@@ -252,6 +252,33 @@ class PdaHttpTest {
         noLeak()
     }
 
+    @Test fun odysseusInsightWeights() = runBlocking {
+        val t = FakeTransport { _, _ ->
+            HttpAnswer(200, """{"version": 1, "date": "2026-10-20", "weights": {"list:n1": 2, "list:n7": -1}}""")
+        }
+        val c = OdysseusInsightClient("http://hub.example.ts.net:7000/", { token }, t, log = { _, msg -> logs += msg })
+        val raw = (c.weights() as ApiResult.Ok).value
+        assertEquals(mapOf("list:n1" to 2L, "list:n7" to -1L), raw["weights"])
+        assertEquals("GET" to "http://hub.example.ts.net:7000/api/codex/insight/weights", t.calls[0].first to t.calls[0].second)
+        assertEquals("Bearer $token", t.calls[0].third["Authorization"])
+        // Anything else keeps the last good table (the feed builder's job): never Ok.
+        val kept = listOf(
+            HttpAnswer(404, """{"detail": "Not Found"}""") to OdysseusInsightClient.WEIGHTS_OLD_HUB,
+            HttpAnswer(405, "") to OdysseusInsightClient.WEIGHTS_OLD_HUB,
+            HttpAnswer(403, """{"detail": "API token missing required scope: insight:read"}""") to OdysseusInsightClient.NO_SCOPE,
+            HttpAnswer(200, "weights") to OdysseusInsightClient.WEIGHTS_MALFORMED,
+        )
+        for ((answer, why) in kept) {
+            t.answer = { _, _ -> answer }
+            assertEquals(ApiResult.Unsupported(why), c.weights())
+        }
+        t.answer = { _, _ -> HttpAnswer(503, "") }
+        assertTrue(c.weights() is ApiResult.Fail)
+        t.answer = { _, _ -> throw IOException("connection refused") }
+        assertTrue(c.weights() is ApiResult.Fail)
+        noLeak()
+    }
+
     /** The real transport against a JDK server: method, headers, body, no redirects. */
     @Test fun urlConnectionTransport() = runBlocking {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)

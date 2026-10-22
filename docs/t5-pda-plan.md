@@ -380,6 +380,7 @@ The phone builds it from these sources:
 | `calendar` | Odysseus calendar REST, today to +7 days: id, title, start, end, location, all-day |
 | `todos` | Odysseus notes (§4.4): the owner's checklists, pinned first, with their items |
 | `insight` | Odysseus `GET /api/codex/insight/today` (scope `insight:read`): the hub's Today insight, a headline and the to-dos and events to look at today (404 → leave out) |
+| `weights` | Odysseus `GET /api/codex/insight/weights` (same scope): the hub's learned rule weights per checklist for the T5's rule-based Today plan (§5); a failure keeps the last good table, never fetched → leave out |
 
 ```json
 {"v": 1, "version": 1729411200, "generated": "2026-10-20T07:00:00Z", "tz": "Europe/Berlin",
@@ -393,6 +394,7 @@ The phone builds it from these sources:
  "insight": {"date": "2026-10-20", "headline": "…",
              "focus": [{"ref": "todo:3f2c…:0", "why": "…"}, {"ref": "event:…", "why": "…"}],
              "coming_up": [{"ref": "event:…", "why": "…"}], "also": []},
+ "weights": {"version": 1, "date": "2026-10-20", "weights": {"list:3f2c…": 2, "list:9a1e…": -1}},
  "templates": ["Call", "Meeting", "Reminder"]}
 ```
 
@@ -437,6 +439,24 @@ The phone builds it from these sources:
       why, and the phone's status line says it (for example "insight: token lacks
       insight:read"). Network errors, 5xx, 408/429 and 401 fail the build, like a failing
       calendar.
+  - `weights` (added 2026-10-22): the hub's learned rule weights (§5 "Rule order and
+    weights"), from `GET /api/codex/insight/weights` with the insight's URL and token
+    (scope `insight:read`). The hub answers `{"version": 1, "date": "YYYY-MM-DD",
+    "weights": {"list:<note id>": <int>}}`, `"weights": {}` when it has none.
+    - The feed's key is `{"version": 1, "date", "weights": {…}}`, after `insight`. Only
+      `list:<note id>` keys (the id 1 to 150 UTF-8 bytes) with integer values (not
+      booleans, not `1.0`) are kept, clamped to [-6, 6], at most 32 in the hub's order
+      (largest first); everything else is dropped. An answer with a `version` other than 1,
+      or whose `weights` isn't an object, is malformed. A `date` that isn't `YYYY-MM-DD` is
+      left out.
+    - **Last good table:** any failure (an older hub's 404, 405, 403, network errors, 5xx,
+      a malformed answer) keeps the last good table, so a weights failure never fails the
+      build. The PC relay keeps it in its state file (`pda.json`, so it survives restarts);
+      the Android relay in its private preferences. A table that was never fetched leaves
+      the key out; so does a relay without Odysseus. An empty table (`{}`) replaces the
+      last one: the hub has no weights any more.
+    - The T5 matches the keys to `todos` by note id; a key for a note not in the feed is
+      ignored there.
   - `templates` (optional): the owner's event titles for the "+" picker (§5), e.g.
     `["Call", "Meeting", "Reminder"]`. At most 12 of up to 40 characters. The phone takes
     them from its settings, the PC relay from `--templates "Call,Meeting,Reminder"`. The key
@@ -445,13 +465,14 @@ The phone builds it from these sources:
   - The size limit is 32,768 bytes of compact UTF-8 JSON. Over it, each summary is cut to
     240 characters, then the oldest conversations are dropped. If it is still too big
     (hundreds of open items), done checklist items go, then the whole `insight`, then the
-    last action items, then the last unpinned checklists, then the last calendar entries. An
+    `weights`, then the last action items, then the last unpinned checklists, then the last calendar entries. An
     `insight` that is kept loses the refs to done items that were dropped, so every ref
     still resolves.
   - A source that fails fails the whole build, so nothing is pushed and the T5 keeps its
     feed. These don't count as failures: a digest 404, no Odysseus configured (no `calendar`
-    entries, no `todos`, no `insight`), a hub that can't list notes for this token (§4.4),
-    and an insight the hub can't give (see `insight` above).
+    entries, no `todos`, no `insight`, no `weights`), a hub that can't list notes for this
+    token (§4.4), an insight the hub can't give (see `insight` above), and any weights
+    failure (see `weights`).
   - **Push rule:** the content hash is SHA-256 over the feed without `version` and
     `generated`. The relay pushes when this hash differs from the last one it pushed to
     this T5, or when `status.feed_version` isn't the version it pushed (the T5 was wiped,
@@ -625,14 +646,44 @@ a 3 × 4 grid of hour slots and the durations.
     events still to come all end DO FIRST in time order, wherever the hub put them (with
     its `why` when it named them).
   - **Without one** (no key, or `date` isn't today), the same sections from rules, and
-    INSIGHT says "All caught up!" (with a small filled tick):
-    - DO FIRST: open items of overdue checklists (oldest first, "overdue since
-      2026-10-19"), then of those due today ("due today"), then today's events that aren't
-      over (all-day first, "today, all day"; then "today 14:00");
-    - COMING UP: events and items of checklists due within the next 7 days, by date and
-      time ("Wed 21 Oct 09:00", "due Fri 23 Oct");
-    - ALSO WORTH A LOOK: items of pinned checklists not listed above ("pinned"), then of
-      undated ones ("no date"); unpinned checklists due later than that aren't on Today.
+    INSIGHT says "All caught up!" (with a small filled tick). The hub's weights (feed
+    `weights`, below) reorder items within each group, never across groups; without
+    weights every w is 0 and the order is the one the T5 had before them:
+    - DO FIRST: open items of overdue checklists ("overdue since 2026-10-19") and of those
+      due today ("due today") by (-w, due date, feed order), then today's events that
+      aren't over (all-day first, "today, all day"; then "today 14:00");
+    - COMING UP: events and items of checklists due within the next 7 days, by (-w, date,
+      time) with events at w 0 ("Wed 21 Oct 09:00", "due Fri 23 Oct");
+    - ALSO WORTH A LOOK: items of pinned checklists not listed above ("pinned") by (-w,
+      feed order), then of undated ones ("no date") by (-w, feed order); unpinned
+      checklists due later than that aren't on Today.
+  - **Rule order and weights (published 2026-10-22; the hub's candidate order for its
+    insight follows the same rules):**
+
+    | tier | items | within the tier | on the T5 |
+    |---|---|---|---|
+    | 0 | overdue and due today | higher weight first, then date, time, input order | DO FIRST (to-dos, then today's events) |
+    | 1 | due in the next 7 days | higher weight first, then date, time | COMING UP |
+    | 2 | items of pinned notes (undated or later) | higher weight first, then input order | ALSO WORTH A LOOK, first |
+    | 3 | undated | higher weight first, then input order | ALSO WORTH A LOOK, then |
+    | 4 | due later than a week | higher weight first, then date, time | not on Today |
+
+    A weight never moves an item to another tier, so overdue and due-today items always
+    come first. The weight table (feed `weights`, §4.1):
+
+    | key | applies to | range |
+    |---|---|---|
+    | `list:<note id>` | the to-do items of that checklist | integer, -6 to 6 (0 when absent) |
+
+    At most 32 entries; the T5 has only this key (the hub folds its per-note-type weights
+    into it, since every T5 to-do is a checklist item), events always weigh 0. The hub
+    learns each weight from the owner's outcomes on its Today page over the last 28 days
+    (done, "↑ first", "not today", moved, ignored), and keeps it at 0 until a list has been
+    shown often enough ([how the hub learns them](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/today-insight.md#weights)).
+    The T5 uses the weights only in the rule-based plan: with an insight for today, the
+    hub's order stands. Integers only, no floats on the T5. A fictional day with known
+    weights and its expected order is `firmware/pda/test/fixtures/insight_eval_day.json`,
+    shared with the hub's insight eval.
   - **Left out:** done items, events that are over, and shopping lists: a checklist titled
     Shopping, Groceries or Grocery (any case, with or without " list") unless it has a due
     date. The hub's insight may still name one of their items.
@@ -644,7 +695,8 @@ a 3 × 4 grid of hour slots and the durations.
     for the next 7 days." under it; INSIGHT is left out unless the hub sent a headline.
   - **The digest** is on Brief only; the bottom row of Today says "Digest ready on Brief ›"
     when the feed has a briefing.
-  - Code: `main/today_plan.c` (the plan, pure, `test/test_today_plan.c`), `main/ui_today.c`
+  - Code: `main/today_plan.c` (the plan, pure, `test/test_today_plan.c`; the weights are
+    parsed by `main/feed.c`, `test/test_feed.c`), `main/ui_today.c`
     (the drawing), `main/ui_chrome.c` (header, tabs, headings, the Asleep screen); both
     rendered on the host by `test/test_ui_today.c`.
 - **Asleep screen** (BOOT held 1 s, §2 "Sleep"): "Asleep" (SemiBold 32 pt), "since Tue 20
