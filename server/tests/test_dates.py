@@ -85,6 +85,9 @@ def test_code_date_wins_over_the_model(pipeline):
     ("this afternoon", (None, False)),
     ("at 2 people", (None, False)),
     ("at one point", (None, False)),
+    ("13 mm by 14 mm by 3 mm", (None, False)),  # measurements
+    ("cut it at 5 cm", (None, False)),
+    ("by 4 at the gym", ("16:00", False)),
     ("2026-10-21", (None, False)),
     ("costs 3.30", (None, False)),
     ("", (None, False)),

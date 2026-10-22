@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-22 ("Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-22 ("Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -118,6 +118,17 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
+
+## Done on 2026-10-22: "Create a note." takes the next sentence as the note
+
+- Same gap as the to-do list sentence below, for notes: "Create a note. Battery is 13 mm
+  wide." or "Add to my hardware notes. The screen is 1.4 inch." made a note of the command
+  alone ("Add to my hardware notes") and left the content as a task or a suggestion. A
+  note command with nothing to note now takes the next sentence as its note; a task the
+  model wrote for that sentence becomes the note.
+- Found on the way: "13 mm by 14 mm" read as a deadline ("by 14" -> 14:00), so a
+  measurement became a dated to-do. A number followed by a unit (mm, cm, kg, inch, V,
+  mAh, ...) is no time now. Tests: `server/tests/test_note_items.py`, `test_dates.py`.
 
 ## Done on 2026-10-22: "Create a to-do list." covers the items after it
 

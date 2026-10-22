@@ -194,3 +194,25 @@ def test_shopping_list_items_stay_out_of_the_digest():
     first, second = (json.loads(b["messages"][-1]["content"])[0]["action_items"] for b in log)
     assert first == ["Call the bank", "Book flights"]
     assert second == ["Milk", "Eggs", "Call the bank", "Book flights"]
+
+
+# --------------------------------------------- the command and the note in two sentences
+@pytest.mark.parametrize("said,item,notes", [
+    # the model takes the measurement for a task ("by 14" is no deadline)
+    ("Create a note. Battery dimensions are 13 mm by 14 mm by 3 mm.",
+     {"text": "Battery dimensions are 13 mm by 14 mm by 3 mm"}, None),
+    ("Add to my hardware notes. The screen is 1.4 inch.", {"text": "The screen is 1.4 inch"},
+     "hardware"),
+    ("Add this to my hardware notes. The screen is 1.4 inch.",
+     {"text": "The screen is 1.4 inch"}, "hardware"),
+])
+def test_note_in_the_next_sentence(said, item, notes):
+    (got,) = note_items([item], said)
+    assert (got["kind"], got["text"], got["list_name"], got["due_time"], got["explicit"]) == (
+        "note", item["text"], notes, None, True)
+
+
+def test_no_note_from_the_command_alone():
+    items = note_items([], "Add to my hardware notes. The screen is 1.4 inch.")
+    assert [(i["kind"], i["text"], i["list_name"]) for i in items] == [
+        ("note", "The screen is 1.4 inch", "hardware")]
