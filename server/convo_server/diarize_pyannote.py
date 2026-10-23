@@ -34,11 +34,13 @@ import numpy as np  # noqa: E402
 
 from .audio import SAMPLE_RATE  # noqa: E402
 from .diarize import (  # noqa: E402
+    SPLIT_MIN_SECONDS,
     Diarizer,
     EnrolledVoice,
     PieceRef,
     SpeakerEmbedder,
     SpeakerLabel,
+    Word,
     _normalize,
     cluster,
     rms_db,
@@ -141,7 +143,9 @@ class PyannoteDiarizer(Diarizer):
         centroids = [_normalize(np.mean([embs[j] for j in m], axis=0)) for m in members]
         cl_loud = [float(np.mean([loud[j] for j in m])) for m in members]
         names, unnamed = self.name_clusters(centroids, cl_loud)
+        self._remember(names, centroids)
         by_key = {k: names[cids[j]] for j, k in enumerate(keys)}
+        self._last_turns, self._last_by_key = turns, by_key
 
         out: list[SpeakerLabel] = []
         for p in pieces:
@@ -168,6 +172,42 @@ class PyannoteDiarizer(Diarizer):
             for i, lab in zip(rest, labels, strict=True):
                 out[i] = SpeakerLabel(renumber.get(lab.name, lab.name), lab.is_owner)
         return out, unnamed
+
+    def split_lines(self, runs: list[np.ndarray], pieces: list[PieceRef],
+                    words: list[list[Word]], labels: list[SpeakerLabel]
+                    ) -> list[list[tuple[int, int, SpeakerLabel]]]:
+        """Split lines at pyannote's turn changes: each word takes the speaker of the
+        turn it overlaps most; a part shorter than ``SPLIT_MIN_SECONDS`` joins the part
+        before it (or after it, at the start)."""
+        turns = getattr(self, "_last_turns", None)
+        by_key = getattr(self, "_last_by_key", {})
+        out = []
+        for p, ws, lab in zip(pieces, words, labels, strict=True):
+            if not turns or len(ws) < 2 or p.run >= len(turns):
+                out.append([(0, len(ws), lab)])
+                continue
+            who = []
+            for s, e, _ in ws:
+                t = _best_turn(turns[p.run], s, max(e, s + 1e-3))
+                who.append(by_key.get((p.run, t), lab) if t else lab)
+            parts: list[list] = []  # [first, end, label]
+            for k, w in enumerate(who):
+                if parts and parts[-1][2] == w:
+                    parts[-1][1] = k + 1
+                else:
+                    parts.append([k, k + 1, w])
+            merged: list[list] = []
+            for part in parts:
+                long = ws[part[1] - 1][1] - ws[part[0]][0] >= SPLIT_MIN_SECONDS
+                if merged and (not long or merged[-1][2] == part[2]):
+                    merged[-1][1] = part[1]
+                elif (merged and ws[merged[-1][1] - 1][1] - ws[merged[-1][0]][0]
+                      < SPLIT_MIN_SECONDS):
+                    merged[-1][1], merged[-1][2] = part[1], part[2]
+                else:
+                    merged.append(list(part))
+            out.append([(a, b, w) for a, b, w in merged])
+        return out
 
     def _embed_speech(self, speech: np.ndarray, win_seconds: float = 3.0) -> np.ndarray:
         win = int(win_seconds * SAMPLE_RATE)

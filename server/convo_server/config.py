@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     # A speaker with a single line joins the closest speaker with several lines when its
     # voice is at least this similar (0 = off).
     speaker_absorb_threshold: float = 0.30
+    # Split a transcript line where the voice changes to another speaker of the same
+    # recording (needs word times from whisper-server's verbose_json). Off until measured
+    # on the server.
+    speaker_split_lines: bool = False
     # After a speaker is named, unnamed speakers in other conversations whose voice is at
     # least this close are renamed too (stricter than the match threshold).
     speaker_relabel_threshold: float = 0.60
