@@ -25,8 +25,9 @@ SCREEN = {"text": "The screen is 1.4 inch", "kind": "note", "title": "Screen siz
 TASK = {"text": "Call the plumber", "kind": "task", "owner": "Me", "at_seconds": 0}
 
 
-def summarizer(items: list[dict]) -> Summarizer:
-    summary = {"title": "Battery", "summary": "s", "key_points": [], "people": [],
+def summarizer(items: list[dict], said: str = "") -> Summarizer:
+    # no summary by default: a lone note keeps its own words (see test_lone_note_*)
+    summary = {"title": "Battery", "summary": said, "key_points": [], "people": [],
                "topics": [], "facts": [], "action_items": items}
     llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary=summary))
     return Summarizer(llm, "Me", timezone="Europe/Berlin")
@@ -252,3 +253,37 @@ def test_twin_task_with_more_words_keeps_them():
 def test_several_notes_keep_their_own_titles():
     items = note_items([], "Note that the gate code is 4417. Note that the wifi is on the router.")
     assert [i["note_title"] for i in items] == [None, None]
+
+
+# ------------------------------------------------ a voice note that is only one note
+SUMMARY = ("A speaker gets the wrong name in the hub when two people talk over each "
+           "other, a diarization bug.")
+
+
+def test_lone_note_is_the_summary():
+    out = summarizer([], SUMMARY).summarize(
+        [Segment(T0, T0 + 4, "Make a note that the hub has a bug where a", "Me", True),
+         Segment(T0 + 4, T0 + 8, "speaker, um, gets the wrong name.", "Me", True)], kind="note")
+    (item,) = out["action_items"]
+    assert (item["kind"], item["text"], item["note_title"], item["title"]) == (
+        "note", SUMMARY, "Battery", "Battery")
+    assert item["source_at"] == T0 and item["explicit"] is True
+
+
+def test_named_notes_and_several_notes_keep_their_words():
+    said = "Add to my hardware notes, the screen is 1.4 inch"
+    (item,) = summarizer([SCREEN], "Specs of the screen.").summarize(
+        [Segment(T0, T0 + 5, said, "Me", True)], kind="note")["action_items"]
+    assert (item["text"], item["list_name"]) == ("The screen is 1.4 inch", "hardware")
+    items = summarizer([], "Gate code and wifi.").summarize(
+        [Segment(T0, T0 + 5, "Note that the gate code is 4417. Note that the wifi is on the "
+                 "router.", "Me", True)], kind="note")["action_items"]
+    assert [i["text"] for i in items] == ["The gate code is 4417", "The wifi is on the router"]
+
+
+def test_lone_note_with_tasks_keeps_its_words():
+    items = summarizer([TASK], "Plumber and gate code.").summarize(
+        [Segment(T0, T0 + 5, "Note that the gate code is 4417. Call the plumber.", "Me",
+                 True)], kind="note")["action_items"]
+    assert sorted((i["kind"], i["text"]) for i in items) == [
+        ("note", "The gate code is 4417"), ("task", "Call the plumber")]

@@ -484,7 +484,7 @@ class Summarizer:
                                if i["kind"] != NOTE_ITEM or (asked and i["text"])]
         if asked:  # a command the model missed or took for a task
             _notes_from_commands(out["action_items"], parts, origin)
-        _title_lone_note(out)
+        _lone_note(out)
         for item in out["action_items"]:
             if item["kind"] == NOTE_ITEM:  # a note is filed as it is: no date or time
                 item.update(due=None, due_date=None, due_time=None, time_unclear=False,
@@ -865,16 +865,21 @@ def _command_sentences(parts: list[str]) -> list[tuple[str, int]]:
     return out
 
 
-def _title_lone_note(out: dict[str, Any]) -> None:
-    """A voice note that is only one untitled note: the note takes the voice note's
-    title, written from all of it (the hub would otherwise start the title with the
-    note's first words)."""
+def _lone_note(out: dict[str, Any]) -> None:
+    """A voice note that is only one note becomes that note: its summary (written from
+    all of it, so nothing the transcriber cut is lost) is the note's text, and its title
+    titles an untitled note. A line for named notes ("add to my hardware notes") keeps
+    its own words; several notes keep theirs."""
     items, title = out["action_items"], (out.get("title") or "").strip()
-    if len(items) != 1 or items[0]["kind"] != NOTE_ITEM or items[0].get("note_title") \
-            or not title:
+    if len(items) != 1 or items[0]["kind"] != NOTE_ITEM:
         return
-    items[0]["note_title"] = title[:80]
-    items[0]["title"] = short_title(title, items[0]["text"])
+    note = items[0]
+    summary = " ".join((out.get("summary") or "").split())
+    if summary and not note.get("list_name"):
+        note["text"] = summary
+    if title and not note.get("note_title"):
+        note["note_title"] = title[:80]
+    note["title"] = short_title(note.get("note_title"), note["text"])
 
 
 def _command_only(said: str) -> bool:
