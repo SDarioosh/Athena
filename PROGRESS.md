@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-23 (facts name what they are about, passing curiosity is not a fact; "a to-do" transcribed as "a to do" or "it to do" still counts as a command; complete forget: `erase_fact`, MCP 0.10.0; opt-in transcript retention; "Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-23 (T-Watch event log in flash and card power cycle on write errors, after a call recorded in four pieces; facts name what they are about, passing curiosity is not a fact; "a to-do" transcribed as "a to do" or "it to do" still counts as a command; complete forget: `erase_fact`, MCP 0.10.0; opt-in transcript retention; "Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -123,6 +123,55 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
+
+## Done on 2026-10-23: T-Watch event log, card power cycle on write errors (branch `feature/twatch-event-log`)
+
+- **Bug:** during a phone call (2026-10-23, 13:40–13:47 UTC) one PWR press started a
+  recording, and the server got four short sessions (6, 8.5, 6.3 and 20.5 s, each one chunk
+  with LAST) with gaps of 17 s, ~2 min and ~3 min. Nothing was pressed on purpose after the
+  start.
+- **What the watch showed (USB, after the owner had reset it):** no core dump; the power log
+  (`power.csv`) counts uptime straight through the call (62333 → 62634 → 62938 s), so no
+  reboot; battery 73 %, USB unplugged, BLE advertising (not connected) at 13:41 and 13:46.
+  That rules out a crash or watchdog restart, low battery, USB and the relay. Only a PWR short
+  press can start a conversation again after it stopped (besides the console and a crash
+  resume), so the three restarts were PWR events the watch saw. Whether the key was pressed
+  (wrist bent with the phone at the ear) or the PMU reported presses without one is open.
+- **Reproduction (phone held to the ear with the watch arm, relay off, no real speech):**
+  test 1 (34 s) ended with the card dead: one write `0x108`, then every read `0x107` until
+  the session gave up (REC ERROR, 3 buzzes, which the owner didn't notice); the open chunk's
+  24 s were deleted as "nothing to keep" because the card couldn't be read. Test 2 (84 s):
+  clean, no extra PWR event. So card errors may explain the stops (a session ended by a card
+  error closes with LAST, like a normal stop), not the restarts. Not reproduced yet.
+- **What:** `main/event_log.*` (pure, `test/test_event_log.c`) and `main/event_log_store.*`
+  (NVS, 16 blobs of 8 entries, 128 kept). One entry per boot (reset reason, standby wake,
+  resume), button event (PWR short with the PMU interrupt bits, so a press without key edges
+  shows as "no key edges"; PWR short ignored by the 1 s guard, with the gap; PWR held; BOOT
+  short/double/held), recording start and stop request (with what asked: PWR, PWR held,
+  console, resume, after a note, a note, mute, low battery), recording end (stopped, card
+  full, error, length limit; seconds), mute, low battery and card power cycle, with the UTC
+  time, uptime and battery. Console `events [clear]`.
+- **Card power cycle:** after a write error the session closes the chunk file, powers the
+  card off and on (`board_storage_power_cycle()`, ~0.3 s; the mic ring holds the audio) and
+  only then recovers the chunk, so a card that stopped answering gives back what was
+  written. A chunk that couldn't start powers the card off and on before the retry. A card
+  read error during recovery no longer deletes the chunk (only a missing file does); it
+  stays on the card for the next boot. The T-Watch S3 and T4-S3 (flash) skip it.
+- **Checks:** host tests in WSL (all pass, new `test_event_log`, two-step abandon in
+  `test_chunk_queue`); `idf.py build` for twatch_ultra, twatch_s3, t4_s3.
+- **Checked on the owner's T-Watch Ultra (flashed after review):** `events` after the flash
+  shows "boot: USB reset". `session start` + `sd failwrite 1`: the card went off and on in
+  416 ms, the chunk was kept, the session went on into a second chunk and ended normally; the
+  log shows "card powered off and on after write error 0x108: mounted again". Two deliberate
+  PWR presses: both "button PWR short (PMU 0x000b00: key edges + -)", then "started by PWR"
+  and "stop asked by PWR". Test 1's lost chunk (22 s) turned up in the queue: the dead card
+  couldn't delete it either, and a boot recovered it. All test chunks were dropped.
+- **Next (owner):** wear it on calls. If a recording stops or starts by itself again, run
+  `events` over USB before anything else (don't reset): "no key edges" on a PWR press means
+  a phantom from the PMU; key edges mean the key really moved. Not seen yet: a real card
+  failure in use, a phantom press.
+- **Also seen:** `tools/wcon.py --listen` doesn't work on Windows (it takes `COM35` for a
+  file path, thinks the port is gone and reopens it in a loop).
 
 ## Done on 2026-10-23: a voice note that is one note becomes that note
 

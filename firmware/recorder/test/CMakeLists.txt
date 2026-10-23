@@ -25,6 +25,7 @@ add_library(recorder_pure STATIC
     ${FW}/main/mic_mix.c
     ${FW}/main/battery_guard.c
     ${FW}/main/power_samples.c
+    ${FW}/main/event_log.c
     ${FW}/boards/twatch_ultra/board/pcf85063a_codec.c
     ${FW}/boards/twatch_s3/board/pcf8563_codec.c
     ${FW}/boards/t4_s3/board/sy6970_codec.c
@@ -44,6 +45,7 @@ endif()
 enable_testing()
 set(TESTS test_audio_dsp test_audio_stats test_wav test_isotime test_textfb test_pcf85063a_codec
     test_pcf8563_codec test_button_gesture test_click_counter test_key_press test_mic_mix test_battery_guard test_power_samples
+    test_event_log
     test_sy6970_codec)
 foreach(t test_ogg_opus test_chunk_queue test_ble_proto test_crc32)
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${t}.c)

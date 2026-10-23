@@ -88,7 +88,7 @@ records everything between start and stop.
   `gain [dB]`, `eq [on|off]`, `ls [q]`, `get <file>`, `mute`, `screen`, `sd`, `reboot`.
   `status` also prints the free heap and the last reset reason.
   `sd failwrite <n>` makes the next n chunk writes fail (to test the recovery below).
-  `batt sim`, `coredump [get|erase]` and `crash yes|wdt`: see below.
+  `batt sim`, `coredump [get|erase]`, `crash yes|wdt` and `events [clear]`: see below.
 
 ## What it does (T-Watch S3)
 
@@ -225,6 +225,13 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 24 kbps VBR, complexity 1) -> 30 s Ogg
   session and BLE tasks are on the task watchdog: a 10 s hang restarts the watch, and a
   conversation that was recording starts again after the boot. `crash yes` / `crash wdt`
   test it.
+- **Event log**: `events` prints what started and ended recordings, kept in flash (NVS,
+  the last 128): boots with the reset reason, every button event (a PWR press with the PMU's
+  interrupt bits: "no key edges" means the PMU reported a press the key never made; presses
+  the 1 s guard ignored), recording starts and stop requests with what asked for them,
+  recording ends with the reason, mute, low battery and card power cycles, each with the UTC
+  time, uptime and battery. `events clear` empties it. When a recording stopped or started
+  by itself, read `events` before anything else.
 - **Power log**: `power` shows the battery, what the watch is doing, the CPU clock and the
   drain rate; every 5 min (`power log <min>|off`) a sample goes to `/sdcard/power.csv`
   (written hourly, never while recording or syncing). `power locks` shows what keeps the
@@ -233,7 +240,9 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 24 kbps VBR, complexity 1) -> 30 s Ogg
 - **Card errors**: a failed write (the card sometimes answers `0x108`) costs at most the
   open page (~1 s): the chunk is cut back to its last page and the session goes on with a
   new chunk after 100/300/1000 ms of skipped (but counted) mic frames; it ends only after 4
-  failures in a row. `status` and the end-of-session log count them.
+  failures in a row. After each failure the card is powered off and on (~0.3 s, the mic ring
+  keeps the audio) before the chunk is read back: a card that failed once could time out on
+  every later command until then (2026-10-23). `status` and the end-of-session log count them.
 - **Queue**: `queue` lists it (id, session, sequence, start, length, size, flags);
   `queue drop <id>` deletes one without uploading. `ls q` / `get q/<file>` and
   `tools/pull.py --queue` copy chunks over USB for debugging without BLE (they stay

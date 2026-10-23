@@ -43,6 +43,7 @@
 #include "esp_sleep.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "event_log_store.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -142,15 +143,36 @@ esp_err_t app_battery_read(board_battery_t *out, bool *simulated)
     return board_battery_read(out);
 }
 
+/* Event loop only: add to the flash event log, with the battery (an I2C read). */
+static void log_event(el_kind_t kind, int why, int32_t arg, uint8_t aux)
+{
+    board_battery_t b;
+    const int batt = app_battery_read(&b, NULL) == ESP_OK ? b.percent : -1;
+    event_log_add(kind, why, arg, aux, batt);
+}
+
+static uint8_t rec_kind(session_rec_kind_t kind)
+{
+    return kind == SESSION_KIND_NOTE ? EL_REC_NOTE : EL_REC_CONVERSATION;
+}
+
 static void on_button(board_button_t button, board_press_t press, void *ctx)
 {
     (void)ctx;
     if (button == BOARD_BUTTON_PWR) {
+        /* Read now, in the button task: the details belong to this event. */
+        uint32_t pmu_irq = 0;
+        int32_t gap_ms = 0;
+        board_pwr_event_info(&pmu_irq, &gap_ms);
         if (press == BOARD_PRESS_SHORT) {
-            app_post(APP_EV_PWR_SHORT, 0);
+            app_post(APP_EV_PWR_SHORT, (int)pmu_irq);
         } else if (press == BOARD_PRESS_LONG) {
-            app_post(APP_EV_PWR_LONG, 0);
+            app_post(APP_EV_PWR_LONG, (int)pmu_irq);
+        } else if (press == BOARD_PRESS_SHORT_IGNORED) {
+            app_post(APP_EV_PWR_IGNORED, (int)gap_ms);
         }
+    } else if (press == BOARD_PRESS_SHORT_IGNORED) {
+        /* only the PMIC button reports it */
     } else if (press == BOARD_PRESS_SHORT) {
         app_post(APP_EV_BOOT_SHORT, 0);
     } else if (press == BOARD_PRESS_DOUBLE) {
@@ -488,9 +510,11 @@ static void stop_test_recording(const char *why)
  * when its SESSION_DONE arrives; when the note ends, a new conversation session starts
  * (s_resume_conversation). Mute cancels both. */
 
-/* quiet: resuming after a note (no buzz; the note's 2 buzzes just played). */
-static void start_conversation(bool quiet)
+/* trig: what asked for it (event log). Only a PWR press or the console buzzes and explains
+ * a refusal: a resume after a note (the note's 2 buzzes just played) or a restart is quiet. */
+static void start_conversation(el_trigger_t trig)
 {
+    const bool quiet = trig != EL_TRIG_PWR && trig != EL_TRIG_CONSOLE;
     if (s_muted || s_batt_low) {
         if (!quiet) {
             s_muted ? refuse_muted() : refuse_low();
@@ -514,7 +538,9 @@ static void start_conversation(bool quiet)
         show_message("REC FAILED", "SEE CONSOLE LOG");
         return;
     }
-    ESP_LOGI(TAG, "recording session started%s", quiet ? " again (no buzz)" : " (1 buzz)");
+    ESP_LOGI(TAG, "recording session started by %s%s", el_trigger_name(trig),
+             quiet ? " (no buzz)" : " (1 buzz)");
+    log_event(EL_START, trig, 0, EL_REC_CONVERSATION);
     if (!quiet) {
         board_haptic_pulse(1);
     }
@@ -526,8 +552,21 @@ static void start_conversation(bool quiet)
     ble_sync_kick();
 }
 
+/* What asked for the pending note (event log): PWR held or the console. */
+static el_trigger_t s_note_trig = EL_TRIG_PWR_LONG;
+
+/* Log a stop request for whatever records now (a conversation or a note). */
+static void log_stop(el_trigger_t trig)
+{
+    session_rec_state_t ss;
+    session_rec_get_state(&ss);
+    if (ss.running) {
+        log_event(EL_STOP, trig, 0, rec_kind(ss.kind));
+    }
+}
+
 /* Start the note session now (the mic is free). */
-static void begin_note(void)
+static void begin_note(el_trigger_t trig)
 {
     const esp_err_t err =
         session_rec_start(SESSION_KIND_NOTE, on_session_done, on_session_tick, NULL);
@@ -537,11 +576,13 @@ static void begin_note(void)
         show_message("NOTE FAILED", "SEE CONSOLE LOG");
         if (s_resume_conversation) {
             s_resume_conversation = false;
-            start_conversation(true);
+            start_conversation(EL_TRIG_AFTER_NOTE);
         }
         return;
     }
-    ESP_LOGI(TAG, "voice note started (1 buzz; max %d s, PWR press or hold stops it)", SESSION_REC_NOTE_MAX_S);
+    ESP_LOGI(TAG, "voice note started by %s (1 buzz; max %d s, PWR press or hold stops it)",
+             el_trigger_name(trig), SESSION_REC_NOTE_MAX_S);
+    log_event(EL_START, trig, 0, EL_REC_NOTE);
     board_haptic_pulse(1);
     if (board_screen_on_while_recording()) {
         show_rec();
@@ -551,7 +592,7 @@ static void begin_note(void)
     ble_sync_kick();
 }
 
-static void start_note(void)
+static void start_note(el_trigger_t trig)
 {
     if (s_muted) {
         refuse_muted();
@@ -574,17 +615,20 @@ static void start_note(void)
         /* A conversation is recording: end it cleanly, the note follows on SESSION_DONE, and
          * the conversation resumes as a new session after the note. */
         ESP_LOGI(TAG, "note: ending the conversation session first; it resumes after the note");
+        log_stop(EL_TRIG_NOTE);
         s_note_pending = true;
+        s_note_trig = trig;
         s_resume_conversation = true;
         session_rec_stop();
         show_message("NOTE", "STARTING");
         return;
     }
-    begin_note();
+    begin_note(trig);
 }
 
-static void stop_note(const char *why)
+static void stop_note(el_trigger_t trig)
 {
+    const char *why = el_trigger_name(trig);
     if (s_note_pending) {
         /* The note hadn't started yet: drop it; the conversation resumes at SESSION_DONE. */
         ESP_LOGI(TAG, "%s: note cancelled before it started", why);
@@ -595,15 +639,18 @@ static void stop_note(const char *why)
     }
     if (note_running()) {
         ESP_LOGI(TAG, "%s: ending the voice note", why);
+        log_stop(trig);
         session_rec_stop(); /* 2 buzzes and "Note saved" when it has ended */
     } else {
         ESP_LOGI(TAG, "%s: no note is recording", why);
     }
 }
 
-static void stop_conversation(const char *why)
+static void stop_conversation(el_trigger_t trig)
 {
+    const char *why = el_trigger_name(trig);
     s_resume_conversation = false;
+    log_stop(trig);
     if (session_rec_stop()) {
         ESP_LOGI(TAG, "%s: ending the recording session (2 buzzes)", why);
         board_haptic_pulse(2);
@@ -620,11 +667,11 @@ static void pwr_short(void)
         stop_test_recording("PWR");
         show_message("WAV STOPPED", NULL);
     } else if (s_note_pending || note_running()) {
-        stop_note("PWR");
+        stop_note(EL_TRIG_PWR);
     } else if (session_rec_running()) {
-        stop_conversation("PWR");
+        stop_conversation(EL_TRIG_PWR);
     } else {
-        start_conversation(false);
+        start_conversation(EL_TRIG_PWR);
     }
 }
 
@@ -633,20 +680,22 @@ static void pwr_short(void)
 static void pwr_long(void)
 {
     if (s_note_pending || note_running()) {
-        stop_note("PWR hold");
+        stop_note(EL_TRIG_PWR_LONG);
     } else {
-        start_note();
+        start_note(EL_TRIG_PWR_LONG);
     }
 }
 
 static void toggle_mute(void)
 {
     s_muted = !s_muted;
+    log_event(EL_MUTE, s_muted, 0, 0);
     if (s_muted) {
         /* Muting must never leave the mic recording, and nothing resumes afterwards. */
         s_note_pending = false;
         s_resume_conversation = false;
         const bool was_recording = test_wav_running() || session_rec_running();
+        log_stop(EL_TRIG_MUTE);
         recorder_stop();
         session_rec_stop();
         show_message("MUTED", was_recording ? "RECORDING STOPPED" : NULL);
@@ -674,6 +723,7 @@ static void session_done(session_rec_kind_t kind, session_rec_end_t why)
              note ? "note" : "session", ss.session_hex, (unsigned)why < 4 ? WHY[why] : "?",
              esp_err_to_name(s_session_result), ss.elapsed_s, ss.chunks_written,
              ss.enc_avg_us, ss.enc_max_us, ss.stack_free_min);
+    log_event(EL_END, why, (int32_t)ss.elapsed_s, rec_kind(kind));
     ble_sync_kick();
 
     if (why == SESSION_END_CARD_FULL || why == SESSION_END_ERROR) {
@@ -694,17 +744,17 @@ static void session_done(session_rec_kind_t kind, session_rec_end_t why)
         }
         if (s_resume_conversation) {
             s_resume_conversation = false;
-            start_conversation(true);
+            start_conversation(EL_TRIG_AFTER_NOTE);
         }
         return;
     }
     /* A conversation session ended. */
     if (s_note_pending) {
         s_note_pending = false;
-        begin_note();
+        begin_note(s_note_trig);
     } else if (s_resume_conversation) { /* the pending note was cancelled */
         s_resume_conversation = false;
-        start_conversation(true);
+        start_conversation(EL_TRIG_AFTER_NOTE);
     } else {
         refresh_screen_if_shown();
     }
@@ -769,26 +819,39 @@ static void handle(const app_event_t *ev)
 {
     switch (ev->type) {
     case APP_EV_PWR_SHORT:
+        log_event(EL_BUTTON, EL_BTN_PWR_SHORT, ev->arg, 0);
         pwr_short();
         break;
     case APP_EV_PWR_LONG:
+        log_event(EL_BUTTON, EL_BTN_PWR_LONG, ev->arg, 0);
         pwr_long();
         break;
+    case APP_EV_PWR_IGNORED:
+        log_event(EL_BUTTON, EL_BTN_PWR_SHORT_IGNORED, ev->arg, 0);
+        break;
     case APP_EV_NOTE_START:
-        start_note();
+        start_note(EL_TRIG_CONSOLE);
         break;
     case APP_EV_NOTE_STOP:
-        stop_note("console");
+        stop_note(EL_TRIG_CONSOLE);
         break;
     case APP_EV_BOOT_SHORT:
+        log_event(EL_BUTTON, EL_BTN_BOOT_SHORT, 0, 0);
+        show_screen();
+        break;
     case APP_EV_SCREEN_SHOW:
         show_screen();
         break;
     case APP_EV_BOOT_DOUBLE:
+        log_event(EL_BUTTON, EL_BTN_BOOT_DOUBLE, 0, 0);
+        toggle_mute();
+        break;
     case APP_EV_MUTE_TOGGLE:
         toggle_mute();
         break;
     case APP_EV_BOOT_LONG:
+        log_event(EL_BUTTON, EL_BTN_BOOT_LONG, 0, 0);
+        /* fall through */
     case APP_EV_SYNC_NOW:
         ESP_LOGI(TAG, "sync now: BLE sync window open for 2 min (advertising, new phones may pair)");
         ble_sync_open_window();
@@ -796,15 +859,15 @@ static void handle(const app_event_t *ev)
         show_message("SYNC OPEN", "2 MIN");
         break;
     case APP_EV_SESSION_START:
-        start_conversation(false);
+        start_conversation(EL_TRIG_CONSOLE);
         break;
     case APP_EV_SESSION_STOP:
         s_note_pending = false;
         s_resume_conversation = false;
         if (note_running()) {
-            stop_note("console");
+            stop_note(EL_TRIG_CONSOLE);
         } else {
-            stop_conversation("console");
+            stop_conversation(EL_TRIG_CONSOLE);
         }
         break;
     case APP_EV_PASSKEY:
@@ -955,6 +1018,8 @@ static void check_battery(void)
         s_note_pending = false;
         s_resume_conversation = false;
         const bool was_recording = test_wav_running() || session_rec_running();
+        event_log_add(EL_BATT_LOW, 1, b.millivolts, 0, b.percent);
+        log_stop(EL_TRIG_BATT_LOW);
         recorder_stop();
         session_rec_stop();
         ESP_LOGW(TAG, "battery low (%d%%, %d mV): %s; new recordings refused until %d%% or USB",
@@ -967,6 +1032,7 @@ static void check_battery(void)
     }
     case BG_LEAVE_LOW:
         s_batt_low = false;
+        event_log_add(EL_BATT_LOW, 0, b.millivolts, 0, b.percent);
         ESP_LOGI(TAG, "battery OK again (%d%%, %d mV%s): recording allowed", b.percent,
                  b.millivolts, b.vbus ? ", USB" : "");
         refresh_screen_if_shown();
@@ -991,6 +1057,7 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+    event_log_init();
 
 #if CONFIG_PM_ENABLE
     /* DFS between 80 and 40 MHz, light sleep when idle. Recording can't be cut by it: the
@@ -1011,6 +1078,21 @@ void app_main(void)
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
 
     clock_from_rtc();
+
+    /* A crash or a watchdog restart cut a conversation off: record again (below, once
+     * everything is up). A power cut, brownout or reboot by hand doesn't (s_rec_resume is not
+     * kept, or not wanted). */
+    const esp_reset_reason_t rr = esp_reset_reason();
+    const bool crashed = rr == ESP_RST_PANIC || rr == ESP_RST_TASK_WDT ||
+                         rr == ESP_RST_INT_WDT || rr == ESP_RST_WDT;
+    const bool resume = crashed && s_rec_resume == REC_RESUME_MAGIC;
+    s_rec_resume = 0;
+    {
+        board_battery_t b;
+        event_log_boot(from_standby ? 1 : resume ? 2 : 0,
+                       board_battery_read(&b) == ESP_OK ? b.percent : -1);
+    }
+
     ESP_ERROR_CHECK(mic_init(board_mic_pins()));
     board_buttons_set_callback(on_button, NULL);
     bg_limits_t lim;
@@ -1045,17 +1127,10 @@ void app_main(void)
         ESP_LOGW(TAG, "power log: no memory");
     }
 
-    /* A crash or a watchdog restart cut a conversation off: record again. A power cut,
-     * brownout or reboot by hand doesn't (s_rec_resume is not kept, or not wanted). */
-    const esp_reset_reason_t rr = esp_reset_reason();
-    const bool crashed = rr == ESP_RST_PANIC || rr == ESP_RST_TASK_WDT ||
-                         rr == ESP_RST_INT_WDT || rr == ESP_RST_WDT;
-    const bool resume = crashed && s_rec_resume == REC_RESUME_MAGIC;
-    s_rec_resume = 0;
     if (resume) {
         ESP_LOGW(TAG, "restarted by %s while recording: starting a new session",
                  reset_reason_name());
-        start_conversation(true);
+        start_conversation(EL_TRIG_RESUME);
     }
 
     ESP_ERROR_CHECK(console_start());

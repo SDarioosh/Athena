@@ -89,6 +89,7 @@ static void poke(uint32_t id, const char *ext, long off, uint8_t xor_mask)
 static const uint8_t SESSION_A[8] = {0x3f, 0x9a, 0x0c, 0x11, 0xd2, 0xe4, 0xb5, 0x07};
 static const uint8_t SESSION_B[8] = {1, 2, 3, 4, 5, 6, 7, 8};
 static const uint8_t SESSION_C[8] = {9, 9, 9, 9, 9, 9, 9, 9};
+static const uint8_t SESSION_D[8] = {4, 4, 4, 4, 4, 4, 4, 4};
 
 /* ---- writing a chunk the way the recorder does ---- */
 
@@ -390,10 +391,37 @@ static void test_abandon_and_set_last(void)
     CHECK(cq_get(&q, c1, &c) && c.flags == 0);
     CHECK(cq_get(&q, c0, &c) && c.flags == 0);
 
+    /* In two steps (the card is power-cycled in between on the watch): the same result. */
+    const uint32_t d0 = begin(&q, SESSION_D, 0, 0, 0, 7, 0);
+    packets(&q, 60);
+    CHECK_EQ(cq_abandon_recover(&q, true, &kept), CQ_ERR_STATE); /* not closed yet */
+    CHECK_EQ(cq_abandon_close(&q), CQ_OK);
+    CHECK(!cq_current(&q, NULL));
+    CHECK_EQ(cq_abandon_close(&q), CQ_ERR_STATE);
+    CHECK_EQ(cq_abandon_recover(&q, true, &kept), CQ_OK);
+    CHECK_EQ(kept, d0);
+    CHECK(cq_get(&q, d0, &c) && c.flags == CQ_FLAG_LAST && c.bytes == file_size(d0, "opus"));
+    CHECK_EQ(cq_abandon_recover(&q, true, &kept), CQ_ERR_STATE); /* once */
+
+    /* Closed but never recovered: a new chunk drops it from memory; the card keeps it and
+     * the next boot recovers it. */
+    const uint32_t d1 = begin(&q, SESSION_D, 1, 0, 0, 7, 0);
+    packets(&q, 60);
+    CHECK_EQ(cq_abandon_close(&q), CQ_OK);
+    const uint32_t d2 = begin(&q, SESSION_D, 2, 0, 0, 7, 0);
+    CHECK_EQ(cq_abandon_recover(&q, false, &kept), CQ_ERR_STATE);
+    CHECK(!cq_get(&q, d1, NULL));
+    packets(&q, 60);
+    CHECK_EQ(ogg_opus_finish(&g_w, 0), OGG_OPUS_OK);
+    CHECK_EQ(cq_end(&q, 1200, true), CQ_OK);
+    cq_boot_report_t rep;
+    reopen_queue(&q, &rep);
+    CHECK(cq_get(&q, d1, &c) && c.state == CQ_STATE_CLOSED);
+    CHECK(cq_get(&q, d2, &c));
+
     CHECK_EQ(cq_set_last(&q, a0), CQ_OK);
     CHECK(cq_get(&q, a0, &c) && c.flags == CQ_FLAG_LAST);
     CHECK_EQ(cq_set_last(&q, 999), CQ_ERR_NOT_FOUND);
-    cq_boot_report_t rep;
     reopen_queue(&q, &rep);
     CHECK(cq_get(&q, a0, &c) && c.flags == CQ_FLAG_LAST);
 

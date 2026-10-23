@@ -375,6 +375,13 @@ static esp_err_t buttons_init(void)
     return ESP_OK;
 }
 
+/* No PMIC button interrupts on this board: nothing to report. */
+void board_pwr_event_info(uint32_t *pmu_irq, int32_t *since_prev_ms)
+{
+    *pmu_irq = 0;
+    *since_prev_ms = 0;
+}
+
 void board_buttons_set_callback(board_button_cb_t cb, void *ctx)
 {
     s_button_cb = cb;
@@ -472,6 +479,12 @@ esp_err_t board_storage_unmount(void)
     }
     xSemaphoreGive(s_storage_lock);
     return err;
+}
+
+/* Built-in flash: nothing to power off. */
+esp_err_t board_storage_power_cycle(void)
+{
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 bool board_storage_is_mounted(void)
