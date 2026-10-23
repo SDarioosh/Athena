@@ -73,6 +73,8 @@ the data path touches the cloud.**
   model-weight downloads).
 - Raw audio is deleted after successful transcription unless
   `CONVO_KEEP_AUDIO=true`. Failed sessions keep audio so they can be retried.
+- Transcripts are kept forever unless the owner sets `CONVO_TRANSCRIPT_RETENTION_DAYS`.
+  Forgetting a fact in the hub erases its words here (`erase_fact`).
 - Every API route except `/health` requires `Authorization: Bearer <token>`.
   Bind to `127.0.0.1` unless devices need LAN/Tailscale access.
 
@@ -138,7 +140,7 @@ the data path touches the cloud.**
 |---|---|
 | `search_transcripts`, `search_conversations`, `get_conversation`, `get_transcript`, `list_action_items`, `list_facts`, `get_daily_digest`, `list_people`, `list_unnamed_speakers` | read-only (`ro`: `readOnlyHint: true`) |
 | `update_action_item`, `name_speaker`, `reassign_line` | write (`rw`: `readOnlyHint: false`, `destructiveHint: false`) |
-| `rename_speaker_everywhere`, `retire_fact` | write, destructive (`rw_merge`: `readOnlyHint: false`, `destructiveHint: true`; merging two names or forgetting a fact can't be undone) |
+| `rename_speaker_everywhere`, `retire_fact`, `erase_fact` | write, destructive (`rw_merge`: `readOnlyHint: false`, `destructiveHint: true`; merging two names or forgetting a fact can't be undone) |
 
 - Odysseus runs read-only tools without approval because of `readOnlyHint: true`. A tool
   that changes anything must use `rw`. Never mark a write tool read-only.
@@ -186,6 +188,19 @@ the data path touches the cloud.**
   `retired`, out of `list_facts` (both formats), search and conversation details. It
   stays retired when its conversation is re-summarized, and a later fact linked "same"
   to it becomes another source of it, so a forgotten fact doesn't come back. Idempotent.
+- `erase_fact(fact_id, reason)` (MCP 0.10.0, additive; the hub's Forget calls it and falls
+  back to `retire_fact` on an older module) forgets a fact completely: what `retire_fact`
+  does, plus its words leave where they were said. The transcript line at the fact's
+  `source_at` (in its conversation and in each that said it again, also later repeats
+  linked "same") reads `[forgotten]`; the conversation's title, summary, key points and
+  topics are hidden until the worker's local model rewrites them without it; digests
+  that cover it are written again; search entries and embeddings are redone, kept audio
+  of the line is deleted. The fact's own sentence stays in `facts` (never served) so a
+  repeat is recognized. Can't be undone. Idempotent ("already erased").
+- Retention: `CONVO_TRANSCRIPT_RETENTION_DAYS` (0 = keep forever, the default and the
+  owner's decision) deletes transcript lines and kept audio of conversations older than
+  that; summaries, facts and action items stay, and `get_transcript` and the `/view`
+  page say the transcript was removed.
 - **Changing a tool name, an argument, an annotation, the link format, or the auth is a
   breaking change.** It needs a coordinated hub PR (module doc, preset text) per the
   [versioning rules](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules.md#versioning),

@@ -185,6 +185,35 @@ CREATE TABLE IF NOT EXISTS speaker_candidates (
     PRIMARY KEY (session_id, label)
 );
 
+-- Forgetting (erase_fact): the conversations whose summary, key points and title must be
+-- rewritten without an erased fact. The text waits here, out of every read path, until
+-- the worker's local model has rewritten it (then the row is deleted).
+CREATE TABLE IF NOT EXISTS forget_rewrites (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    facts TEXT NOT NULL DEFAULT '[]',         -- JSON: the erased facts' sentences
+    title TEXT,
+    summary TEXT,
+    key_points TEXT NOT NULL DEFAULT '[]',
+    topics TEXT NOT NULL DEFAULT '[]',
+    queued_at REAL NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0
+);
+-- Daily digests taken down by a forget, written again once their conversations are
+-- rewritten.
+CREATE TABLE IF NOT EXISTS forget_digests (
+    date TEXT PRIMARY KEY,
+    conversation_ids TEXT NOT NULL DEFAULT '[]',
+    queued_at REAL NOT NULL
+);
+-- Which conversations an erased fact was already erased from (its own and every one
+-- that said it again), so erasing is idempotent and a new repeat is erased once.
+CREATE TABLE IF NOT EXISTS erased_sources (
+    fact_id INTEGER NOT NULL,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    erased_at REAL NOT NULL,
+    PRIMARY KEY (fact_id, conversation_id)
+);
+
 -- Line-level full-text index for "what did X say about Y" (kept in sync by triggers).
 CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
     text, content='segments', content_rowid='id', tokenize = 'porter unicode61'
@@ -208,6 +237,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
 
 
 _PLACEHOLDER_SPEAKER = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
+
+# What an erased transcript line says instead (erase_fact)
+ERASED_TEXT = "[forgotten]"
 
 # Session kinds (sessions.kind). A voice note's conversation also gets conversations.kind
 # NOTE; ordinary conversations get the kind the summary triage picks.
@@ -319,6 +351,9 @@ class Store:
         self._conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        # deleted rows are overwritten, not left in free pages: a forgotten fact or a
+        # pruned transcript must not stay readable in the file
+        self._conn.execute("PRAGMA secure_delete = ON")
         # The API server and the MCP server open the same database at the same time
         # (deploy starts both): set up and migrate one process at a time.
         with _init_lock(self.path):
@@ -421,6 +456,13 @@ class Store:
                 if _person_id(c, old) is not None:
                     _rename_person(c, old, new)
             c.execute("PRAGMA user_version = 12")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 13:
+            # forgetting erases a fact's words (erase_fact); retention prunes old
+            # transcripts (CONVO_TRANSCRIPT_RETENTION_DAYS)
+            self._add_column("facts", "erased_at", "REAL")
+            self._add_column("segments", "erased", "INTEGER NOT NULL DEFAULT 0")
+            self._add_column("conversations", "transcript_pruned_at", "REAL")
+            self._conn.execute("PRAGMA user_version = 13")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -731,6 +773,14 @@ class Store:
             c.execute("INSERT INTO search_fts VALUES ('conversation', ?, ?, ?)",
                       (conv_id, conv_id, body))
             self._index_transcript(c, conv_id)
+            # a re-summary of a conversation an erased fact was said in: its new text
+            # waits for the forget rewrite too
+            erased = [r[0] for r in c.execute(
+                "SELECT fact FROM facts WHERE conversation_id = ? AND erased_at IS NOT NULL"
+                " UNION SELECT f.fact FROM fact_sources s JOIN facts f ON f.id = s.fact_id"
+                " WHERE s.conversation_id = ? AND f.erased_at IS NOT NULL", (conv_id, conv_id))]
+            if erased:
+                self._queue_rewrite(c, conv_id, erased, time.time())
         return fact_ids
 
     def save_discarded(self, conv_id: str, reason: str, kind: str | None) -> None:
@@ -815,9 +865,11 @@ class Store:
         that updates a retired one is a new belief and is shown; the retired one stays
         retired.
         """
+        audio: list[str] = []
         with self.tx() as c:
             rows = {r["id"]: r for r in c.execute(
-                "SELECT f.id, f.conversation_id, f.source_at, f.status, c.started_at FROM facts f"
+                "SELECT f.id, f.conversation_id, f.source_at, f.status, f.erased_at,"
+                " c.started_at FROM facts f"
                 " JOIN conversations c ON c.id = f.conversation_id WHERE f.id IN (?, ?)",
                 (new_id, existing_id))}
             if len(rows) != 2:
@@ -829,6 +881,8 @@ class Store:
                 c.execute("DELETE FROM search_fts WHERE kind = 'fact' AND ref_id = ?",
                           (str(new_id),))
                 c.execute("DELETE FROM facts WHERE id = ?", (new_id,))
+                if old["erased_at"] is not None:  # said again after a forget: erase it too
+                    self._erase_mentions(c, existing_id, time.time(), audio)
             elif relation == "updates":
                 newer, older = (new, old) if new["started_at"] >= old["started_at"] else (old, new)
                 if older["status"] == "retired":  # forgotten: not part of any history
@@ -838,6 +892,8 @@ class Store:
                 # whatever the older one had replaced now points at the newer one
                 c.execute("UPDATE facts SET superseded_by = ? WHERE superseded_by = ?",
                           (newer["id"], older["id"]))
+        if relation == "same" and rows[existing_id]["erased_at"] is not None:
+            self._after_erase(audio)
 
     def fact_history(self, fact_id: int) -> list[dict[str, Any]]:
         """Facts this one replaced (newest first), each with its conversation."""
@@ -870,6 +926,231 @@ class Store:
                 return "already"
             _retire(c, fact_id, time.time(), reason.strip() or None)
         return "retired"
+
+    # --------------------------------------------------------------- retention
+    def prune_transcripts(self, before: float) -> dict[str, Any]:
+        """Retention (``CONVO_TRANSCRIPT_RETENTION_DAYS``): delete the transcript lines of
+        conversations that ended before ``before``, keeping their title, summary, key
+        points, facts and action items, and delete kept audio of finished sessions that
+        ended before it. Pending and failed conversations keep their lines (they still
+        need them for a summary). Returns ``{"conversations", "lines", "audio"}`` with the
+        audio paths deleted from the database (the caller removes the files)."""
+        now = time.time()
+        with self.tx() as c:
+            convs = [r[0] for r in c.execute(
+                "SELECT id FROM conversations WHERE ended_at < ? AND transcript_pruned_at"
+                " IS NULL AND status NOT IN ('pending', 'failed')", (before,))]
+            lines = 0
+            for conv_id in convs:
+                lines += c.execute("DELETE FROM segments WHERE conversation_id = ?",
+                                   (conv_id,)).rowcount
+                c.execute("DELETE FROM search_fts WHERE kind = 'transcript'"
+                          " AND conversation_id = ?", (conv_id,))
+                c.execute("UPDATE conversations SET transcript_pruned_at = ? WHERE id = ?",
+                          (now, conv_id))
+            audio = [r for r in c.execute(
+                "SELECT k.session_id, k.sequence, k.audio_path FROM chunks k JOIN sessions s"
+                " ON s.id = k.session_id WHERE s.status = 'done' AND k.audio_path IS NOT NULL"
+                " AND k.started_at + k.duration < ?", (before,)).fetchall()]
+            c.executemany("UPDATE chunks SET audio_path = NULL WHERE session_id = ?"
+                          " AND sequence = ?", [(r[0], r[1]) for r in audio])
+        if convs or audio:
+            self.compact()
+        return {"conversations": len(convs), "lines": lines, "audio": [r[2] for r in audio]}
+
+    # ------------------------------------------------------------- forgetting
+    def erase_fact(self, fact_id: int, reason: str = "") -> dict[str, Any] | None:
+        """Forget a fact completely (the owner forgot it in the hub): retired as in
+        ``retire_fact``, and its words are erased where they were said, in its own
+        conversation and in every one that said it again. None for an unknown id.
+
+        * The transcript line it came from (``source_at``) is redacted in place: its text
+          becomes ``ERASED_TEXT``, speaker and times stay, so links keep working. The
+          line search index follows (trigger); the conversation's search entry is redone.
+        * The conversation's title, summary, key points and topics leave every read path
+          now and wait in ``forget_rewrites`` until the worker's model rewrites them
+          without the fact (``Pipeline.rewrite_forgotten``). Daily digests that cover the
+          conversation are taken down and written again after that.
+        * Its embedding and the conversation's are deleted; kept audio of the line
+          (``CONVO_KEEP_AUDIO``) is deleted.
+        * A later repeat linked "same" to it is erased the same way (``link_fact``).
+
+        Idempotent: a second call erases only what is new and answers ``"already"``.
+        Returns ``{"result": "erased"|"already", "lines", "conversations"}``.
+        """
+        audio: list[str] = []
+        with self.tx() as c:
+            row = c.execute("SELECT status, erased_at FROM facts WHERE id = ?",
+                            (fact_id,)).fetchone()
+            if row is None:
+                return None
+            now = time.time()
+            if row["status"] != "retired":
+                _retire(c, fact_id, now, reason.strip() or None)
+            c.execute("UPDATE facts SET erased_at = COALESCE(erased_at, ?) WHERE id = ?",
+                      (now, fact_id))
+            done = self._erase_mentions(c, fact_id, now, audio)
+        self._after_erase(audio)
+        fresh = row["erased_at"] is None or done["conversations"]
+        return {"result": "erased" if fresh else "already", **done}
+
+    def _erase_mentions(self, c: sqlite3.Connection, fact_id: int, now: float,
+                        audio: list[str]) -> dict[str, int]:
+        """Erase an erased fact from each conversation that said it and isn't done yet."""
+        fact = c.execute("SELECT conversation_id, source_at, subject, fact FROM facts"
+                         " WHERE id = ?", (fact_id,)).fetchone()
+        said = [(fact["conversation_id"], fact["source_at"])] + [
+            (r["conversation_id"], r["source_at"]) for r in c.execute(
+                "SELECT conversation_id, source_at FROM fact_sources WHERE fact_id = ?",
+                (fact_id,))]
+        done = {r[0] for r in c.execute(
+            "SELECT conversation_id FROM erased_sources WHERE fact_id = ?", (fact_id,))}
+        lines = convs = 0
+        for conv_id, source_at in said:
+            if conv_id in done:
+                continue
+            done.add(conv_id)
+            lines += self._redact_line(c, conv_id, source_at, audio)
+            self._queue_rewrite(c, conv_id, [fact["fact"]], now)
+            c.execute("INSERT OR IGNORE INTO erased_sources VALUES (?, ?, ?)",
+                      (fact_id, conv_id, now))
+            convs += 1
+        return {"lines": lines, "conversations": convs}
+
+    def _redact_line(self, c: sqlite3.Connection, conv_id: str, source_at: float | None,
+                     audio: list[str]) -> int:
+        """Redact the transcript line that starts at ``source_at`` (the summary's line
+        offset: whole seconds from the conversation start, so the line starts within a
+        second after it). Returns 1 if a line was redacted."""
+        if source_at is None:
+            return 0
+        line = c.execute(
+            "SELECT id, session_id, started_at, ended_at FROM segments"
+            " WHERE conversation_id = ? AND erased = 0 AND started_at < ? + 1"
+            " AND ended_at > ? - 1 ORDER BY abs(started_at - ?) LIMIT 1",
+            (conv_id, source_at, source_at, source_at)).fetchone()
+        if line is None:
+            return 0
+        c.execute("UPDATE segments SET text = ?, erased = 1 WHERE id = ?",
+                  (ERASED_TEXT, line["id"]))
+        c.execute("DELETE FROM search_fts WHERE kind = 'transcript' AND conversation_id = ?",
+                  (conv_id,))
+        self._index_transcript(c, conv_id)
+        for chunk in c.execute(
+                "SELECT sequence, audio_path FROM chunks WHERE session_id = ?"
+                " AND audio_path IS NOT NULL AND started_at < ? AND started_at + duration > ?",
+                (line["session_id"], line["ended_at"], line["started_at"])).fetchall():
+            audio.append(chunk["audio_path"])
+            c.execute("UPDATE chunks SET audio_path = NULL WHERE session_id = ?"
+                      " AND sequence = ?", (line["session_id"], chunk["sequence"]))
+        return 1
+
+    def _queue_rewrite(self, c: sqlite3.Connection, conv_id: str, facts: list[str],
+                       now: float) -> None:
+        """Take the conversation's title, summary, key points and topics out of every
+        read path until they are rewritten without ``facts``; take down its digests."""
+        conv = c.execute("SELECT title, summary, key_points, topics FROM conversations"
+                         " WHERE id = ?", (conv_id,)).fetchone()
+        if conv is None:
+            return
+        old = c.execute("SELECT facts FROM forget_rewrites WHERE conversation_id = ?",
+                        (conv_id,)).fetchone()
+        known = json.loads(old["facts"]) if old else []
+        facts = list(dict.fromkeys(known + facts))
+        if conv["title"] or conv["summary"] or old is None:
+            # the text shown now (a first forget, or a re-summary since): rewrite that
+            c.execute("INSERT OR REPLACE INTO forget_rewrites (conversation_id, facts, title,"
+                      " summary, key_points, topics, queued_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (conv_id, json.dumps(facts), conv["title"], conv["summary"],
+                       conv["key_points"], conv["topics"], now))
+        else:
+            c.execute("UPDATE forget_rewrites SET facts = ?, queued_at = ?, attempts = 0"
+                      " WHERE conversation_id = ?", (json.dumps(facts), now, conv_id))
+        c.execute("UPDATE conversations SET title = NULL, summary = NULL, key_points = '[]',"
+                  " topics = '[]' WHERE id = ?", (conv_id,))
+        c.execute("DELETE FROM search_fts WHERE kind = 'conversation' AND conversation_id = ?",
+                  (conv_id,))
+        c.execute("DELETE FROM embeddings WHERE kind = 'conversation' AND conversation_id = ?",
+                  (conv_id,))
+        for d in c.execute("SELECT date, content FROM digests WHERE content LIKE ?",
+                           (f"%{conv_id}%",)).fetchall():
+            ids = json.loads(d["content"]).get("conversation_ids", [])
+            if conv_id in ids:
+                c.execute("INSERT OR REPLACE INTO forget_digests VALUES (?, ?, ?)",
+                          (d["date"], json.dumps(ids), now))
+                c.execute("DELETE FROM digests WHERE date = ?", (d["date"],))
+
+    def _after_erase(self, audio: list[str]) -> None:
+        for path in audio:
+            Path(path).unlink(missing_ok=True)
+        self.compact()
+
+    def compact(self) -> None:
+        """After removing text: merge the full-text indexes (a deleted row's words stay
+        in older index segments until a merge) and checkpoint the write-ahead log, so the
+        old pages leave the -wal file. ``secure_delete`` zeroes freed pages."""
+        with self._lock:
+            for table in ("segments_fts", "search_fts"):
+                self._conn.execute(f"INSERT INTO {table}({table}) VALUES ('optimize')")
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    def pending_rewrites(self) -> list[dict[str, Any]]:
+        rows = self._q("SELECT * FROM forget_rewrites ORDER BY attempts, queued_at")
+        for r in rows:
+            for k in ("facts", "key_points", "topics"):
+                r[k] = json.loads(r[k])
+        return rows
+
+    def finish_rewrite(self, conv_id: str, queued_at: float, fields: dict[str, Any]) -> bool:
+        """Store a conversation's rewritten title, summary, key points and topics and put
+        it back in search. False (nothing stored) when it was queued again meanwhile."""
+        with self.tx() as c:
+            row = c.execute("SELECT queued_at FROM forget_rewrites WHERE conversation_id = ?",
+                            (conv_id,)).fetchone()
+            if row is None or row["queued_at"] != queued_at:
+                return False
+            c.execute("DELETE FROM forget_rewrites WHERE conversation_id = ?", (conv_id,))
+            conv = c.execute("SELECT status, people FROM conversations WHERE id = ?",
+                             (conv_id,)).fetchone()
+            if conv is None or conv["status"] != "summarized":
+                return True
+            c.execute("UPDATE conversations SET title = ?, summary = ?, key_points = ?,"
+                      " topics = ?, updated_at = ? WHERE id = ?",
+                      (fields["title"], fields["summary"], json.dumps(fields["key_points"]),
+                       json.dumps(fields["topics"]), time.time(), conv_id))
+            body = "\n".join([fields["title"], fields["summary"], *fields["key_points"],
+                              " ".join(fields["topics"]),
+                              " ".join(json.loads(conv["people"]))])
+            c.execute("DELETE FROM search_fts WHERE kind = 'conversation'"
+                      " AND conversation_id = ?", (conv_id,))
+            c.execute("INSERT INTO search_fts VALUES ('conversation', ?, ?, ?)",
+                      (conv_id, conv_id, body))
+        return True
+
+    def drop_rewrite(self, conv_id: str) -> None:
+        with self.tx() as c:
+            c.execute("DELETE FROM forget_rewrites WHERE conversation_id = ?", (conv_id,))
+
+    def rewrite_failed(self, conv_id: str) -> None:
+        with self.tx() as c:
+            c.execute("UPDATE forget_rewrites SET attempts = attempts + 1"
+                      " WHERE conversation_id = ?", (conv_id,))
+
+    def rewrite_pending(self, conv_ids: Iterable[str]) -> bool:
+        ids = list(conv_ids)
+        return bool(ids) and self._one(
+            "SELECT 1 AS x FROM forget_rewrites WHERE conversation_id IN"
+            f" ({','.join('?' * len(ids))}) LIMIT 1", ids) is not None
+
+    def pending_digests(self) -> list[dict[str, Any]]:
+        rows = self._q("SELECT * FROM forget_digests ORDER BY date")
+        for r in rows:
+            r["conversation_ids"] = json.loads(r["conversation_ids"])
+        return rows
+
+    def drop_pending_digest(self, date: str) -> None:
+        with self.tx() as c:
+            c.execute("DELETE FROM forget_digests WHERE date = ?", (date,))
 
     def search_segments(self, *, query: str | None = None, speaker: str | None = None,
                         since: float | None = None, until: float | None = None,
@@ -1133,6 +1414,8 @@ class Store:
             "SELECT * FROM action_items WHERE conversation_id = ? ORDER BY id", (conv_id,))
         row["facts"] = self._q("SELECT * FROM facts WHERE conversation_id = ?"
                                " AND status != 'retired' ORDER BY id", (conv_id,))
+        # erase_fact took its summary down until the worker has rewritten it
+        row["forget_pending"] = self.rewrite_pending([conv_id])
         return row
 
     def list_conversations(self, *, since: float | None = None, until: float | None = None,
@@ -1779,7 +2062,8 @@ def _knowledge(c: sqlite3.Connection, conv_id: str) -> dict[str, Any]:
     """What a re-summary must not lose: closed action items and the facts' links."""
     facts = [dict(r) for r in c.execute(
         "SELECT id, subject, fact, source_at, status, superseded_by, retired_at,"
-        " retired_reason FROM facts WHERE conversation_id = ? ORDER BY id", (conv_id,))]
+        " retired_reason, erased_at FROM facts WHERE conversation_id = ? ORDER BY id",
+        (conv_id,))]
     for f in facts:
         f["sources"] = [dict(r) for r in c.execute(
             "SELECT s.conversation_id, s.source_at FROM fact_sources s JOIN conversations v"
@@ -1833,6 +2117,10 @@ def _carry_over(c: sqlite3.Connection, conv_id: str, before: dict[str, Any],
             continue
         if old["status"] == "retired":
             _retire(c, target, old["retired_at"], old["retired_reason"])
+        if old["erased_at"] is not None:  # erased stays erased, under its new id
+            c.execute("UPDATE facts SET erased_at = ? WHERE id = ?", (old["erased_at"], target))
+            c.execute("UPDATE OR IGNORE erased_sources SET fact_id = ? WHERE fact_id = ?",
+                      (target, old["id"]))
         if old["status"] == "superseded" and old["superseded_by"] and c.execute(
                 "SELECT 1 FROM facts WHERE id = ?", (old["superseded_by"],)).fetchone():
             c.execute("UPDATE facts SET status = 'superseded', superseded_by = ? WHERE id = ?",

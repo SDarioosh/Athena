@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     asr_agc_max_gain: float = 1.0
     conversation_gap_seconds: float = 180.0
     keep_audio: bool = False
+    # Retention: delete transcripts (and any kept audio) of conversations that ended more
+    # than this many days ago; summaries, facts and action items stay. 0 = keep forever
+    # (the default, the owner's decision). Pending and failed conversations are kept
+    # until they are summarized.
+    transcript_retention_days: int = 0
     language: str = "en"
     timezone: str = "UTC"  # IANA name used for daily digests, e.g. Europe/Berlin
     run_worker: bool = True  # background thread: finalize idle sessions, process, digest

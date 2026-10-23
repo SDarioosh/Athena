@@ -115,6 +115,14 @@ class ConversationSummary(BaseModel):
     facts: list[Fact]
 
 
+class ForgetRewrite(BaseModel):
+    """A conversation's notes rewritten without facts the user erased (erase_fact)."""
+    title: str
+    summary: str
+    key_points: list[str]
+    topics: list[str]
+
+
 class DailyDigest(BaseModel):
     headline: str
     summary: str
@@ -269,6 +277,13 @@ statement without such a command ("the wifi password is on the router") is no it
 
 MERGE_SYSTEM = """You merge partial notes of ONE long conversation (given in order) into \
 a single set of notes with the same JSON shape. Deduplicate. Output JSON only."""
+
+FORGET_SYSTEM = """You edit the notes of one conversation because the user asked to \
+forget some facts. Remove every statement of the facts to forget, and anything that \
+reveals them, from the title, the summary, the key points and the topics. Keep everything \
+else word for word. Never add anything. Drop a key point or topic that is only about a \
+fact to forget. If the title gives one away, write a neutral title about what else was \
+discussed. Output JSON only."""
 
 DIGEST_SYSTEM = """You write a short daily digest of the user's conversations for {date} \
 from their structured notes. Only use the given notes. Output JSON only."""
@@ -592,6 +607,21 @@ class Summarizer:
         out["date"] = date
         out["conversation_ids"] = [c["id"] for c in conversations]
         return out
+
+    def remove_facts(self, notes: dict[str, Any], facts: list[str]) -> dict[str, Any]:
+        """``notes`` (title, summary, key_points, topics) rewritten without ``facts``.
+
+        The model edits; then code drops any key point or topic, and any summary
+        sentence, that still contains a fact's words in order, so a model that ignores the
+        instruction can't keep the exact sentence."""
+        fields = {"title": notes.get("title") or "", "summary": notes.get("summary") or "",
+                  "key_points": list(notes.get("key_points") or []),
+                  "topics": list(notes.get("topics") or [])}
+        if not facts or not any(fields.values()):
+            return fields
+        user = json.dumps({"facts_to_forget": facts, "notes": fields}, ensure_ascii=False)
+        result = self.llm.structured(FORGET_SYSTEM, user, ForgetRewrite).model_dump()
+        return scrub_facts(result, facts)
 
     def _skipped_list(self, list_name: str | None) -> bool:
         name = clean_list_name(list_name)
@@ -1001,3 +1031,26 @@ def _dedupe(items: list[str]) -> list[str]:
         if k and k.lower() not in seen:
             seen[k.lower()] = k
     return list(seen.values())
+
+
+def _plain(text: str) -> str:
+    return " ".join(re.sub(r"[^\w ]+", " ", (text or "").lower()).split())
+
+
+def scrub_facts(notes: dict[str, Any], facts: list[str]) -> dict[str, Any]:
+    """Drop what still states one of ``facts`` word for word (case and punctuation
+    aside): key points and topics that contain it, summary sentences that contain it, a
+    title that contains it (becomes "Conversation")."""
+    gone = [f for f in (_plain(x) for x in facts) if f]
+
+    def says(text: str) -> bool:
+        plain = f" {_plain(text)} "
+        return any(f" {f} " in plain for f in gone)
+
+    sentences = re.split(r"(?<=[.!?])\s+", (notes.get("summary") or "").strip())
+    return {
+        "title": "Conversation" if says(notes.get("title") or "") else notes.get("title") or "",
+        "summary": " ".join(x for x in sentences if x and not says(x)),
+        "key_points": [k for k in notes.get("key_points") or [] if not says(k)],
+        "topics": [t for t in notes.get("topics") or [] if not says(t)],
+    }

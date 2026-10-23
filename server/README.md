@@ -226,6 +226,7 @@ source of truth, so the frontend can be swapped. Tools:
 | `update_action_item(item_id, status, kind, due_date, due_time, list_name, title)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears), time (`HH:MM`, `none` clears), to-do list (`shopping`, `none` clears) or title (at most 60 characters, `none` = from the text); every argument but `item_id` is optional |
 | `list_facts(subject, query, limit, confirmed, format)` | facts about people, the user and things; `confirmed=true` keeps only confirmed facts (below); `format="json"` returns a JSON object for programs (the hub copies confirmed facts into its memory from it) |
 | `retire_fact(fact_id, reason)` | "forget that": the fact is retired for good (below); answers `Fact #12 retired.`, `Fact #12 was already retired.` or `No fact #12.` |
+| `erase_fact(fact_id, reason)` | forget completely: retired, and its words erased where they were said (below); answers `Fact #12 erased: 2 transcript line(s) redacted, 2 conversation summary(ies) being rewritten.`, `Fact #12 was already erased.` or `No fact #12.` |
 | `get_daily_digest(date)` | memory |
 | `list_people(format)` | speakers and people mentioned; `format="json"` returns each person's stable id for programs (the hub links people to its contacts by it, below) |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
@@ -338,6 +339,38 @@ facts returned, not by old ids), and the fact linker is shown retired facts too,
 same fact said in a later conversation becomes another source of the retired fact
 instead of a new one. A later fact that *updates* a retired one is a new belief and is
 shown. Calling it again answers "already retired".
+
+**Erased facts** (MCP 0.10.0). `erase_fact(fact_id, reason)` (write, destructive) is what
+the hub's Forget calls; it does everything `retire_fact` does and takes the fact's words
+out of every place this module serves or stores them, while the rest of the conversation
+stays:
+
+| Where | What happens |
+|---|---|
+| Transcript | The line at the fact's `source_at` (whole seconds from the conversation start, so the line that starts within that second) reads `[forgotten]` (`segments.erased = 1`); speaker and times stay, so transcript links still open at that spot. Done in the fact's conversation and in every one that said it again (`fact_sources`). |
+| Title, summary, key points, topics | Taken off every read path at once (`get_conversation` says "being rewritten") and moved to `forget_rewrites`; the worker's local model rewrites them without the fact (`ForgetRewrite`, keep everything else word for word), then code drops any sentence, key point or topic that still has the fact's words in order. If the model is down they stay hidden and are retried on the next pass. |
+| Daily digest | Every digest that lists the conversation is taken down and written again once its conversations are rewritten. |
+| Search | The line index follows the line; the conversation's summary and transcript entries are redone; the fact's and the conversation's embeddings are deleted (the conversation is embedded again after the rewrite). |
+| Kept audio | With `CONVO_KEEP_AUDIO=true`, the audio chunks under the line are deleted. |
+| Database file | `PRAGMA secure_delete` is on, both full-text indexes are merged and the write-ahead log is checkpointed after an erase, so the words don't stay in free pages. |
+
+A later repeat linked "same" to an erased fact is erased the same way; a re-summary of a
+conversation it was said in hides the new notes until they are rewritten too. Not
+touched: action items (their own text), people, and facts the erased one had replaced.
+The fact's own sentence stays in the `facts` table, never served, so that a repeat can be
+recognized. It can't be undone. Calling it again erases only what is new and answers
+"already erased"; a fact retired earlier can be erased later.
+
+**Retention** (`CONVO_TRANSCRIPT_RETENTION_DAYS`, default 0 = keep forever). When set,
+the worker (at most hourly) deletes the transcript lines of conversations that ended more
+than that many days ago, and kept audio of finished sessions older than that. Pending and
+failed conversations keep their lines until they are summarized. A pruned conversation
+still answers everything its notes hold: title, summary, key points, topics, people,
+facts (with links) and action items, `search_conversations`, `list_facts`, digests.
+It no longer answers exact wording: `search_transcripts` doesn't find its lines,
+`get_transcript` says when the transcript was removed, and its links (`/view/<id>#t=…`)
+open the page with the summary, facts and that note instead of the lines. It can't be
+re-summarized.
 
 **Hermes** (stdio; add to the profile's `config.yaml`):
 

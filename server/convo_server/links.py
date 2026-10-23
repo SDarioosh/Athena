@@ -97,11 +97,16 @@ def render_conversation(settings: Settings, conv: dict[str, Any], segments: list
         people=e(", ".join(conv.get("people", [])) or "—"),
         summary=f"<p>{e(conv.get('summary') or _no_summary(conv))}</p>",
         lists=lists,
-        lines="".join(lines) or "<p>No transcript.</p>",
+        lines="".join(lines) or (
+            f"<p>The transcript was removed on {e(local_time(settings, pruned, '%Y-%m-%d') or '')}"
+            " by the retention setting; the summary, facts and action items are kept.</p>"
+            if (pruned := conv.get("transcript_pruned_at")) else "<p>No transcript.</p>"),
     )
 
 
 def _no_summary(conv: dict) -> str:
+    if conv.get("forget_pending"):
+        return "Being rewritten after something here was forgotten."
     if conv.get("status") == "discarded":
         return (f"Not summarized: this looked like {conv.get('discard_reason') or 'junk'} "
                 "(TV, noise or no real conversation).")
