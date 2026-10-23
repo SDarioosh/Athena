@@ -474,7 +474,12 @@ small local model does better on narrow questions):
    Each item has a `kind`: `event` (meeting, appointment, call: "meeting with Jason on
    Wednesday at 12 pm"), `reminder` ("remind me at 5 to call Mom") or `task` ("get the
    proposal done on Wednesday"), plus `duration_minutes` and `location` for events if
-   said. Something repeating ("every Monday") becomes a task "Set up a repeating event:
+   said. In a voice note, code also finds appointments the model left out: a sentence
+   with an appointment word (meeting, call, lunch, appointment, dentist, …), a day and a
+   time, not in the past tense ("Meeting with the Meshtastic team Tuesday 11 a.m."),
+   becomes an event (text without the day and time) unless an item already says most of
+   its words or has its day from its line; an undated task or reminder that says it gets
+   its day and time and becomes the event. Something repeating ("every Monday") becomes a task "Set up a repeating event:
    …". The model returns the time as said; `resolve_time` in `dates.py` turns it into
    `due_time` (HH:MM, `CONVO_TIMEZONE`): "12 pm"/"noon" → 12:00, "3:30 pm" → 15:30, "half
    past two" → 14:30, "midnight" → 00:00; a bare hour 12 → 12:00, 1–6 → afternoon, 7–11 →

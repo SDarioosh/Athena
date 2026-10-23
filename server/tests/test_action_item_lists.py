@@ -36,7 +36,7 @@ def test_clean_list_name(said, name):
 
 
 def test_note_items_get_their_list():
-    got = [(a["text"], a["list_name"]) for a in note_items(LIST_ITEMS)]
+    got = [(a["text"], a["list_name"]) for a in note_items(LIST_ITEMS, said="A few things to do.")]
     assert got == [("Milk", "shopping"), ("Eggs", "shopping"), ("Call the bank", "Work"),
                    ("Call the plumber", None)]
 
@@ -61,7 +61,7 @@ def test_note_items_get_their_list():
     ("Call the bank", "todos", ("Call the bank", None)),
 ])
 def test_list_phrase_in_text(text, said, want):
-    (item,) = note_items([{"text": text, "list_name": said}])
+    (item,) = note_items([{"text": text, "list_name": said}], said="A few things to do.")
     assert (item["text"], item["list_name"]) == want
 
 

@@ -281,8 +281,10 @@ dimensions are 13mm x 14mm x 3mm" -> text "Battery dimensions are 13 mm x 14 mm 
 title "Battery dimensions". list_name: the notes the user names to add it to, e.g. "add to \
 my hardware notes: the screen is 1.4 inch" -> text "The screen is 1.4 inch", title \
 "Screen size", list_name "hardware"; else null. A note has no due, time or owner. A plain \
-statement without such a command ("the wifi password is on the router") is no item, and \
+statement without such a command ("the wifi password is on the router") is no note, and \
 "remember to ..." is a task, not a note.
+An appointment said without a verb is still an item: "meeting with the design team \
+Tuesday 11 a.m." -> text "Meet the design team", kind event, due "Tuesday", time "11 a.m.".
 """ + ACTION_KEYS
 
 MERGE_SYSTEM = """You merge partial notes of ONE long conversation (given in order) into \
@@ -485,6 +487,10 @@ class Summarizer:
         if asked:  # a command the model missed or took for a task
             _notes_from_commands(out["action_items"], parts, origin)
         _lone_note(out)
+        # a meeting said as a fragment ("Meeting with the team Tuesday 11 a.m."): small
+        # models often list no item for it, though the summary says it
+        _events_from_lines(out, _lines(parts), origin,
+                           datetime.fromtimestamp(origin, self.tz).date(), self.owner)
         for item in out["action_items"]:
             if item["kind"] == NOTE_ITEM:  # a note is filed as it is: no date or time
                 item.update(due=None, due_date=None, due_time=None, time_unclear=False,
@@ -929,6 +935,79 @@ def _notes_from_commands(items: list[dict[str, Any]], parts: list[str],
             note.pop("time", None)
             note["due_time"], note["time_unclear"] = None, False
             items.append(note)
+
+
+# A voice note's appointment the model left out (``_events_from_lines``): a sentence
+# with an appointment word, a day and a time, not in the past tense.
+_APPOINTMENT = re.compile(
+    r"\b(?:meet(?:ing)?s?|appointments?|appt|calls?|lunch|dinner|breakfast|brunch|coffee|"
+    r"interviews?|dentist|doctor|doctor's|checkup|check-up|class|lesson|session|party|"
+    r"standup|stand-up|sync|demo|presentation|webinar|reservation)\b", re.IGNORECASE)
+_PAST = re.compile(r"\b(?:had|was|were|met|went|did|attended|called|yesterday|ago|last)\b",
+                   re.IGNORECASE)
+_WHEN_WORDS = re.compile(
+    r"\s*,?\s*\b(?:(?:on|by|for|this|next|at|around)\s+)*(?:"
+    r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|today|tomorrow|tonight"
+    r"|\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\d{1,2}:\d{2}|noon|midday"
+    r"|\d{1,2}\s+o'?\s?clock|in\s+the\s+(?:morning|afternoon|evening))\b",
+    re.IGNORECASE)
+
+
+def _meridiem(line: str) -> str:
+    """"11 a.m." -> "11 am": the sentence splitter would end a sentence at "a." and "m."."""
+    line = re.sub(r"\b([ap])\.\s?m\.(?=\s+[A-Z])", r"\1m.", line, flags=re.IGNORECASE)
+    return re.sub(r"\b([ap])\.\s?m\.?", r"\1m", line, flags=re.IGNORECASE)
+
+
+def _overlaps(want: set[str], text: str) -> bool:
+    """``text`` says most of the content words ``want``."""
+    got = _content_words(text)
+    return bool(want and got and len(want & got) >= 0.6 * min(len(want), len(got)))
+
+
+def _events_from_lines(out: dict[str, Any], lines: dict[int, str], origin: float,
+                       today: Any, owner: str) -> None:
+    """Make sure each appointment a voice note names with a day and a time is an event.
+    Small models list nothing for a fragment like "Meeting with the Meshtastic team
+    Tuesday 11 a.m." (no verb, no command word), so it reached neither the calendar nor
+    the suggestions. Only a sentence with an appointment word, a day and a time, not in
+    the past tense, that no item already covers (most of its words, or the same day
+    from the same line). An undated to-do with most of its words gets its day and time.
+    """
+    items = out["action_items"]
+    for at, line in sorted(lines.items()):
+        for sentence in _SENTENCE_END.split(_meridiem(line)):
+            sentence = sentence.strip()
+            if not _APPOINTMENT.search(sentence) or _PAST.search(sentence):
+                continue
+            day = resolve_due(sentence, today)
+            hhmm, unclear = resolve_time(sentence)
+            if day is None or hhmm is None:
+                continue
+            what = _WHEN_WORDS.sub(" ", sentence)
+            what = re.sub(r"\s+", " ", what).strip(" ,.;:-!?") or sentence.rstrip(".")
+            what = what[:1].upper() + what[1:]
+            want = _content_words(what)
+            source_at = origin + at
+
+            # the model's item for it, reworded ("Meet Jason" for "Lunch with Jason ...")
+            if any(i.get("due_date") == day.isoformat() and i.get("source_at") == source_at
+                   for i in items):
+                continue
+            twin = next((i for i in items if _overlaps(want, i["text"])), None)
+            if twin is not None:  # the model wrote it as an undated to-do: date it
+                if (twin["kind"] in ("task", "reminder") and not twin.get("due_date")
+                        and not twin.get("due_time") and not twin.get("list_name")):
+                    log.info("dated an appointment the model left undated: %r", sentence)
+                    twin.update(kind="event", due_date=day.isoformat(), due_time=hhmm,
+                                time_unclear=unclear)
+                continue
+            log.info("added an event the model left out: %r", sentence)
+            items.append({"text": what, "title": short_title(None, what), "kind": "event",
+                          "owner": owner, "due": None, "due_date": day.isoformat(),
+                          "due_time": hhmm, "time_unclear": unclear,
+                          "duration_minutes": None, "location": None, "list_name": None,
+                          "note_title": None, "source_at": source_at})
 
 
 # Voice notes: how the owner wants to work is a fact, not a to-do (``_intention``).
