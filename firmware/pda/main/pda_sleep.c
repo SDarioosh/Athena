@@ -15,6 +15,7 @@
 #include "sleep_plan.h"
 #include "t5_board.h"
 #include "ui_pda.h"
+#include "wake_log_store.h"
 
 static const char *TAG = "sleep";
 
@@ -82,15 +83,18 @@ void pda_sleep_synced_line(int64_t t, char *out, size_t cap)
     snprintf(out, cap, "synced %s", hm);
 }
 
-/* Doesn't return. target_s 0: BOOT only. */
-static void sleep_until(int64_t target_s)
+/* Doesn't return. target_s 0: BOOT only. why: wl_sleep_t, for the sleep/wake log; use_i2c
+ * false from the backstop (the stuck task may hold the I2C bus). */
+static void sleep_until(int64_t target_s, wl_sleep_t why, bool use_i2c)
 {
     s_rtc.target_s = target_s;
     if (s_rtc.phase == PH_SYNC_WAKE) {
         s_rtc.last_awake_ms = (int32_t)now_ms(); /* since the boot, i.e. the wake */
     }
     s_rtc.phase = PH_ASLEEP;
-    t5_board_deep_sleep(target_s ? sleep_plan_sleep_us(&CFG, clock_s(), target_s) : 0);
+    const uint64_t us = target_s ? sleep_plan_sleep_us(&CFG, clock_s(), target_s) : 0;
+    wake_log_add(WL_SLEEP, why, (int32_t)(us / 1000000), use_i2c);
+    t5_board_deep_sleep(us);
 }
 
 void pda_sleep_enter(const ui_asleep_t *screen, int override_min)
@@ -99,12 +103,12 @@ void pda_sleep_enter(const ui_asleep_t *screen, int override_min)
     s_rtc.screen = *screen;
     if (override_min < 0) {
         ESP_LOGI(TAG, "no sync wakes this time");
-        sleep_until(0);
+        sleep_until(0, WL_SLEEP_USER, true);
     }
     const int64_t now = clock_s();
     const int64_t target = sleep_plan_target(&CFG, now, ble_pda_last_sync(), override_min);
     ESP_LOGI(TAG, "phone expected in %" PRId64 " s", target - now);
-    sleep_until(target);
+    sleep_until(target, WL_SLEEP_USER, true);
 }
 
 void pda_sleep_check_crash(void)
@@ -121,7 +125,7 @@ void pda_sleep_check_crash(void)
         s_rtc.crashes++;
         ESP_LOGE(TAG, "reset %d during a sync wake: back to sleep (the next sync wake as planned)",
                  (int)r);
-        sleep_until(clock_s() + CFG.interval_s);
+        sleep_until(clock_s() + CFG.interval_s, WL_SLEEP_AFTER_CRASH, true);
     }
 }
 
@@ -131,7 +135,7 @@ static void on_backstop(void *arg)
     ESP_LOGE(TAG, "sync wake stuck: sleeping now");
     s_rtc.backstops++;
     s_rtc.misses++;
-    sleep_until(clock_s() + CFG.interval_s);
+    sleep_until(clock_s() + CFG.interval_s, WL_SLEEP_STUCK, false);
 }
 
 /* A new feed came: change the synced line on the panel, nothing else. The panel shows the
@@ -181,6 +185,7 @@ void pda_sleep_sync_wake(const ble_pda_hooks_t *hooks)
         ESP_LOGI(TAG, "woke %" PRId64 " s early: sleeping again", s_rtc.target_s - now);
         s_rtc.resleeps++;
         s_rtc.phase = PH_ASLEEP;
+        wake_log_add(WL_SLEEP, WL_SLEEP_EARLY, (int32_t)(arg / 1000000), true);
         t5_board_deep_sleep(arg);
     }
     const int64_t window_ms = (int64_t)arg;
@@ -196,14 +201,14 @@ void pda_sleep_sync_wake(const ble_pda_hooks_t *hooks)
     if (pda_app_init() != ESP_OK) {
         ESP_LOGE(TAG, "storage unavailable: no sync this time");
         s_rtc.misses++;
-        sleep_until(clock_s() + CFG.interval_s);
+        sleep_until(clock_s() + CFG.interval_s, WL_SLEEP_NO_STORAGE, true);
     }
     const uint32_t feed_before = pda_app_feed_version();
     ble_pda_set_fast_adv(true); /* no pairing window: bonded relays only */
     if (ble_pda_init(pda_app_store(), NULL, hooks) != ESP_OK) {
         ESP_LOGE(TAG, "BLE unavailable: no sync this time");
         s_rtc.misses++;
-        sleep_until(clock_s() + CFG.interval_s);
+        sleep_until(clock_s() + CFG.interval_s, WL_SLEEP_NO_BLE, true);
     }
 
     sleep_wake_state_t st = {.window_ms = window_ms, .bye_ms = -1, .link_down_ms = -1};
@@ -247,6 +252,7 @@ void pda_sleep_sync_wake(const ble_pda_hooks_t *hooks)
             esp_timer_stop(backstop);
         }
         s_rtc.phase = PH_AWAKE;
+        wake_log_add(WL_UI_RESTART, 0, 0, true);
         t5_board_restart_awake();
     }
     const int64_t bye_s = ble_pda_last_sync();
@@ -256,15 +262,17 @@ void pda_sleep_sync_wake(const ble_pda_hooks_t *hooks)
         s_rtc.misses++;
     }
     pda_app_lock(); /* no feed or outbox write from the BLE task from here on */
+    wl_sleep_t why = bye_s ? WL_SLEEP_SYNCED : WL_SLEEP_NO_SYNC;
     if (bye_s && pda_app_feed_version() != feed_before) {
         s_rtc.feeds++;
+        why = WL_SLEEP_SYNCED_FEED;
         show_synced(bye_s);
     }
     now = clock_s();
     const int64_t target = sleep_plan_target(&CFG, now, bye_s, 0);
     ESP_LOGI(TAG, "%s after %" PRId64 " s; phone next expected in %" PRId64 " s",
              bye_s ? "synced" : "no sync", (now_ms() - s_wake_ms) / 1000, target - now);
-    sleep_until(target);
+    sleep_until(target, why, true);
 }
 
 void pda_sleep_print(void)

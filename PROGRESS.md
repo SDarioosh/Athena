@@ -124,6 +124,27 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-23: the T5 keeps a sleep/wake log in flash (branch `feature/pda-wake-log`)
+
+- **Why:** the T5 was found frozen in the morning after a night asleep on battery: in ROM
+  download mode, after a power-on reset with BOOT (GPIO0) low. The battery was full (94% at
+  sleep, 97% the next morning) and the PCF8563 kept time, so only the ESP32's supply was cut. Per
+  the schematic (V1.0 24-12-24) the BQ25896 QON is the PWR button (S4), and its default
+  long-press (about 10-15 s) power-cycles the system; BOOT isn't on QON. Holding PWR with BOOT
+  down gives exactly this. Why BOOT hadn't woken it first is unknown: the RTC-memory sleep
+  counters died with the power-on. PWR long-press is left as it is (owner's choice).
+- **What:** `main/wake_log.*` (pure, `test/test_wake_log.c`) and `main/wake_log_store.*` (NVS,
+  one key per entry, 128 kept, about 16 h of sync wakes). An entry per boot (reset reason, wake
+  cause) and per deep sleep (from the UI, synced, new feed, no sync, early, after a crash,
+  stuck/backstop, storage or BLE failure; the timer), with the time, seconds since boot and the
+  battery. The backstop's entry does no I2C. Console `wakelog [clear]` prints it oldest first and
+  flags a sync wake followed by another boot with no sleep between (it hung or reset).
+- **Checked on the owner's T5:** flashed; `sleep 1`, then BOOT: the log shows the USB-reset boot,
+  "asleep from the UI; timer 0 min 49 s", the sync-timer boot, "no sync; timer 14 min 33 s" after
+  54 s awake, and the BOOT wake, each with the battery. Not seen yet: a sync with the phone, the
+  backstop, a crash, a power cut.
+- **Next:** if the T5 freezes again, press RST (not BOOT), then `wakelog` before anything else.
+
 ## Done on 2026-10-23: one-day facts are not facts
 
 Owner report: the hub's Beliefs page offered "was very focused and locked in today",
