@@ -221,9 +221,15 @@ relationships, jobs, moves, decisions, prices, dates of future events. Skip smal
 one-off logistics and anything only true for today: never how someone felt, slept, ate, \
 drank or worked on one day ("was very focused today", "did not drink enough water \
 today"), and never a plan for the next minutes or hours or the next step of what they are \
-doing ("plans to get a snack", "plans to wire it up on a breadboard to test it"). \
+doing ("plans to get a snack", "plans to wire it up on a breadboard to test it"), and \
+never passing curiosity about something that came up ("is interested in hearing how it \
+sounds", "wants to see the demo"). \
 Each fact is a complete sentence that names its subject and makes sense on its own, e.g. \
 {{"subject": "Alice", "fact": "Alice is vegetarian."}}, never a bare value like "May". \
+Read months later without the conversation, it must still say what it is about: name the \
+thing ("Alice's bakery", "the Lisbon flat") instead of pointing back into the \
+conversation ("the technology", "the project", "this app", "that idea"). If you can't \
+name it, leave the fact out. \
 at_seconds: the bracketed number of the supporting line. Return an empty list if there \
 are none.
 Decisions, priorities and principles someone states about how they want to work or live \
@@ -478,6 +484,7 @@ class Summarizer:
                                if i["kind"] != NOTE_ITEM or (asked and i["text"])]
         if asked:  # a command the model missed or took for a task
             _notes_from_commands(out["action_items"], parts, origin)
+        _lone_note(out)
         for item in out["action_items"]:
             if item["kind"] == NOTE_ITEM:  # a note is filed as it is: no date or time
                 item.update(due=None, due_date=None, due_time=None, time_unclear=False,
@@ -804,13 +811,43 @@ _LEAD = re.compile(r"^(?:and|also|then|oh|so)[,\s]+", re.IGNORECASE)
 _ADD_TO_NOTES = re.compile(r"^(?:add|put|write(?:\s+down)?)\b", re.IGNORECASE)
 
 
+# a sentence the transcriber left open is read on into the next lines up to this length
+_SENTENCE_MAX = 400
+
+
+def _whole_sentences(parts: list[str]) -> list[tuple[str, int]]:
+    """The transcript's sentences, each with the offset of the line it starts on. The
+    transcriber breaks lines mid-sentence ("... has a bug where a" / "speaker is ..."):
+    a line that doesn't end a sentence goes on into the next one."""
+    out: list[tuple[str, int]] = []
+    open_: tuple[str, int] | None = None  # the sentence still being said
+    for part in parts:
+        for line in part.splitlines():
+            m = _LINE.match(line.strip())
+            if not m:
+                continue
+            at = int(m["at"])
+            pieces = [p.strip() for p in _SENTENCE_END.split(m["text"]) if p.strip()]
+            for i, piece in enumerate(pieces):
+                if open_ is not None and i == 0:
+                    piece, start = f"{open_[0]} {piece}", open_[1]
+                else:
+                    start = at
+                open_ = None
+                if i < len(pieces) - 1 or piece.endswith((".", "!", "?")) \
+                        or len(piece) >= _SENTENCE_MAX:
+                    out.append((piece, start))
+                else:
+                    open_ = (piece, start)
+    if open_ is not None:
+        out.append(open_)
+    return out
+
+
 def _command_sentences(parts: list[str]) -> list[tuple[str, int]]:
     """Sentences that ask for a note ("create a note ...", "note that ...", "add to my
-    hardware notes ..."), with the line's offset in seconds."""
-    sentences = [(_LEAD.sub("", sentence.strip()), int(m["at"]))
-                 for part in parts for line in part.splitlines()
-                 if (m := _LINE.match(line.strip()))
-                 for sentence in _SENTENCE_END.split(m["text"]) if sentence.strip()]
+    hardware notes ..."), with the offset of the line they start on."""
+    sentences = [(_LEAD.sub("", said), at) for said, at in _whole_sentences(parts)]
     out = []
     i = 0
     while i < len(sentences):
@@ -826,6 +863,23 @@ def _command_sentences(parts: list[str]) -> list[tuple[str, int]]:
                 _ADD_TO_NOTES.match(said) and _NOTES_PHRASE.search(said)):
             out.append((said, at))
     return out
+
+
+def _lone_note(out: dict[str, Any]) -> None:
+    """A voice note that is only one note becomes that note: its summary (written from
+    all of it, so nothing the transcriber cut is lost) is the note's text, and its title
+    titles an untitled note. A line for named notes ("add to my hardware notes") keeps
+    its own words; several notes keep theirs."""
+    items, title = out["action_items"], (out.get("title") or "").strip()
+    if len(items) != 1 or items[0]["kind"] != NOTE_ITEM:
+        return
+    note = items[0]
+    summary = " ".join((out.get("summary") or "").split())
+    if summary and not note.get("list_name"):
+        note["text"] = summary
+    if title and not note.get("note_title"):
+        note["note_title"] = title[:80]
+    note["title"] = short_title(note.get("note_title"), note["text"])
 
 
 def _command_only(said: str) -> bool:
@@ -864,6 +918,10 @@ def _notes_from_commands(items: list[dict[str, Any]], parts: list[str],
         twin = next((i for i in items if i["kind"] != NOTE_ITEM and not i.get("due_date")
                      and not i.get("due_time") and _covers(i, want)), None)
         if twin is not None:
+            if len(_words(twin["text"])) > len(want):  # the model wrote down more of it
+                text = _NOTE_COMMAND.sub("", twin["text"].strip()).strip(" :,-")
+                note["text"] = re.sub(r"(?<!\.)\.$", "", text[:1].upper() + text[1:])
+                note["title"] = short_title(None, note["text"])
             twin.update(note, note_title=None, source_at=twin.get("source_at") or origin + at,
                         time_unclear=False)
             twin.pop("time", None)
@@ -976,14 +1034,27 @@ _ONE_DAY = re.compile(r"\b(?:today|tonight|yesterday|this\s+(?:morning|afternoon
                       r"right\s+now|just\s+now|at\s+the\s+moment)\b", re.IGNORECASE)
 
 
+# passing curiosity about something that came up: "is interested in hearing how the
+# voice compression sounds", "wants to see what the demo looks like"
+_CURIOUS = re.compile(
+    r"\b(?:(?:is|was|seems?|seemed)\s+(?:\w+\s+)?(?:interested|curious|keen|eager|excited)"
+    r"\s+(?:in|about|to)|wants?\s+to|wanted\s+to)\s+(?:hear(?:ing)?|see(?:ing)?|"
+    r"watch(?:ing)?|know(?:ing)?|find(?:ing)?\s+out)\s+(?:how|what|whether|if)\b",
+    re.IGNORECASE)
+
+
 def _drop_passing_facts(out: dict[str, Any]) -> None:
     """Facts are for months; one tied to a single day ("today", "tonight", "this
-    morning", "right now") is not one, whatever the model says (small models keep
-    them)."""
+    morning", "right now") is not one, and neither is curiosity about something that
+    came up ("is interested in hearing how it sounds"), whatever the model says (small
+    models keep them)."""
     keep = []
     for fact in out["facts"]:
         if _ONE_DAY.search(fact["fact"]):
             log.info("dropped a one-day fact: %r", fact["fact"])
+            continue
+        if _CURIOUS.search(fact["fact"]):
+            log.info("dropped a passing-curiosity fact: %r", fact["fact"])
             continue
         keep.append(fact)
     out["facts"] = keep
