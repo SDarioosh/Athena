@@ -1,6 +1,6 @@
-# odysseus-sound progress
+# Athena progress
 
-odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first module of
+Athena (formerly convo-ai / barvis-ai / barvis-sound / odysseus-sound) is the first module of
 [Odysseus](https://github.com/SDarioosh/Barvis), our Odysseus fork. Design: wearables
 (Amazfit T-Rex 3 Pro, T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → local
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.

@@ -1,4 +1,4 @@
-"""The T5 PDA feed (docs/t5-pda-plan.md §4.1), built from the odysseus-sound HTTP API.
+"""The T5 PDA feed (docs/t5-pda-plan.md §4.1), built from the Athena HTTP API.
 
 - `ServerApi` is the small client the PDA needs: `health`, `get`, `patch`, `post`. `HttpApi`
   is the real one (urllib, the same rules as `Uploader`: bearer header only, no redirects,

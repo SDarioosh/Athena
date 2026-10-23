@@ -1,4 +1,4 @@
-# Plan: LilyGO T-Watch Ultra as an odysseus-sound recorder
+# Plan: LilyGO T-Watch Ultra as an Athena recorder
 
 Status: **milestone 1 verified on the owner's watch (2026-10-19). The BLE upload path
 (milestones 5 and 6: Opus chunks, queue, BLE service, PC relay, Android app) is built and

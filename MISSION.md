@@ -1,4 +1,4 @@
-You are building odysseus-sound (formerly convo-ai, barvis-ai, barvis-sound) in this
+You are building Athena (formerly convo-ai, barvis-ai, barvis-sound, odysseus-sound) in this
 repository, the first module of [Odysseus](https://github.com/SDarioosh/Barvis), our
 Odysseus fork. Read AGENTS.md first; it describes the
 devices, architecture, privacy rules, the MCP tool contract, and checks.

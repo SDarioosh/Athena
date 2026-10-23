@@ -167,7 +167,7 @@ sealed class PdaAction {
             }
             val fromItem = if ("from_item" in o) positive(o["from_item"], "from_item") else null
             val description = if (fromItem != null) {
-                "Added on the T5 PDA from odysseus-sound action item #$fromItem"
+                "Added on the T5 PDA from Athena action item #$fromItem"
             } else "Added on the T5 PDA"
             if (allDay) {
                 if ("end" in o) throw Bad("an all-day event has no end")

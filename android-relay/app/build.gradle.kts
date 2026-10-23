@@ -1,4 +1,4 @@
-// odysseus-sound Android relay: watch (BLE) -> owner's server (LAN / Tailscale).
+// Athena Android relay: watch (BLE) -> owner's server (LAN / Tailscale).
 // Kotlin is compiled by AGP 9's built-in Kotlin support (no separate Kotlin plugin).
 plugins {
     id("com.android.application")

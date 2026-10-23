@@ -194,7 +194,7 @@ class FakePda(
     }
 }
 
-/** Fictional odysseus-sound data (like server/scripts/seed_demo.py), answers overridable. */
+/** Fictional Athena data (like server/scripts/seed_demo.py), answers overridable. */
 class FakeConvoApi(private val timeline: Timeline = Timeline()) : ConvoApi {
     var healthAnswer: ServerResult = ServerResult.Ok()
     var patchAnswer: (Long, String) -> ServerResult = { _, _ -> ServerResult.Ok() }

@@ -114,7 +114,7 @@ def add_ingest_routes(mcp: Any, settings: Settings,
         except httpx.HTTPError as e:
             # Never log the request: its URL may carry ?access_token=.
             log.warning("ingest API at %s not reachable: %s", base, type(e).__name__)
-            return _json(502, f"odysseus-sound's ingest API is not reachable at {base} "
+            return _json(502, f"Athena's ingest API is not reachable at {base} "
                               "(is `convo-server serve` running?)")
         log.log(logging.WARNING if resp.status_code >= 500 else logging.DEBUG,
                 "ingest API answered %s for %s %s", resp.status_code, method, path)

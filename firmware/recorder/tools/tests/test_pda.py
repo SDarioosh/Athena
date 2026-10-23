@@ -1,5 +1,5 @@
 """The T5 PDA glance protocol (docs/t5-pda-plan.md §3-§4): codec, feed, actions and the
-relay algorithm against a fake T5 and a fake odysseus-sound server."""
+relay algorithm against a fake T5 and a fake Athena server."""
 
 from __future__ import annotations
 
