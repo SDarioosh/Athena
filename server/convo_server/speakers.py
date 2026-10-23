@@ -4,7 +4,8 @@ When someone is named (``name_speaker``) or enrolled, their voice is compared wi
 stored voices of unnamed speakers ("Speaker N") in every other recording. Confident
 matches are renamed and those conversations are marked for re-summary. "Confident" is
 stricter than live matching: the score must reach ``CONVO_SPEAKER_RELABEL_THRESHOLD``
-and beat every other known voice by ``RELABEL_MARGIN``.
+and beat every other known voice by ``RELABEL_MARGIN``. A recording that already has
+lines by that person is skipped: the diarizer heard two different voices there.
 """
 
 from __future__ import annotations
@@ -44,6 +45,9 @@ def relabel_matches(store: Any, name: str, threshold: float,
         score, best = ranked[0]
         runner_up = ranked[1][0] if len(ranked) > 1 else -1.0
         if best != name or score < threshold or score - runner_up < margin:
+            continue
+        # Two labels of one recording are two people: never give a second one the name.
+        if any(s.speaker == name for s in store.session_segments(cand["session_id"])):
             continue
         n, convs = store.rename_session_label(cand["session_id"], cand["label"], name)
         if n:

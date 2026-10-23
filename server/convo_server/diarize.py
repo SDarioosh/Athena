@@ -208,7 +208,8 @@ class Diarizer:
     def __init__(self, embedder: SpeakerEmbedder, voices: list[EnrolledVoice],
                  match_threshold: float = 0.50, cluster_threshold: float = 0.45,
                  min_seconds: float = 1.0, owner_hint_margin: float = 0.10,
-                 owner_hint_db: float = 3.0, absorb_threshold: float = 0.0) -> None:
+                 owner_hint_db: float = 3.0, absorb_threshold: float = 0.0,
+                 line_margin: float = 0.0) -> None:
         self.embedder = embedder
         self.voices = voices
         self.match_threshold = match_threshold
@@ -220,6 +221,10 @@ class Diarizer:
         self.owner_hint_margin = owner_hint_margin
         self.owner_hint_db = owner_hint_db
         self.absorb_threshold = absorb_threshold
+        # Line check (pyannote, runs where it heard one voice): a line whose own voice
+        # matches another known person by at least this much more than its speaker's
+        # voice moves to that person. 0 = off.
+        self.line_margin = line_margin
 
     def diarize_runs(self, runs: list[np.ndarray], pieces: list[PieceRef]
                      ) -> tuple[list[SpeakerLabel], dict[str, np.ndarray]]:
@@ -313,6 +318,28 @@ class Diarizer:
                 unnamed[names[c].name] = centroids[c]
             out.append(names[c])
         return out, unnamed
+
+    def recheck_lines(self, labels: list[SpeakerLabel], embeddings: list[np.ndarray]
+                      ) -> list[SpeakerLabel]:
+        """Move lines whose own voice clearly belongs to another known person.
+
+        A line moves to voice V when its score for V reaches the match threshold and beats
+        its current speaker's score by ``line_margin`` (an unnamed "Speaker N" counts as
+        the match threshold, so V must reach threshold + margin).
+        """
+        if self.line_margin <= 0 or not self.voices:
+            return labels
+        index = {v.name: k for k, v in enumerate(self.voices)}
+        out = list(labels)
+        for i, (lab, emb) in enumerate(zip(labels, embeddings, strict=True)):
+            scores = [v.score(emb) for v in self.voices]
+            best = int(np.argmax(scores))
+            if self.voices[best].name == lab.name or scores[best] < self.match_threshold:
+                continue
+            cur = (scores[index[lab.name]] if lab.name in index else self.match_threshold)
+            if scores[best] - cur >= self.line_margin:
+                out[i] = SpeakerLabel(self.voices[best].name, self.voices[best].is_owner)
+        return out
 
     def _owner_hint(self, scores: np.ndarray, names: dict[int, SpeakerLabel], used: set[int],
                     loudness: list[float] | None) -> tuple[int, int] | None:

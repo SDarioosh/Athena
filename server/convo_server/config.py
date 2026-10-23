@@ -140,6 +140,10 @@ class Settings(BaseSettings):
     # After a speaker is named, unnamed speakers in other conversations whose voice is at
     # least this close are renamed too (stricter than the match threshold).
     speaker_relabel_threshold: float = 0.60
+    # pyannote: in a run where it heard only one voice, a line whose own voice matches
+    # another known person (match threshold reached) by at least this much more than its
+    # speaker's voice moves to that person (0 = off).
+    speaker_line_margin: float = 0.10
     # Owner hint: the wearer is usually the loudest voice. A cluster that is at least
     # owner_hint_db louder than all others and within owner_hint_margin below the match
     # threshold of the owner's voice is labelled as the owner. 0 margin = off.

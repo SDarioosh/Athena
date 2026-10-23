@@ -27,6 +27,7 @@ os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
 import logging  # noqa: E402
+from collections import Counter  # noqa: E402
 from collections.abc import Callable  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -100,9 +101,10 @@ class PyannoteDiarizer(Diarizer):
                  segmenter: Callable[[np.ndarray], list[Turn]],
                  match_threshold: float = 0.50, cluster_threshold: float = 0.45,
                  min_seconds: float = 1.0, owner_hint_margin: float = 0.10,
-                 owner_hint_db: float = 3.0, absorb_threshold: float = 0.0) -> None:
+                 owner_hint_db: float = 3.0, absorb_threshold: float = 0.0,
+                 line_margin: float = 0.0) -> None:
         super().__init__(embedder, voices, match_threshold, cluster_threshold, min_seconds,
-                         owner_hint_margin, owner_hint_db, absorb_threshold)
+                         owner_hint_margin, owner_hint_db, absorb_threshold, line_margin)
         self.segmenter = segmenter
 
     def diarize_runs(self, runs: list[np.ndarray], pieces: list[PieceRef]
@@ -122,6 +124,9 @@ class PyannoteDiarizer(Diarizer):
                 speech = np.concatenate(own) if own else np.zeros(0, np.float32)
                 speech = speech[: int(MAX_SPEAKER_SECONDS * sr)]
                 if speech.size < int(self.min_seconds * sr):
+                    log.info("pyannote: run %d speaker %s has %.1f s of speech, too little "
+                             "for a voiceprint; their lines join the nearest speaker",
+                             ri, spk, speech.size / sr)
                     continue
                 keys.append((ri, spk))
                 embs.append(self._embed_speech(speech))
@@ -155,6 +160,7 @@ class PyannoteDiarizer(Diarizer):
                     j = min(near, key=lambda j: abs((pieces[j].start + pieces[j].end) / 2
                                                      - (p.start + p.end) / 2))
                     out[i] = out[j]
+        out = self._recheck_one_voice_runs(runs, pieces, out, keys)
         if any(o is None for o in out):  # a run where nobody could be identified
             rest = [i for i, o in enumerate(out) if o is None]
             labels, extra = self.diarize([window(runs[pieces[i].run], pieces[i].start,
@@ -168,6 +174,37 @@ class PyannoteDiarizer(Diarizer):
             for i, lab in zip(rest, labels, strict=True):
                 out[i] = SpeakerLabel(renumber.get(lab.name, lab.name), lab.is_owner)
         return out, unnamed
+
+    def _recheck_one_voice_runs(self, runs: list[np.ndarray], pieces: list[PieceRef],
+                                out: list[SpeakerLabel | None], keys: list[tuple[int, str]]
+                                ) -> list[SpeakerLabel | None]:
+        """Where pyannote kept fewer than two voices in a run, check each line's own voice.
+
+        On a body-worn mic, a short call with quick turns can come back from pyannote as
+        one speaker, and every line then gets one name. A line that clearly sounds like
+        another known person (``recheck_lines``) moves to them.
+        """
+        if self.line_margin <= 0 or not self.voices:
+            return out
+        kept = Counter(ri for ri, _ in keys)
+        out = list(out)
+        for ri, audio in enumerate(runs):
+            if kept[ri] >= 2:
+                continue
+            idx = [i for i, p in enumerate(pieces) if p.run == ri and out[i] is not None]
+            if len(idx) < 2:
+                continue
+            embs = [self.embedder.embed(window(audio, pieces[i].start, pieces[i].end))
+                    for i in idx]
+            before = [out[i] for i in idx]
+            after = self.recheck_lines(before, embs)  # type: ignore[arg-type]
+            moved = sum(a != b for a, b in zip(after, before, strict=True))
+            if moved:
+                log.info("pyannote: run %d had one voice; %d of %d lines moved by their own "
+                         "voice", ri, moved, len(idx))
+            for i, lab in zip(idx, after, strict=True):
+                out[i] = lab
+        return out
 
     def _embed_speech(self, speech: np.ndarray, win_seconds: float = 3.0) -> np.ndarray:
         win = int(win_seconds * SAMPLE_RATE)

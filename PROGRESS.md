@@ -6,7 +6,7 @@ odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first modul
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-23 ("a to-do" transcribed as "a to do" or "it to do" still counts as a command; complete forget: `erase_fact`, MCP 0.10.0; opt-in transcript retention; "Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-23 (two voices of one call no longer get one name; "a to-do" transcribed as "a to do" or "it to do" still counts as a command; complete forget: `erase_fact`, MCP 0.10.0; opt-in transcript retention; "Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -123,6 +123,26 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
+
+## Done on 2026-10-23: two voices of one call no longer get one name
+
+- Problem (owner, pyannote on): a 17 s phone call on the T-Watch Ultra came out with every
+  line under the caller's name, the owner's "not yet, but I will get you one" included.
+  The 2026-10-21 fix keeps pyannote's speakers of one run apart, so two paths were left:
+  1. pyannote heard **one voice** in the run (short call, quick turns, one body-worn mic).
+     Its one voiceprint matched the caller and every line took that name.
+  2. **Relabelling** after naming a speaker: the other unnamed voice of the same recording
+     could be renamed to the same person when its voiceprint was close enough.
+- Fix 1: where pyannote kept fewer than two voices in a run, each line's own voice is
+  checked against the known voices; a line that matches another person (match threshold
+  reached, `CONVO_SPEAKER_LINE_MARGIN` 0.10 above its speaker) moves to them. Needs the
+  owner's voice enrolled. The log says how many lines moved and when pyannote dropped a
+  speaker for too little speech.
+- Fix 2: relabelling skips a recording that already has lines by that person.
+- Not known yet which path this call took: the server log says
+  `pyannote: [1] speaker(s) per run` for path 1. Its audio is gone, so fix its lines with
+  `reassign_line` (tap the speaker name in the hub).
+- Needs the owner: a short two-person call on the watch, then check both names.
 
 ## Done on 2026-10-23: the T5 keeps a sleep/wake log in flash (branch `feature/pda-wake-log`)
 

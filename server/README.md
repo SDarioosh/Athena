@@ -68,7 +68,14 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
 - After someone is named or enrolled, unnamed speakers ("Speaker N") in other
   conversations whose stored voice clearly matches are renamed too
   (`CONVO_SPEAKER_RELABEL_THRESHOLD`, default 0.60, and at least 0.05 above any other
-  known voice); those conversations are re-summarized.
+  known voice); those conversations are re-summarized. A recording that already has
+  lines by that person is skipped: two voices of one recording are two people.
+- pyannote line check: on a body-worn mic, a short call with quick turns can come back
+  from pyannote as one voice, so every line would get one name. In a run where pyannote
+  kept fewer than two voices, each line's own voice (a 3 s window) is compared with the
+  known voices; a line that matches another person (at least the match threshold, and
+  `CONVO_SPEAKER_LINE_MARGIN`, 0.10, above its speaker's score) moves to them. 0 turns
+  it off. The log says how many lines moved.
 - Owner hint: the wearer is usually the loudest voice. A speaker at least
   `CONVO_OWNER_HINT_DB` (3 dB) louder than everyone else whose voice is a borderline
   match for the owner (within `CONVO_OWNER_HINT_MARGIN`, 0.10, below the match
