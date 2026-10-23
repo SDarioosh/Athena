@@ -6,8 +6,9 @@
 #include "board.h"
 
 typedef enum {
-    APP_EV_PWR_SHORT,
-    APP_EV_PWR_LONG,
+    APP_EV_PWR_SHORT,     /* arg = the PMIC's interrupt bits (event log) */
+    APP_EV_PWR_LONG,      /* arg = the PMIC's interrupt bits (event log) */
+    APP_EV_PWR_IGNORED,   /* a short press the board ignored; arg = ms since the previous */
     APP_EV_BOOT_SHORT,
     APP_EV_BOOT_LONG,
     APP_EV_BOOT_DOUBLE,

@@ -245,7 +245,9 @@ static int scan_file(const char *path, ogg_opus_scan_t *scan, long *size)
 {
     file_reader_t r = {.f = fopen(path, "rb")};
     if (!r.f) {
-        return CQ_ERR_NOT_FOUND;
+        /* Only a missing file means "no audio": a card that doesn't answer (EIO) must not
+         * get a chunk with audio on it deleted. */
+        return errno == ENOENT ? CQ_ERR_NOT_FOUND : CQ_ERR_IO;
     }
     int err = ogg_opus_scan(file_read_at, &r, scan) == OGG_OPUS_OK ? CQ_OK : CQ_ERR_IO;
     if (fseek(r.f, 0, SEEK_END) != 0 || (*size = ftell(r.f)) < 0) {
@@ -566,6 +568,7 @@ int cq_begin(chunk_queue_t *q, const cq_new_t *c, uint32_t *chunk_id)
     if (q->open) {
         return CQ_ERR_STATE;
     }
+    q->abandoned = false; /* an abandoned chunk never recovered stays for the boot recovery */
     const uint32_t id = q->next_id;
     /* Persist the counter first: an id handed out is never handed out again. */
     int err = write_next(q, id + 1);
@@ -660,17 +663,34 @@ int cq_end(chunk_queue_t *q, uint32_t duration_ms, bool last)
     return insert(q, &q->cur);
 }
 
-int cq_abandon(chunk_queue_t *q, bool last, uint32_t *closed_id)
+int cq_abandon_close(chunk_queue_t *q)
 {
-    *closed_id = 0;
     if (!q->open) {
         return CQ_ERR_STATE;
     }
     fclose(q->cur_file);
     q->cur_file = NULL;
     q->open = false;
+    q->abandoned = true;
+    return CQ_OK;
+}
+
+int cq_abandon_recover(chunk_queue_t *q, bool last, uint32_t *closed_id)
+{
+    *closed_id = 0;
+    if (!q->abandoned) {
+        return CQ_ERR_STATE;
+    }
+    q->abandoned = false;
     cq_boot_report_t rep = {0};
     return recover_open(q, q->cur, last, closed_id, &rep);
+}
+
+int cq_abandon(chunk_queue_t *q, bool last, uint32_t *closed_id)
+{
+    *closed_id = 0;
+    const int err = cq_abandon_close(q);
+    return err ? err : cq_abandon_recover(q, last, closed_id);
 }
 
 int cq_set_last(chunk_queue_t *q, uint32_t chunk_id)
