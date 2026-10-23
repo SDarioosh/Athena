@@ -1,6 +1,6 @@
 """Facts are for months: one tied to a single day is dropped.
 
-"Shahyah was very focused and locked in today." and "Shahyah did not drink enough water
+"Marisol was very focused and locked in today." and "Marisol did not drink enough water
 today." reached the hub's memory review as beliefs. The facts prompt names these, and
 code drops any fact that says it is about one day ("today", "tonight", "this morning",
 "right now"). Fictional data."""

@@ -291,7 +291,7 @@ def short_title(title: str | None, text: str | None) -> str:
     return t.rstrip(" .,;:-") or t
 
 
-# "Shahyah's" / "James'": a possessive the summary model left on a name
+# "Marisol's" / "James'": a possessive the summary model left on a name
 _POSSESSIVE = re.compile(r"(?<=\w)['’]s$|(?<=s)['’]$", re.IGNORECASE)
 
 
@@ -436,8 +436,8 @@ class Store:
                            int(is_explicit(r)), r["id"]))
             c.execute("PRAGMA user_version = 11")
         if self._conn.execute("PRAGMA user_version").fetchone()[0] < 12:
-            # names the summary model saved with a possessive ("Shahyah's") become the
-            # name ("Shahyah"); a person of that name already there absorbs them
+            # names the summary model saved with a possessive ("Marisol's") become the
+            # name ("Marisol"); a person of that name already there absorbs them
             c = self._conn
             names = {r[0] for r in c.execute(
                 "SELECT name FROM conversation_people UNION SELECT name FROM people"

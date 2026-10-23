@@ -44,7 +44,7 @@ or facts, and get_transcript only for exact wording the summary doesn't have. If
 matches, try other words for the topic once, then search_transcripts. Don't call a tool \
 again with the same arguments: you already have that result.
 
-Naming speakers: when the user says who an unnamed speaker was ("Speaker 2 was Jenn", \
+Naming speakers: when the user says who an unnamed speaker was ("Speaker 2 was Kath", \
 "Speaker 1 and Speaker 3 were both Sam"), that is a request to save the name, not a claim \
 to check. Find the conversation (search_conversations by date), call name_speaker once for \
 each label, then say which labels were renamed (it also renames that voice in other \
@@ -512,7 +512,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             old_name: Annotated[str, Field(description="Speaker name as it appears now")],
             new_name: Annotated[str, Field(description="The correct name")]) -> str:
         """Rename a speaker in ALL conversations, e.g. to fix a misspelled or wrong name
-        ("it's Jenn, not Jen"). If new_name already exists the two become one person.
+        ("it's Kath, not Kat"). If new_name already exists the two become one person.
         For an unnamed 'Speaker N' use name_speaker (those labels are per conversation)."""
         old_name, new_name = old_name.strip(), new_name.strip()
         if not old_name or not new_name:
