@@ -420,13 +420,72 @@ def pink_noise(n: int, seed: int = SIM_SEED) -> np.ndarray:
     return (pink / (np.sqrt(np.mean(pink ** 2)) or 1.0)).astype(np.float32)
 
 
-def sim_path(meeting: str, owner: str, distance: float, rt60: float, snr: float) -> Path:
+def sim_path(meeting: str, owner: str, distance: float, rt60: float, snr: float,
+             mutes: tuple = (), dips_db: float = 0.0) -> Path:
+    extra = ""
+    if mutes:
+        import hashlib
+
+        extra += "-mute" + hashlib.sha1(repr(sorted(mutes)).encode()).hexdigest()[:8]
+    if dips_db:
+        extra += f"-dips{dips_db:g}"
     return SIM_DIR / (f"{meeting}-{owner}-d{distance:g}-rt{rt60:g}-snr{snr:g}"
-                      f"-seed{SIM_SEED}-v{SIM_VERSION}.wav")
+                      f"-seed{SIM_SEED}-v{SIM_VERSION}{extra}.wav")
+
+
+def owner_dips(n: int, max_db: float, seed: int = SIM_SEED, min_db: float = 6.0,
+               ramp: float = 0.05) -> np.ndarray:
+    """A gain envelope for the owner's voice (--owner-dips): a wrist mic turns away when
+    the arm moves. Every 5-20 s the level drops by a random ``min_db``..``max_db`` dB for
+    2-8 s (50 ms ramps). Deterministic for a given seed."""
+    env = np.ones(n, np.float32)
+    rng = np.random.default_rng(seed + 1)
+    t = rng.uniform(5, 20)
+    sr = SAMPLE_RATE
+    r = int(ramp * sr)
+    while t < n / sr:
+        dur = rng.uniform(2, 8)
+        g = 10 ** (-rng.uniform(min_db, max(min_db, max_db)) / 20)
+        a, b = int(t * sr), min(n, int((t + dur) * sr))
+        env[a:b] = g
+        up = np.linspace(1, g, min(r, b - a), dtype=np.float32)
+        env[a:a + up.size] = up
+        down = np.linspace(g, 1, min(r, n - b), dtype=np.float32)
+        env[b:b + down.size] = down
+        t += dur + rng.uniform(5, 20)
+    return env
+
+
+def late_joiner_mutes(by_time: list[str], start: float, end: float,
+                      keep: int = 2) -> tuple[tuple[str, float, float], ...]:
+    """--late-joiners: everyone after the ``keep`` most active speakers is silent in the
+    first half of the window (they join halfway)."""
+    mid = (start + end) / 2
+    return tuple((spk, start, mid) for spk in by_time[keep:])
+
+
+def cut_turns(turns, mutes) -> list[tuple[float, float, str]]:
+    """Reference turns without the muted stretches (a muted speaker said nothing then)."""
+    out = []
+    for a, b, s in turns:
+        parts = [(a, b)]
+        for spk, x, y in mutes:
+            if spk != s:
+                continue
+            parts = [p for c, d in parts
+                     for p in ((c, min(d, x)), (max(c, y), d)) if p[1] > p[0]]
+        out += [(c, d, s) for c, d in parts]
+    return sorted(out)
+
+
+def cut_words(ref_words: dict[str, list[tuple[float, float, str]]], mutes
+              ) -> dict[str, list[tuple[float, float, str]]]:
+    return {spk: [w for w in ws if not any(m == spk and x <= w[0] < y for m, x, y in mutes)]
+            for spk, ws in ref_words.items()}
 
 
 def simulate(meeting: str, owner: str, distance: float = 2.0, rt60: float = 0.5,
-             snr: float = 30.0) -> np.ndarray:
+             snr: float = 30.0, mutes: tuple = (), dips_db: float = 0.0) -> np.ndarray:
     """The --audio sim stream: ``owner`` close to a chest mic, everyone else at
     ``distance`` m, in a reverberant room with noise, as a fixed-gain device records it.
 
@@ -443,9 +502,12 @@ def simulate(meeting: str, owner: str, distance: float = 2.0, rt60: float = 0.5,
        ``rt60``) and the tracks are summed.
     3. Stationary pink noise at ``snr`` dB below the owner's (reverberant) speech level.
     4. ``device_gain``: one fixed gain for the owner at -24 dBFS, firmware limiter.
+    ``mutes`` ((speaker, start, end) in seconds) silence a speaker's track there
+    (--late-joiners); ``dips_db`` turns the owner's voice down in stretches
+    (--owner-dips, ``owner_dips``).
     Deterministic (fixed seed); cached in eval/data/sim/ by meeting and parameters.
     """
-    path = sim_path(meeting, owner, distance, rt60, snr)
+    path = sim_path(meeting, owner, distance, rt60, snr, mutes, dips_db)
     if path.exists():
         return audio_mod.decode(path.read_bytes(), "wav")
     from scipy.signal import oaconvolve
@@ -477,6 +539,11 @@ def simulate(meeting: str, owner: str, distance: float = 2.0, rt60: float = 0.5,
         own = masks.get(f"solo:{spk}", np.zeros(n, bool))
         tracks[spk] = scale_to_level(gate_to_turns(t, turns, spk), -26.0,
                                      own if own.any() else None)
+    for spk, a, b in mutes:
+        if spk in tracks:
+            tracks[spk][int(a * SAMPLE_RATE): int(b * SAMPLE_RATE)] = 0.0
+    if dips_db:
+        tracks[owner] = tracks[owner] * owner_dips(n, dips_db)
     others = sorted(s for s in tracks if s != owner)
     owner_pos, other_pos = place_sources(len(others), distance)
     rirs = room_rirs([owner_pos, *other_pos], rt60)
@@ -520,12 +587,14 @@ def opus_roundtrip(audio: np.ndarray, kbps: float) -> np.ndarray:
     return out[: audio.size]
 
 
-def load_stream(meeting: str, args: argparse.Namespace, turns, owner: str) -> np.ndarray:
+def load_stream(meeting: str, args: argparse.Namespace, turns, owner: str,
+                mutes: tuple = ()) -> np.ndarray:
     """The whole decoded meeting as the device would deliver it (--audio, --opus-kbps);
     the window and the enrollment audio are both cut from it."""
     mode = getattr(args, "audio", "headset")
     if mode == "sim":
-        full = simulate(meeting, owner, args.distance, args.rt60, args.snr)
+        full = simulate(meeting, owner, args.distance, args.rt60, args.snr, mutes,
+                        getattr(args, "owner_dips", 0.0) or 0.0)
     else:
         f = DATA / (ARRAY_FILE if mode == "array" else MIX_FILE).format(m=meeting)
         if not f.exists():
@@ -709,6 +778,32 @@ class CachedTranscriber:
         return pieces
 
 
+class CachedSegmenter:
+    """--cache for pyannote: reuse its turns for the same audio and pyannote settings, so
+    runs that only change naming (owner hint, line check, thresholds) skip pyannote."""
+
+    def __init__(self, inner, settings: Settings) -> None:
+        self.inner = inner
+        self.key = json.dumps(["pyannote", getattr(settings, "pyannote_model", ""),
+                               getattr(settings, "pyannote_cluster_threshold", None),
+                               getattr(settings, "pyannote_min_speakers", 0),
+                               getattr(settings, "pyannote_max_speakers", 0)])
+        self.dir = DATA.parent / "cache"
+        self.dir.mkdir(parents=True, exist_ok=True)
+
+    def __call__(self, audio: np.ndarray):
+        import hashlib
+
+        h = hashlib.sha1(self.key.encode()
+                         + np.ascontiguousarray(audio, np.float32).tobytes()).hexdigest()
+        path = self.dir / f"pyannote-{h}.json"
+        if path.exists():
+            return [tuple(t) for t in json.loads(path.read_text())]
+        turns = self.inner(audio)
+        path.write_text(json.dumps([list(t) for t in turns]))
+        return turns
+
+
 def _process(pipeline: Pipeline, sid: str, audio: np.ndarray, t0: float) -> None:
     step = int(CHUNK * SAMPLE_RATE)
     for i in range(0, audio.size, step):
@@ -770,7 +865,12 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
     ref = annotation(turns, start, end)
     by_time = sorted(ref.labels(), key=lambda s: -ref.label_duration(s))
     owner = by_time[0]
-    full = load_stream(meeting, args, turns, owner)
+    mutes = (late_joiner_mutes(by_time, start, end) if getattr(args, "late_joiners", False)
+             else ())
+    full = load_stream(meeting, args, turns, owner, mutes)
+    if mutes:  # the reference: the late joiners said nothing before they joined
+        turns = cut_turns(turns, mutes)
+        ref = annotation(turns, start, end)
     levels = stream_levels(full, turns, owner)
     print(f"  {meeting}: {getattr(args, 'audio', 'headset')} active speech level "
           f"{levels['speech_dbfs']} dBFS (owner {owner} {levels['owner_dbfs']}, others "
@@ -787,6 +887,8 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
                                if k not in dropped})
         store = Store(settings.db_path)
         diarizer = build_diarizer(settings, store)
+        if args.cache and diarizer is not None and hasattr(diarizer, "segmenter"):
+            diarizer.segmenter = CachedSegmenter(diarizer.segmenter, settings)
         label_scores: dict[str, float] = {}  # label -> its voice's match score (last run)
         if diarizer is not None and hasattr(diarizer, "name_clusters"):
             _wrap_name_clusters(diarizer, label_scores)
@@ -827,7 +929,10 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
 
     import jiwer
 
-    ref_text = normalize(reference_words(meeting, start, end))
+    ref_words = cut_words(reference_words_by_speaker(meeting, start, end), mutes)
+    ref_text = (normalize(" ".join(w for _, w in sorted((t, w) for ws in ref_words.values()
+                                                         for t, _, w in ws)))
+                if mutes else normalize(reference_words(meeting, start, end)))
     hyp_text = normalize(" ".join(sg[3] for sg in segs))
     m = jiwer.process_words(ref_text, hyp_text)
     hyp = annotation([(a, b, spk) for a, b, spk, _ in segs])
@@ -852,7 +957,8 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
         "label_scores": {named.get(k, k): round(v, 3) for k, v in label_scores.items()},
     }
     out.update(_naming(turns, start, end, segs, enrolled))
-    ref_words = reference_words_by_speaker(meeting, start, end)
+    if mutes:
+        out["late_joiners"] = [spk for spk, _, _ in mutes]
     out.update(split_wer(ref_words, assign_words(segs, turns, start, ref_words), owner))
     out.update(missed_by_group(turns, segs, owner, start, end))
     return out
@@ -890,6 +996,7 @@ def _naming(turns, start, end, segs, enrolled) -> dict:
     right = wrong = enrolled_n = n = 0
     owner = enrolled[0]
     as_owner = owner_true = owner_frames = 0
+    stranger_frames = stranger_named = 0
     seg_t = [(a + start, b + start, spk) for a, b, spk, _ in segs]
     for t in frames:
         refs = {s for a, b, s in turns if a <= t < b}
@@ -909,12 +1016,17 @@ def _naming(turns, start, end, segs, enrolled) -> dict:
             as_owner += 1
             owner_true += spk == owner
         owner_frames += spk == owner
+        if spk not in enrolled:
+            stranger_frames += 1
+            stranger_named += hyp in enrolled
     return {"named_right": right / enrolled_n if enrolled_n else None,
             "named_wrong": wrong / n if n else None, "named_frames": n,
             "owner_precision": owner_true / as_owner if as_owner else None,
             "owner_recall": owner_true / owner_frames if owner_frames else None,
             "owner_labelled_frames": as_owner, "owner_frames": owner_frames,
-            "owner_true_frames": owner_true}
+            "owner_true_frames": owner_true,
+            "unenrolled_named": stranger_named / stranger_frames if stranger_frames else None,
+            "unenrolled_frames": stranger_frames, "unenrolled_named_frames": stranger_named}
 
 
 def pooled(rows: list[dict]) -> dict:
@@ -943,6 +1055,10 @@ def pooled(rows: list[dict]) -> dict:
         true = sum(r["owner_true_frames"] for r in rows)
         out["owner_precision"] = true / labelled if labelled else None
         out["owner_recall"] = true / frames if frames else None
+    if all("unenrolled_frames" in r for r in rows) and rows:
+        n = sum(r["unenrolled_frames"] for r in rows)
+        out["unenrolled_named"] = (sum(r["unenrolled_named_frames"] for r in rows) / n
+                                   if n else None)
     return out
 
 
@@ -956,6 +1072,10 @@ def audio_desc(res: dict) -> str:
     out = a["mode"]
     if a["mode"] == "sim":
         out += f" {a['distance']:g} m, RT60 {a['rt60']:g} s, SNR {a['snr']:g} dB"
+        if a.get("late_joiners"):
+            out += ", late joiners"
+        if a.get("owner_dips"):
+            out += f", owner dips up to {a['owner_dips']:g} dB"
     if a.get("level") is not None:
         out += f", speech at {a['level']:g} dBFS"
     if a.get("opus_kbps"):
@@ -965,7 +1085,8 @@ def audio_desc(res: dict) -> str:
 
 def table(results: dict[str, dict]) -> str:
     cols = ["wer", "wer_owner", "wer_others", "der", "confusion", "missed", "missed_others",
-            "false_alarm", "named_right", "named_wrong", "owner_precision", "owner_recall"]
+            "false_alarm", "named_right", "named_wrong", "owner_precision", "owner_recall",
+            "unenrolled_named"]
     lines = ["| run | meeting | " + " | ".join(cols) + " | speakers (ref/hyp) | time |",
              "|---" * (len(cols) + 4) + "|"]
     for label, res in results.items():
@@ -1015,6 +1136,12 @@ def main() -> None:
     r.add_argument("--distance", type=float, default=2.0,
                    help="sim: the others' distance from the mic (m)")
     r.add_argument("--rt60", type=float, default=0.5, help="sim: reverberation time (s)")
+    r.add_argument("--late-joiners", action="store_true",
+                   help="sim: everyone after the two most active speakers is silent in the "
+                        "first half of the window (people joining a conversation)")
+    r.add_argument("--owner-dips", type=float, default=0.0, metavar="DB",
+                   help="sim: the owner's voice drops by 6..DB dB for 2-8 s every 5-20 s "
+                        "(a wrist mic turning away as the arm moves)")
     r.add_argument("--snr", type=float, default=30.0,
                    help="sim: owner's speech level over the room noise (dB)")
     r.add_argument("--level", type=float, default=None,
@@ -1034,6 +1161,8 @@ def main() -> None:
     if getattr(args, "mic", None):
         args.audio = "array" if args.mic == "Array1-01" else "headset"
 
+    if args.cmd == "run" and (args.late_joiners or args.owner_dips) and args.audio != "sim":
+        ap.error("--late-joiners and --owner-dips need --audio sim")
     if args.cmd == "fetch":
         fetch(args.meetings, args.audio)
         return
@@ -1073,7 +1202,8 @@ def main() -> None:
                                             if k != "cmd"},
               "settings": {k: str(v) for k, v in base.items() if k != "ingest_token"},
               "audio": {"mode": args.audio,
-                        **({"distance": args.distance, "rt60": args.rt60, "snr": args.snr}
+                        **({"distance": args.distance, "rt60": args.rt60, "snr": args.snr,
+                            "late_joiners": args.late_joiners, "owner_dips": args.owner_dips}
                            if args.audio == "sim" else {}),
                         "opus_kbps": args.opus_kbps,
                         **({"level": args.level} if args.level is not None else {})},

@@ -68,3 +68,25 @@ def test_the_check_is_off_by_default(pipeline):
     pipeline.end_session("s1")
     pipeline.process_session("s1")
     assert UNSURE_LABEL not in {s.speaker for s in pipeline.store.session_segments("s1")}
+
+
+def test_the_floor_unnames_a_line_that_fits_nobody_even_with_one_voice():
+    run = np.concatenate([tone(200, 4), tone(1000, 4)])  # the owner, then someone new
+    pieces = [PieceRef(0, 0.0, 4.0), PieceRef(0, 4.0, 8.0)]
+    me = SpeakerLabel("Me", True)
+    d = Diarizer(ThreeEmbedder(), [EnrolledVoice("Me", ThreeEmbedder().embed(tone(200, 2)),
+                                                 True)])
+    assert d.check_lines([run], pieces, [me, me]) == [me, me]  # off by default
+    assert d.check_lines([run], pieces, [me, me], floor=0.5) == [
+        me, SpeakerLabel(UNSURE_LABEL, False)]
+
+
+class ThreeEmbedder(MixEmbedder):
+    """Energy at 200, 600 and 1000 Hz: three distinct voices."""
+
+    def embed(self, audio: np.ndarray) -> np.ndarray:
+        spec = np.abs(np.fft.rfft(audio)) ** 2
+        f = np.fft.rfftfreq(audio.size, 1 / 16000)
+        v = np.array([spec[np.abs(f - c) < 50].sum() for c in (200, 600, 1000)])
+        n = np.linalg.norm(v)
+        return (v / n if n > 0 else np.full(3, 3 ** -0.5)).astype(np.float32)

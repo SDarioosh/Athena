@@ -23,6 +23,7 @@ Either way, each speaker cluster is then named the same way (``name_clusters``):
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -30,6 +31,8 @@ from typing import Any, Protocol
 import numpy as np
 
 from .audio import SAMPLE_RATE
+
+log = logging.getLogger(__name__)
 
 # Speaker embeddings on 1-2 s whisper segments are too noisy (one fast talker split into
 # 7 "speakers" in testing); embedding a >= 3 s window around each segment fixes that.
@@ -291,18 +294,21 @@ class Diarizer:
         return [o for o in out if o is not None], unnamed
 
     def check_lines(self, runs: list[np.ndarray], pieces: list[PieceRef],
-                    labels: list[SpeakerLabel]) -> list[SpeakerLabel]:
+                    labels: list[SpeakerLabel], floor: float = 0.0) -> list[SpeakerLabel]:
         """Line voice check (``CONVO_SPEAKER_LINE_CHECK``): a line named after an enrolled
         person whose own voice (a >= 3 s window around it) fits another enrolled person
-        at least as well loses the name and becomes ``UNSURE_LABEL``.
+        at least as well, or fits its own name below ``floor``
+        (``CONVO_SPEAKER_LINE_FLOOR``, 0 = off: someone new), loses the name and becomes
+        ``UNSURE_LABEL``.
 
         A speaker's lines can include someone else's short turns (the diarizer missed
         them); those are the wrong names this catches. Moving the line to the other
         person measured worse than unnaming it: the better fit is often someone who
-        isn't enrolled. Needs two or more enrolled voices.
+        isn't enrolled. The comparison needs two or more enrolled voices; the floor works
+        with one.
         """
         by_name = {v.name: v for v in self.voices}
-        if len(by_name) < 2:
+        if len(by_name) < 2 and floor <= 0:
             return list(labels)
         out = []
         for p, lab in zip(pieces, labels, strict=True):
@@ -312,7 +318,8 @@ class Diarizer:
                 continue
             e = self.embedder.embed(window(runs[p.run], p.start, p.end))
             mine = own.score(e)
-            if any(v.score(e) >= mine for n, v in by_name.items() if n != lab.name):
+            if mine < floor or any(v.score(e) >= mine for n, v in by_name.items()
+                                   if n != lab.name):
                 out.append(SpeakerLabel(UNSURE_LABEL, False))
             else:
                 out.append(lab)
@@ -373,6 +380,10 @@ class Diarizer:
         # not if the cluster looks more like someone else than like the owner
         if int(np.argmax(scores[loudest])) != owner:
             return None
+        log.info("owner hint: speaker %d of %d named %s (voice score %.2f, below the match "
+                 "threshold %.2f; %.1f dB louder than the next speaker)", loudest + 1,
+                 len(loudness), self.voices[owner].name, float(scores[loudest, owner]),
+                 self.match_threshold, loudness[loudest] - max(others))
         return loudest, owner
 
 

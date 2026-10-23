@@ -151,6 +151,10 @@ class Settings(BaseSettings):
     # another enrolled person at least as well is labelled "Unknown" instead of keeping a
     # probably wrong name. Off until measured on the server.
     speaker_line_check: bool = False
+    # With the line check: a named line whose voice scores below this against its own
+    # name (cosine, like speaker_match_threshold) is labelled "Unknown" too: someone new.
+    # 0 = off.
+    speaker_line_floor: float = 0.0
     # After a speaker is named, unnamed speakers in other conversations whose voice is at
     # least this close are renamed too (stricter than the match threshold).
     speaker_relabel_threshold: float = 0.60
