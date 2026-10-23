@@ -221,9 +221,15 @@ relationships, jobs, moves, decisions, prices, dates of future events. Skip smal
 one-off logistics and anything only true for today: never how someone felt, slept, ate, \
 drank or worked on one day ("was very focused today", "did not drink enough water \
 today"), and never a plan for the next minutes or hours or the next step of what they are \
-doing ("plans to get a snack", "plans to wire it up on a breadboard to test it"). \
+doing ("plans to get a snack", "plans to wire it up on a breadboard to test it"), and \
+never passing curiosity about something that came up ("is interested in hearing how it \
+sounds", "wants to see the demo"). \
 Each fact is a complete sentence that names its subject and makes sense on its own, e.g. \
 {{"subject": "Alice", "fact": "Alice is vegetarian."}}, never a bare value like "May". \
+Read months later without the conversation, it must still say what it is about: name the \
+thing ("Alice's bakery", "the Lisbon flat") instead of pointing back into the \
+conversation ("the technology", "the project", "this app", "that idea"). If you can't \
+name it, leave the fact out. \
 at_seconds: the bracketed number of the supporting line. Return an empty list if there \
 are none.
 Decisions, priorities and principles someone states about how they want to work or live \
@@ -976,14 +982,27 @@ _ONE_DAY = re.compile(r"\b(?:today|tonight|yesterday|this\s+(?:morning|afternoon
                       r"right\s+now|just\s+now|at\s+the\s+moment)\b", re.IGNORECASE)
 
 
+# passing curiosity about something that came up: "is interested in hearing how the
+# voice compression sounds", "wants to see what the demo looks like"
+_CURIOUS = re.compile(
+    r"\b(?:(?:is|was|seems?|seemed)\s+(?:\w+\s+)?(?:interested|curious|keen|eager|excited)"
+    r"\s+(?:in|about|to)|wants?\s+to|wanted\s+to)\s+(?:hear(?:ing)?|see(?:ing)?|"
+    r"watch(?:ing)?|know(?:ing)?|find(?:ing)?\s+out)\s+(?:how|what|whether|if)\b",
+    re.IGNORECASE)
+
+
 def _drop_passing_facts(out: dict[str, Any]) -> None:
     """Facts are for months; one tied to a single day ("today", "tonight", "this
-    morning", "right now") is not one, whatever the model says (small models keep
-    them)."""
+    morning", "right now") is not one, and neither is curiosity about something that
+    came up ("is interested in hearing how it sounds"), whatever the model says (small
+    models keep them)."""
     keep = []
     for fact in out["facts"]:
         if _ONE_DAY.search(fact["fact"]):
             log.info("dropped a one-day fact: %r", fact["fact"])
+            continue
+        if _CURIOUS.search(fact["fact"]):
+            log.info("dropped a passing-curiosity fact: %r", fact["fact"])
             continue
         keep.append(fact)
     out["facts"] = keep
