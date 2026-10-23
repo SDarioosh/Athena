@@ -1,4 +1,4 @@
-"""Lines that run over a change of speaker are split (CONVO_SPEAKER_SPLIT_LINES)."""
+"""Lines that run over a pyannote turn change are split (CONVO_SPEAKER_SPLIT_LINES)."""
 
 from __future__ import annotations
 
@@ -32,38 +32,15 @@ def _me() -> EnrolledVoice:
     return EnrolledVoice("Me", MixEmbedder().embed(tone(200, 2)), True)
 
 
-def test_a_line_over_a_speaker_change_is_split_where_the_voice_changes():
+def test_ecapa_keeps_every_line_whole():
+    """Splitting by voice alone measured worse on far-field audio (eval/recognition.py)."""
     run = np.concatenate([tone(200, 4), tone(600, 8), tone(200, 4)])
     pieces = [PieceRef(0, 0.0, 8.0), PieceRef(0, 8.0, 12.0), PieceRef(0, 12.0, 16.0)]
     d = Diarizer(MixEmbedder(), [_me()])
     labels, _ = d.diarize_runs([run], pieces)
-    words = [_words(0, 8), _words(8, 12), _words(12, 16)]
-    parts = d.split_lines([run], pieces, words, labels)
-    first = [(a, b, lab.name) for a, b, lab in parts[0]]
-    assert first == [(0, 8, "Me"), (8, 16, "Speaker 1")]  # cut at 4.0 s
-    assert parts[0][0][2].is_owner and not parts[0][1][2].is_owner
-    # one voice in the line: it stays whole with its own label
-    assert [(a, b, lab.name) for a, b, lab in parts[1]] == [(0, 8, "Speaker 1")]
-    assert [(a, b, lab.name) for a, b, lab in parts[2]] == [(0, 8, "Me")]
-
-
-def test_short_lines_and_lines_without_words_are_not_split():
-    run = np.concatenate([tone(200, 4), tone(600, 4)])
-    pieces = [PieceRef(0, 0.0, 4.0), PieceRef(0, 4.0, 8.0), PieceRef(0, 3.0, 5.0)]
-    d = Diarizer(MixEmbedder(), [_me()])
-    labels, _ = d.diarize_runs([run], pieces)
-    # the last line has a change at 4.0 s but each side is under 1.5 s of speech
-    parts = d.split_lines([run], pieces, [_words(0, 4), [], _words(3, 5)], labels)
-    assert [len(p) for p in parts] == [1, 1, 1]
-    assert parts[1] == [(0, 0, labels[1])]
-
-
-def test_one_speaker_in_the_run_means_nothing_to_split():
-    run = tone(200, 8)
-    d = Diarizer(MixEmbedder(), [_me()])
-    labels, _ = d.diarize_runs([run], [PieceRef(0, 0.0, 8.0)])
-    assert d.split_lines([run], [PieceRef(0, 0.0, 8.0)], [_words(0, 8)], labels) == [
-        [(0, 16, labels[0])]]
+    words = [_words(0, 8), _words(8, 12), []]
+    assert d.split_lines([run], pieces, words, labels) == [
+        [(0, 16, labels[0])], [(0, 8, labels[1])], [(0, 0, labels[2])]]
 
 
 def test_pyannote_lines_split_at_turn_changes_and_blips_join_their_neighbour():
@@ -81,6 +58,20 @@ def test_pyannote_lines_split_at_turn_changes_and_blips_join_their_neighbour():
     assert [(a, b, lab.name) for a, b, lab in parts[1]] == [(0, 6, "Me")]
 
 
+def test_pyannote_short_first_part_joins_the_next_and_wordless_lines_stay():
+    from convo_server.diarize_pyannote import PyannoteDiarizer
+
+    run = np.concatenate([tone(200, 4), tone(600, 6)])
+    turns = [(0.0, 4.0, "A"), (4.0, 10.0, "B")]
+    d = PyannoteDiarizer(MixEmbedder(), [_me()], segmenter=lambda audio: turns)
+    pieces = [PieceRef(0, 3.0, 10.0), PieceRef(0, 0.0, 3.0)]
+    labels, _ = d.diarize_runs([run], pieces)
+    parts = d.split_lines([run], pieces, [_words(3, 10), []], labels)
+    # 1 s of A at the start is too short: the whole line is B's
+    assert [(a, b, lab.name) for a, b, lab in parts[0]] == [(0, 14, "Speaker 1")]
+    assert parts[1] == [(0, 0, labels[1])]
+
+
 class WordTranscriber(FakeTranscriber):
     """One line from 0 to 8 s over two voices, one line from 8 to 12 s, with word times."""
 
@@ -92,7 +83,10 @@ class WordTranscriber(FakeTranscriber):
 
 
 def test_pipeline_stores_the_parts_as_lines_when_turned_on(pipeline):
-    pipeline.diarizer = Diarizer(MixEmbedder(), [])
+    from convo_server.diarize_pyannote import PyannoteDiarizer
+
+    turns = [(0.0, 4.0, "A"), (4.0, 12.0, "B")]
+    pipeline.diarizer = PyannoteDiarizer(MixEmbedder(), [], segmenter=lambda audio: turns)
     pipeline.store.put_speaker("Me", MixEmbedder().embed(tone(200, 2)), is_owner=True)
     pipeline.settings.speaker_split_lines = True
     pipeline.settings.whisper_pad_seconds = 0.0
@@ -116,3 +110,35 @@ def test_pipeline_keeps_whole_lines_by_default(pipeline):
     pipeline.end_session("s1")
     pipeline.process_session("s1")
     assert len(pipeline.store.session_segments("s1")) == 2
+
+
+def test_pyannote_clustering_threshold_and_speaker_bounds():
+    import pytest
+
+    from convo_server.diarize_pyannote import speaker_bounds, tune_clustering
+
+    class FakePipeline:
+        def __init__(self) -> None:
+            self.params = {"segmentation": {"min_duration_off": 0.0},
+                           "clustering": {"threshold": 0.6, "Fa": 0.07, "Fb": 0.8}}
+
+        def parameters(self, instantiated: bool = False) -> dict:
+            return {k: dict(v) for k, v in self.params.items()}
+
+        def instantiate(self, params: dict) -> None:
+            self.params = params
+
+    p = FakePipeline()
+    tune_clustering(p, None)  # unset: the pipeline's own
+    assert p.params["clustering"]["threshold"] == 0.6
+    tune_clustering(p, 0.5)
+    assert p.params["clustering"] == {"threshold": 0.5, "Fa": 0.07, "Fb": 0.8}
+    p.params = {"segmentation": {}}
+    with pytest.raises(ValueError):
+        tune_clustering(p, 0.5)
+
+    assert speaker_bounds(0, 0) == {}
+    assert speaker_bounds(2, 0) == {"min_speakers": 2}
+    assert speaker_bounds(1, 4) == {"min_speakers": 1, "max_speakers": 4}
+    with pytest.raises(ValueError):
+        speaker_bounds(3, 2)

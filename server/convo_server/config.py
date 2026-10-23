@@ -132,14 +132,20 @@ class Settings(BaseSettings):
     # Hugging Face id or a local directory. Cloud (pyannoteAI) pipelines are refused.
     pyannote_model: str = "pyannote-community/speaker-diarization-community-1"
     pyannote_device: str = "auto"  # auto (cuda if available), cuda or cpu
+    # pyannote's clustering threshold (unset = the pipeline's own, 0.6 for community-1):
+    # lower splits voices into more speakers, higher joins them. Speaker count bounds per
+    # recording (0 = none). Not measured on the server yet: leave unset by default.
+    pyannote_cluster_threshold: float | None = None
+    pyannote_min_speakers: int = 0
+    pyannote_max_speakers: int = 0
     speaker_match_threshold: float = 0.50  # cosine similarity to enrolled voice
     speaker_cluster_threshold: float = 0.45  # cosine similarity to merge clusters
     # A speaker with a single line joins the closest speaker with several lines when its
     # voice is at least this similar (0 = off).
     speaker_absorb_threshold: float = 0.30
-    # Split a transcript line where the voice changes to another speaker of the same
-    # recording (needs word times from whisper-server's verbose_json). Off until measured
-    # on the server.
+    # pyannote only: split a transcript line where pyannote's turns change speaker
+    # (needs word times from whisper-server's verbose_json). Off until measured on the
+    # server.
     speaker_split_lines: bool = False
     # After a speaker is named, unnamed speakers in other conversations whose voice is at
     # least this close are renamed too (stricter than the match threshold).

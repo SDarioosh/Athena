@@ -74,7 +74,10 @@ def build_diarizer(settings: Settings, store: Store) -> Diarizer | None:
         from .diarize_pyannote import PyannoteDiarizer, PyannoteSegmenter
 
         segmenter = PyannoteSegmenter(settings.pyannote_model, settings.model_cache / "pyannote",
-                                      settings.pyannote_device)
+                                      settings.pyannote_device,
+                                      cluster_threshold=settings.pyannote_cluster_threshold,
+                                      min_speakers=settings.pyannote_min_speakers,
+                                      max_speakers=settings.pyannote_max_speakers)
         return PyannoteDiarizer(embedder, load_voices(store), segmenter, **args)
     if settings.diarizer != "ecapa":
         raise SystemExit("CONVO_DIARIZER must be ecapa or pyannote")

@@ -29,6 +29,7 @@ os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 import logging  # noqa: E402
 from collections.abc import Callable  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
 
 import numpy as np  # noqa: E402
 
@@ -67,7 +68,9 @@ class PyannoteSegmenter:
     """Runs a local pyannote pipeline on 16 kHz mono audio; returns exclusive turns."""
 
     def __init__(self, model: str = DEFAULT_MODEL, cache_dir: Path | None = None,
-                 device: str = "auto", threads: int | None = None) -> None:
+                 device: str = "auto", threads: int | None = None, *,
+                 cluster_threshold: float | None = None, min_speakers: int | None = None,
+                 max_speakers: int | None = None) -> None:
         _refuse_cloud(model)
         try:
             import torch
@@ -85,16 +88,44 @@ class PyannoteSegmenter:
             model, cache_dir=str(cache_dir) if cache_dir else None)
         if self._pipeline is None:  # pragma: no cover
             raise RuntimeError(f"could not load pyannote pipeline {model!r}")
+        tune_clustering(self._pipeline, cluster_threshold)  # pragma: no cover
+        self._speakers = speaker_bounds(min_speakers, max_speakers)
         if device == "auto":  # pragma: no cover - depends on the machine
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self._pipeline.to(torch.device(device))  # pragma: no cover
 
     def __call__(self, audio: np.ndarray) -> list[Turn]:  # pragma: no cover - needs model
         wav = self._torch.from_numpy(np.ascontiguousarray(audio, dtype=np.float32))[None]
-        out = self._pipeline({"waveform": wav, "sample_rate": SAMPLE_RATE})
+        out = self._pipeline({"waveform": wav, "sample_rate": SAMPLE_RATE}, **self._speakers)
         ann = getattr(out, "exclusive_speaker_diarization", out)
         return [(float(seg.start), float(seg.end), str(label))
                 for seg, _, label in ann.itertracks(yield_label=True)]
+
+
+def tune_clustering(pipeline: Any, threshold: float | None) -> None:
+    """Set the pipeline's clustering threshold (``CONVO_PYANNOTE_CLUSTER_THRESHOLD``;
+    None keeps the pipeline's own, 0.6 for community-1). Lower splits voices into more
+    speakers, higher joins them."""
+    if threshold is None:
+        return
+    params = pipeline.parameters(instantiated=True)
+    if "clustering" not in params or "threshold" not in params["clustering"]:
+        raise ValueError("this pyannote pipeline has no clustering threshold to set")
+    params["clustering"]["threshold"] = float(threshold)
+    pipeline.instantiate(params)
+
+
+def speaker_bounds(min_speakers: int | None, max_speakers: int | None) -> dict[str, int]:
+    """Keyword arguments for the pipeline call: speaker count bounds, if set (> 0)."""
+    out = {}
+    if min_speakers:
+        out["min_speakers"] = int(min_speakers)
+    if max_speakers:
+        out["max_speakers"] = int(max_speakers)
+    if "min_speakers" in out and "max_speakers" in out and out["min_speakers"] > out[
+            "max_speakers"]:
+        raise ValueError("CONVO_PYANNOTE_MIN_SPEAKERS is above CONVO_PYANNOTE_MAX_SPEAKERS")
+    return out
 
 
 class PyannoteDiarizer(Diarizer):
@@ -143,7 +174,6 @@ class PyannoteDiarizer(Diarizer):
         centroids = [_normalize(np.mean([embs[j] for j in m], axis=0)) for m in members]
         cl_loud = [float(np.mean([loud[j] for j in m])) for m in members]
         names, unnamed = self.name_clusters(centroids, cl_loud)
-        self._remember(names, centroids)
         by_key = {k: names[cids[j]] for j, k in enumerate(keys)}
         self._last_turns, self._last_by_key = turns, by_key
 

@@ -37,12 +37,9 @@ DIARIZATION_WINDOW = 3.0
 # A person's score is the mean similarity of their closest voice samples: up to this
 # many, and at most a third of them (so 1 of 2 samples, 3 of 9 or more).
 TOP_SAMPLES = 3
-# Line splitting (CONVO_SPEAKER_SPLIT_LINES): each part of a split line has at least this
-# much speech, and its voice must be this much closer to its own speaker than to the
-# other one.
+# Line splitting at pyannote turn changes (CONVO_SPEAKER_SPLIT_LINES): a shorter part
+# joins its neighbour.
 SPLIT_MIN_SECONDS = 1.5
-SPLIT_MARGIN = 0.05
-SPLIT_CANDIDATES = 8
 
 Word = tuple[float, float, str]  # start, end (seconds in the run), text
 
@@ -279,7 +276,6 @@ class Diarizer:
             loud = [float(np.mean([loudness[idx[j]] for j, c in enumerate(cids) if c == cid]))
                     for cid in range(n)]
         names, unnamed = self.name_clusters(centroids, loud)
-        self._remember(names, centroids)
         out: list[SpeakerLabel | None] = [None] * len(clips)
         for j, i in enumerate(idx):
             out[i] = names[cids[j]]
@@ -291,93 +287,13 @@ class Diarizer:
                 out[i] = out[int(nearest)]
         return [o for o in out if o is not None], unnamed
 
-    def _remember(self, names: list[SpeakerLabel], centroids: list[np.ndarray]) -> None:
-        """Keep each speaker's voice centroid of the last run, for ``split_lines``."""
-        self.last_speakers = list(zip(names, centroids, strict=True))
-
     def split_lines(self, runs: list[np.ndarray], pieces: list[PieceRef],
                     words: list[list[Word]], labels: list[SpeakerLabel]
                     ) -> list[list[tuple[int, int, SpeakerLabel]]]:
-        """Split lines where the voice changes to another speaker of this run.
-
-        A whisper segment can run over a change of speaker (far from the mic, segments
-        get long). For a line with word times and at least two parts of
-        ``SPLIT_MIN_SECONDS``, each candidate cut between words is scored: the voice
-        before and after it is compared with every speaker's centroid of this run. The
-        best cut whose two sides are closest to different speakers (by ``SPLIT_MARGIN``)
-        splits the line, and each part may be split once more.
-
-        Returns per line a list of (first word, end word, label) parts; a line that is
-        not split is one part with its own label.
-        """
-        speakers = list(getattr(self, "last_speakers", []))
-        # an enrolled voice with no whole line of its own here can still own part of one
-        have = {lab.name for lab, _ in speakers}
-        speakers += [(SpeakerLabel(v.name, v.is_owner), _normalize(v.embedding))
-                     for v in self.voices if v.name not in have]
-        out = []
-        for p, ws, lab in zip(pieces, words, labels, strict=True):
-            if len(speakers) < 2 or len(ws) < 2:
-                out.append([(0, len(ws), lab)])
-                continue
-            parts: list[tuple[int, int, SpeakerLabel]] = []
-            for a, b, who in self._split(runs[p.run], ws, 0, len(ws), lab, speakers, 2):
-                if parts and parts[-1][2] == who:  # two cuts may leave one voice twice
-                    parts[-1] = (parts[-1][0], b, who)
-                else:
-                    parts.append((a, b, who))
-            out.append(parts)
-        return out
-
-    def _split(self, audio: np.ndarray, ws: list[Word], a: int, b: int, lab: SpeakerLabel,
-               speakers: list[tuple[SpeakerLabel, np.ndarray]], depth: int
-               ) -> list[tuple[int, int, SpeakerLabel]]:
-        if depth == 0 or ws[b - 1][1] - ws[a][0] < 2 * SPLIT_MIN_SECONDS:
-            return [(a, b, lab)]
-        cuts = [k for k in range(a + 1, b)
-                if ws[k][0] - ws[a][0] >= SPLIT_MIN_SECONDS
-                and ws[b - 1][1] - ws[k][0] >= SPLIT_MIN_SECONDS]
-        if not cuts:
-            return [(a, b, lab)]
-        cents = np.stack([_normalize(c) for _, c in speakers])
-        coarse = cuts
-        if len(cuts) > SPLIT_CANDIDATES:
-            coarse = sorted({cuts[round(i * (len(cuts) - 1) / (SPLIT_CANDIDATES - 1))]
-                             for i in range(SPLIT_CANDIDATES)})
-        best = self._best_cut(audio, ws, a, b, coarse, cents)
-        if best is not None and coarse is not cuts:  # refine between the coarse neighbours
-            i = coarse.index(best[1])
-            lo = coarse[i - 1] if i > 0 else cuts[0]
-            hi = coarse[i + 1] if i + 1 < len(coarse) else cuts[-1]
-            fine = self._best_cut(audio, ws, a, b, [k for k in cuts if lo <= k <= hi], cents)
-            if fine is not None and fine[0] > best[0]:
-                best = fine
-        if best is None:
-            return [(a, b, lab)]
-        _, k, i, j = best
-        return (self._split(audio, ws, a, k, speakers[i][0], speakers, depth - 1)
-                + self._split(audio, ws, k, b, speakers[j][0], speakers, depth - 1))
-
-    def _best_cut(self, audio: np.ndarray, ws: list[Word], a: int, b: int, cuts: list[int],
-                  cents: np.ndarray) -> tuple[float, int, int, int] | None:
-        """(fit, cut, left speaker, right speaker) of the best cut among ``cuts``."""
-        sr = SAMPLE_RATE
-        best: tuple[float, int, int, int] | None = None
-        for k in cuts:
-            t = ws[k][0]
-            left = audio[int(ws[a][0] * sr): int(t * sr)]
-            right = audio[int(t * sr): int(ws[b - 1][1] * sr)]
-            sl = cents @ _normalize(self.embedder.embed(left))
-            sr_ = cents @ _normalize(self.embedder.embed(right))
-            i, j = int(np.argmax(sl)), int(np.argmax(sr_))
-            if i == j or min(float(sl[i] - sl[j]), float(sr_[j] - sr_[i])) < SPLIT_MARGIN:
-                continue
-            # the cut where both sides fit their own speaker best, weighted by length
-            fit = (left.size * float(sl[i]) + right.size * float(sr_[j])) / (left.size
-                                                                             + right.size)
-            if best is None or fit > best[0]:
-                best = (fit, k, i, j)
-        return best
+        """Parts of each line by speaker: (first word, end word, label). ECAPA keeps every
+        line whole (splitting by voice measured worse in eval/recognition.py); the
+        pyannote backend splits at its turn changes."""
+        return [[(0, len(ws), lab)] for ws, lab in zip(words, labels, strict=True)]
 
     def name_clusters(self, centroids: list[np.ndarray], loudness: list[float] | None = None
                       ) -> tuple[list[SpeakerLabel], dict[str, np.ndarray]]:
