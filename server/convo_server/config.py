@@ -140,6 +140,10 @@ class Settings(BaseSettings):
     # needs a new enrollment: voices of the other model never match.
     speaker_embedder: str = "ecapa"
     pyannote_cluster_threshold: float | None = None
+    # VBx clustering (community-1): how many speakers come out. Unset = the pipeline's own
+    # (Fa 0.07, Fb 0.8); a lower Fb or a higher Fa keeps more speakers apart.
+    pyannote_vbx_fa: float | None = None
+    pyannote_vbx_fb: float | None = None
     pyannote_min_speakers: int = 0
     pyannote_max_speakers: int = 0
     speaker_match_threshold: float = 0.50  # cosine similarity to enrolled voice

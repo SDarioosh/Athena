@@ -134,6 +134,8 @@ def test_pyannote_clustering_threshold_and_speaker_bounds():
     assert p.params["clustering"]["threshold"] == 0.6
     tune_clustering(p, 0.5)
     assert p.params["clustering"] == {"threshold": 0.5, "Fa": 0.07, "Fb": 0.8}
+    tune_clustering(p, None, fa=0.1, fb=0.4)
+    assert p.params["clustering"] == {"threshold": 0.5, "Fa": 0.1, "Fb": 0.4}
     p.params = {"segmentation": {}}
     with pytest.raises(ValueError):
         tune_clustering(p, 0.5)

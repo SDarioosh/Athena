@@ -69,7 +69,8 @@ class PyannoteSegmenter:
     def __init__(self, model: str = DEFAULT_MODEL, cache_dir: Path | None = None,
                  device: str = "auto", threads: int | None = None, *,
                  cluster_threshold: float | None = None, min_speakers: int | None = None,
-                 max_speakers: int | None = None) -> None:
+                 max_speakers: int | None = None, vbx_fa: float | None = None,
+                 vbx_fb: float | None = None) -> None:
         _refuse_cloud(model)
         try:
             import torch
@@ -87,7 +88,7 @@ class PyannoteSegmenter:
             model, cache_dir=str(cache_dir) if cache_dir else None)
         if self._pipeline is None:  # pragma: no cover
             raise RuntimeError(f"could not load pyannote pipeline {model!r}")
-        tune_clustering(self._pipeline, cluster_threshold)  # pragma: no cover
+        tune_clustering(self._pipeline, cluster_threshold, vbx_fa, vbx_fb)  # pragma: no cover
         self._speakers = speaker_bounds(min_speakers, max_speakers)
         if device == "auto":  # pragma: no cover - depends on the machine
             device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -120,16 +121,24 @@ class PyannoteEmbedder:
         return _normalize(np.nan_to_num(v))
 
 
-def tune_clustering(pipeline: Any, threshold: float | None) -> None:
-    """Set the pipeline's clustering threshold (``CONVO_PYANNOTE_CLUSTER_THRESHOLD``;
-    None keeps the pipeline's own, 0.6 for community-1). Lower splits voices into more
-    speakers, higher joins them."""
-    if threshold is None:
+def tune_clustering(pipeline: Any, threshold: float | None, fa: float | None = None,
+                    fb: float | None = None) -> None:
+    """Set the pipeline's clustering parameters; None keeps the pipeline's own.
+
+    ``threshold`` (``CONVO_PYANNOTE_CLUSTER_THRESHOLD``, 0.6 in community-1) only seeds
+    VBx clustering; how many speakers come out is decided by VBx's ``Fa`` (0.07) and
+    ``Fb`` (0.8) (``CONVO_PYANNOTE_VBX_FA``/``_FB``): a lower Fb or a higher Fa keeps
+    more speakers apart.
+    """
+    wanted = {k: float(v) for k, v in (("threshold", threshold), ("Fa", fa), ("Fb", fb))
+              if v is not None}
+    if not wanted:
         return
     params = pipeline.parameters(instantiated=True)
-    if "clustering" not in params or "threshold" not in params["clustering"]:
-        raise ValueError("this pyannote pipeline has no clustering threshold to set")
-    params["clustering"]["threshold"] = float(threshold)
+    missing = [k for k in wanted if k not in params.get("clustering", {})]
+    if missing:
+        raise ValueError(f"this pyannote pipeline has no clustering {', '.join(missing)}")
+    params["clustering"].update(wanted)
     pipeline.instantiate(params)
 
 

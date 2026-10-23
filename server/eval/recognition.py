@@ -784,10 +784,15 @@ class CachedSegmenter:
 
     def __init__(self, inner, settings: Settings) -> None:
         self.inner = inner
-        self.key = json.dumps(["pyannote", getattr(settings, "pyannote_model", ""),
-                               getattr(settings, "pyannote_cluster_threshold", None),
-                               getattr(settings, "pyannote_min_speakers", 0),
-                               getattr(settings, "pyannote_max_speakers", 0)])
+        key = ["pyannote", getattr(settings, "pyannote_model", ""),
+               getattr(settings, "pyannote_cluster_threshold", None),
+               getattr(settings, "pyannote_min_speakers", 0),
+               getattr(settings, "pyannote_max_speakers", 0)]
+        vbx = [getattr(settings, "pyannote_vbx_fa", None),
+               getattr(settings, "pyannote_vbx_fb", None)]
+        if any(v is not None for v in vbx):  # only when set: older entries still hit
+            key += ["vbx", *vbx]
+        self.key = json.dumps(key)
         self.dir = DATA.parent / "cache"
         self.dir.mkdir(parents=True, exist_ok=True)
 

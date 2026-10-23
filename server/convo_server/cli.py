@@ -91,7 +91,9 @@ def _build_diarizer(settings: Settings, store: Store, embedder: EcapaEmbedder | 
                                       settings.pyannote_device,
                                       cluster_threshold=settings.pyannote_cluster_threshold,
                                       min_speakers=settings.pyannote_min_speakers,
-                                      max_speakers=settings.pyannote_max_speakers)
+                                      max_speakers=settings.pyannote_max_speakers,
+                                      vbx_fa=settings.pyannote_vbx_fa,
+                                      vbx_fb=settings.pyannote_vbx_fb)
         if embedder is None:
             from .diarize_pyannote import PyannoteEmbedder
 
