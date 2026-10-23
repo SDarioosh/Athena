@@ -147,6 +147,10 @@ class Settings(BaseSettings):
     # (needs word times from whisper-server's verbose_json). Off until measured on the
     # server.
     speaker_split_lines: bool = False
+    # Check each named line's own voice against the enrolled voices; a line that fits
+    # another enrolled person at least as well is labelled "Unknown" instead of keeping a
+    # probably wrong name. Off until measured on the server.
+    speaker_line_check: bool = False
     # After a speaker is named, unnamed speakers in other conversations whose voice is at
     # least this close are renamed too (stricter than the match threshold).
     speaker_relabel_threshold: float = 0.60

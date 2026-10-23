@@ -25,7 +25,8 @@ class MixEmbedder(ToneEmbedder):
         f = np.fft.rfftfreq(audio.size, 1 / 16000)
         v = np.array([spec[np.abs(f - 200) < 50].sum(), spec[np.abs(f - 600) < 50].sum()])
         v = v / (v.sum() or 1.0)
-        return (v / np.linalg.norm(v)).astype(np.float32)
+        n = np.linalg.norm(v)
+        return (v / n if n > 0 else np.full(2, 2 ** -0.5)).astype(np.float32)
 
 
 def _me() -> EnrolledVoice:

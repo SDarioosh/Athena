@@ -266,6 +266,8 @@ class Pipeline:
             self.diarizer.voices = load_voices(self.store)  # pick up newly named speakers
             labels, unnamed = self.diarizer.diarize_runs(runs, [p[3] for p in pieces])
             self.store.put_speaker_candidates(session_id, unnamed)
+            if cfg.speaker_line_check:
+                labels = self.diarizer.check_lines(runs, [p[3] for p in pieces], labels)
             if cfg.speaker_split_lines:
                 parts = self.diarizer.split_lines(runs, [p[3] for p in pieces],
                                                   piece_words, labels)

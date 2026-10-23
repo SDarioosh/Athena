@@ -37,6 +37,9 @@ DIARIZATION_WINDOW = 3.0
 # A person's score is the mean similarity of their closest voice samples: up to this
 # many, and at most a third of them (so 1 of 2 samples, 3 of 9 or more).
 TOP_SAMPLES = 3
+# A line the voice check unnamed (CONVO_SPEAKER_LINE_CHECK): a placeholder name, so it is
+# never taken for a person.
+UNSURE_LABEL = "Unknown"
 # Line splitting at pyannote turn changes (CONVO_SPEAKER_SPLIT_LINES): a shorter part
 # joins its neighbour.
 SPLIT_MIN_SECONDS = 1.5
@@ -286,6 +289,34 @@ class Diarizer:
                 nearest = idx_arr[np.argmin(np.abs(t[idx_arr] - t[i]))]
                 out[i] = out[int(nearest)]
         return [o for o in out if o is not None], unnamed
+
+    def check_lines(self, runs: list[np.ndarray], pieces: list[PieceRef],
+                    labels: list[SpeakerLabel]) -> list[SpeakerLabel]:
+        """Line voice check (``CONVO_SPEAKER_LINE_CHECK``): a line named after an enrolled
+        person whose own voice (a >= 3 s window around it) fits another enrolled person
+        at least as well loses the name and becomes ``UNSURE_LABEL``.
+
+        A speaker's lines can include someone else's short turns (the diarizer missed
+        them); those are the wrong names this catches. Moving the line to the other
+        person measured worse than unnaming it: the better fit is often someone who
+        isn't enrolled. Needs two or more enrolled voices.
+        """
+        by_name = {v.name: v for v in self.voices}
+        if len(by_name) < 2:
+            return list(labels)
+        out = []
+        for p, lab in zip(pieces, labels, strict=True):
+            own = by_name.get(lab.name)
+            if own is None:
+                out.append(lab)
+                continue
+            e = self.embedder.embed(window(runs[p.run], p.start, p.end))
+            mine = own.score(e)
+            if any(v.score(e) >= mine for n, v in by_name.items() if n != lab.name):
+                out.append(SpeakerLabel(UNSURE_LABEL, False))
+            else:
+                out.append(lab)
+        return out
 
     def split_lines(self, runs: list[np.ndarray], pieces: list[PieceRef],
                     words: list[list[Word]], labels: list[SpeakerLabel]
