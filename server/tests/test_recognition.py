@@ -267,6 +267,55 @@ def test_pyannote_keeps_speakers_of_one_run_apart():
     assert list(unnamed) == ["Speaker 1"]
 
 
+def test_pyannote_one_voice_run_moves_lines_by_their_own_voice():
+    """A short call on a body-worn mic can come back from pyannote as one speaker; the
+    owner's lines in it must not all take the other person's name."""
+    from conftest import ToneEmbedder
+
+    from convo_server.diarize import EnrolledVoice, PieceRef
+    from convo_server.diarize_pyannote import PyannoteDiarizer
+
+    e = ToneEmbedder()
+    run = np.concatenate([tone(600, 3), tone(200, 3), tone(600, 3)])  # Hayden, me, Hayden
+    voices = [EnrolledVoice("Me", e.embed(tone(200, 2)), True),
+              EnrolledVoice("Hayden", e.embed(tone(600, 2)), False)]
+    pieces = [PieceRef(0, 0, 3), PieceRef(0, 3, 6), PieceRef(0, 6, 9)]
+
+    def one_voice(audio):
+        return [(0.0, 9.0, "SPEAKER_00")]
+
+    off = PyannoteDiarizer(e, voices, segmenter=one_voice)
+    assert [x.name for x in off.diarize_runs([run], pieces)[0]] == ["Hayden"] * 3
+    on = PyannoteDiarizer(e, voices, segmenter=one_voice, line_margin=0.1)
+    labels, _ = on.diarize_runs([run], pieces)
+    assert [(x.name, x.is_owner) for x in labels] == [
+        ("Hayden", False), ("Me", True), ("Hayden", False)]
+
+    # a run where pyannote kept two voices is left as pyannote split it
+    def two_voices(audio):
+        return [(0.0, 3.0, "A"), (3.0, 9.0, "B")]
+
+    on = PyannoteDiarizer(e, voices, segmenter=two_voices, line_margin=0.1)
+    assert [x.name for x in on.diarize_runs([run], pieces)[0]] == ["Hayden", "Me", "Me"]
+
+
+def test_line_check_needs_a_clear_known_voice():
+    from convo_server.diarize import Diarizer, EnrolledVoice, SpeakerLabel
+
+    me, hayden = unit(1, 0, 0), unit(0, 1, 0)
+    d = Diarizer(None, [EnrolledVoice("Me", me, True), EnrolledVoice("Hayden", hayden, False)],
+                 line_margin=0.1)
+    h, s1 = SpeakerLabel("Hayden", False), SpeakerLabel("Speaker 1", False)
+    lines = [unit(1, 0.2, 0),  # clearly me
+             unit(1, 0.95, 0),  # both, me only slightly ahead: stays
+             unit(0.55, 0, 1),  # me at 0.48, under the match threshold: stays
+             unit(1, 0, 0.6)]  # unnamed speaker, me at 0.86 >= 0.5 + 0.1: moves
+    out = d.recheck_lines([h, h, h, s1], lines)
+    assert [x.name for x in out] == ["Me", "Hayden", "Hayden", "Me"]
+    d.line_margin = 0
+    assert d.recheck_lines([h], [me]) == [h]
+
+
 def test_cluster_cannot_link():
     from convo_server.diarize import cluster
 
@@ -361,6 +410,26 @@ def test_relabel_never_overwrites_a_name_a_person_set(pipeline):
     assert "matched 1 unnamed" in out  # s2's Speaker 1; s0 has no unnamed line left
     speakers = [[s.speaker for s in store.conversation_segments(c["id"])] for c in convs]
     assert speakers == [["Me", "Dan"], ["Me", "Carol"], ["Eve", "Carol"]]
+
+
+def test_relabel_never_gives_two_voices_of_one_recording_the_same_name(pipeline):
+    """Naming one voice must not rename the other voice of the same recording, even if
+    their voiceprints are close (two people on one body-worn mic)."""
+    from conftest import ToneEmbedder
+    from test_mcp import call, process_two_speakers
+
+    from convo_server.mcp_server import build_mcp
+
+    store = pipeline.store
+    mcp = build_mcp(store, pipeline.settings)
+    process_two_speakers(pipeline)  # Me, Speaker 1
+    me_line = store.session_segments("s1")[0]
+    store.reassign_segment(me_line.id, "Speaker 2")  # the owner wasn't recognised
+    voice = ToneEmbedder().embed(tone(600, 2))
+    store.put_speaker_candidates("s1", {"Speaker 1": voice, "Speaker 2": voice})
+    conv = store.list_conversations()[0]["id"]
+    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Hayden")
+    assert [s.speaker for s in store.session_segments("s1")] == ["Speaker 2", "Hayden"]
 
 
 def test_rename_everywhere_refuses_an_unnamed_label_as_new_name(pipeline):

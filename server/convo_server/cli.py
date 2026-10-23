@@ -69,6 +69,8 @@ def build_diarizer(settings: Settings, store: Store) -> Diarizer | None:
                 owner_hint_margin=settings.owner_hint_margin,
                 owner_hint_db=settings.owner_hint_db,
                 absorb_threshold=settings.speaker_absorb_threshold)
+    if settings.diarizer == "pyannote":
+        args["line_margin"] = settings.speaker_line_margin
     embedder = EcapaEmbedder(settings.model_cache)
     if settings.diarizer == "pyannote":
         from .diarize_pyannote import PyannoteDiarizer, PyannoteSegmenter
