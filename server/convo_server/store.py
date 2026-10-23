@@ -720,7 +720,9 @@ class Store:
         """Store structured LLM output and refresh the FTS index for the conversation.
 
         A re-summary (e.g. after a speaker was renamed) keeps what is known about the
-        old items: action-item status, fact links and other conversations' sources.
+        old items: action-item status, fact links and other conversations' sources. A
+        fact said again keeps its id (the hub files facts by id), and new facts never take
+        an id this conversation's old facts had.
         Returns the ids of the new facts that still need ``link_facts``.
         """
         conv = self.get_conversation(conv_id)
@@ -760,9 +762,15 @@ class Store:
                      row["explicit"]))
                 c.execute("INSERT INTO search_fts VALUES ('action_item', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id, item["text"]))
+            # above every old id: SQLite reuses the highest free id, which would give an
+            # old fact's id to a different new one
+            next_id = max([f["id"] for f in before["facts"]]
+                          + [c.execute("SELECT COALESCE(MAX(id), 0) FROM facts").fetchone()[0]]
+                          ) + 1
             for fact in summary["facts"]:
                 fact_ids.append(_insert_fact(c, conv_id, fact.get("subject"), fact["fact"],
-                                             fact.get("source_at")))
+                                             fact.get("source_at"), fact_id=next_id))
+                next_id += 1
             fact_ids = _carry_over(c, conv_id, before, fact_ids)
             c.executemany("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
                           [(conv_id, p) for p in summary["people"]])
@@ -2041,9 +2049,9 @@ def _same_item(before: list[dict[str, Any]], item: dict[str, Any]) -> dict[str, 
 
 
 def _insert_fact(c: sqlite3.Connection, conv_id: str, subject: str | None, fact: str,
-                 source_at: float | None) -> int:
-    cur = c.execute("INSERT INTO facts (conversation_id, subject, fact, source_at)"
-                    " VALUES (?, ?, ?, ?)", (conv_id, subject, fact, source_at))
+                 source_at: float | None, fact_id: int | None = None) -> int:
+    cur = c.execute("INSERT INTO facts (id, conversation_id, subject, fact, source_at)"
+                    " VALUES (?, ?, ?, ?, ?)", (fact_id, conv_id, subject, fact, source_at))
     c.execute("INSERT INTO search_fts VALUES ('fact', ?, ?, ?)",
               (str(cur.lastrowid), conv_id, f"{subject or ''}: {fact}"))
     return int(cur.lastrowid or 0)
@@ -2105,14 +2113,20 @@ def _carry_over(c: sqlite3.Connection, conv_id: str, before: dict[str, Any],
         sources = old["sources"]
         if target is not None:
             fresh.remove(target)
+            # said again: the new row takes the old id, so the hub sees the same fact
+            c.execute("UPDATE facts SET id = ? WHERE id = ?", (old["id"], target))
+            c.execute("UPDATE search_fts SET ref_id = ? WHERE kind = 'fact' AND ref_id = ?",
+                      (str(old["id"]), str(target)))
+            target = old["id"]
         elif sources:  # said elsewhere too: keep it, owned by the first other source
             first, sources = sources[0], sources[1:]
             target = _insert_fact(c, first["conversation_id"], old["subject"], old["fact"],
-                                  first["source_at"])
+                                  first["source_at"], fact_id=old["id"])
         elif old["status"] == "retired":
             # not said this time: keep the retired row, so a later re-summary that says it
             # again still finds it retired
-            target = _insert_fact(c, conv_id, old["subject"], old["fact"], old["source_at"])
+            target = _insert_fact(c, conv_id, old["subject"], old["fact"], old["source_at"],
+                                  fact_id=old["id"])
         else:
             continue
         if old["status"] == "retired":

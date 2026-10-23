@@ -337,8 +337,8 @@ forgets a fact from the hub's review page. The fact gets status `retired` (next 
 `list_facts` (both formats), search (keyword index and embeddings), `get_conversation`
 and `GET /v1/conversations/{id}`. Facts it had replaced stay replaced. It stays
 forgotten: a re-summary of its conversation (e.g. after `name_speaker`) marks the matching
-new fact retired again (a re-summary gives facts new ids, so the hub reconciles by the
-facts returned, not by old ids), and the fact linker is shown retired facts too, so the
+fact retired again (it keeps its id, see below; the hub still reconciles by the facts
+returned), and the fact linker is shown retired facts too, so the
 same fact said in a later conversation becomes another source of the retired fact
 instead of a new one. A later fact that *updates* a retired one is a new belief and is
 shown. Calling it again answers "already retired".
@@ -510,9 +510,12 @@ small local model does better on narrow questions):
 A re-summary (e.g. after a speaker is renamed) keeps what was known about the old items:
 the id, status, creation time and `explicit` of action items (and the kind, date, time,
 list and title if the user changed them with `update_action_item`; an item with the same text is matched
-before a similar one said nearby), the other sources of a fact, which facts it
-replaced, and whether the owner retired it. Stable ids matter: Odysseus files voice-note
-items by id.
+before a similar one said nearby), and of facts the id (the same text, or the same
+transcript line read alike), the other sources, which facts it replaced, and whether the
+owner retired it. New facts get ids no old fact of the conversation had. Stable ids
+matter: Odysseus files voice-note items and facts by id, and a fact under a new id was a
+second belief there (the same fact twice in its memory when the owner had confirmed the
+first).
 
 ## Recognition eval
 
