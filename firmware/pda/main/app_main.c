@@ -27,6 +27,7 @@
 #include "t5_board.h"
 #include "touch_gt911.h"
 #include "ui_pda.h"
+#include "wake_log_store.h"
 
 static const char *TAG = "app";
 
@@ -117,6 +118,8 @@ void app_main(void)
     }
     const t5_wake_t wake = t5_board_wake_reason();
     ESP_ERROR_CHECK(t5_board_init());
+    wake_log_init();
+    wake_log_boot(wake);
     if (wake == T5_WAKE_TIMER) {
         pda_sleep_sync_wake(&s_hooks); /* doesn't return */
     }
