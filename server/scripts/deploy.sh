@@ -325,14 +325,14 @@ install_deps() {
 remote() {
   if [ -n "$REMOTE_NAME" ]; then echo "$REMOTE_NAME"; return; fi
   git -C "$REPO_DIR" remote -v \
-    | awk 'tolower($2) ~ /[\/:]sdarioosh\/(barvis-sound|barvis-ai|convo-ai)(\.git)?$/ {print $1; exit}'
+    | awk 'tolower($2) ~ /[\/:]sdarioosh\/(athena|odysseus-sound|barvis-sound|barvis-ai|convo-ai)(\.git)?$/ {print $1; exit}'
 }
 
 update_checkout() {  # $1 ref or empty; sets PREV and NEW
   local r ref
   git -C "$REPO_DIR" diff --quiet HEAD -- \
     || die "tracked files in $REPO_DIR have local changes (git status); commit or stash them first"
-  r=$(remote); [ -n "$r" ] || die "no git remote points at the Athena repo (SDarioosh/barvis-sound); set BARVIS_SOUND_REMOTE"
+  r=$(remote); [ -n "$r" ] || die "no git remote points at the Athena repo (SDarioosh/Athena); set BARVIS_SOUND_REMOTE"
   ref=${1:-$r/$BRANCH}
   PREV=$(git -C "$REPO_DIR" rev-parse HEAD)
   log "fetching $r"

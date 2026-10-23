@@ -20,7 +20,8 @@ server. **Nothing in the data path touches the cloud.**
   `convo_server` package, the `convo-server` CLI, `CONVO_*` env vars, paths such as
   `server/data/convo.db`, the MCP server name `convo-ai`, the hub's server name
   `convo`, the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app ("Convo Rec Test", vendor
-  `convo-ai`), the repo URL `SDarioosh/barvis-sound`, the `barvis-sound*` service names
+  `convo-ai`), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
+  `SDarioosh/Athena`; GitHub redirects the old URL), the `barvis-sound*` service names
   and `BARVIS_SOUND_*` vars of `server/scripts/deploy.sh`, the Android app ID
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its `BARVIS_UUID` /
   `BARVIS_*` Opus tag macros, and the PC relay's `barvis_relay` package. Renaming them
