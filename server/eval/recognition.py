@@ -787,6 +787,9 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
                                if k not in dropped})
         store = Store(settings.db_path)
         diarizer = build_diarizer(settings, store)
+        label_scores: dict[str, float] = {}  # label -> its voice's match score (last run)
+        if diarizer is not None and hasattr(diarizer, "name_clusters"):
+            _wrap_name_clusters(diarizer, label_scores)
         named: dict[str, str] = {}  # fictional name -> AMI speaker id
         targets = by_time[: args.enroll] if diarizer is not None else []
         if not args.relabel:
@@ -845,12 +848,31 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
         "enrolled": enrolled, "lines": len(segs), "relabeled_lines": relabeled,
         "owner": owner, "levels": levels,
         "hypothesis": [[round(a, 2), round(b, 2), spk, text] for a, b, spk, text in segs],
+        # the enrolled-voice score behind each name (eval names: Maria is the owner, ...)
+        "label_scores": {named.get(k, k): round(v, 3) for k, v in label_scores.items()},
     }
     out.update(_naming(turns, start, end, segs, enrolled))
     ref_words = reference_words_by_speaker(meeting, start, end)
     out.update(split_wer(ref_words, assign_words(segs, turns, start, ref_words), owner))
     out.update(missed_by_group(turns, segs, owner, start, end))
     return out
+
+
+def _wrap_name_clusters(diarizer, scores: dict[str, float]) -> None:
+    """Record, for each name the diarizer gives, how close that cluster's voice was to
+    the named person's (cosine score; "Speaker N" labels get their best score too)."""
+    inner = diarizer.name_clusters
+
+    def name_clusters(centroids, loudness=None):
+        names, unnamed = inner(centroids, loudness)
+        scores.clear()
+        for lab, c in zip(names, centroids, strict=True):
+            sims = [v.score(c) for v in diarizer.voices if v.name == lab.name]
+            best = [v.score(c) for v in diarizer.voices]
+            scores[lab.name] = float(sims[0] if sims else max(best, default=0.0))
+        return names, unnamed
+
+    diarizer.name_clusters = name_clusters
 
 
 def _naming(turns, start, end, segs, enrolled) -> dict:
