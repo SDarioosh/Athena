@@ -891,9 +891,13 @@ _HABIT = re.compile(r"\b(?:be|become|get\s+better\s+at|try\s+(?:to|and))\b"
                     r"|\b(?:start|keep)\s+\w+ing\b|\b(?:more|less)\s+(?:often|time)\b"
                     r"|\b\w+\s+(?:more|less)[.!?]*\s*$", re.IGNORECASE)
 # the user asked for a to-do: "remind me", "todo", "to-do", "task:", "add a task", "add
-# ... to my ... list", "note that"
+# ... to my ... list", "note that". The transcriber also writes "a to-do" as "a to do" or
+# "it to do" ("Make it to do to get ..."): "to do" with a space counts after make,
+# create or add, or before item / list, never alone ("I need to do the dishes")
 _COMMAND_WORDS = re.compile(
-    r"\bremind\s+me\b|\breminder\b|\bto-?do\b|\bto\s+do\s+list\b|\btask\s*:"
+    r"\bremind\s+me\b|\breminder\b|\bto-?do\b|\bto\s+do\s+(?:list|item)s?\b|\btask\s*:"
+    r"|\b(?:add|create|make)\s+(?:(?:a|an|it|me)\s+)?(?:new\s+)?to\s+do\b"
+    r"(?!\s+(?:the|my|a|an|some|it|this|that|with|about)\b)"
     r"|\b(?:add|create|make|new)\s+(?:a\s+)?(?:new\s+)?task\b|\bnote\s+that\b"
     r"|\b(?:add|put|write)\b[^.!?]*\blist\b", re.IGNORECASE)
 # owners that are the user ("Me" is the summarizer's name for them by default)
