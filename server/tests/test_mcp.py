@@ -114,7 +114,7 @@ def test_tool_annotations_match_contract(mcp):
             return (await client.list_tools()).tools
 
     contract = contract_table()
-    assert len(contract) == 14  # the table parsed: 9 read-only + 5 write tools
+    assert len(contract) == 15  # the table parsed: 9 read-only + 6 write tools
     tools = {t.name: t.annotations for t in asyncio.run(go())}
     assert set(tools) == set(contract), (
         f"not in the AGENTS.md table: {sorted(set(tools) - set(contract))}; "

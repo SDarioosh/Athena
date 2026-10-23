@@ -94,12 +94,13 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.9.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.10.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
     # merging two names can't be undone (the lines of both look the same afterwards);
-    # retire_fact uses it too: a forgotten fact is out of every listing for good
+    # retire_fact uses it too: a forgotten fact is out of every listing for good; and
+    # erase_fact: the words are gone from the transcript and the notes
     rw_merge = ToolAnnotations(read_only_hint=False, destructive_hint=True,
                                idempotent_hint=True, open_world_hint=False)
 
@@ -189,7 +190,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                + (f", type {c['kind']}" if c.get("kind") else ""),
                f"Speakers: {', '.join(speakers) or '—'}. People: {', '.join(c['people']) or '—'}",
                f"Link: {transcript_link(settings, c['id'])}",
-               f"Summary: {c['summary'] or '(pending)'}"]
+               f"Summary: {_summary(c)}"]
         out += [f"* {k}" for k in c["key_points"]]
         out += [_item(a, settings, c) for a in c["action_items"]]
         out += [f"Fact [{f['subject']}]: {f['fact']} " + _src(f, settings, c)
@@ -220,6 +221,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         out = [f"\"{c['title'] or 'untitled'}\" {when(origin, '%Y-%m-%d %H:%M:%S')} {link}"]
         out += [f"#{s.id} [{int(s.started_at - origin)}s] {s.speaker}: {s.text}"
                 for s in segs[:max_lines]]
+        if pruned := c.get("transcript_pruned_at"):
+            out.append(f"The transcript was removed on {when(pruned, '%Y-%m-%d')}"
+                       " by the retention setting; use get_conversation for the summary, "
+                       "facts and action items.")
         if more:
             out.append(f"… {len(segs) - max_lines} more lines; call again with a later "
                        "start_seconds.")
@@ -417,6 +422,25 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if result == "already":
             return f"Fact #{fact_id} was already retired."
         return f"Fact #{fact_id} retired."
+
+    @mcp.tool(annotations=rw_merge)
+    def erase_fact(fact_id: Annotated[int, Field(description="The fact's id (list_facts "
+                                                             "format=json)")],
+                   reason: Annotated[str, Field(description="Why, e.g. 'wrong' or "
+                                                            "'private'; optional")] = ""
+                   ) -> str:
+        """Forget a fact completely: everything retire_fact does, and its words are erased
+        where they were said. The transcript line that said it reads "[forgotten]" (in its
+        conversation and in every later one that said it again), the conversation's
+        summary is rewritten without it, and its digest is written again. Can't be undone.
+        Only when the user asks."""
+        result = store.erase_fact(fact_id, reason)
+        if result is None:
+            return f"No fact #{fact_id}."
+        if result["result"] == "already":
+            return f"Fact #{fact_id} was already erased."
+        return (f"Fact #{fact_id} erased: {result['lines']} transcript line(s) redacted, "
+                f"{result['conversations']} conversation summary(ies) being rewritten.")
 
     @mcp.tool(annotations=ro)
     def get_daily_digest(date: Annotated[str, Field(description="YYYY-MM-DD")]) -> str:
@@ -632,7 +656,17 @@ def _relabel_note(store: Store, name: str, settings: Settings) -> str:
             f"to {name} in {lines} lines across {len(convs)} other conversation(s).")
 
 
+def _summary(c: dict[str, Any]) -> str:
+    if c.get("forget_pending"):
+        return "(being rewritten after the user forgot something; ask again later)"
+    if c.get("transcript_pruned_at") and not c.get("summary"):
+        return "(none; the transcript was removed by the retention setting)"
+    return c["summary"] or "(pending)"
+
+
 def _title(c: dict[str, Any]) -> str:
+    if c.get("forget_pending"):
+        return "untitled (being rewritten after a forget)"
     if c.get("status") == "discarded":
         return f"(not summarized: looked like {c.get('discard_reason') or 'junk'})"
     return c.get("title") or "untitled (summary pending)"

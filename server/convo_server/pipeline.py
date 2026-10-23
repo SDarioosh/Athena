@@ -445,9 +445,69 @@ class Pipeline:
         convs = self.digest_conversations(date)
         if not convs:
             return None
+        if self.store.rewrite_pending(c["id"] for c in convs):
+            return None  # a forget took a summary down: wait for its rewrite
         digest = self.summarizer.digest(date, convs)
         self.store.put_digest(date, digest)
         return digest
+
+
+    # ---------------------------------------------------------------- retention
+    def prune_transcripts(self, now: float | None = None) -> dict[str, Any] | None:
+        """Apply ``CONVO_TRANSCRIPT_RETENTION_DAYS`` (0 = keep forever: nothing runs)."""
+        days = self.settings.transcript_retention_days
+        if days <= 0:
+            return None
+        now = time.time() if now is None else now
+        out = self.store.prune_transcripts(now - days * 86400)
+        for path in out["audio"]:
+            Path(path).unlink(missing_ok=True)
+        if out["conversations"] or out["audio"]:
+            log.info("retention: removed the transcripts of %d conversation(s) (%d lines) "
+                     "and %d audio chunk(s) older than %d days", out["conversations"],
+                     out["lines"], len(out["audio"]), days)
+        return out
+
+    # --------------------------------------------------------------- forgetting
+    def rewrite_forgotten(self) -> int:
+        """Rewrite the summaries ``erase_fact`` took down, then write again the digests it
+        took down once none of their conversations waits. Stops at the first model
+        failure (llama-server is most likely down; the rest wait for a later pass).
+        Returns how many conversations were rewritten."""
+        if self.summarizer is None:
+            return 0
+        done = 0
+        for row in self.store.pending_rewrites():
+            conv = self.store.get_conversation(row["conversation_id"])
+            if conv is None or conv["status"] != "summarized":
+                self.store.drop_rewrite(row["conversation_id"])
+                continue
+            try:
+                fields = self.summarizer.remove_facts(row, row["facts"])
+            except Exception:
+                log.exception("forget rewrite failed for %s", row["conversation_id"])
+                self.store.rewrite_failed(row["conversation_id"])
+                break
+            if not self.store.finish_rewrite(row["conversation_id"], row["queued_at"], fields):
+                continue  # erased again meanwhile: the next pass rewrites the new state
+            done += 1
+            if self.embedder is not None:
+                try:
+                    index_conversation(self.store, self.embedder, row["conversation_id"])
+                except Exception:
+                    log.exception("embedding failed for %s", row["conversation_id"])
+        for d in self.store.pending_digests():
+            if self.store.rewrite_pending(d["conversation_ids"]):
+                continue
+            try:
+                self.make_digest(d["date"])
+            except Exception:
+                log.exception("digest after a forget failed for %s", d["date"])
+                break
+            self.store.drop_pending_digest(d["date"])
+        if done:
+            self.store.compact()
+        return done
 
 
 class Worker(threading.Thread):
@@ -458,6 +518,7 @@ class Worker(threading.Thread):
         self.pipeline = pipeline
         self.interval = interval
         self._stop_evt = threading.Event()
+        self._last_prune = 0.0
 
     def start(self) -> None:
         # A restart (e.g. a deploy) during processing leaves sessions in 'processing',
@@ -479,9 +540,20 @@ class Worker(threading.Thread):
         try:
             self.pipeline.finalize_idle(now)
             self.pipeline.process_pending(now)
+            self.pipeline.rewrite_forgotten()
             self._maybe_digest()
+            self._maybe_prune()
         except Exception:
             log.exception("worker iteration failed")
+
+    def _maybe_prune(self) -> None:
+        """Retention, at most once an hour (it only matters by the day)."""
+        if self.pipeline.settings.transcript_retention_days <= 0:
+            return
+        now = time.time()
+        if now - self._last_prune >= 3600:
+            self._last_prune = now
+            self.pipeline.prune_transcripts(now)
 
     def _maybe_digest(self) -> None:
         """Write yesterday's digest, and write it again when the conversations of that day
