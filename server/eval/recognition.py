@@ -43,7 +43,10 @@ Metrics, per meeting window and pooled:
 - With --enroll N, the N speakers with the most speech get a voice profile from up to
   --enroll-seconds of their speech *outside* the window (the first is the owner).
   "named right" = share of their speech labelled with their name; "named wrong" = share
-  of everyone's speech labelled with a wrong enrolled name.
+  of everyone's speech labelled with a wrong enrolled name. "owner precision" = share of
+  the speech labelled as the owner that the owner said (the rest would be filed as the
+  owner's words); "owner recall" = share of the owner's transcribed speech labelled as
+  the owner. All on 0.1 s frames where one person speaks.
 - Owner vs others (the owner is the speaker with the most speech in the window):
   ``wer_owner``/``wer_others`` split the overall WER's errors by speaker (AMI word files
   are per speaker): a substitution or deletion counts for the speaker of the reference
@@ -681,7 +684,8 @@ class CachedTranscriber:
                                getattr(settings, "transcriber", "whisper"),
                                str(getattr(settings, "parakeet_model_dir", None)),
                                getattr(settings, "parakeet_redecode_holes", False),
-                               getattr(inner, "temperature_inc", None)])
+                               getattr(inner, "temperature_inc", None),
+                               "words"])  # entries keep word times (older ones didn't)
         self.dir = DATA.parent / "cache"
         self.dir.mkdir(parents=True, exist_ok=True)
 
@@ -694,12 +698,14 @@ class CachedTranscriber:
                          + np.ascontiguousarray(audio, np.float32).tobytes()).hexdigest()
         path = self.dir / f"{h}.json"
         if path.exists():
-            return [TranscriptPiece(*p) for p in json.loads(path.read_text())]
+            return [TranscriptPiece(p[0], p[1], p[2], tuple(tuple(w) for w in p[3]))
+                    for p in json.loads(path.read_text())]
         try:
             pieces = self.inner.transcribe(audio, prompt)
         except TypeError:  # pre-#24 transcriber: no prompt argument
             pieces = self.inner.transcribe(audio)
-        path.write_text(json.dumps([[p.start, p.end, p.text] for p in pieces]))
+        path.write_text(json.dumps([[p.start, p.end, p.text, [list(w) for w in p.words]]
+                                    for p in pieces]))
         return pieces
 
 
@@ -848,12 +854,20 @@ def run_meeting(meeting: str, args: argparse.Namespace, base: dict) -> dict:
 
 
 def _naming(turns, start, end, segs, enrolled) -> dict:
-    """Frame-level (0.1 s) check of enrolled names on single-speaker reference frames."""
+    """Frame-level (0.1 s) check of enrolled names on single-speaker reference frames.
+
+    ``enrolled[0]`` is the owner. ``owner_precision``: of the frames labelled as the
+    owner, the share the owner said (else someone's words would be filed as the
+    owner's). ``owner_recall``: of the owner's frames with a line over them, the share
+    labelled as the owner.
+    """
     if not enrolled:
         return {}
     step = 0.1
     frames = np.arange(start, end, step)
     right = wrong = enrolled_n = n = 0
+    owner = enrolled[0]
+    as_owner = owner_true = owner_frames = 0
     seg_t = [(a + start, b + start, spk) for a, b, spk, _ in segs]
     for t in frames:
         refs = {s for a, b, s in turns if a <= t < b}
@@ -869,8 +883,16 @@ def _naming(turns, start, end, segs, enrolled) -> dict:
             right += hyp == spk
         if hyp in enrolled and hyp != spk:
             wrong += 1
+        if hyp == owner:
+            as_owner += 1
+            owner_true += spk == owner
+        owner_frames += spk == owner
     return {"named_right": right / enrolled_n if enrolled_n else None,
-            "named_wrong": wrong / n if n else None, "named_frames": n}
+            "named_wrong": wrong / n if n else None, "named_frames": n,
+            "owner_precision": owner_true / as_owner if as_owner else None,
+            "owner_recall": owner_true / owner_frames if owner_frames else None,
+            "owner_labelled_frames": as_owner, "owner_frames": owner_frames,
+            "owner_true_frames": owner_true}
 
 
 def pooled(rows: list[dict]) -> dict:
@@ -893,6 +915,12 @@ def pooled(rows: list[dict]) -> dict:
     if named:
         out["named_right"] = float(np.mean([r["named_right"] for r in named]))
         out["named_wrong"] = float(np.mean([r["named_wrong"] for r in named]))
+    if all("owner_labelled_frames" in r for r in rows) and rows:
+        labelled = sum(r["owner_labelled_frames"] for r in rows)
+        frames = sum(r["owner_frames"] for r in rows)
+        true = sum(r["owner_true_frames"] for r in rows)
+        out["owner_precision"] = true / labelled if labelled else None
+        out["owner_recall"] = true / frames if frames else None
     return out
 
 
@@ -915,7 +943,7 @@ def audio_desc(res: dict) -> str:
 
 def table(results: dict[str, dict]) -> str:
     cols = ["wer", "wer_owner", "wer_others", "der", "confusion", "missed", "missed_others",
-            "false_alarm", "named_right", "named_wrong"]
+            "false_alarm", "named_right", "named_wrong", "owner_precision", "owner_recall"]
     lines = ["| run | meeting | " + " | ".join(cols) + " | speakers (ref/hyp) | time |",
              "|---" * (len(cols) + 4) + "|"]
     for label, res in results.items():
