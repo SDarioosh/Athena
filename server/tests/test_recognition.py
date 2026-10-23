@@ -202,6 +202,44 @@ def test_best_pairs_are_matched_first():
     assert [x.name for x in labels] == ["Speaker 1", "Alice"]
 
 
+def two_voices(margin=0.05):
+    from conftest import ToneEmbedder
+
+    from convo_server.diarize import Diarizer, EnrolledVoice
+
+    # Me = axis 0, a coworker (Sam) = axis 1
+    return Diarizer(ToneEmbedder(), [EnrolledVoice("Me", unit(1), True),
+                                     EnrolledVoice("Sam", unit(0, 1), False)],
+                    match_threshold=0.5, match_margin=margin)
+
+
+def test_close_call_between_two_people_stays_unnamed():
+    # 0.62 Me vs 0.60 Sam: either could be right, so no name rather than a wrong one
+    unsure = unit(0.62, 0.60, 0.505)
+    labels, unnamed = two_voices().name_clusters([unsure])
+    assert [x.name for x in labels] == ["Speaker 1"]
+    assert set(unnamed) == {"Speaker 1"}
+    # margin 0 keeps the old behaviour: the closest voice wins
+    assert two_voices(margin=0).name_clusters([unsure])[0][0].name == "Me"
+
+
+def test_clear_matches_are_still_named():
+    me, sam = unit(0.9, 0.3), unit(0.25, 0.9)
+    labels, unnamed = two_voices().name_clusters([me, sam])
+    assert [(x.name, x.is_owner) for x in labels] == [("Me", True), ("Sam", False)]
+    assert unnamed == {}
+
+
+def test_owner_hint_skips_a_loud_voice_that_also_sounds_like_the_coworker():
+    d = two_voices()
+    d.owner_hint_margin = 0.10
+    quiet = unit(0.05, 0.05, 1)
+    loud_unsure = unit(0.45, 0.43, 0.78)  # borderline owner, but Sam is nearly as close
+    assert d.name_clusters([quiet, loud_unsure], [-30.0, -18.0])[0][1].name == "Speaker 2"
+    loud_owner = unit(0.45, 0.1, 0.887)
+    assert d.name_clusters([quiet, loud_owner], [-30.0, -18.0])[0][1].name == "Me"
+
+
 # ----------------------------------------------------------------------- pyannote
 def test_pyannote_backend_turns_off_telemetry_and_cloud():
     import os

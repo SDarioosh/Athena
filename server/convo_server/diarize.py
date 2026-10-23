@@ -13,10 +13,12 @@ Either way, each speaker cluster is then named the same way (``name_clusters``):
 
 1. It is matched against enrolled voices. A person has several voice samples (enrollment
    windows, named speakers); the score is the mean of the closest few, so one odd sample
-   doesn't decide. The best (cluster, person) pairs are assigned first.
+   doesn't decide. The best (cluster, person) pairs are assigned first. A cluster that
+   sounds almost as much like a second person (within ``match_margin``) is not named: a
+   wrong name is worse than "Speaker N", which can be named later.
 2. Owner hint: the wearer is usually the loudest voice. If the owner wasn't matched and
-   the clearly loudest cluster is a borderline match for the owner's voice, it is the
-   owner.
+   the clearly loudest cluster is a borderline match for the owner's voice (and clearly
+   closer to it than to anyone else), it is the owner.
 3. Unmatched clusters become "Speaker 1", "Speaker 2", ... and their voice embedding is
    returned so the speaker can be named later and recognised from then on.
 """
@@ -208,7 +210,8 @@ class Diarizer:
     def __init__(self, embedder: SpeakerEmbedder, voices: list[EnrolledVoice],
                  match_threshold: float = 0.50, cluster_threshold: float = 0.45,
                  min_seconds: float = 1.0, owner_hint_margin: float = 0.10,
-                 owner_hint_db: float = 3.0, absorb_threshold: float = 0.0) -> None:
+                 owner_hint_db: float = 3.0, absorb_threshold: float = 0.0,
+                 match_margin: float = 0.05) -> None:
         self.embedder = embedder
         self.voices = voices
         self.match_threshold = match_threshold
@@ -220,6 +223,9 @@ class Diarizer:
         self.owner_hint_margin = owner_hint_margin
         self.owner_hint_db = owner_hint_db
         self.absorb_threshold = absorb_threshold
+        # A cluster is named only when its best voice beats every other known voice by
+        # this much; closer calls stay "Speaker N" (0 = always take the best voice).
+        self.match_margin = match_margin
 
     def diarize_runs(self, runs: list[np.ndarray], pieces: list[PieceRef]
                      ) -> tuple[list[SpeakerLabel], dict[str, np.ndarray]]:
@@ -295,7 +301,7 @@ class Diarizer:
         for s, c, v in pairs:
             if s < self.match_threshold:
                 break
-            if c in names or v in used:
+            if c in names or v in used or not self._clear(scores[c], v):
                 continue
             names[c] = SpeakerLabel(self.voices[v].name, self.voices[v].is_owner)
             used.add(v)
@@ -326,10 +332,18 @@ class Diarizer:
             return None
         if scores[loudest, owner] < self.match_threshold - self.owner_hint_margin:
             return None
-        # not if the cluster looks more like someone else than like the owner
-        if int(np.argmax(scores[loudest])) != owner:
+        # not if the cluster sounds as much (or more) like someone else as like the owner
+        if not self._clear(scores[loudest], owner):
             return None
         return loudest, owner
+
+    def _clear(self, row: np.ndarray, v: int) -> bool:
+        """Whether voice ``v`` beats every other voice in ``row`` by ``match_margin``."""
+        others = np.delete(row, v)
+        if others.size == 0:
+            return True
+        best_other = float(others.max())
+        return float(row[v]) > best_other and float(row[v]) - best_other >= self.match_margin
 
 
 def load_voices(store: Any) -> list[EnrolledVoice]:

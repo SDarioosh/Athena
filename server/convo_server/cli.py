@@ -68,7 +68,8 @@ def build_diarizer(settings: Settings, store: Store) -> Diarizer | None:
                 cluster_threshold=settings.speaker_cluster_threshold,
                 owner_hint_margin=settings.owner_hint_margin,
                 owner_hint_db=settings.owner_hint_db,
-                absorb_threshold=settings.speaker_absorb_threshold)
+                absorb_threshold=settings.speaker_absorb_threshold,
+                match_margin=settings.speaker_match_margin)
     embedder = EcapaEmbedder(settings.model_cache)
     if settings.diarizer == "pyannote":
         from .diarize_pyannote import PyannoteDiarizer, PyannoteSegmenter

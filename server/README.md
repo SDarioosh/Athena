@@ -65,6 +65,11 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
 - Each person has several voice samples (enrollment is cut into ~9 s samples; every
   `name_speaker` adds one, up to 40 learned samples). A voice is matched against the
   closest few samples, not one blended voiceprint.
+- A speaker gets a name only when the voice is a clear match: at least
+  `CONVO_SPEAKER_MATCH_THRESHOLD` (0.50) and at least `CONVO_SPEAKER_MATCH_MARGIN`
+  (0.05) above every other known voice. When two people sound alike (the owner and a
+  coworker, say), a close call stays "Speaker N" instead of getting the wrong name;
+  `list_unnamed_speakers` shows who it sounds like, and `name_speaker` fixes it.
 - After someone is named or enrolled, unnamed speakers ("Speaker N") in other
   conversations whose stored voice clearly matches are renamed too
   (`CONVO_SPEAKER_RELABEL_THRESHOLD`, default 0.60, and at least 0.05 above any other
@@ -72,7 +77,8 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
 - Owner hint: the wearer is usually the loudest voice. A speaker at least
   `CONVO_OWNER_HINT_DB` (3 dB) louder than everyone else whose voice is a borderline
   match for the owner (within `CONVO_OWNER_HINT_MARGIN`, 0.10, below the match
-  threshold) is labelled as the owner. `CONVO_OWNER_HINT_MARGIN=0` turns it off.
+  threshold, and clearly closer to the owner than to anyone else) is labelled as the
+  owner. `CONVO_OWNER_HINT_MARGIN=0` turns it off.
 - A speaker with a single line joins the closest speaker with several lines when the
   voice is at least `CONVO_SPEAKER_ABSORB_THRESHOLD` (0.30) similar, instead of becoming
   one more "Speaker N" (one noisy piece often ends up alone). 0 turns it off.

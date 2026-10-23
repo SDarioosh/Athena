@@ -128,6 +128,9 @@ class Settings(BaseSettings):
     pyannote_model: str = "pyannote-community/speaker-diarization-community-1"
     pyannote_device: str = "auto"  # auto (cuda if available), cuda or cpu
     speaker_match_threshold: float = 0.50  # cosine similarity to enrolled voice
+    # A speaker is named only when the best voice beats every other known voice by this
+    # much; closer calls stay "Speaker N" for the owner to name (0 = always pick the best).
+    speaker_match_margin: float = 0.05
     speaker_cluster_threshold: float = 0.45  # cosine similarity to merge clusters
     # A speaker with a single line joins the closest speaker with several lines when its
     # voice is at least this similar (0 = off).
