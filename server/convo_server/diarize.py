@@ -87,6 +87,8 @@ class EnrolledVoice:
     def score(self, vec: np.ndarray) -> float:
         """Similarity of ``vec`` to this voice: mean of the closest few samples."""
         vec = _normalize(vec)
+        if vec.size != np.asarray(self.embedding).size:
+            return -1.0  # a voice of another speaker model never matches
         if self.samples.size == 0:
             return float(vec @ _normalize(self.embedding))
         sims = _normalize_rows(self.samples) @ vec

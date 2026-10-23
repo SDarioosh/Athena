@@ -135,6 +135,10 @@ class Settings(BaseSettings):
     # pyannote's clustering threshold (unset = the pipeline's own, 0.6 for community-1):
     # lower splits voices into more speakers, higher joins them. Speaker count bounds per
     # recording (0 = none). Not measured on the server yet: leave unset by default.
+    # Voiceprints for naming speakers: "ecapa" (SpeechBrain, default) or "pyannote" (the
+    # pyannote pipeline's own WeSpeaker model; CONVO_DIARIZER=pyannote only). Switching
+    # needs a new enrollment: voices of the other model never match.
+    speaker_embedder: str = "ecapa"
     pyannote_cluster_threshold: float | None = None
     pyannote_min_speakers: int = 0
     pyannote_max_speakers: int = 0

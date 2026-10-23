@@ -69,7 +69,12 @@ def build_diarizer(settings: Settings, store: Store) -> Diarizer | None:
                 owner_hint_margin=settings.owner_hint_margin,
                 owner_hint_db=settings.owner_hint_db,
                 absorb_threshold=settings.speaker_absorb_threshold)
-    embedder = EcapaEmbedder(settings.model_cache)
+    if settings.speaker_embedder not in ("ecapa", "pyannote"):
+        raise SystemExit("CONVO_SPEAKER_EMBEDDER must be ecapa or pyannote")
+    if settings.speaker_embedder == "pyannote" and settings.diarizer != "pyannote":
+        raise SystemExit("CONVO_SPEAKER_EMBEDDER=pyannote needs CONVO_DIARIZER=pyannote")
+    embedder = (EcapaEmbedder(settings.model_cache) if settings.speaker_embedder == "ecapa"
+                else None)  # pyannote: built from the loaded pipeline below
     diarizer = _build_diarizer(settings, store, embedder, args)
     diarizer.match_margin = settings.speaker_match_margin
     diarizer.name_min_seconds = settings.speaker_name_min_seconds
@@ -77,7 +82,7 @@ def build_diarizer(settings: Settings, store: Store) -> Diarizer | None:
     return diarizer
 
 
-def _build_diarizer(settings: Settings, store: Store, embedder: EcapaEmbedder,
+def _build_diarizer(settings: Settings, store: Store, embedder: EcapaEmbedder | None,
                     args: dict) -> Diarizer:
     if settings.diarizer == "pyannote":
         from .diarize_pyannote import PyannoteDiarizer, PyannoteSegmenter
@@ -87,6 +92,10 @@ def _build_diarizer(settings: Settings, store: Store, embedder: EcapaEmbedder,
                                       cluster_threshold=settings.pyannote_cluster_threshold,
                                       min_speakers=settings.pyannote_min_speakers,
                                       max_speakers=settings.pyannote_max_speakers)
+        if embedder is None:
+            from .diarize_pyannote import PyannoteEmbedder
+
+            embedder = PyannoteEmbedder(segmenter)
         return PyannoteDiarizer(embedder, load_voices(store), segmenter, **args)
     if settings.diarizer != "ecapa":
         raise SystemExit("CONVO_DIARIZER must be ecapa or pyannote")

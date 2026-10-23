@@ -101,6 +101,25 @@ class PyannoteSegmenter:
                 for seg, _, label in ann.itertracks(yield_label=True)]
 
 
+class PyannoteEmbedder:
+    """Speaker embeddings from the loaded pyannote pipeline's own model (WeSpeaker
+    ResNet34 for community-1, 256 values; ``CONVO_SPEAKER_EMBEDDER=pyannote``) instead of
+    ECAPA. Voices enrolled or named with ECAPA don't match it: enroll again after
+    switching (see ``EnrolledVoice.score``)."""
+
+    def __init__(self, segmenter: PyannoteSegmenter) -> None:  # pragma: no cover - model
+        self._torch = segmenter._torch
+        self._model = segmenter._pipeline._embedding
+        self._min = int(getattr(self._model, "min_num_samples", 400))
+
+    def embed(self, audio: np.ndarray) -> np.ndarray:  # pragma: no cover - needs model
+        x = np.ascontiguousarray(audio, dtype=np.float32)
+        if x.size < self._min:
+            x = np.pad(x, (0, self._min - x.size))
+        v = np.asarray(self._model(self._torch.from_numpy(x)[None, None]))[0]
+        return _normalize(np.nan_to_num(v))
+
+
 def tune_clustering(pipeline: Any, threshold: float | None) -> None:
     """Set the pipeline's clustering threshold (``CONVO_PYANNOTE_CLUSTER_THRESHOLD``;
     None keeps the pipeline's own, 0.6 for community-1). Lower splits voices into more

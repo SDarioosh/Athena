@@ -135,3 +135,40 @@ def test_build_diarizer_sets_the_naming_rules(tmp_path, monkeypatch):
                  speaker_name_min_seconds=5, speaker_split_min_seconds=0.6)
     d = cli.build_diarizer(s, Store(tmp_path / "x.db"))
     assert (d.match_margin, d.name_min_seconds, d.split_min_seconds) == (0.1, 5.0, 0.6)
+
+
+def test_voices_of_two_speaker_models_dont_mix(tmp_path):
+    """Switching CONVO_SPEAKER_EMBEDDER: old (192-value) samples stay stored but the
+    voiceprint follows the newest model, and a voice of the other model never matches."""
+    from convo_server.diarize import load_voices
+    from convo_server.store import Store
+
+    store = Store(tmp_path / "x.db")
+    old = np.ones(192, np.float32)
+    store.put_speaker("Me", old, is_owner=True)
+    store.add_voice_sample("Me", np.ones(192, np.float32))
+    (v,) = load_voices(store)
+    assert v.embedding.size == 192 and v.samples.shape == (2, 192)
+    new = np.zeros(256, np.float32)
+    new[0] = 1
+    assert v.score(new) == -1.0  # another model: never a match
+    store.put_speaker("Me", new, is_owner=True)  # enrolled again with the new model
+    store.add_voice_sample("Me", new)
+    (v,) = load_voices(store)
+    assert v.embedding.size == 256 and v.samples.shape == (2, 256)
+    assert v.score(new) > 0.99 and v.score(old) == -1.0
+
+
+def test_pyannote_embedder_needs_the_pyannote_diarizer(tmp_path):
+    import pytest
+
+    from convo_server import cli
+    from convo_server.config import Settings
+    from convo_server.store import Store
+
+    s = Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_embedder="pyannote")
+    with pytest.raises(SystemExit):
+        cli.build_diarizer(s, Store(tmp_path / "x.db"))
+    s = Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_embedder="wespeaker")
+    with pytest.raises(SystemExit):
+        cli.build_diarizer(s, Store(tmp_path / "x.db"))
