@@ -158,12 +158,18 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   read error during recovery no longer deletes the chunk (only a missing file does); it
   stays on the card for the next boot. The T-Watch S3 and T4-S3 (flash) skip it.
 - **Checks:** host tests in WSL (all pass, new `test_event_log`, two-step abandon in
-  `test_chunk_queue`); `idf.py build` for twatch_ultra, twatch_s3, t4_s3. **Not flashed**
-  (owner reviews first).
-- **Needs real-device testing:** flash; `events` after a boot shows the boot entry; a PWR
-  press shows the PMU bits with key edges; `session start`, `sd failwrite 1`: the log shows
-  "card powered off and on" and the session goes on. Then wear it on a call: if a recording
-  stops or starts by itself again, run `events` before anything else.
+  `test_chunk_queue`); `idf.py build` for twatch_ultra, twatch_s3, t4_s3.
+- **Checked on the owner's T-Watch Ultra (flashed after review):** `events` after the flash
+  shows "boot: USB reset". `session start` + `sd failwrite 1`: the card went off and on in
+  416 ms, the chunk was kept, the session went on into a second chunk and ended normally; the
+  log shows "card powered off and on after write error 0x108: mounted again". Two deliberate
+  PWR presses: both "button PWR short (PMU 0x000b00: key edges + -)", then "started by PWR"
+  and "stop asked by PWR". Test 1's lost chunk (22 s) turned up in the queue: the dead card
+  couldn't delete it either, and a boot recovered it. All test chunks were dropped.
+- **Next (owner):** wear it on calls. If a recording stops or starts by itself again, run
+  `events` over USB before anything else (don't reset): "no key edges" on a PWR press means
+  a phantom from the PMU; key edges mean the key really moved. Not seen yet: a real card
+  failure in use, a phantom press.
 - **Also seen:** `tools/wcon.py --listen` doesn't work on Windows (it takes `COM35` for a
   file path, thinks the port is gone and reopens it in a loop).
 
