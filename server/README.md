@@ -90,7 +90,10 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   a stock phrase is dropped when whisper was unsure of it (mean token log-probability
   below `CONVO_WHISPER_DROP_PHRASE_LOGPROB`, -0.7), so a real "thank you" stays. Subtitle
   credits and lines with no words go too, and repetition loops are cut to
-  `CONVO_WHISPER_MAX_REPEATS` (4). `CONVO_WHISPER_DROP_HALLUCINATIONS=false` turns it off.
+  `CONVO_WHISPER_MAX_REPEATS` (4). A whole sentence (4 or more different words) said
+  again right after itself, in one line or as the next lines, is kept once: that is
+  whisper repeating itself over the next pause or someone else's turn, not a person.
+  `CONVO_WHISPER_DROP_HALLUCINATIONS=false` turns it off.
 - Speech goes to whisper in clips of up to `CONVO_WHISPER_WINDOW_SECONDS` (28): the VAD
   regions of a run, padded by `CONVO_WHISPER_PAD_SECONDS` (0.25), are packed in order
   and the silence between them is shortened to `CONVO_WHISPER_WINDOW_GAP_SECONDS` (1.0).
