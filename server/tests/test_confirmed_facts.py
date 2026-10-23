@@ -118,7 +118,7 @@ def test_json_mode_shape_and_counts(pipeline):
         "id": fid, "subject": "Alice", "about": "other", "person_id": None,
         "fact": "Alice is vegetarian",
         "times_said": 3, "days": 2, "first_said": "2025-10-09", "last_said": "2025-10-10",
-        "confirmed": True, "link": link}]}
+        "confirmed": True, "valid_until": None, "link": link}]}
     assert "/view/" in link and "#t=2" in link
     assert not out.rstrip().endswith(".")  # no citation line after the JSON
     assert link in call(build_mcp(store, settings), "list_facts")  # same link as text mode

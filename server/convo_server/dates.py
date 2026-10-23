@@ -211,3 +211,52 @@ def resolve_time(phrase: str | None) -> tuple[str | None, bool]:
         else:  # 7-11: morning, but could be the evening
             unclear = True
     return f"{hour:02d}:{minute:02d}", unclear
+
+
+# ------------------------------------------------------------------ fact end dates
+# a fact about something that repeats or that already happened has no end date
+_RECURRING = re.compile(
+    r"\b(?:birthdays?|anniversar(?:y|ies)|every|each|annual(?:ly)?|yearly|weekly|daily|"
+    r"monthly|usually|always|often|weekdays|weekends|(?:mon|tues|wednes|thurs|fri|satur|"
+    r"sun)days)\b", re.IGNORECASE)
+_PAST = re.compile(
+    r"\b(?:was|were|had|did|went|met|moved|started|began|finished|ended|attended|"
+    r"since|ago|last\s+(?:week|weekend|month|year|night|time)|yesterday|used\s+to|born)\b",
+    re.IGNORECASE)
+_PERIOD = re.compile(r"\b(this|next|the|over\s+the)\s+(week|weekend|month)\b", re.IGNORECASE)
+_IN_MONTH = re.compile(rf"\b(?:in|during|until|till|through|by|of|this|next)\s+{_MONTH}"
+                       r"(?!\s*\d)(?!\s+(?:the\s+)?\w+(?:st|nd|rd|th)\b)", re.IGNORECASE)
+
+
+def _month_end(year: int, month: int) -> date:
+    return (date(year + month // 12, month % 12 + 1, 1)) - timedelta(days=1)
+
+
+def fact_valid_until(text: str | None, said_on: date) -> date | None:
+    """The last day a fact tied to one occasion is worth keeping, counted from the day it
+    was said: "has a meeting with the Meshtastic team on Tuesday at 11 a.m." -> that
+    Tuesday; "is in Berlin until December 3" -> December 3; "flies to Lisbon next week"
+    -> the Sunday ending next week; "is moving in May" -> May 31. None for facts without
+    such a date, about something that repeats ("Alice's birthday is June 14", "works
+    on Mondays") or that already happened ("moved here on March 3"), and for a date
+    more than a year ahead."""
+    if not text or _RECURRING.search(text) or _PAST.search(text):
+        return None
+    out: date | None = None
+    if m := _PERIOD.search(text):
+        which, what = m.group(1).lower(), m.group(2).lower()
+        if what == "month":
+            month = said_on.month + (1 if which == "next" else 0)
+            out = _month_end(said_on.year + (month - 1) // 12, (month - 1) % 12 + 1)
+        else:  # the week ends on Sunday; "the weekend" is this one
+            out = said_on + timedelta(days=6 - said_on.weekday()
+                                      + (7 if which == "next" else 0))
+    if out is None:
+        out = resolve_due(text, said_on)
+    if out is None and (m := _IN_MONTH.search(text)):
+        month = _month(m.group(1))
+        year = said_on.year + (1 if month < said_on.month else 0)
+        out = _month_end(year, month)
+    if out is None or out > said_on + timedelta(days=366):
+        return None
+    return out
