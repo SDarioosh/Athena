@@ -969,8 +969,8 @@ def _wrap_name_clusters(diarizer, scores: dict[str, float]) -> None:
     the named person's (cosine score; "Speaker N" labels get their best score too)."""
     inner = diarizer.name_clusters
 
-    def name_clusters(centroids, loudness=None):
-        names, unnamed = inner(centroids, loudness)
+    def name_clusters(centroids, *rest):
+        names, unnamed = inner(centroids, *rest)
         scores.clear()
         for lab, c in zip(names, centroids, strict=True):
             sims = [v.score(c) for v in diarizer.voices if v.name == lab.name]
