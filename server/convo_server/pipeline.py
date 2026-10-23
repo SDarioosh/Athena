@@ -260,36 +260,49 @@ class Pipeline:
         pieces = [pieces[i] for i in order]
         piece_words = [piece_words[i] for i in order]
         labels = None
-        parts = None
         owner_name = (self.store.owner_name() or self.settings.owner_name) if note else ""
         if not note and self.diarizer is not None and pieces:
             self.diarizer.voices = load_voices(self.store)  # pick up newly named speakers
             labels, unnamed = self.diarizer.diarize_runs(runs, [p[3] for p in pieces])
             self.store.put_speaker_candidates(session_id, unnamed)
-            if cfg.speaker_line_check:
+            if cfg.speaker_split_lines:
+                pieces, labels = self._split_pieces(runs, pieces, piece_words, labels)
+            if cfg.speaker_line_check:  # after splitting: each part is checked on its own
                 labels = self.diarizer.check_lines(runs, [p[3] for p in pieces], labels,
                                                    cfg.speaker_line_floor)
-            if cfg.speaker_split_lines:
-                parts = self.diarizer.split_lines(runs, [p[3] for p in pieces],
-                                                  piece_words, labels)
         segments = []
-        for i, (s, e, text, ref) in enumerate(pieces):
+        for i, (s, e, text, _) in enumerate(pieces):
             if note:
                 name, owner = owner_name, True
             else:
                 name, owner = ((labels[i].name, labels[i].is_owner) if labels
                                else ("Unknown", False))
-            if parts is not None and len(parts[i]) > 1:
-                ws, base = piece_words[i], s - ref.start
-                for a, b, lab in parts[i]:
-                    segments.append(Segment(
-                        started_at=base + ws[a][0], ended_at=base + ws[b - 1][1],
-                        text="".join(w[2] for w in ws[a:b]).strip(), speaker=lab.name,
-                        is_owner=lab.is_owner))
-                continue
             segments.append(Segment(started_at=s, ended_at=e, text=text, speaker=name,
                                     is_owner=owner))
         return segments, ranges, chunks
+
+    def _split_pieces(self, runs: list[np.ndarray],
+                      pieces: list[tuple[float, float, str, PieceRef]],
+                      piece_words: list[list[tuple[float, float, str]]],
+                      labels: list[Any]) -> tuple[list[tuple[float, float, str, PieceRef]],
+                                                  list[Any]]:
+        """CONVO_SPEAKER_SPLIT_LINES: a line over a speaker change becomes one line per
+        speaker (``Diarizer.split_lines``), cut at word times."""
+        parts = self.diarizer.split_lines(runs, [p[3] for p in pieces], piece_words, labels)
+        out, out_labels = [], []
+        for (s, e, text, ref), ws, lab, cut in zip(pieces, piece_words, labels, parts,
+                                                     strict=True):
+            if len(cut) <= 1:
+                out.append((s, e, text, ref))
+                out_labels.append(cut[0][2] if cut else lab)
+                continue
+            base = s - ref.start  # wall-clock time of the run's start
+            for a, b, who in cut:
+                ra, rb = ws[a][0], ws[b - 1][1]
+                out.append((base + ra, base + rb, "".join(w[2] for w in ws[a:b]).strip(),
+                            PieceRef(ref.run, ra, rb)))
+                out_labels.append(who)
+        return out, out_labels
 
     def whisper_prompt(self) -> str:
         """CONVO_WHISPER_PROMPT plus the names of known speakers, for whisper's spelling."""
