@@ -32,7 +32,8 @@ ItemKind = Literal["task", "event", "reminder", "note"]
 
 
 class ActionItem(BaseModel):
-    text: str = Field(description="What needs to be done, imperative, self-contained")
+    text: str = Field(description="What needs to be done, imperative, self-contained; "
+                                  "an event: its name as said, e.g. 'Meeting with Jason'")
     kind: ItemKind = Field(default="task",
                            description="event (meeting, appointment, call at a set day), "
                                        "reminder (remind me at a time), note (the user "
@@ -51,10 +52,10 @@ class ActionItem(BaseModel):
                                   description="The user's list it goes on, if they name one "
                                               "('add milk to my shopping list' -> 'shopping')")
     title: str | None = Field(default=None,
-                              description="A short imperative summary, at most 60 "
-                                          "characters, e.g. 'Call the plumber about the "
-                                          "tap'; for a note, its title, e.g. 'Battery "
-                                          "dimensions'")
+                              description="A short imperative summary (an event: its "
+                                          "name), at most 60 characters, e.g. 'Call the "
+                                          "plumber about the tap'; for a note, its "
+                                          "title, e.g. 'Battery dimensions'")
     at_seconds: int | None = Field(default=None,
                                    description="Offset in seconds where it was mentioned")
 
@@ -168,8 +169,11 @@ Keys: title, summary, key_points, people, topics."""
 
 # Both action prompts: what kind of item it is and the time details (resolved in code).
 KINDS = """kind: "event" for a meeting, appointment, call or lunch on a set day, e.g. \
-"meeting with Jason on Wednesday at 12 pm" -> text "Meet Jason", kind event, due \
-"Wednesday", time "12 pm"; "reminder" when the user asks to be reminded at a time, e.g. \
+"meeting with Jason on Wednesday at 12 pm" -> text "Meeting with Jason", kind event, due \
+"Wednesday", time "12 pm". An event's text and title name it as the user said it \
+("Meeting with Jason", "Lunch with Ana", "Dentist appointment"), never a verb that \
+changes its meaning ("Meet Jason" sounds like meeting him for the first time); \
+"reminder" when the user asks to be reminded at a time, e.g. \
 "remind me at 5 to call Mom" -> text "Call Mom", kind reminder, time "5"; otherwise \
 "task", e.g. "get the proposal done on Wednesday" -> text "Get the proposal done", kind \
 task, due "Wednesday". Something repeating ("every Monday") is a task whose text starts \
@@ -205,7 +209,8 @@ the plants while I'm away?") or an appointment to keep. List each one the user \
 would want to be reminded of later, small promises to someone too ("I'll text you the \
 address tonight"); leave out things already done.
 """ + ITEM_RULES + """
-text: a task that starts with a verb and names who and what, e.g. "Send Sam the \
+text: a task that starts with a verb and names who and what (an event: its name, see \
+kind), e.g. "Send Sam the \
 slides" or "Water Lena's plants". Never copy the spoken sentence, but keep the verb \
 the speaker used ("I'll move the car" -> "Move the car", never "Drive the car").
 owner: who should do it ("{owner}" for the user), if clear. due: the deadline in the \
@@ -268,7 +273,8 @@ action_items: things the note says the user wants or needs to do ("call the plum
 mentions, and things to be reminded of.
 """ + ITEM_RULES + """
 text: imperative and \
-self-contained ("Call the plumber about the leaking tap"). owner: "{owner}" unless the \
+self-contained ("Call the plumber about the leaking tap"); an event: its name, see \
+kind. owner: "{owner}" unless the \
 note says someone else should do it. due: the deadline as said ("Friday"); due_date: \
 that deadline as YYYY-MM-DD counted from the note's date, or null if there is none. \
 at_seconds: the bracketed number of the line it comes from. Return an empty list if \
@@ -284,7 +290,7 @@ my hardware notes: the screen is 1.4 inch" -> text "The screen is 1.4 inch", tit
 statement without such a command ("the wifi password is on the router") is no note, and \
 "remember to ..." is a task, not a note.
 An appointment said without a verb is still an item: "meeting with the design team \
-Tuesday 11 a.m." -> text "Meet the design team", kind event, due "Tuesday", time "11 a.m.".
+Tuesday 11 a.m." -> text "Meeting with the design team", kind event, due "Tuesday", time "11 a.m.".
 """ + ACTION_KEYS
 
 MERGE_SYSTEM = """You merge partial notes of ONE long conversation (given in order) into \
@@ -454,7 +460,10 @@ class Summarizer:
         out["kind"] = triage.kind
         _drop_passing_facts(out)
         self._resolve_due_dates(out, origin)
-        _drop_errands(out, _spoken(parts), _lines(parts), origin)
+        spoken = _spoken(parts)
+        _drop_errands(out, spoken, _lines(parts), origin)
+        _name_meetings(out["action_items"], spoken)
+        _drop_event_facts(out)
         _mark_explicit(out["action_items"], None)
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
@@ -498,6 +507,8 @@ class Summarizer:
         spoken = _spoken(parts)
         _drop_errands(out, spoken, _lines(parts), origin)
         self._intentions_to_facts(out, spoken)
+        _name_meetings(out["action_items"], spoken)
+        _drop_event_facts(out)
         _mark_explicit(out["action_items"], spoken)
         return out
 
@@ -1008,6 +1019,52 @@ def _events_from_lines(out: dict[str, Any], lines: dict[int, str], origin: float
                           "due_time": hhmm, "time_unclear": unclear,
                           "duration_minutes": None, "location": None, "list_name": None,
                           "note_title": None, "source_at": source_at})
+
+
+# "Meet the Meshtastic team" for "Meeting with Meshtastic team ...": the meeting's name
+# as said (``_name_meetings``)
+_MEET = re.compile(r"^meet(?:\s+(?:up\s+)?with)?\s+(?P<who>.+)$", re.IGNORECASE)
+_MEETING_WITH = re.compile(r"\bmeeting\s+with\s+(?P<who>.+)$", re.IGNORECASE)
+
+
+def _name_meetings(items: list[dict[str, Any]], spoken: list[tuple[str, str]]) -> None:
+    """An event the model wrote as "Meet X" when the user said "meeting with X" is
+    named as said: "Meet the Meshtastic team" means getting to know them, the calendar
+    should say "Meeting with Meshtastic team". The day and time are left out."""
+    for item in items:
+        m = _MEET.match(item["text"].strip())
+        if item["kind"] != "event" or m is None:
+            continue
+        said = next((c for c, _ in spoken if (w := _MEETING_WITH.search(_meridiem(c)))
+                     and _overlaps(_content_words(m["who"]), w["who"])), None)
+        if said is None:
+            continue
+        who = _MEETING_WITH.search(_meridiem(said))["who"]  # type: ignore[index]
+        who = re.sub(r"\s+", " ", _WHEN_WORDS.sub(" ", who)).strip(" ,.;:-!?")
+        if not who:
+            continue
+        name = f"Meeting with {who}"
+        if not item.get("title") or _MEET.match(item["title"].strip()):
+            item["title"] = short_title(None, name)
+        item["text"] = name
+
+
+def _drop_event_facts(out: dict[str, Any]) -> None:
+    """A fact that only repeats a dated event of the same conversation with its weekday
+    or time ("Shahyah has a meeting with the Meshtastic team on Tuesday at 11 a.m.") is
+    left out: the event is on the calendar, and the fact would be wrong a week later.
+    A fact that names no weekday or time ("Alice's wedding is on June 14") stays."""
+    events = [_content_words(i["text"]) for i in out["action_items"]
+              if i["kind"] == "event" and i.get("due_date")]
+    keep = []
+    for fact in out["facts"]:
+        text = fact["fact"]
+        if _WHEN_WORDS.search(_meridiem(text)) and any(
+                _overlaps(want, text) for want in events):
+            log.info("dropped a fact that repeats an event: %r", text)
+            continue
+        keep.append(fact)
+    out["facts"] = keep
 
 
 # Voice notes: how the owner wants to work is a fact, not a to-do (``_intention``).

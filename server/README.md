@@ -479,7 +479,11 @@ small local model does better on narrow questions):
    time, not in the past tense ("Meeting with the Meshtastic team Tuesday 11 a.m."),
    becomes an event (text without the day and time) unless an item already says most of
    its words or has its day from its line; an undated task or reminder that says it gets
-   its day and time and becomes the event. Something repeating ("every Monday") becomes a task "Set up a repeating event:
+   its day and time and becomes the event. An event is named as said: when the model writes
+   "Meet X" for "meeting with X", code makes it "Meeting with X" ("Meet the Meshtastic
+   team" reads like getting to know them). A fact that only repeats a dated event of
+   the same conversation with its weekday or time ("… has a meeting with the Meshtastic
+   team on Tuesday at 11 a.m.") is left out: the event is on the calendar. Something repeating ("every Monday") becomes a task "Set up a repeating event:
    …". The model returns the time as said; `resolve_time` in `dates.py` turns it into
    `due_time` (HH:MM, `CONVO_TIMEZONE`): "12 pm"/"noon" → 12:00, "3:30 pm" → 15:30, "half
    past two" → 14:30, "midnight" → 00:00; a bare hour 12 → 12:00, 1–6 → afternoon, 7–11 →

@@ -54,7 +54,7 @@ def test_voice_note_items_get_kind_date_and_time():
     got = [(a["text"], a["kind"], a["due_date"], a["due_time"], a["time_unclear"],
             a["duration_minutes"], a["location"]) for a in items]
     assert got == [
-        ("Meet Jason", "event", "2025-10-15", "12:00", False, None, None),
+        ("Meeting with Jason", "event", "2025-10-15", "12:00", False, None, None),  # as said
         ("Get the proposal done", "task", "2025-10-15", None, False, None, None),
         ("Call Mom", "reminder", "2025-10-09", "17:00", False, None, None),  # today
         ("Go to the dentist", "event", "2025-10-10", "15:00", False, 60, "Main Street"),
