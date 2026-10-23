@@ -1,4 +1,4 @@
-# odysseus-sound recorder firmware (ESP-IDF 5.x).
+# Athena recorder firmware (ESP-IDF 5.x).
 #
 # One firmware, one board layer. Pick the board with -DBOARD=<name>; each board is a
 # component named "board" under boards/<name>/board that implements main/board.h.

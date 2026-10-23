@@ -1,6 +1,6 @@
 # PDA firmware: LilyGO T5 E-Paper Pro
 
-The odysseus-sound pocket PDA ([docs/t5-pda-plan.md](../../docs/t5-pda-plan.md)). It shows
+The Athena pocket PDA ([docs/t5-pda-plan.md](../../docs/t5-pda-plan.md)). It shows
 the daily briefing, recent conversations, open action items and the week's calendar on
 the 4.7" e-paper and queues taps (done, dismiss, add an event, fetch a transcript) as
 actions. The phone (android-relay `PdaSync`) or the PC relay (`ble_relay.py pda`) brings

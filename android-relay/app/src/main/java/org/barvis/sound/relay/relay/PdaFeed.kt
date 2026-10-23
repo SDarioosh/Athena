@@ -22,7 +22,7 @@ object PdaTime {
 
     /**
      * `2026-10-20` stays a date. A time with `Z` or an offset is converted to UTC. A time
-     * without one is taken as local time in [naiveZone] (legacy Odysseus rows; odysseus-sound
+     * without one is taken as local time in [naiveZone] (legacy Odysseus rows; Athena
      * always sends an offset). Null if unparseable.
      */
     fun utc(s: String?, naiveZone: ZoneId = ZoneOffset.UTC): String? {
@@ -77,7 +77,7 @@ sealed class FeedBuild {
 }
 
 /**
- * Builds the feed (§4.1) from the odysseus-sound API and the Odysseus calendar, following the
+ * Builds the feed (§4.1) from the Athena API and the Odysseus calendar, following the
  * PC relay's rules (plan §4.1 "How the PC relay builds it"). Pure Kotlin.
  *
  * A source that fails fails the build, except a digest 404 and a calendar that isn't set up

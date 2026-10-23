@@ -1,5 +1,5 @@
 """Test helpers for the T5 PDA: a fake T5 (the T5 side of the glance protocol, in memory)
-and a fake odysseus-sound API (http.server in a thread). Fictional data only."""
+and a fake Athena API (http.server in a thread). Fictional data only."""
 
 from __future__ import annotations
 
@@ -223,7 +223,7 @@ class FakeT5:
 
 
 def demo_data() -> dict[str, Any]:
-    """Fictional server state, in the shapes the odysseus-sound API returns."""
+    """Fictional server state, in the shapes the Athena API returns."""
     return {
         "digests": {"2026-10-19": {
             "date": "2026-10-19", "headline": "Lease and family dinner",
@@ -259,7 +259,7 @@ def demo_data() -> dict[str, Any]:
 
 
 class FakeApiServer:
-    """The odysseus-sound routes the PDA uses, over HTTP. `fail` maps a path prefix to a
+    """The Athena routes the PDA uses, over HTTP. `fail` maps a path prefix to a
     list of statuses to answer (FIFO) before behaving normally."""
 
     def __init__(self) -> None:

@@ -35,10 +35,10 @@ sealed class PdaOutcome {
 
     data class Done(override val stats: PdaStats) : PdaOutcome()
 
-    /** odysseus-sound unreachable (or 5xx): the T5 keeps its feed; back off (§3.4 step 3). */
+    /** Athena unreachable (or 5xx): the T5 keeps its feed; back off (§3.4 step 3). */
     data class ServerUnavailable(val detail: String, override val stats: PdaStats) : PdaOutcome()
 
-    /** odysseus-sound rejected the token. */
+    /** Athena rejected the token. */
     data class AuthRejected(val code: Int, override val stats: PdaStats) : PdaOutcome()
 
     /** The T5 speaks another protocol, has a too small MTU, or answered something unusable. */
@@ -273,7 +273,7 @@ class PdaSync(
         return false
     }
 
-    /** odysseus-sound's answer to an action: ack, or stop the sync (no ack) on a temporary failure. */
+    /** Athena's answer to an action: ack, or stop the sync (no ack) on a temporary failure. */
     private suspend fun convoAnswer(e: OutboxEntry, action: PdaAction, r: ServerResult) {
         when (r) {
             is ServerResult.Ok -> ack(e, AckResult.DONE, action.type)
@@ -315,7 +315,7 @@ class PdaSync(
     /**
      * Odysseus's answer. A temporary failure or a rejected Odysseus token stops the sync like
      * the server's (plan §3.5), but as "unavailable" with backoff: it must not mark the
-     * odysseus-sound token as rejected.
+     * Athena token as rejected.
      */
     private suspend fun calendarAnswer(e: OutboxEntry, action: PdaAction, r: ServerResult) {
         when (r) {
@@ -411,7 +411,7 @@ class PdaSync(
                 val err = b.error
                 log.log(Level.WARN, "feed not built (${b.what}), the T5 keeps its last one: ${FeedBuilder.describe(err)}")
                 throw when {
-                    // Only odysseus-sound's token stops the relay; Odysseus's is its own.
+                    // Only Athena's token stops the relay; Odysseus's is its own.
                     err is ServerResult.AuthRejected && !b.what.startsWith("Odysseus") -> ServerStop { PdaOutcome.AuthRejected(err.code, it) }
                     else -> ServerStop { PdaOutcome.ServerUnavailable("${b.what}: ${FeedBuilder.describe(err)}", it) }
                 }

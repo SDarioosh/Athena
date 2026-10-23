@@ -128,7 +128,7 @@ class PdaFeedTest {
         assertEquals(NewEvent("Call Ben", "2026-10-22T10:00:00Z", "2026-10-22T12:15:00+02:00", false, "Added on the T5 PDA"),
             (add as PdaAction.CalAdd).event)
         val allDay = p("""{"t":"cal_add","title":"Trip","start":"2026-10-24","all_day":true,"from_item":7}""")
-        assertEquals(NewEvent("Trip", "2026-10-24", null, true, "Added on the T5 PDA from odysseus-sound action item #7"),
+        assertEquals(NewEvent("Trip", "2026-10-24", null, true, "Added on the T5 PDA from Athena action item #7"),
             (allDay as PdaAction.CalAdd).event)
         // Plan §3.5 strict checks: anything else is acked with result 1.
         for (bad in listOf(

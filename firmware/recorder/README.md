@@ -1,4 +1,4 @@
-# odysseus-sound recorder firmware
+# Athena recorder firmware
 
 ESP-IDF firmware for the wearable recorders. One firmware, one board layer:
 `main/` is shared, `boards/<name>/board/` implements `main/board.h` for one board.

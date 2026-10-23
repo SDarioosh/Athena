@@ -1,4 +1,4 @@
-# odysseus-sound PDA firmware, LilyGO T5 E-Paper Pro (ESP32-S3R8: 16 MB QIO flash, 8 MB
+# Athena PDA firmware, LilyGO T5 E-Paper Pro (ESP32-S3R8: 16 MB QIO flash, 8 MB
 # octal PSRAM, confirmed with esptool on the owner's board). `idf.py build` uses this file.
 CONFIG_IDF_TARGET="esp32s3"
 

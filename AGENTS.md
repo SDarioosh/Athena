@@ -1,17 +1,21 @@
-# odysseus-sound: agent guide
+# Athena: agent guide
 
-odysseus-sound (formerly "convo-ai", then "barvis-ai", then "barvis-sound") is a
-private conversation-memory system and the first **Odysseus module**. Wearables capture
-audio; this Ubuntu server transcribes, diarizes and summarizes it with local
-models; [Odysseus](https://github.com/SDarioosh/Barvis), our Odysseus fork (repo
-`SDarioosh/Barvis`), answers questions about it through our MCP server. **Nothing in
-the data path touches the cloud.**
+Athena (formerly "convo-ai", then "barvis-ai", then "barvis-sound", then
+"odysseus-sound") is a private conversation-memory system and the first **Odysseus
+module**. Wearables capture audio; this Ubuntu server transcribes, diarizes and
+summarizes it with local models; [Odysseus](https://github.com/SDarioosh/Barvis), our
+Odysseus fork (repo `SDarioosh/Barvis`), answers questions about it through our MCP
+server. **Nothing in the data path touches the cloud.**
 
 ## Names: prose vs code
 
-- In prose (docs, PR text, comments you add) call the project **odysseus-sound**
-  (formerly convo-ai, barvis-ai, barvis-sound) and the hub **Odysseus** ("our Odysseus
-  fork" where it must be told apart from upstream Odysseus).
+- In prose (docs, PR text, comments you add) call the project **Athena**
+  (formerly convo-ai, barvis-ai, barvis-sound, odysseus-sound) and the hub **Odysseus**
+  ("our Odysseus fork" where it must be told apart from upstream Odysseus).
+- The name `odysseus-sound` also stays where it is data, not prose: the systemd unit
+  text that `server/scripts/deploy.sh` writes (changing it restarts the services), and,
+  in the hub, the belief source, the label on filed notes, the memory source and
+  calendar uid prefixes (stored in the owner's data).
 - **Don't rename code identifiers.** They keep the old name on purpose: the
   `convo_server` package, the `convo-server` CLI, `CONVO_*` env vars, paths such as
   `server/data/convo.db`, the MCP server name `convo-ai`, the hub's server name

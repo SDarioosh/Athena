@@ -1,4 +1,4 @@
-# odysseus-sound server
+# Athena server
 
 The `convo_server` package (CLI `convo-server`, env prefix `CONVO_`) keeps the project's
 old name, convo-ai. Don't rename it.

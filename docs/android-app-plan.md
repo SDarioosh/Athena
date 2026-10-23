@@ -48,7 +48,7 @@ Status: **plan only, nothing built** (2026-10-20). Owner decisions are open (§1
 │   DrainSession · PdaSync · GattClient · HttpUploader           │
 └───────┬───────────────────────────────┬────────────────────────┘
         │ BLE                           │ HTTPS/HTTP
-   T-Watch Ultra / T5                   ├─ odysseus-sound :8000  (token)
+   T-Watch Ultra / T5                   ├─ Athena :8000  (token)
                                         └─ Odysseus :7000        (WebView session; PDA token)
 ```
 

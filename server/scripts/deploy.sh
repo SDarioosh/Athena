@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# odysseus-sound: update the server checkout and run it in the background.
+# Athena: update the server checkout and run it in the background.
 #
 #   server/scripts/deploy.sh deploy [REF]   # update to REF (default: <remote>/main), install, restart,
 #                                           # check, then update Odysseus (BARVIS_SOUND_ODYSSEUS_DIR)
@@ -32,7 +32,7 @@ REPO_DIR=$(cd "$SERVER_DIR/.." && pwd)
 cd "$SERVER_DIR"
 
 die() { echo "error: $*" >&2; exit 1; }
-log() { echo "==> [odysseus-sound] $*"; }
+log() { echo "==> [Athena] $*"; }
 
 env_value() {  # $1 from the environment (even if empty), else from .env, else $2
   local v=""
@@ -332,7 +332,7 @@ update_checkout() {  # $1 ref or empty; sets PREV and NEW
   local r ref
   git -C "$REPO_DIR" diff --quiet HEAD -- \
     || die "tracked files in $REPO_DIR have local changes (git status); commit or stash them first"
-  r=$(remote); [ -n "$r" ] || die "no git remote points at the odysseus-sound repo (SDarioosh/barvis-sound); set BARVIS_SOUND_REMOTE"
+  r=$(remote); [ -n "$r" ] || die "no git remote points at the Athena repo (SDarioosh/barvis-sound); set BARVIS_SOUND_REMOTE"
   ref=${1:-$r/$BRANCH}
   PREV=$(git -C "$REPO_DIR" rev-parse HEAD)
   log "fetching $r"
@@ -371,7 +371,7 @@ cmd_deploy() {
     check_services || true
     die "deploy of $short failed and was rolled back (checkout is detached at the old commit; the next deploy returns to $BRANCH)"
   fi
-  die "odysseus-sound is not healthy; see the logs above"
+  die "Athena is not healthy; see the logs above"
 }
 
 # Odysseus (the hub) after the module: its own deploy script rebuilds and restarts it.
@@ -409,18 +409,18 @@ deploy_odysseus() {
   for script in "$dir/scripts/fork_deploy.sh" "$dir/scripts/barvis_deploy.sh"; do
     [ -x "$script" ] && break
   done
-  [ -x "$script" ] || die "no scripts/fork_deploy.sh in $dir (BARVIS_SOUND_ODYSSEUS_DIR); odysseus-sound itself is deployed"
+  [ -x "$script" ] || die "no scripts/fork_deploy.sh in $dir (BARVIS_SOUND_ODYSSEUS_DIR); Athena itself is deployed"
   log "updating Odysseus in $dir"
   # Empty module lists: this script just deployed the module, don't run it again.
   # Run from the checkout: the first barvis_deploy.sh only works from there.
   (cd "$dir" && FORK_MODULES="" BARVIS_MODULES="" FORK_DEPLOY_RUNNING=1 "$script" deploy) \
-    || die "Odysseus deploy failed (see above); odysseus-sound itself is deployed"
+    || die "Odysseus deploy failed (see above); Athena itself is deployed"
 }
 
 cmd_status() {
   load_config
   local s state
-  echo "odysseus-sound: $(git -C "$REPO_DIR" rev-parse --short HEAD) $(git -C "$REPO_DIR" log -1 --format=%s) ($RUNNER)"
+  echo "Athena: $(git -C "$REPO_DIR" rev-parse --short HEAD) $(git -C "$REPO_DIR" log -1 --format=%s) ($RUNNER)"
   for s in "${SERVICES[@]}"; do
     if ! enabled "$s"; then state="not configured"
     elif ! is_running "$s"; then state="stopped"

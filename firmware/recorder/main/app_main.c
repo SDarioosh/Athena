@@ -1,4 +1,4 @@
-/* odysseus-sound recorder (docs/t-watch-ultra-plan.md §8): recording sessions to Opus chunks
+/* Athena recorder (docs/t-watch-ultra-plan.md §8): recording sessions to Opus chunks
  * on the SD card, drained by a phone or PC relay over BLE (docs/twatch-ble-protocol.md).
  *
  * Power: the chip light-sleeps whenever every task is blocked (BLE keeps working, every
@@ -1045,7 +1045,7 @@ static void check_battery(void)
 void app_main(void)
 {
     const bool from_standby = esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED;
-    ESP_LOGI(TAG, "odysseus-sound recorder %s; reset reason: %s", FW_VERSION, reset_reason_name());
+    ESP_LOGI(TAG, "Athena recorder %s; reset reason: %s", FW_VERSION, reset_reason_name());
     if (from_standby) {
         /* EXT1 = the board's wake line (PWR, USB power); anything else is a bug. */
         ESP_LOGI(TAG, "woken from standby, wake cause %d", (int)esp_sleep_get_wakeup_cause());
