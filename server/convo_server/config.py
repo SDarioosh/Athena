@@ -155,6 +155,12 @@ class Settings(BaseSettings):
     # name (cosine, like speaker_match_threshold) is labelled "Unknown" too: someone new.
     # 0 = off.
     speaker_line_floor: float = 0.0
+    # Line splitting: the shortest part a split leaves (shorter ones join a neighbour).
+    speaker_split_min_seconds: float = 1.5
+    # Name a speaker only if its best voice beats the runner-up voice by this much
+    # (0 = off), and (pyannote) only with this much speech (0 = off).
+    speaker_match_margin: float = 0.0
+    speaker_name_min_seconds: float = 0.0
     # After a speaker is named, unnamed speakers in other conversations whose voice is at
     # least this close are renamed too (stricter than the match threshold).
     speaker_relabel_threshold: float = 0.60

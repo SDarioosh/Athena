@@ -35,7 +35,6 @@ import numpy as np  # noqa: E402
 
 from .audio import SAMPLE_RATE  # noqa: E402
 from .diarize import (  # noqa: E402
-    SPLIT_MIN_SECONDS,
     Diarizer,
     EnrolledVoice,
     PieceRef,
@@ -148,6 +147,7 @@ class PyannoteDiarizer(Diarizer):
         keys: list[tuple[int, str]] = []
         embs: list[np.ndarray] = []
         loud: list[float] = []
+        secs: list[float] = []
         for ri, (audio, tt) in enumerate(zip(runs, turns, strict=True)):
             for spk in sorted({t[2] for t in tt}, key=lambda s: min(t[0] for t in tt
                                                                     if t[2] == s)):
@@ -159,6 +159,7 @@ class PyannoteDiarizer(Diarizer):
                 keys.append((ri, spk))
                 embs.append(self._embed_speech(speech))
                 loud.append(rms_db(speech))
+                secs.append(sum(b - a for a, b, s in tt if s == spk))
         if not keys:  # pyannote heard nobody long enough: per-piece fallback
             return super().diarize_runs(runs, pieces)
         # pyannote already decided who is who inside a run, so its speakers of one run are
@@ -173,7 +174,8 @@ class PyannoteDiarizer(Diarizer):
         members = [[j for j, c in enumerate(cids) if c == cid] for cid in range(n)]
         centroids = [_normalize(np.mean([embs[j] for j in m], axis=0)) for m in members]
         cl_loud = [float(np.mean([loud[j] for j in m])) for m in members]
-        names, unnamed = self.name_clusters(centroids, cl_loud)
+        cl_secs = [float(sum(secs[j] for j in m)) for m in members]
+        names, unnamed = self.name_clusters(centroids, cl_loud, cl_secs)
         by_key = {k: names[cids[j]] for j, k in enumerate(keys)}
         self._last_turns, self._last_by_key = turns, by_key
 
@@ -207,7 +209,7 @@ class PyannoteDiarizer(Diarizer):
                     words: list[list[Word]], labels: list[SpeakerLabel]
                     ) -> list[list[tuple[int, int, SpeakerLabel]]]:
         """Split lines at pyannote's turn changes: each word takes the speaker of the
-        turn it overlaps most; a part shorter than ``SPLIT_MIN_SECONDS`` joins the part
+        turn it overlaps most; a part shorter than ``split_min_seconds`` joins the part
         before it (or after it, at the start)."""
         turns = getattr(self, "_last_turns", None)
         by_key = getattr(self, "_last_by_key", {})
@@ -228,11 +230,11 @@ class PyannoteDiarizer(Diarizer):
                     parts.append([k, k + 1, w])
             merged: list[list] = []
             for part in parts:
-                long = ws[part[1] - 1][1] - ws[part[0]][0] >= SPLIT_MIN_SECONDS
+                long = ws[part[1] - 1][1] - ws[part[0]][0] >= self.split_min_seconds
                 if merged and (not long or merged[-1][2] == part[2]):
                     merged[-1][1] = part[1]
                 elif (merged and ws[merged[-1][1] - 1][1] - ws[merged[-1][0]][0]
-                      < SPLIT_MIN_SECONDS):
+                      < self.split_min_seconds):
                     merged[-1][1], merged[-1][2] = part[1], part[2]
                 else:
                     merged.append(list(part))

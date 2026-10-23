@@ -90,3 +90,48 @@ class ThreeEmbedder(MixEmbedder):
         v = np.array([spec[np.abs(f - c) < 50].sum() for c in (200, 600, 1000)])
         n = np.linalg.norm(v)
         return (v / n if n > 0 else np.full(3, 3 ** -0.5)).astype(np.float32)
+
+
+def _two_voice_diarizer() -> Diarizer:
+    from test_recognition import unit
+
+    return Diarizer(MixEmbedder(), [EnrolledVoice("Me", unit(1), True),
+                                    EnrolledVoice("Alice", unit(0, 1), False)],
+                    match_threshold=0.5, owner_hint_margin=0)
+
+
+def test_match_margin_leaves_a_voice_between_two_people_unnamed():
+    from test_recognition import unit
+
+    d = _two_voice_diarizer()
+    clear, between = unit(0.95, 0.31), unit(0.75, 0.66)  # Me 0.95 vs 0.31; 0.75 vs 0.66
+    names = [x.name for x in d.name_clusters([clear, between])[0]]
+    assert names == ["Me", "Alice"]  # off: the second still takes the free name
+    d.match_margin = 0.10
+    names = [x.name for x in d.name_clusters([clear, between])[0]]
+    assert names == ["Me", "Speaker 1"]
+
+
+def test_too_little_speech_is_not_named():
+    from test_recognition import unit
+
+    d = _two_voice_diarizer()
+    d.name_min_seconds = 5.0
+    labels, unnamed = d.name_clusters([unit(1), unit(0, 1)], seconds=[30.0, 3.0])
+    assert [x.name for x in labels] == ["Me", "Speaker 1"] and list(unnamed) == ["Speaker 1"]
+    # no durations (the ECAPA path): the rule doesn't apply
+    assert [x.name for x in d.name_clusters([unit(1), unit(0, 1)])[0]] == ["Me", "Alice"]
+
+
+def test_build_diarizer_sets_the_naming_rules(tmp_path, monkeypatch):
+    from conftest import ToneEmbedder
+
+    from convo_server import cli
+    from convo_server.config import Settings
+    from convo_server.store import Store
+
+    monkeypatch.setattr(cli, "EcapaEmbedder", lambda cache: ToneEmbedder())
+    s = Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_match_margin=0.1,
+                 speaker_name_min_seconds=5, speaker_split_min_seconds=0.6)
+    d = cli.build_diarizer(s, Store(tmp_path / "x.db"))
+    assert (d.match_margin, d.name_min_seconds, d.split_min_seconds) == (0.1, 5.0, 0.6)

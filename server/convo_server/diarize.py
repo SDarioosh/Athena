@@ -216,6 +216,15 @@ def absorb_singletons(embs: np.ndarray, cids: list[int], threshold: float) -> li
 
 
 class Diarizer:
+    # Opt-in naming rules (set from CONVO_* settings by ``cli.build_diarizer``):
+    # a speaker is named only if its best voice beats the runner-up voice by this much
+    # (CONVO_SPEAKER_MATCH_MARGIN, 0 = off) ...
+    match_margin: float = 0.0
+    # ... and only with this much speech (CONVO_SPEAKER_NAME_MIN_SECONDS, pyannote, 0 = off)
+    name_min_seconds: float = 0.0
+    # the shortest part a line split leaves (CONVO_SPEAKER_SPLIT_MIN_SECONDS)
+    split_min_seconds: float = SPLIT_MIN_SECONDS
+
     def __init__(self, embedder: SpeakerEmbedder, voices: list[EnrolledVoice],
                  match_threshold: float = 0.50, cluster_threshold: float = 0.45,
                  min_seconds: float = 1.0, owner_hint_margin: float = 0.10,
@@ -333,12 +342,17 @@ class Diarizer:
         pyannote backend splits at its turn changes."""
         return [[(0, len(ws), lab)] for ws, lab in zip(words, labels, strict=True)]
 
-    def name_clusters(self, centroids: list[np.ndarray], loudness: list[float] | None = None
+    def name_clusters(self, centroids: list[np.ndarray], loudness: list[float] | None = None,
+                      seconds: list[float] | None = None
                       ) -> tuple[list[SpeakerLabel], dict[str, np.ndarray]]:
-        """Name each cluster (in order of first appearance) from the enrolled voices."""
+        """Name each cluster (in order of first appearance) from the enrolled voices.
+
+        ``seconds``: each cluster's amount of speech, for ``name_min_seconds``.
+        """
         scores = np.array([[v.score(c) for v in self.voices] for c in centroids],
                           dtype=np.float32).reshape(len(centroids), len(self.voices))
         names: dict[int, SpeakerLabel] = {}
+        blocked = self._unnameable(scores, seconds)
         # best pairs first, so a weak early cluster can't take a voice a later one fits better
         pairs = sorted(((float(scores[c, v]), c, v) for c in range(len(centroids))
                         for v in range(len(self.voices))), reverse=True)
@@ -346,11 +360,13 @@ class Diarizer:
         for s, c, v in pairs:
             if s < self.match_threshold:
                 break
-            if c in names or v in used:
+            if c in names or v in used or c in blocked:
                 continue
             names[c] = SpeakerLabel(self.voices[v].name, self.voices[v].is_owner)
             used.add(v)
         owner = self._owner_hint(scores, names, used, loudness)
+        if owner is not None and owner[0] in blocked:
+            owner = None
         if owner is not None:
             c, v = owner
             names[c] = SpeakerLabel(self.voices[v].name, True)
@@ -364,6 +380,21 @@ class Diarizer:
                 unnamed[names[c].name] = centroids[c]
             out.append(names[c])
         return out, unnamed
+
+    def _unnameable(self, scores: np.ndarray, seconds: list[float] | None) -> set[int]:
+        """Clusters the opt-in naming rules keep unnamed: too little speech, or a best
+        voice that doesn't beat the runner-up voice by ``match_margin`` (two people fit
+        about as well: likely neither, e.g. someone new)."""
+        out: set[int] = set()
+        for c in range(scores.shape[0]):
+            if (self.name_min_seconds > 0 and seconds is not None
+                    and seconds[c] < self.name_min_seconds):
+                out.add(c)
+            elif self.match_margin > 0 and scores.shape[1] >= 2:
+                top2 = np.sort(scores[c])[-2:]
+                if top2[1] - top2[0] < self.match_margin:
+                    out.add(c)
+        return out
 
     def _owner_hint(self, scores: np.ndarray, names: dict[int, SpeakerLabel], used: set[int],
                     loudness: list[float] | None) -> tuple[int, int] | None:
