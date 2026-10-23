@@ -218,8 +218,11 @@ FACTS_SYSTEM = """You pick durable facts from one conversation for the user's lo
 memory. """ + COMMON + """
 facts: specific facts worth remembering for months: preferences, allergies, plans, \
 relationships, jobs, moves, decisions, prices, dates of future events. Skip small talk, \
-one-off logistics and anything only true for today. Each fact is a complete sentence that \
-names its subject and makes sense on its own, e.g. \
+one-off logistics and anything only true for today: never how someone felt, slept, ate, \
+drank or worked on one day ("was very focused today", "did not drink enough water \
+today"), and never a plan for the next minutes or hours or the next step of what they are \
+doing ("plans to get a snack", "plans to wire it up on a breadboard to test it"). \
+Each fact is a complete sentence that names its subject and makes sense on its own, e.g. \
 {{"subject": "Alice", "fact": "Alice is vegetarian."}}, never a bare value like "May". \
 at_seconds: the bracketed number of the supporting line. Return an empty list if there \
 are none.
@@ -228,7 +231,8 @@ are facts about that person (the subject is the speaker, "{owner}" for the user)
 phrased as a decision, e.g. the user saying "I should stop prioritizing side projects \
 before the base system is stable" -> {{"subject": "{owner}", "fact": "The owner decided \
 to stabilise the base system before side projects."}}. A plan with no time is a fact \
-too: "The owner plans to ...". Keys: facts[{{subject, fact, at_seconds}}]."""
+too when it will still matter in a month (a trip, a purchase, a project, a move): "The \
+owner plans to ...". Keys: facts[{{subject, fact, at_seconds}}]."""
 
 LINK_SYSTEM = """You keep the user's memory of facts up to date. You get facts already \
 known (with id and the date they were learned) and new facts from a conversation on \
@@ -440,6 +444,7 @@ class Summarizer:
                                      facts=_unique(facts))
         out = to_storage(result, origin)
         out["kind"] = triage.kind
+        _drop_passing_facts(out)
         self._resolve_due_dates(out, origin)
         _drop_errands(out, _spoken(parts), _lines(parts), origin)
         _mark_explicit(out["action_items"], None)
@@ -465,6 +470,7 @@ class Summarizer:
         out = to_storage(ConversationSummary(**merged.model_dump(), action_items=_unique(actions),
                                              facts=_unique(facts)), origin)
         out["kind"] = "note"
+        _drop_passing_facts(out)
         self._resolve_due_dates(out, origin)
         # only explicit commands make a note: none without the word "note(s)"
         asked = _NOTE_WORD.search("\n".join(parts)) is not None
@@ -959,6 +965,24 @@ def _after_list_header(text: str, spoken: list[tuple[str, str]]) -> bool:
 _IMMEDIATE = re.compile(
     r"\b(?:right\s+now|right\s+away|real\s+(?:quick|fast)|in\s+a\s+(?:sec(?:ond)?|minute|"
     r"moment|jiffy)|(?:one|just\s+a)\s+(?:sec(?:ond)?|minute|moment))\b", re.IGNORECASE)
+
+
+# a fact tied to one day: "was very focused today", "didn't drink enough water today"
+_ONE_DAY = re.compile(r"\b(?:today|tonight|yesterday|this\s+(?:morning|afternoon|evening)|"
+                      r"right\s+now|just\s+now|at\s+the\s+moment)\b", re.IGNORECASE)
+
+
+def _drop_passing_facts(out: dict[str, Any]) -> None:
+    """Facts are for months; one tied to a single day ("today", "tonight", "this
+    morning", "right now") is not one, whatever the model says (small models keep
+    them)."""
+    keep = []
+    for fact in out["facts"]:
+        if _ONE_DAY.search(fact["fact"]):
+            log.info("dropped a one-day fact: %r", fact["fact"])
+            continue
+        keep.append(fact)
+    out["facts"] = keep
 
 
 def _lines(parts: list[str]) -> dict[int, str]:

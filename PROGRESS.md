@@ -124,6 +124,23 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-23: one-day facts are not facts
+
+Owner report: the hub's Beliefs page offered "was very focused and locked in today",
+"did not drink enough water today", "plans to get a snack" and "plans to wire the device
+up on a breadboard to test it". The owner dismissed them, but they shouldn't have been
+facts at all.
+
+- Facts prompt: never how someone felt, slept, ate, drank or worked on one day, never a
+  plan for the next minutes or hours or the next step of the current task; a plan with no
+  time is a fact only when it will still matter in a month. It used to say "A plan with no
+  time is a fact too", which let the snack through.
+- Code drops what small models still return: a fact that says it is about one day
+  ("today", "tonight", "yesterday", "this morning/afternoon/evening", "right now", "just
+  now", "at the moment"). Facts already stored are unchanged (the owner dismisses them
+  on the hub). Tests: `server/tests/test_passing_facts.py`. No MCP change.
+- **Owner: Server verification** (PR): a fictional conversation with one-day lines.
+
 ## Done on 2026-10-22: "Create a note." takes the next sentence as the note
 
 - Same gap as the to-do list sentence below, for notes: "Create a note. Battery is 13 mm
