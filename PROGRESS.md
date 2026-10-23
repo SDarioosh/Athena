@@ -124,6 +124,23 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-23: a note keeps the whole sentence and gets a title
+
+Owner report: a voice note "Make a note that the Odysseus system has a bug where a ..."
+made a note that read only "The Odysseus system has a bug where a", titled the same.
+
+- The transcriber broke the sentence over two lines and the note command was read one
+  line at a time, so the rest of the sentence was lost. A line that doesn't end a
+  sentence now goes on into the next (up to 400 characters).
+- A task the model wrote for the same words that has more of them keeps its text when it
+  becomes the note (it used to take the command's shorter text).
+- A voice note that is only one untitled note gives the note its title ("Odysseus system
+  diarization bug"); the hub used to title it with the note's first words. Several notes
+  keep the hub's titles. Notes already filed are unchanged. Tests:
+  `server/tests/test_note_items.py`. No MCP change (`note_title` and `title` already exist).
+- **Owner: Server verification** (PR): a fictional voice note whose command line breaks
+  mid-sentence.
+
 ## Done on 2026-10-23: the T5 keeps a sleep/wake log in flash (branch `feature/pda-wake-log`)
 
 - **Why:** the T5 was found frozen in the morning after a night asleep on battery: in ROM

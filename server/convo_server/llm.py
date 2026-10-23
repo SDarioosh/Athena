@@ -484,6 +484,7 @@ class Summarizer:
                                if i["kind"] != NOTE_ITEM or (asked and i["text"])]
         if asked:  # a command the model missed or took for a task
             _notes_from_commands(out["action_items"], parts, origin)
+        _title_lone_note(out)
         for item in out["action_items"]:
             if item["kind"] == NOTE_ITEM:  # a note is filed as it is: no date or time
                 item.update(due=None, due_date=None, due_time=None, time_unclear=False,
@@ -810,13 +811,43 @@ _LEAD = re.compile(r"^(?:and|also|then|oh|so)[,\s]+", re.IGNORECASE)
 _ADD_TO_NOTES = re.compile(r"^(?:add|put|write(?:\s+down)?)\b", re.IGNORECASE)
 
 
+# a sentence the transcriber left open is read on into the next lines up to this length
+_SENTENCE_MAX = 400
+
+
+def _whole_sentences(parts: list[str]) -> list[tuple[str, int]]:
+    """The transcript's sentences, each with the offset of the line it starts on. The
+    transcriber breaks lines mid-sentence ("... has a bug where a" / "speaker is ..."):
+    a line that doesn't end a sentence goes on into the next one."""
+    out: list[tuple[str, int]] = []
+    open_: tuple[str, int] | None = None  # the sentence still being said
+    for part in parts:
+        for line in part.splitlines():
+            m = _LINE.match(line.strip())
+            if not m:
+                continue
+            at = int(m["at"])
+            pieces = [p.strip() for p in _SENTENCE_END.split(m["text"]) if p.strip()]
+            for i, piece in enumerate(pieces):
+                if open_ is not None and i == 0:
+                    piece, start = f"{open_[0]} {piece}", open_[1]
+                else:
+                    start = at
+                open_ = None
+                if i < len(pieces) - 1 or piece.endswith((".", "!", "?")) \
+                        or len(piece) >= _SENTENCE_MAX:
+                    out.append((piece, start))
+                else:
+                    open_ = (piece, start)
+    if open_ is not None:
+        out.append(open_)
+    return out
+
+
 def _command_sentences(parts: list[str]) -> list[tuple[str, int]]:
     """Sentences that ask for a note ("create a note ...", "note that ...", "add to my
-    hardware notes ..."), with the line's offset in seconds."""
-    sentences = [(_LEAD.sub("", sentence.strip()), int(m["at"]))
-                 for part in parts for line in part.splitlines()
-                 if (m := _LINE.match(line.strip()))
-                 for sentence in _SENTENCE_END.split(m["text"]) if sentence.strip()]
+    hardware notes ..."), with the offset of the line they start on."""
+    sentences = [(_LEAD.sub("", said), at) for said, at in _whole_sentences(parts)]
     out = []
     i = 0
     while i < len(sentences):
@@ -832,6 +863,18 @@ def _command_sentences(parts: list[str]) -> list[tuple[str, int]]:
                 _ADD_TO_NOTES.match(said) and _NOTES_PHRASE.search(said)):
             out.append((said, at))
     return out
+
+
+def _title_lone_note(out: dict[str, Any]) -> None:
+    """A voice note that is only one untitled note: the note takes the voice note's
+    title, written from all of it (the hub would otherwise start the title with the
+    note's first words)."""
+    items, title = out["action_items"], (out.get("title") or "").strip()
+    if len(items) != 1 or items[0]["kind"] != NOTE_ITEM or items[0].get("note_title") \
+            or not title:
+        return
+    items[0]["note_title"] = title[:80]
+    items[0]["title"] = short_title(title, items[0]["text"])
 
 
 def _command_only(said: str) -> bool:
@@ -870,6 +913,10 @@ def _notes_from_commands(items: list[dict[str, Any]], parts: list[str],
         twin = next((i for i in items if i["kind"] != NOTE_ITEM and not i.get("due_date")
                      and not i.get("due_time") and _covers(i, want)), None)
         if twin is not None:
+            if len(_words(twin["text"])) > len(want):  # the model wrote down more of it
+                text = _NOTE_COMMAND.sub("", twin["text"].strip()).strip(" :,-")
+                note["text"] = re.sub(r"(?<!\.)\.$", "", text[:1].upper() + text[1:])
+                note["title"] = short_title(None, note["text"])
             twin.update(note, note_title=None, source_at=twin.get("source_at") or origin + at,
                         time_unclear=False)
             twin.pop("time", None)
