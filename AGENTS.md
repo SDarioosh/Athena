@@ -171,8 +171,10 @@ server. **Nothing in the data path touches the cloud.**
   `CONVO_FACT_CONFIRM_DAYS` (2) distinct dates in `CONVO_TIMEZONE`. The hub copies them
   into its memory hourly (`confirmed=true, format="json"`) and retires any fact id no
   longer returned. Each JSON row also has `confirmed` (true/false by those thresholds),
-  so a program can read all current facts and promote the confirmed ones. JSON fields are
-  listed in `server/README.md`.
+  so a program can read all current facts and promote the confirmed ones. Each JSON row
+  also has `valid_until` (MCP 0.11.0, additive): the last day a fact about one occasion
+  ("has a meeting with X on Tuesday at 11 a.m.") is worth keeping, else null; the hub
+  ends the belief after it. JSON fields are listed in `server/README.md`.
 - Each `list_action_items` JSON row has `title` (≤ 60 characters, for the hub's to-do or
   note) and `explicit` (true when the item has a date or time, a named list, kind
   reminder/event/note, or the voice note used a command word such as "remind me" or "add a
