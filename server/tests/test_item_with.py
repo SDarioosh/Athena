@@ -81,19 +81,19 @@ def test_owner_excluded_by_voice_name_alias_and_setting(pipeline):
 
 def test_merged_person_reports_the_surviving_id(pipeline):
     store = pipeline.store
-    converse(store, "c0", T0, [("Jen", "I need the notes")],
-             [{"text": "Send Jen the notes", "owner": "Me"}])
-    converse(store, "c1", T0 + HOUR, [("Jennifer", "Hi")], [], people=("Jennifer",))
-    jennifer = store.person_id("Jennifer")
-    store.rename_everywhere("Jen", "Jennifer")
+    converse(store, "c0", T0, [("Kat", "I need the notes")],
+             [{"text": "Send Kat the notes", "owner": "Me"}])
+    converse(store, "c1", T0 + HOUR, [("Katherine", "Hi")], [], people=("Katherine",))
+    katherine = store.person_id("Katherine")
+    store.rename_everywhere("Kat", "Katherine")
     rows = by_text(items_json(pipeline))
-    assert rows["Send Jen the notes"] == [{"id": jennifer, "name": "Jennifer"}]
+    assert rows["Send Kat the notes"] == [{"id": katherine, "name": "Katherine"}]
 
     # a name only an alias of someone resolves to that person and still counts as named
     converse(store, "c2", T0 + 2 * HOUR, [("Kim", "ok")],
-             [{"text": "Ask Jen about Friday", "owner": "Me"}], people=("Jen",))
-    got = by_text(items_json(pipeline))["Ask Jen about Friday"]
-    assert got == [{"id": jennifer, "name": "Jennifer"},
+             [{"text": "Ask Kat about Friday", "owner": "Me"}], people=("Kat",))
+    got = by_text(items_json(pipeline))["Ask Kat about Friday"]
+    assert got == [{"id": katherine, "name": "Katherine"},
                    {"id": store.person_id("Kim"), "name": "Kim"}]
 
 

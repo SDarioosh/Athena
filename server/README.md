@@ -230,7 +230,7 @@ source of truth, so the frontend can be swapped. Tools:
 | `get_daily_digest(date)` | memory |
 | `list_people(format)` | speakers and people mentioned; `format="json"` returns each person's stable id for programs (the hub links people to its contacts by it, below) |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
-| `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists); the person keeps their id |
+| `rename_speaker_everywhere(old_name, new_name)` | "it's Kath, not Kat": renames in every conversation (merges if the name exists); the person keeps their id |
 | `reassign_line(line_id, name)` | one line given to the wrong person (`#id` from `get_transcript`) |
 | `list_unnamed_speakers(limit)` | voices nobody has named yet, with quotes and a guess, for "who is this?" |
 

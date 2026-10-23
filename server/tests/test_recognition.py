@@ -31,9 +31,9 @@ def test_whisper_server_gets_prompt_and_temperature_fallback():
 
     t = WhisperServerTranscriber("http://whisper.test", transport=httpx.MockTransport(handler),
                                  temperature_inc=0.3)
-    assert [p.text for p in t.transcribe(tone(300, 1), "Jenn, Shahyah.")] == ["hi"]
+    assert [p.text for p in t.transcribe(tone(300, 1), "Kath, Marisol.")] == ["hi"]
     body = seen[0]
-    assert b'name="prompt"\r\n\r\nJenn, Shahyah.' in body
+    assert b'name="prompt"\r\n\r\nKath, Marisol.' in body
     assert b'name="temperature_inc"\r\n\r\n0.3' in body
     assert _fields(body)["suppress_non_speech"] == "true"  # default: measured best
     t.transcribe(tone(300, 1))
@@ -42,9 +42,9 @@ def test_whisper_server_gets_prompt_and_temperature_fallback():
 
 def test_whisper_cli_command_has_prompt_and_fallback():
     t = WhisperCliTranscriber("whisper-cli", "model.bin", temperature_inc=0.2)
-    cmd = t.command(Path("a.wav"), Path("out"), "Odysseus, Jenn.")
+    cmd = t.command(Path("a.wav"), Path("out"), "Odysseus, Kath.")
     assert cmd[cmd.index("-tpi") + 1] == "0.2"
-    assert cmd[-2:] == ["--prompt", "Odysseus, Jenn."]
+    assert cmd[-2:] == ["--prompt", "Odysseus, Kath."]
     assert "--prompt" not in t.command(Path("a.wav"), Path("out"))
 
 
@@ -104,12 +104,12 @@ def test_non_speech_tags_are_dropped():
 
 def test_prompt_has_vocabulary_and_known_names(pipeline):
     pipeline.settings.whisper_prompt = "Odysseus, Tailscale."
-    pipeline.store.put_speaker("Jenn", np.ones(16, np.float32), is_owner=False)
-    assert pipeline.whisper_prompt() == "Odysseus, Tailscale. Jenn."
+    pipeline.store.put_speaker("Kath", np.ones(16, np.float32), is_owner=False)
+    assert pipeline.whisper_prompt() == "Odysseus, Tailscale. Kath."
     ingest(pipeline, 0, np.concatenate([tone(200, 4), tone(600, 4)]))
     pipeline.end_session("s1")
     pipeline.process_pending()
-    assert pipeline.transcriber.prompts == ["Odysseus, Tailscale. Jenn."]
+    assert pipeline.transcriber.prompts == ["Odysseus, Tailscale. Kath."]
 
 
 # ------------------------------------------------------------------ voice samples
@@ -260,10 +260,10 @@ def test_pyannote_keeps_speakers_of_one_run_apart():
     e = ToneEmbedder()
     run = tone(300, 8)  # both "voices" embed the same
     turns = [(0.0, 4.0, "SPEAKER_00"), (4.0, 8.0, "SPEAKER_01")]
-    d = PyannoteDiarizer(e, [EnrolledVoice("Hayden", e.embed(tone(300, 2)), False)],
+    d = PyannoteDiarizer(e, [EnrolledVoice("Tobias", e.embed(tone(300, 2)), False)],
                          segmenter=lambda audio: turns)
     labels, unnamed = d.diarize_runs([run], [PieceRef(0, 0.5, 3.5), PieceRef(0, 4.5, 7.5)])
-    assert sorted(x.name for x in labels) == ["Hayden", "Speaker 1"]  # two people, not one
+    assert sorted(x.name for x in labels) == ["Speaker 1", "Tobias"]  # two people, not one
     assert list(unnamed) == ["Speaker 1"]
 
 
@@ -322,20 +322,20 @@ def test_rename_everywhere_and_reassign_line(pipeline):
     mcp = build_mcp(pipeline.store, pipeline.settings)
     process_two_speakers(pipeline)
     conv = pipeline.store.list_conversations()[0]["id"]
-    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Jen")
-    process_two_speakers(pipeline, session="s2", start=T0 + 3600)  # recognised as Jen
+    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Kat")
+    process_two_speakers(pipeline, session="s2", start=T0 + 3600)  # recognised as Kat
     assert "per-conversation" in call(mcp, "rename_speaker_everywhere",
                                       old_name="Speaker 1", new_name="Bob")
-    out = call(mcp, "rename_speaker_everywhere", old_name="jen", new_name="Jenn")
+    out = call(mcp, "rename_speaker_everywhere", old_name="kat", new_name="Kath")
     assert "2 lines across 2 conversations" in out
-    assert [s["name"] for s in pipeline.store.speakers()] == ["Me", "Jenn"]
-    assert "No lines by 'Jen'" in call(mcp, "rename_speaker_everywhere", old_name="Jen",
+    assert [s["name"] for s in pipeline.store.speakers()] == ["Me", "Kath"]
+    assert "No lines by 'Kat'" in call(mcp, "rename_speaker_everywhere", old_name="Kat",
                                        new_name="X")
 
     transcript = call(mcp, "get_transcript", conversation_id=conv)
-    line = int(re.search(r"#(\d+) \[\d+s\] Jenn:", transcript).group(1))
+    line = int(re.search(r"#(\d+) \[\d+s\] Kath:", transcript).group(1))
     out = call(mcp, "reassign_line", line_id=line, name="Me")
-    assert "moved from Jenn to Me" in out
+    assert "moved from Kath to Me" in out
     seg = pipeline.store.get_segment(line)
     assert seg.speaker == "Me" and seg.is_owner
     assert "already" in call(mcp, "reassign_line", line_id=line, name="Me")

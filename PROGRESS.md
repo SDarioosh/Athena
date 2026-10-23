@@ -175,8 +175,8 @@ facts at all.
 
 ## Done on 2026-10-22: "Create a to-do list." covers the items after it
 
-- Owner report: a voice note "Create a to-do list and get Rock Talk ready for the meeting
-  with the Meshtastic team" stayed under "Not filed yet" in the hub. The command word only
+- Owner report: a voice note "Create a to-do list and get Kite Lab ready for the meeting
+  with the Harbor Radio team" stayed under "Not filed yet" in the hub. The command word only
   counted when it was in the same sentence as the item; when the transcriber ends the
   sentence after "Create a to do list.", the next item was a suggestion, not explicit.
 - Now a sentence that starts a to-do list ("create/make/start a to-do list", "to-do list:")
@@ -217,8 +217,8 @@ facts at all.
 
 ## Done on 2026-10-22: quick errands are not action items
 
-"I'll move my truck" said in passing became the suggested to-do "Walk truck to Shahyah's
-house", shown in the hub's Today insight "with Shahyah's".
+"I'll move my truck" said in passing became the suggested to-do "Walk truck to Marisol's
+house", shown in the hub's Today insight "with Marisol's".
 
 - Prompts: something done during the conversation or right after it that nobody needs
   reminding of ("I'll move my truck", "let me grab my keys") is not an action item; the
@@ -227,7 +227,7 @@ house", shown in the hub's Today insight "with Shahyah's".
 - Code drops what small models still list: an undated task with no list or command word
   whose clause says it happens now ("right now", "real quick", "in a minute"); found by
   the item's words, or by the one-clause line it cites when the model reworded it.
-- People's names lose a possessive ("Shahyah's" -> "Shahyah") in new summaries; schema
+- People's names lose a possessive ("Marisol's" -> "Marisol") in new summaries; schema
   v12 fixes the names already stored once (the person keeps their id, the old spelling
   is an alias; an existing person of that name absorbs it).
 - Hub side: a "Not a task" button on Today's open loops dismisses the item here
@@ -538,17 +538,17 @@ parallel agents, one per stream, reviewed and merged by the orchestrator.
   now wraps such uploads in Ogg Opus before ffmpeg (`convo_server/opus_packets.py`,
   `tests/test_opus_packets.py`). An incomplete last packet is dropped.
 
-## Done in round 9: "Speaker 2 was Jenn" renames the speaker
+## Done in round 9: "Speaker 2 was Kath" renames the speaker
 
-- The owner said "/sound … Speaker 1 and Speaker 3 were both Shahyah and Speaker 2 was
-  Jenn" and the model only repeated what they said; nothing was renamed. Reproduced in
+- The owner said "/sound … Speaker 1 and Speaker 3 were both Marisol and Speaker 2 was
+  Kath" and the model only repeated what they said; nothing was renamed. Reproduced in
   the sandbox: Odysseus offered `name_speaker` on the `/sound` turn, but the model read the
   sentence as a claim to check and never called it.
 - `INSTRUCTIONS` now has a "Naming speakers" paragraph (a statement of who a speaker was
   is a request to save it; call `name_speaker` once per label), and the tool description
   says the same. Sandbox, same message: before, only `search_conversations`; after,
   `search_conversations`, `get_conversation`, `name_speaker` (approved) and Speaker 1
-  became Shahyah. The next model call hit the sandbox CPU's read timeout (HTTP 504), so
+  became Marisol. The next model call hit the sandbox CPU's read timeout (HTTP 504), so
   Speakers 2 and 3 still need the server run.
 - Needs the owner: paste the new `INSTRUCTIONS` into the Custom preset and rerun
   `modules_setup.py` (was `barvis_setup.py`) so `/sound` picks it up.
