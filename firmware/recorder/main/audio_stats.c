@@ -34,34 +34,17 @@ int32_t audio_stats_dc(const audio_stats_t *s)
     return s->count ? (int32_t)(s->sum / (int64_t)s->count) : 0;
 }
 
-static uint32_t isqrt64(uint64_t x)
-{
-    uint64_t r = 0, bit = 1ULL << 62;
-    while (bit > x) {
-        bit >>= 2;
-    }
-    while (bit) {
-        if (x >= r + bit) {
-            x -= r + bit;
-            r = (r >> 1) + bit;
-        } else {
-            r >>= 1;
-        }
-        bit >>= 2;
-    }
-    return (uint32_t)r;
-}
-
 uint32_t audio_stats_rms(const audio_stats_t *s)
 {
     if (!s->count) {
         return 0;
     }
-    /* Variance = E[x^2] - E[x]^2, in integers. mean_sq <= 2^30, so no overflow. */
-    const uint64_t mean_sq = s->sum_squares / s->count;
-    const int64_t mean = s->sum / (int64_t)s->count;
-    const uint64_t dc_sq = (uint64_t)(mean * mean);
-    return isqrt64(mean_sq > dc_sq ? mean_sq - dc_sq : 0);
+    /* Variance = E[x^2] - E[x]^2, in double: the integer version truncated both means first,
+     * which leaves up to ~2|DC| in the variance (QC R10). */
+    const double n = (double)s->count;
+    const double mean = (double)s->sum / n;
+    const double var = (double)s->sum_squares / n - mean * mean;
+    return var > 0.0 ? (uint32_t)sqrt(var) : 0;
 }
 
 float audio_stats_rms_dbfs(const audio_stats_t *s)

@@ -46,11 +46,11 @@ static int band_for(int scale)
 static esp_err_t push_line(int y, const char *text, int scale, uint16_t color)
 {
     int h = band_for(scale);
-    /* Small panels: keep the band on the panel. (Large panels draw as they always have.) */
-    if (s_compact && (y < 0 || y >= s_info.height)) {
+    /* Keep the band on the panel. */
+    if (y < 0 || y >= s_info.height) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (s_compact && y + h > s_info.height) {
+    if (y + h > s_info.height) {
         h = s_info.height - y;
     }
     /* Shrink text that would not fit across rather than cutting it off (any panel: lines
@@ -106,7 +106,11 @@ static esp_err_t screen_begin(view_t view)
         if (!s_band) {
             s_band = heap_caps_malloc((size_t)s_info.width * STRIP_H * sizeof(uint16_t),
                                       MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-            ESP_RETURN_ON_FALSE(s_band, ESP_ERR_NO_MEM, TAG, "band buffer");
+            if (!s_band) {
+                board_display_off(); /* s_shown is still false: ui_hide() wouldn't */
+                ESP_LOGE(TAG, "band buffer: no memory");
+                return ESP_ERR_NO_MEM;
+            }
         }
         if (s_pm_lock) {
             esp_pm_lock_acquire(s_pm_lock);
@@ -127,8 +131,10 @@ esp_err_t ui_show_status(const ui_status_t *s)
     const uint16_t red = textfb_rgb(240, 40, 40);
     const uint16_t amber = textfb_rgb(250, 180, 30);
     char line[32];
-    /* Where each line starts: the first row, then the step after each of the 8 lines. */
-    static const int steps_large[] = {70, 60, 70, 60, 70, 80, 36};
+    /* Where each line starts: the first row, then the step after each of the 8 lines. Large:
+     * the last band ends at 40 + 414 + 48 = 502, the T-Watch Ultra's height (it ran to 534,
+     * so the button hint was drawn below the panel). */
+    static const int steps_large[] = {66, 58, 66, 58, 66, 64, 36};
     static const int steps_compact[] = {30, 27, 30, 27, 30, 30, 22};
     const int *step = s_compact ? steps_compact : steps_large;
     int y = s_compact ? 8 : 40;
