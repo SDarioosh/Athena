@@ -253,7 +253,15 @@ static esp_err_t close_chunk(session_t *s, const int16_t *next, bool last)
     if (err != ESP_OK) {
         /* The queue recovered it from the card like abandon_chunk() does. */
         ESP_LOGE(TAG, "close chunk %08" PRIx32 ": %s", s->chunk_id, esp_err_to_name(err));
-        after_abandon(s, chunk_store_get(s->chunk_id, NULL) ? s->chunk_id : 0);
+        const uint32_t kept = chunk_store_get(s->chunk_id, NULL) ? s->chunk_id : 0;
+        after_abandon(s, kept);
+        if (!kept) {
+            /* Not queued: either nothing was left to keep, or the card couldn't be read and
+             * the chunk stays on it for the next boot, which recovers it with this sequence
+             * number. The next chunk must not reuse it (the server would drop one of the two
+             * as a retry); a skipped number only starts a new run on the server. */
+            s->sequence++;
+        }
         return err;
     }
     opus_enc_reset(s->enc);
