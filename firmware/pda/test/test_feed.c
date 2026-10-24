@@ -1,4 +1,5 @@
 /* Feed and detail parsing (§4.1, §4.3) against the fictional fixtures, and feed times. */
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -44,11 +45,31 @@ static void test_times(void)
     CHECK(!pda_time_parse("20-10-2026", &t, &d));
     CHECK(!pda_time_parse("2026-10-20T07:00:00Zjunk", &t, &d));
     CHECK(!pda_time_parse("2026-13-01", &t, &d));
+    /* QC P3: NULL, a dot without digits, offsets out of range or with a bare colon */
+    CHECK(!pda_time_parse(NULL, &t, &d));
+    CHECK(!pda_time_parse("2026-10-24T12:00:00.Z", &t, &d));
+    CHECK(!pda_time_parse("2026-10-24T12:00:00.", &t, &d));
+    CHECK(!pda_time_parse("2026-10-24T12:00:00+99:99", &t, &d));
+    CHECK(!pda_time_parse("2026-10-24T12:00:00+02:60", &t, &d));
+    CHECK(!pda_time_parse("2026-10-24T12:00:00+15:00", &t, &d));
+    CHECK(!pda_time_parse("2026-10-24T12:00:00+14:30", &t, &d));
+    CHECK(!pda_time_parse("2026-10-24T12:00:00+02:", &t, &d));
+    CHECK(pda_time_parse("2026-10-24T12:00:00.5+14:00", &t, &d) && t == 1792843200 - 14 * 3600);
+    CHECK(pda_time_parse("2026-10-24T12:00:00-12:00", &t, &d) && t == 1792843200 + 12 * 3600);
+    CHECK(pda_time_parse("2026-10-24T12:00:00+02", &t, &d) && t == 1792843200 - 2 * 3600);
+    CHECK(pda_time_parse("2026-10-24T12:00:00+0545", &t, &d) && t == 1792843200 - 345 * 60);
 
     char b[40];
     CHECK_EQ(pda_local_day(1792479600, 120), 20746);
     CHECK_EQ(pda_local_day(1792540800 - 1, 120), 20747); /* 01:59:59 local on the 21st */
     CHECK_EQ(pda_local_day(1792540800 - 7201, 120), 20746); /* 23:59:59 local on the 20th */
+    /* QC P4: floor division at and below 0, and at INT64_MIN without overflow */
+    CHECK_EQ(pda_local_day(-1, 0), -1);
+    CHECK_EQ(pda_local_day(-86400, 0), -1);
+    CHECK_EQ(pda_local_day(-86401, 0), -2);
+    CHECK_EQ(pda_local_day(0, 0), 0);
+    CHECK_EQ(pda_local_day(INT64_MIN, 0), (int32_t)(INT64_MIN / 86400 - 1));
+    CHECK_EQ(pda_local_day(INT64_MAX, 0), (int32_t)(INT64_MAX / 86400));
     pda_fmt_date(1792479600, 120, b, sizeof(b));
     CHECK(strcmp(b, "Tue 20 Oct") == 0);
     pda_fmt_hm(1792479600, 120, b, sizeof(b));

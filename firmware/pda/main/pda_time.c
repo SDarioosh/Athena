@@ -20,6 +20,9 @@ static bool digits(const char *s, int n, int *out)
 
 bool pda_time_parse(const char *s, int64_t *epoch, bool *date_only)
 {
+    if (!s) {
+        return false;
+    }
     isotime_fields_t f = {0};
     const size_t n = strlen(s);
     bool dummy;
@@ -46,8 +49,11 @@ bool pda_time_parse(const char *s, int64_t *epoch, bool *date_only)
             return false;
         }
         p += 3;
-        if (*p == '.') { /* fractional seconds: ignored */
+        if (*p == '.') { /* fractional seconds: ignored, but at least one digit */
             p++;
+            if (*p < '0' || *p > '9') {
+                return false;
+            }
             while (*p >= '0' && *p <= '9') {
                 p++;
             }
@@ -64,12 +70,18 @@ bool pda_time_parse(const char *s, int64_t *epoch, bool *date_only)
         const char *q = p + 3;
         if (*q == ':') {
             q++;
+            if (!*q) {
+                return false; /* "+02:" */
+            }
         }
         if (*q) {
             if (!digits(q, 2, &mm)) {
                 return false;
             }
             q += 2;
+        }
+        if (mm > 59 || hh * 60 + mm > 14 * 60) {
+            return false; /* within ±14:00, as the T5's own clock (PDA_TZ_MAX_MIN) */
         }
         offset_min = (hh * 60 + mm) * (*p == '-' ? -1 : 1);
         p = q;
@@ -86,7 +98,10 @@ bool pda_time_parse(const char *s, int64_t *epoch, bool *date_only)
 
 static int64_t floor_div(int64_t a, int64_t b)
 {
-    return a >= 0 ? a / b : -((-a + b - 1) / b);
+    /* b > 0; C division truncates toward zero, so step down for a negative remainder (no
+     * negation of a, which overflows at INT64_MIN) */
+    const int64_t q = a / b;
+    return (a % b != 0 && a < 0) ? q - 1 : q;
 }
 
 int32_t pda_local_day(int64_t epoch, int tz_min)

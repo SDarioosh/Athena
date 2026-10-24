@@ -53,7 +53,9 @@ if(ZLIB_FOUND)
     # host/ first: its epdiy.h stands in for the component's
     target_include_directories(test_ui_today BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/host)
     target_link_libraries(test_ui_today pda_pure ZLIB::ZLIB)
-    set_source_files_properties(${FW}/main/fonts.c PROPERTIES COMPILE_OPTIONS "-Wno-bidi-chars")
+    # -Wbidi-chars is GCC-only; clang rejects the unknown option under -Werror
+    set_source_files_properties(${FW}/main/fonts.c PROPERTIES COMPILE_OPTIONS
+        "$<$<C_COMPILER_ID:GNU>:-Wno-bidi-chars>")
     add_test(NAME test_ui_today COMMAND test_ui_today)
     set_tests_properties(test_ui_today PROPERTIES ENVIRONMENT
         "FIXTURES=${CMAKE_CURRENT_SOURCE_DIR}/fixtures;OUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/today_screens")
