@@ -527,3 +527,7 @@ A looser speech gate on top of the fix (`CONVO_VAD_THRESHOLD=0.35`): WER table 3
 41.6 %, its missed speech 0.0 % on TS3003a); attribution about the same (table named wrong
 1.6 → 1.8 %, unenrolled named 4.7 → 5.5 %; room 2.1 → 2.1 %, 7.7 → 7.4 %). Same direction
 and size as the sandbox (room 28.1 → 27.1 %): worth turning on with the fix.
+
+**Decision (owner, 2026-10-24):** with `CONVO_DIARIZER=pyannote`, split 0.3 s + line
+check + `CONVO_VAD_THRESHOLD=0.35` are the defaults (`Settings._diarizer_defaults`);
+ECAPA keeps the old values; `Fb` stays opt-in.

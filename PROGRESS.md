@@ -43,7 +43,7 @@ _Last updated: 2026-10-24 (capture quality: pyannote line splitting and line voi
 | 18 | One-step pairing through Odysseus: the MCP HTTP server forwards uploads (`/ingest/chunk`, `/sessions/{id}/end`) and the T5's API reads to the ingest API (MCP 0.8.0), so the hub's call recorder and paired phones need only the `convo` MCP server; the Android relay pairs by scanning Odysseus's QR code (ZXing, on-device), stores the Odysseus URL and token, uploads and syncs the T5 through Odysseus (`/api/codex/sound/*`), picks the calendar from a list; direct mode stays as a fallback | **built and tested in the sandbox**, merged (PR #73); fix: the first APK crashed when opening the scanner (ZXing's `CaptureActivity` needs AndroidX), now our own `ScanActivity`; still failed on the owner's Galaxy Z Fold (Android 17) with no permission prompt, cause unknown (no Android 17 test target here): 0.2.1 asks for the camera first, reports scanner errors instead of crashing, opens `odysseus-pair:` links from the camera app (confirm before pairing) and shows the last crash to copy; server tests, relay `assembleDebug test lint` (159 tests), the relay's Kotlin pairing/upload/T5 clients against a real hub and module; **needs a real phone** (scan, pair over Tailscale, watch drain and T5 sync through Odysseus) and the owner's Server verification | `server/convo_server/ingest_relay.py`, `android-relay/` (`net/Pairing.kt`, `net/Routes.kt`), hub `src/call_recorder.py`, `src/phone_pairing.py` |
 | 19 | Open loops for the hub's Today insight (Phase 3, module side): `list_action_items` JSON rows gain `with` (the other people in the item's conversation, person ids, those the item names first; MCP 0.9.0, additive) | ✅ built and tested (`tests/test_item_with.py`); no open question for the owner | `server/convo_server/mcp_server.py`, `server/convo_server/store.py` (`conversation_participants`) |
 | 20 | Complete forget and retention (hub personal context 4.2, module side): `erase_fact` write tool (destructive; MCP 0.10.0, additive, 15 tools) redacts the line that said a fact in every conversation that said it, hides and rewrites (local model) the notes and digests, redoes search and embeddings, deletes kept audio, erases later repeats; opt-in `CONVO_TRANSCRIPT_RETENTION_DAYS` (default 0 = keep forever) prunes old transcripts and kept audio, keeping summaries, facts and action items | **built, tested** (`tests/test_erase_fact.py`, `tests/test_retention.py`); sandbox bakeoff questions 1, 9, 16 through Odysseus: 2/3 (`main` 1/3 the same day), end-to-end forget checked in the sandbox; hub side in SDarioosh/odysseus-expanded; **owner: Server verification** | `server/convo_server/{store,pipeline,llm,mcp_server,links,config}.py` |
-| 21 | Capture quality (hub personal context 4.3): pyannote attribution fixes, all opt-in: line splitting at pyannote turn changes (`CONVO_SPEAKER_SPLIT_LINES`, `_SPLIT_MIN_SECONDS`), line voice check (`CONVO_SPEAKER_LINE_CHECK`), pyannote VBx/clustering settings (`CONVO_PYANNOTE_VBX_FA`/`_FB`, `_CLUSTER_THRESHOLD`, `_MIN/MAX_SPEAKERS`), owner-hint log line; recognition eval: late joiners, arm movement, owner precision/recall, `unenrolled_named`, pyannote cache | **built, measured in the sandbox and on the server GPU** (2026-10-24, split + line check: named wrong 5.8 → 1.6 % on the table mic, 30–70 % less elsewhere, names right within 1.4 points, WER unchanged); no MCP contract change; **owner: one real recording** (PR Server verification step 2), then turn the settings on | `server/convo_server/{diarize,diarize_pyannote,pipeline,config,cli}.py`, `server/eval/recognition.py`, `docs/omi-audio-quality.md` §8 |
+| 21 | Capture quality (hub personal context 4.3): pyannote attribution fixes, all opt-in: line splitting at pyannote turn changes (`CONVO_SPEAKER_SPLIT_LINES`, `_SPLIT_MIN_SECONDS`), line voice check (`CONVO_SPEAKER_LINE_CHECK`), pyannote VBx/clustering settings (`CONVO_PYANNOTE_VBX_FA`/`_FB`, `_CLUSTER_THRESHOLD`, `_MIN/MAX_SPEAKERS`), owner-hint log line; recognition eval: late joiners, arm movement, owner precision/recall, `unenrolled_named`, pyannote cache | **built, measured in the sandbox and on the server GPU** (2026-10-24, split + line check: named wrong 5.8 → 1.6 % on the table mic, 30–70 % less elsewhere, names right within 1.4 points, WER unchanged); no MCP contract change; **default with `CONVO_DIARIZER=pyannote` since 2026-10-24** (owner's call: split 0.3 s + line check + `CONVO_VAD_THRESHOLD=0.35`, any of them overridable in `.env`); **owner: one real recording** (PR Server verification step 2) | `server/convo_server/{diarize,diarize_pyannote,pipeline,config,cli}.py`, `server/eval/recognition.py`, `docs/omi-audio-quality.md` §8 |
 | 10 | End-to-end with real devices | not started | — |
 
 ## Done on 2026-10-24: capture quality, diarization (hub personal context 4.3)
@@ -58,9 +58,10 @@ _Last updated: 2026-10-24 (capture quality: pyannote line splitting and line voi
   when the owner loudness hint names someone.
 - Eval: `--late-joiners`, `--owner-dips`, owner precision/recall, `unenrolled_named`,
   pyannote turns cached; `--cache` keeps word times now.
-- Recommended for the owner's server run: `CONVO_SPEAKER_SPLIT_LINES=true`,
-  `CONVO_SPEAKER_SPLIT_MIN_SECONDS=0.3`, `CONVO_SPEAKER_LINE_CHECK=true`; `Fb` 0.2/0.3
-  only if newcomers keep getting an existing name (it trades names right for that).
+- Server GPU eval confirmed it (2026-10-24); on the owner's request split 0.3 s + line
+  check + `CONVO_VAD_THRESHOLD=0.35` are now the defaults with `CONVO_DIARIZER=pyannote`
+  (ECAPA unchanged). `Fb` 0.2 stays opt-in: it keeps newcomers out of existing names but
+  leaves more lines as "Speaker N".
 - No MCP contract change, no hub PR. Still open from the 4.3 plan: enrollment without the
   Zepp watch and a "speaker unsure" flag for the hub (proposal posted, not decided).
 
@@ -1371,8 +1372,9 @@ Still open:
   names more right but with more wrong names than ECAPA (5.3 vs 1.3 % on the table mic);
   split + line check bring it to 1.6 %. Default diarizer stays `ecapa` in code until the
   server run of the 4.3 PR.
-- Diarization (4.3 PR): turn on split + line check on the server after the GPU eval? Use
-  `Fb` 0.2/0.3 against newcomers getting an existing name (more "Speaker N" in exchange)?
+- Diarization (4.3 PR): split + line check are the pyannote defaults now. Use
+  `CONVO_PYANNOTE_VBX_FB=0.2` against newcomers getting an existing name (more
+  "Speaker N" in exchange)? Decide after a real recording.
 - Enrollment without the Zepp watch (quality checks, enrolling from T-Watch voice notes)
   and a "speaker unsure" flag for the hub: proposed in the 4.3 session, not decided.
 - Insights: should doctor's instructions like "avoid hard food until the follow-up" be

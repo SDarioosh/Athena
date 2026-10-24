@@ -172,3 +172,24 @@ def test_pyannote_embedder_needs_the_pyannote_diarizer(tmp_path):
     s = Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_embedder="wespeaker")
     with pytest.raises(SystemExit):
         cli.build_diarizer(s, Store(tmp_path / "x.db"))
+
+
+def test_pyannote_gets_the_measured_defaults_and_settings_still_win(tmp_path, monkeypatch):
+    from convo_server.config import Settings
+
+    for k in ("CONVO_VAD_THRESHOLD", "CONVO_SPEAKER_SPLIT_LINES", "CONVO_SPEAKER_LINE_CHECK",
+              "CONVO_SPEAKER_SPLIT_MIN_SECONDS", "CONVO_DIARIZER"):
+        monkeypatch.delenv(k, raising=False)
+    base = dict(ingest_token="t" * 32, data_dir=tmp_path, _env_file=None)
+    ecapa = Settings(**base)
+    assert (ecapa.speaker_split_lines, ecapa.speaker_line_check, ecapa.vad_threshold,
+            ecapa.speaker_split_min_seconds) == (False, False, 0.5, 1.5)
+    py = Settings(**base, diarizer="pyannote")
+    assert (py.speaker_split_lines, py.speaker_line_check, py.vad_threshold,
+            py.speaker_split_min_seconds) == (True, True, 0.35, 0.3)
+    # a value set in the environment always wins
+    monkeypatch.setenv("CONVO_SPEAKER_LINE_CHECK", "false")
+    monkeypatch.setenv("CONVO_VAD_THRESHOLD", "0.5")
+    py = Settings(**base, diarizer="pyannote")
+    assert py.speaker_line_check is False and py.vad_threshold == 0.5
+    assert py.speaker_split_lines is True

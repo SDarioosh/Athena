@@ -23,21 +23,24 @@ CONDITIONS=(
   "joiners:--audio sim --distance 2 --opus 24 --late-joiners"
   "arm:--audio sim --distance 2 --opus 24 --owner-dips 12"
 )
-FIX="speaker_split_lines=true speaker_split_min_seconds=0.3 speaker_line_check=true"
+# Spelled out, so the runs mean the same whatever the defaults are (since 2026-10-24
+# pyannote turns the fix and vad_threshold=0.35 on by default).
+OFF="speaker_split_lines=false speaker_line_check=false vad_threshold=0.5"
+FIX="speaker_split_lines=true speaker_split_min_seconds=0.3 speaker_line_check=true vad_threshold=0.5"
 VARIANTS=(
-  "py:"
+  "py:$OFF"
   "py-fix:$FIX"
-  "py-fb0.3:pyannote_vbx_fb=0.3"
+  "py-fb0.3:pyannote_vbx_fb=0.3 $OFF"
   "py-fb0.3-fix:pyannote_vbx_fb=0.3 $FIX"
-  "py-fb0.2:pyannote_vbx_fb=0.2"
+  "py-fb0.2:pyannote_vbx_fb=0.2 $OFF"
   "py-fb0.2-fix:pyannote_vbx_fb=0.2 $FIX"
 )
 
 # Transcription: a looser speech gate (Silero 0.35, default 0.5) for the others' quiet,
 # far speech; it changes what whisper hears, so these runs transcribe again.
 EXTRA=(
-  "table:py-fix-vad35:$FIX vad_threshold=0.35"
-  "room:py-fix-vad35:$FIX vad_threshold=0.35"
+  "table:py-fix-vad35:${FIX/vad_threshold=0.5/vad_threshold=0.35}"
+  "room:py-fix-vad35:${FIX/vad_threshold=0.5/vad_threshold=0.35}"
 )
 audio_of() { for c in "${CONDITIONS[@]}"; do [[ ${c%%:*} == "$1" ]] && echo "${c#*:}"; done; return 0; }
 

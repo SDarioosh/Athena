@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, ValidationInfo, field_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,7 +36,9 @@ class Settings(BaseSettings):
     # Silero speech threshold, the silence that ends a speech span, and padding around
     # each span (Silero's default is 30 ms; Omi uses 300 ms pre-roll). Ignored by the
     # energy backend.
-    vad_threshold: float = 0.5
+    # Unset: 0.35 with CONVO_DIARIZER=pyannote (measured on the server GPU 2026-10-24:
+    # lets more of the others' far speech through, WER about -0.9), else Silero's 0.5.
+    vad_threshold: float | None = None
     vad_min_silence_ms: int = 500
     vad_speech_pad_ms: int = 30
     # Bounded peak gain on a COPY of each chunk before VAD scores it, so quiet far-field
@@ -152,19 +154,21 @@ class Settings(BaseSettings):
     # voice is at least this similar (0 = off).
     speaker_absorb_threshold: float = 0.30
     # pyannote only: split a transcript line where pyannote's turns change speaker
-    # (needs word times from whisper-server's verbose_json). Off until measured on the
-    # server.
-    speaker_split_lines: bool = False
+    # (needs word times from whisper-server's verbose_json). Unset: on with
+    # CONVO_DIARIZER=pyannote (server GPU eval 2026-10-24), off otherwise.
+    speaker_split_lines: bool | None = None
     # Check each named line's own voice against the enrolled voices; a line that fits
     # another enrolled person at least as well is labelled "Unknown" instead of keeping a
-    # probably wrong name. Off until measured on the server.
-    speaker_line_check: bool = False
+    # probably wrong name. Unset: on with CONVO_DIARIZER=pyannote (with the line split it
+    # cut wrong names 30-70 % in the server GPU eval), off otherwise.
+    speaker_line_check: bool | None = None
     # With the line check: a named line whose voice scores below this against its own
     # name (cosine, like speaker_match_threshold) is labelled "Unknown" too: someone new.
     # 0 = off.
     speaker_line_floor: float = 0.0
     # Line splitting: the shortest part a split leaves (shorter ones join a neighbour).
-    speaker_split_min_seconds: float = 1.5
+    # Unset: 0.3 with CONVO_DIARIZER=pyannote, else 1.5.
+    speaker_split_min_seconds: float | None = None
     # Name a speaker only if its best voice beats the runner-up voice by this much
     # (0 = off), and (pyannote) only with this much speech (0 = off).
     speaker_match_margin: float = 0.0
@@ -199,6 +203,22 @@ class Settings(BaseSettings):
     @property
     def base_url(self) -> str:
         return (self.public_url or f"http://{self.host}:{self.port}").rstrip("/")
+
+    @model_validator(mode="after")
+    def _diarizer_defaults(self) -> Settings:
+        """Settings left unset get the defaults measured for the chosen diarizer (pyannote:
+        the 4.3 capture-quality eval, docs/omi-audio-quality.md §8.3). A value set in the
+        environment always wins."""
+        py = self.diarizer == "pyannote"
+        if self.vad_threshold is None:
+            self.vad_threshold = 0.35 if py else 0.5
+        if self.speaker_split_lines is None:
+            self.speaker_split_lines = py
+        if self.speaker_split_min_seconds is None:
+            self.speaker_split_min_seconds = 0.3 if py else 1.5
+        if self.speaker_line_check is None:
+            self.speaker_line_check = py
+        return self
 
     @field_validator("ingest_token", "mcp_token")
     @classmethod

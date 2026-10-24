@@ -60,10 +60,14 @@ The weights come once from the ungated `pyannote-community` copy on Hugging Face
 default; the server turns it off before loading pyannote. pyannoteAI cloud pipelines
 (`precision-2`, `*-cloud`) are refused.
 
-#### Fewer wrong names with pyannote (opt-in)
+#### Fewer wrong names with pyannote (default with pyannote since 2026-10-24)
 
-Measured with `eval/recognition.py` (see [Recognition eval](#recognition-eval)); all off
-until the owner's server run confirms them:
+Measured with `eval/recognition.py` (see [Recognition eval](#recognition-eval)) in the
+sandbox and on the server GPU (`docs/omi-audio-quality.md` §8.3). With
+`CONVO_DIARIZER=pyannote`, line splitting (parts ≥ 0.3 s), the line check and
+`CONVO_VAD_THRESHOLD=0.35` are **on by default**; set any of them in `.env` to override
+(e.g. `CONVO_SPEAKER_LINE_CHECK=false`, `CONVO_VAD_THRESHOLD=0.5` for the old behaviour).
+With ECAPA nothing changes. The rest of the table stays opt-in:
 
 | setting | what it does | sandbox effect |
 |---|---|---|
@@ -215,8 +219,9 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
 
-VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD`, `CONVO_VAD_MIN_SILENCE_MS` and
-`CONVO_VAD_SPEECH_PAD_MS` tune it. A far-field or wrist recording can be 20-30 dB quieter
+VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD` (0.5; 0.35 by default with
+`CONVO_DIARIZER=pyannote`), `CONVO_VAD_MIN_SILENCE_MS` and `CONVO_VAD_SPEECH_PAD_MS` tune
+it. A far-field or wrist recording can be 20-30 dB quieter
 than a close mic, and Silero then misses some of its speech, so whisper never gets it.
 `CONVO_VAD_AGC_MAX_GAIN` (1 = off, the default) lets Silero score a copy of each chunk
 gained toward a `CONVO_VAD_AGC_TARGET` (0.8) peak, at most that many times; the stored
