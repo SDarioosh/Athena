@@ -347,6 +347,16 @@ def test_feed_version_only_grows(api_server) -> None:
     assert t5.feed_json()["version"] == int(NOW) + 501
 
 
+def test_feed_version_stays_a_u32(api_server) -> None:
+    # A T5 reporting the largest u32 must not crash the relay (struct.error) or wrap to 0
+    # ("no feed"): the version stops at 0xFFFFFFFF.
+    t5 = FakeT5(feed_version=0xFFFFFFFF)
+    rep = run(sync_for(api_server), t5)
+    assert rep.outcome == s.DONE
+    assert rep.feed_pushed == [0xFFFFFFFF]
+    assert t5.feed_version == t5.feed_json()["version"] == 0xFFFFFFFF
+
+
 def test_server_down_leaves_everything(api_server) -> None:
     api_server.health_status = 503
     t5 = FakeT5()
