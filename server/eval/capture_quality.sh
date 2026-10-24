@@ -39,6 +39,7 @@ for c in "${CONDITIONS[@]}"; do
   done
 done
 
+mkdir -p eval/results  # a fresh checkout has none yet
 if [[ "${1:-run}" != "compare" ]]; then
   echo "== downloading AMI audio and annotations into eval/data/ (~600 MB, once)"
   "$PY" eval/recognition.py fetch --audio array sim
