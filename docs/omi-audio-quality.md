@@ -494,3 +494,30 @@ meetings; small CPU runs compare only with other sandbox runs. "split" =
 - Open-source ideas not tried yet (research notes in the PR): DiariZen (best published
   far-field DER, but CC-BY-NC weights: owner decision), word times from whisper-server
   `--dtw`, score normalisation against past unnamed speakers.
+
+### 8.3 Server GPU run (owner, 2026-10-24)
+
+`server/eval/capture_quality.sh` on the RTX 3060 (whisper large-v3-turbo-q5_0, pyannote
+on CUDA). "fix" = split 0.3 s + line check.
+
+| run | confusion | named right | named wrong | owner precision | owner recall | unenrolled named | WER |
+|---|---|---|---|---|---|---|---|
+| table, pyannote | 5.6 | 90.2 | 5.8 | 97.4 | 94.2 | 8.3 | 36.0 |
+| table, fix | 6.2 | 90.6 | **1.6** | 98.7 | 94.1 | **4.7** | 36.1 |
+| table, Fb 0.2 + fix | 16.6 | 72.8 | 0.6 | 99.6 | 87.7 | 0.8 | 36.2 |
+| room, pyannote | 2.4 | 98.0 | 3.2 | 98.0 | 99.0 | 12.1 | 28.3 |
+| room, fix | 3.3 | 96.6 | **2.1** | 98.6 | 98.2 | **7.7** | 28.4 |
+| room, Fb 0.2 + fix | 6.4 | 92.0 | 1.1 | 98.6 | 97.3 | 2.7 | 28.3 |
+| joiners, pyannote | 2.6 | 96.8 | 4.2 | 97.1 | 98.9 | 17.1 | 27.6 |
+| joiners, fix | 2.9 | 96.4 | **2.6** | 98.5 | 98.2 | **9.8** | 27.7 |
+| joiners, Fb 0.2 + fix | 10.8 | 82.1 | 1.1 | 98.8 | 93.0 | 4.0 | 27.7 |
+| arm, pyannote | 3.8 | 94.0 | 3.6 | 97.7 | 97.6 | 14.9 | 27.4 |
+| arm, fix | 4.5 | 93.3 | **2.6** | 98.2 | 97.0 | **11.1** | 27.5 |
+| arm, Fb 0.2 + fix | 14.5 | 74.7 | 0.7 | 98.9 | 84.4 | 3.1 | 27.4 |
+
+The sandbox findings hold on the GPU: the fix cuts wrong names by 30–70 % and newcomers
+under an enrolled name by 25–45 %, names right within 1.4 points, WER unchanged.
+`Fb` 0.2 + fix takes wrong names below ~1 % and newcomers to 1–4 %, at the cost of
+names right (−6 to −19 points) and owner recall (−2 to −13): more "Speaker N" lines to
+name by hand, fewer wrong ones. `Fb` 0.3 adds nothing over the fix alone. Full table
+(all 24 runs) in the PR.
