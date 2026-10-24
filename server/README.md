@@ -502,7 +502,34 @@ small local model does better on narrow questions):
    voice note says "note"/"notes", strips command words the model leaves in, and gives
    a note no date, time or owner. It also finds the command sentences itself: one the
    model missed becomes a note (untitled; the hub titles it from the text), and an
-   undated task the model wrote for it becomes that note. In a conversation a `note` becomes a `task`. Notes
+   undated task the model wrote for it becomes that note (never a to-do the user asked
+   for out loud). Named notes need not say "notes" right after a note command: "make a
+   note in voice recorder that the case needs to be 3 mm bigger", "… for the voice
+   recorder: …", "… under car, …" and "add to my car note: …" go to `voice recorder` /
+   `car`; a time, a person or "in case …" there names no notes ("make a note for later:
+   …", "make a note for Sam that …"). When the model's note leaves the notes out, they
+   come from the command. In a conversation a `note` becomes a `task`.
+   **Spoken commands in voice notes** are caught in code even when the model lists no
+   item: to-dos ("make a todo to …", "to-do: …", "new task, …", "create a to-do called
+   …", "make a to-do for tomorrow to …", "remind me [at 5 / tomorrow / on Friday] to …",
+   "remind me about …", "add … to my to-do list"), list lines ("add eggs to my shopping
+   list [for Friday]", "add to the shopping list: oat milk", "put … on my work to-do
+   list") and notes ("note: …", "note to self, …", "new note: …", "add to my notes: …").
+   Words said before a command don't hide it ("um", "okay so", "hey", "can you", "I want
+   to", "let's"), nor do an ellipsis or "uh" inside it, and "…, thanks" is not part of
+   it. One sentence with several commands ("make a todo to get eggs and make a note that
+   the car is broken") gives one item per command, and an appointment said in the same
+   sentence as a command is still an event. "Remind me" with a time is a `reminder`. A
+   model item for a list command that lacks the list gets it. A comma list of short
+   things for a named list ("add eggs, milk and bread to my shopping list") is one item
+   per thing, so each is its own line; "salt and pepper" stays one. A list said line by
+   line ("Make a to-do list. Get eggs. Fix the car.", "Make a shopping list. Eggs.
+   Milk.", "Shopping list: eggs, milk, bread", "… for tomorrow: …") gives one item per
+   line on that list (the plain to-do list for a to-do list) until a closer ("okay,
+   that's it"), another command or a long sentence. The day and time said in a command
+   are the item's when the model drops them ("make a to-do to get eggs tomorrow" →
+   "Get eggs" due tomorrow; "remind me at 5 to call mom" → a reminder at 17:00), and a
+   midnight the model gives a command that names no time is dropped.
    are left out of the text `list_action_items`, the digest and `GET /v1/action-items`
    (add `?include_notes=true`); the JSON listing has them. Odysseus files each into its
    notes (a note of its own, or a line on the named notes) and marks it done here.
