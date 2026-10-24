@@ -75,8 +75,9 @@ class Uploader:
         parsed = urllib.parse.urlsplit(server)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise ValueError("server must be an http:// or https:// URL")
-        if parsed.username or parsed.password or parsed.query:
-            raise ValueError("server URL must not contain credentials or a query")
+        # "@", "?" and "#" even when empty: "http://h#x" + "/v1/..." would POST to "/".
+        if "@" in parsed.netloc or "?" in server or "#" in server:
+            raise ValueError("server URL must not contain credentials, a query or a fragment")
         if not token or any(c in token for c in "\r\n"):
             raise ValueError("token is empty or contains a line break")
         self.server = server.rstrip("/")
