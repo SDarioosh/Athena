@@ -51,6 +51,8 @@ static int s_eq_count;
 #define I2S_DMA_FRAMES 480
 #define I2S_DMA_DESC 8
 #define I2S_READ_FRAMES 256
+#define PDM_DMA_FRAMES 1024 /* 64 ms */
+#define PDM_DMA_DESC 6
 static int s_nports;      /* ports configured: 1 or 2 */
 static int s_nports_live; /* ports delivering audio since mic_start() */
 static uint8_t s_mask_setting = MIC_MASK_AUTO; /* NVS */
@@ -149,8 +151,8 @@ static esp_err_t init_pdm(board_mic_pins_t pins)
     /* PDM RX exists on I2S0 only (ESP32-S3). 1024 frames per DMA buffer = 64 ms; six of
      * them give the writer ~380 ms of slack during an SD card write stall. */
     i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-    chan.dma_desc_num = 6;
-    chan.dma_frame_num = 1024;
+    chan.dma_desc_num = PDM_DMA_DESC;
+    chan.dma_frame_num = PDM_DMA_FRAMES;
     chan.auto_clear = false;
     ESP_RETURN_ON_ERROR(i2s_new_channel(&chan, NULL, &s_rx), TAG, "channel");
 
@@ -165,6 +167,10 @@ static esp_err_t init_pdm(board_mic_pins_t pins)
     };
     cfg.slot_cfg.slot_mask = MIC_PDM_SLOT;
     ESP_RETURN_ON_ERROR(i2s_channel_init_pdm_rx_mode(s_rx, &cfg), TAG, "pdm rx");
+    /* Count DMA buffers lost when the writer falls behind (flash or card stalls), as the
+     * array does: mic_stop() logs them and mic_overflows() reports them. */
+    const i2s_event_callbacks_t cbs = {.on_recv_q_ovf = on_overflow};
+    i2s_channel_register_event_callback(s_rx, &cbs, (void *)&s_overflows[0]);
     ESP_LOGI(TAG, "PDM RX ready: CLK GPIO%d, DATA GPIO%d, %d Hz mono 16-bit; high-pass %d Hz, "
                   "EQ %s (%d bands), gain %d dB", pins.clk_gpio, pins.data_gpio, MIC_SAMPLE_RATE,
              MIC_HIGHPASS_HZ, s_eq_on ? "on" : "off", s_eq_count, s_gain_db);
@@ -581,8 +587,11 @@ esp_err_t mic_stop(void)
                  (unsigned)(RING_SAMPLES * 1000 / MIC_SAMPLE_RATE));
     }
     if (s_overflows[0] || s_overflows[1] || s_ring_drops) {
-        ESP_LOGW(TAG, "audio lost: %" PRIu32 " + %" PRIu32 " DMA buffers (30 ms each), %" PRIu32
-                      " ring blocks (16 ms each)", s_overflows[0], s_overflows[1], s_ring_drops);
+        const unsigned dma_ms =
+            (s_pins.kind == BOARD_MIC_I2S ? I2S_DMA_FRAMES : PDM_DMA_FRAMES) * 1000 / MIC_SAMPLE_RATE;
+        ESP_LOGW(TAG, "audio lost: %" PRIu32 " + %" PRIu32 " DMA buffers (%u ms each), %" PRIu32
+                      " ring blocks (16 ms each)", s_overflows[0], s_overflows[1], dma_ms,
+                 s_ring_drops);
     }
     const esp_err_t err = i2s_channel_disable(s_rx); /* the clock master first */
     if (s_nports_live == 2) {
