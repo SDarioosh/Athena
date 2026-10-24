@@ -144,7 +144,7 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
-## Done on 2026-10-24: recorder fixes from a QC report (branch `qc/recorder`)
+## Done on 2026-10-24: recorder fixes from a QC report (R1-R14)
 
 - **Host-tested** (`test_chunk_queue`, `test_audio_stats`, `test_isotime`): a card read
   error at boot no longer deletes a chunk; a chunk left open while its session went on gets
@@ -164,7 +164,7 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   the glass, `power locks`/current. `sd failwrite` during a session: the next chunk's
   sequence follows. A voice note finished during a phone sync is advertised right after.
 
-## Done on 2026-10-24: T5 firmware QC fixes (branch `qc/pda`, QC report P1-P8)
+## Done on 2026-10-24: T5 firmware QC fixes (QC report P1-P8)
 
 - **Host tests build under clang** (P1, P2): one concatenated literal in parentheses, and
   `-Wno-bidi-chars` for `fonts.c` only with GCC. `ctest` passes under GCC and clang.
