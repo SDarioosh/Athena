@@ -239,10 +239,11 @@ class OdysseusTodosClient(
         val a = c.call("POST", TODOS, json = body) ?: return ApiResult.Fail(c.networkError())
         noTodos(a)?.let { return it }
         return when (val r = c.objOf(a)) {
+            // Plan §4.4: an exit_code other than 0 is result 1; only a missing one is temporary.
             is ApiResult.Ok -> when (r.value.long("exit_code")) {
+                null -> ApiResult.Fail(ServerResult.Transient("Odysseus todos answer has no exit_code"))
                 0L -> ApiResult.Ok(true)
-                1L -> ApiResult.Ok(false)
-                else -> ApiResult.Fail(ServerResult.Transient("Odysseus todos answer has no exit_code"))
+                else -> ApiResult.Ok(false)
             }
             is ApiResult.Fail -> r
             is ApiResult.Unsupported -> r

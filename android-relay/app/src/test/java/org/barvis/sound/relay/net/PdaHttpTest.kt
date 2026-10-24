@@ -205,6 +205,15 @@ class PdaHttpTest {
             Json.parseObject(t.bodies.last()!!))
         t.answer = { _, _ -> HttpAnswer(200, """{"exit_code": 1, "error": "index out of range"}""") }
         assertEquals(ApiResult.Ok(false), c.toggle("n1", 9, true))
+        // Plan §4.4: any exit_code other than 0 is result 1; only a missing one is temporary.
+        t.answer = { _, _ -> HttpAnswer(200, """{"exit_code": 2, "error": "bad note"}""") }
+        assertEquals(ApiResult.Ok(false), c.toggle("n1", 0, true))
+        t.answer = { _, _ -> HttpAnswer(200, """{"exit_code": -1}""") }
+        assertEquals(ApiResult.Ok(false), c.toggle("n1", 0, true))
+        for (body in listOf("""{"output": "ok"}""", """{"exit_code": true}""", """{"exit_code": "0"}""")) {
+            t.answer = { _, _ -> HttpAnswer(200, body) }
+            assertTrue(body, (c.toggle("n1", 0, true) as ApiResult.Fail).error is ServerResult.Transient)
+        }
 
         // "No todos": a hub without format=json answers text; a token without todos:read gets 403.
         t.answer = { _, _ -> HttpAnswer(200, "You have 2 notes:\n- Groceries (checklist)") }
