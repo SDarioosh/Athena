@@ -14,6 +14,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PY=${PY:-.venv/bin/python}
 export CONVO_WHISPER_SERVER_URL=${CONVO_WHISPER_SERVER_URL:-http://127.0.0.1:8178}
+export PYTHONUNBUFFERED=1  # show progress at once, also through a pipe (| tee)
 
 CONDITIONS=(
   "table:--audio array --level -24 --opus 24"
@@ -39,7 +40,10 @@ for c in "${CONDITIONS[@]}"; do
 done
 
 if [[ "${1:-run}" != "compare" ]]; then
+  echo "== downloading AMI audio and annotations into eval/data/ (~600 MB, once)"
   "$PY" eval/recognition.py fetch --audio array sim
+  "$PY" -c "import torch; print('== GPU for pyannote:', torch.cuda.is_available() and
+            torch.cuda.get_device_name(0) or 'none, runs on CPU (slow)')"
   for c in "${CONDITIONS[@]}"; do
     name=${c%%:*}; audio=${c#*:}
     for v in "${VARIANTS[@]}"; do
@@ -48,7 +52,7 @@ if [[ "${1:-run}" != "compare" ]]; then
         echo "== $label: done before, skipped"
         continue
       fi
-      echo "== $label"
+      echo "== $label ($(date +%H:%M), log: eval/results/$label.log)"
       # shellcheck disable=SC2086  # word-split the flag lists on purpose
       "$PY" eval/recognition.py run --label "$label" --cache --enroll 2 $audio \
         --diarizer pyannote ${set_args:+--set $set_args} > "eval/results/$label.log" 2>&1 \
