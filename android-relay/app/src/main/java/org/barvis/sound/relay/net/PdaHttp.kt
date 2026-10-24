@@ -371,6 +371,9 @@ class OdysseusCalendarClient(
     }
 
     override suspend fun deleteEvent(uid: String): ApiResult<Unit> {
+        // An occurrence id (`<uid>::<occurrence>`): the hub would delete the whole series.
+        // Refused without a call, as by the PC relay (pda_calendar.py), so the T5 gets result 1.
+        if ("::" in uid) return ApiResult.Fail(ServerResult.Rejected(400, "one occurrence of a recurring event can't be deleted"))
         val a = c.call("DELETE", "$EVENTS/${JsonClient.enc(uid)}", logPath = "$EVENTS/…")
             ?: return ApiResult.Fail(c.networkError())
         // FastAPI's 404 for a missing route says "Not Found"; a missing event says "Event not found".

@@ -157,8 +157,14 @@ class PdaHttpTest {
         assertEquals(mapOf("summary" to "Call Ben", "dtstart" to "2026-10-22", "all_day" to true,
             "description" to "Added on the T5 PDA", "calendar_href" to "cal-caldav-1"), body)
 
-        assertEquals(ApiResult.Ok(Unit), c.deleteEvent("u1::2026-10-21"))
-        assertTrue(t.calls.last().second.endsWith("/api/codex/calendar/events/u1%3A%3A2026-10-21"))
+        assertEquals(ApiResult.Ok(Unit), c.deleteEvent("u1"))
+        assertEquals("DELETE" to "http://hub.example.ts.net:7000/api/codex/calendar/events/u1", t.calls.last().first to t.calls.last().second)
+        // An occurrence of a recurring event: the hub would delete the whole series, so it is
+        // refused without a call (result 1), as by the PC relay.
+        val calls = t.calls.size
+        assertEquals(ApiResult.Fail(ServerResult.Rejected(400, "one occurrence of a recurring event can't be deleted")),
+            c.deleteEvent("u1::2026-10-21"))
+        assertEquals(calls, t.calls.size)
         assertEquals(ApiResult.Fail(ServerResult.Rejected(404, "Event not found")), c.deleteEvent("gone"))
 
         // An older hub without the codex routes, or without a calendar: "not supported", no guessing.
