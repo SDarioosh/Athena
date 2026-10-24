@@ -102,20 +102,23 @@ typedef struct {
     uint32_t rd_id;
 } chunk_queue_t;
 
-/* Encode/decode the 64-byte .met record. decode returns false on a bad magic, version, or
- * CRC. Exposed for the tests. */
+/* Encode/decode the 64-byte .met record. decode returns false on a bad magic, version, state
+ * or CRC, or chunk_id 0. Exposed for the tests. */
 void cq_record_encode(const cq_info_t *info, uint8_t out[CQ_RECORD_SIZE]);
 bool cq_record_decode(const uint8_t in[CQ_RECORD_SIZE], cq_info_t *info);
 
 /* Create the directory if needed, read `next`, index the closed chunks, recover open ones
  * (cut back to the last complete Ogg page: closed with LAST if audio is left, otherwise
- * deleted and LAST moved to the session's previous queued chunk), and remove leftovers.
+ * deleted and LAST moved to the session's previous queued chunk; no LAST either way when a
+ * later chunk of the session is on the card), and remove leftovers. A file that can't be
+ * read (EIO) is never deleted: it is left on the card and counted as corrupt.
  * report may be NULL. */
 int cq_init(chunk_queue_t *q, const char *dir, cq_boot_report_t *report);
 /* Close open files and free the index. */
 void cq_deinit(chunk_queue_t *q);
 
 /* ---- writing (one chunk at a time) ---- */
+/* CQ_ERR_STATE if a chunk is open, or if every chunk id is used (ids never wrap to 0). */
 int cq_begin(chunk_queue_t *q, const cq_new_t *c, uint32_t *chunk_id);
 int cq_append(chunk_queue_t *q, const void *data, size_t len);
 /* Push what was appended to the card (fflush + fsync), so a power cut keeps it. */
@@ -155,7 +158,8 @@ int cq_delete(chunk_queue_t *q, uint32_t chunk_id, bool *was_queued);
 
 /* The clock was set: TIME_UNSET chunks recorded in boot `boot_id` (closed and open) get
  * start_ms = now_epoch_ms - (now_mono_ms - mono_ms), the flag cleared and their record
- * rewritten. Returns how many were converted, or < 0 on an error. */
+ * rewritten. Returns how many closed chunks were converted, or < 0 on an error; a chunk
+ * whose record couldn't be written stays TIME_UNSET (in memory too) for the next call. */
 int cq_fix_time(chunk_queue_t *q, uint32_t boot_id, int64_t now_epoch_ms, int64_t now_mono_ms);
 
 void cq_stats(const chunk_queue_t *q, cq_stats_t *out);
