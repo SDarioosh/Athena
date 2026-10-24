@@ -6,7 +6,7 @@ Athena (formerly convo-ai / barvis-ai / barvis-sound / odysseus-sound) is the fi
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-23 (events are named as said ("Meeting with Meshtastic team", not "Meet the Meshtastic team"), and a fact that only repeats a dated event is left out; a voice note's appointment said as a fragment ("Meeting with the Meshtastic team Tuesday 11 a.m.") becomes an event even when the model lists no item for it; a re-summary keeps fact ids, so a reworded fact is no second belief in the hub; a sentence whisper repeats on the next lines is kept once; T-Watch event log in flash and card power cycle on write errors, after a call recorded in four pieces; facts name what they are about, passing curiosity is not a fact; "a to-do" transcribed as "a to do" or "it to do" still counts as a command; complete forget: `erase_fact`, MCP 0.10.0; opt-in transcript retention; "Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-24 (a to-do asked for out loud in a voice note ("Make a to-do to figure out how ...") is always a to-do, even when the model lists none or rewords it; events are named as said ("Meeting with Meshtastic team", not "Meet the Meshtastic team"), and a fact that only repeats a dated event is left out; a voice note's appointment said as a fragment ("Meeting with the Meshtastic team Tuesday 11 a.m.") becomes an event even when the model lists no item for it; a re-summary keeps fact ids, so a reworded fact is no second belief in the hub; a sentence whisper repeats on the next lines is kept once; T-Watch event log in flash and card power cycle on write errors, after a call recorded in four pieces; facts name what they are about, passing curiosity is not a fact; "a to-do" transcribed as "a to do" or "it to do" still counts as a command; complete forget: `erase_fact`, MCP 0.10.0; opt-in transcript retention; "Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -123,6 +123,20 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
+
+## Done on 2026-10-24: a spoken to-do command always gives a to-do
+
+- Seen on the owner's server: a voice note like "Make a to-do to figure out how renewing a
+  fishing permit works" / "for Bruno." (made-up example) gave no action item, so the hub
+  neither filed it nor suggested it. The prompts call "figure out how ..." a vague wish (no item unless a
+  command word is said), and the model dropped it despite "to-do".
+- Now each voice-note sentence that asks for a to-do ("make/create/add a to-do ...",
+  "add a task ...", "to-do: ...", "remind me to ...") gives a task when no item covers it,
+  with the words the transcriber put on the next line. An item the model reworded for it
+  stays a to-do (not a "plans to" fact) and is explicit, so the hub files it.
+- Open: only voice notes. In an ordinary conversation recording a one-person command can
+  still be discarded by triage, and command words in a conversation don't make an item
+  explicit. Notes already summarized are not redone; re-summarize one to get its to-do.
 
 ## Done on 2026-10-23: a sentence whisper repeats is kept once
 

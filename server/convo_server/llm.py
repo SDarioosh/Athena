@@ -488,6 +488,7 @@ class Summarizer:
                                              facts=_unique(facts)), origin)
         out["kind"] = "note"
         _drop_passing_facts(out)
+        _todos_from_commands(out["action_items"], parts, origin, self.owner)
         self._resolve_due_dates(out, origin)
         # only explicit commands make a note: none without the word "note(s)"
         asked = _NOTE_WORD.search("\n".join(parts)) is not None
@@ -537,7 +538,7 @@ class Summarizer:
     def _intention(self, item: dict[str, Any], spoken: list[tuple[str, str]]) -> str | None:
         """The fact an action item really is (see ``_intentions_to_facts``), or None."""
         if (item["kind"] != "task" or item.get("due_date") or item.get("due_time")
-                or item.get("list_name")):
+                or item.get("list_name") or item.get(_ASKED)):
             return None
         owner = (item.get("owner") or "").strip().lower()
         if owner and owner not in {self.owner.lower(), *_OWNER_WORDS}:
@@ -948,6 +949,45 @@ def _notes_from_commands(items: list[dict[str, Any]], parts: list[str],
             items.append(note)
 
 
+# A to-do the user asked for out loud ("Make a to-do to figure out how ...", "add a task:
+# ...", "remind me to ..."): what follows the command is the to-do. Not "make a to-do
+# list" (a list header, see ``_after_list_header``).
+_ASKED = "_asked"  # set on items a spoken to-do command asked for; dropped by _mark_explicit
+_TODO_COMMAND = re.compile(
+    r"^(?:(?:please|ok(?:ay)?|so|and|also|then)[,\s]+)*(?:"
+    r"(?:make|create|add|set|put|write)\s+(?:(?:a|an|it|me)\s+)?(?:new\s+)?"
+    r"(?:to-?do|to\s+do|task)(?:\s+item)?(?!\s*lists?\b)(?:\s*(?:to|that|for\s+me\s+to|:|,|-))?"
+    r"|(?:to-?do|task)\s*:|remind\s+me\s+to)\s+(?P<what>\S.*)$", re.IGNORECASE)
+
+
+def _todos_from_commands(items: list[dict[str, Any]], parts: list[str], origin: float,
+                         owner: str) -> None:
+    """Make sure each to-do the user asked for out loud is an item. The prompts call a
+    vague wish ("figure out how ...") no action item unless it has a command word, and
+    small models drop it even with one (for "Make a to-do to figure out how renewing a
+    fishing permit works for Bruno" they list no item, so the hub has nothing to file or
+    suggest).
+    A command no item already covers gets a task; the words the transcriber put on the
+    next line ("... works" / "for Bruno.") are part of it. An item that covers one (the
+    model reworded it) is marked as asked for (``_ASKED``): it stays a to-do and is
+    explicit even when its words no longer find the command's sentence."""
+    for said, at in _whole_sentences(parts):
+        m = _TODO_COMMAND.match(_LEAD.sub("", said.strip()))
+        if not m:
+            continue
+        text = re.sub(r"(?<!\.)[.!?]+$", "", m["what"].strip(" ,:-"))
+        text = text[:1].upper() + text[1:]
+        want = _content_words(text)
+        if not want:
+            continue
+        twins = [i for i in items if i["kind"] != NOTE_ITEM and _overlaps(want, i["text"])]
+        for twin in twins:
+            twin[_ASKED] = True
+        if not twins:
+            items.append({**_item_storage(ActionItem(text=text, kind="task", owner=owner),
+                                          origin + at), _ASKED: True})
+
+
 # A voice note's appointment the model left out (``_events_from_lines``): a sentence
 # with an appointment word, a day and a time, not in the past tense.
 _APPOINTMENT = re.compile(
@@ -1255,7 +1295,8 @@ def _mark_explicit(items: list[dict[str, Any]],
         said = ""
         if spoken is not None:
             said = f"{item['text']}\n{_said_in(item['text'], spoken)[1]}"
-        item["explicit"] = (is_explicit(item) or _COMMAND_WORDS.search(said) is not None
+        item["explicit"] = (bool(item.pop(_ASKED, False)) or is_explicit(item)
+                            or _COMMAND_WORDS.search(said) is not None
                             or (spoken is not None and _after_list_header(item["text"], spoken)))
 
 
