@@ -563,10 +563,12 @@ esp_err_t mic_read(int16_t *buf, size_t max_samples, size_t *got, int timeout_ms
 
 esp_err_t mic_stop(void)
 {
-    if (!s_running) {
+    if (!__atomic_load_n(&s_running, __ATOMIC_ACQUIRE)) {
         return ESP_OK;
     }
-    s_running = false;
+    /* s_running stays true until the channels are off: a mic_start() from another task (the
+     * console's `level` while a session stops) gets "mic in use" instead of resetting the
+     * counters and s_nports_live under this stop, which then left I2S1 enabled. */
     if (s_pins.kind == BOARD_MIC_I2S && s_reader_run) {
         s_reader_run = false;
         xSemaphoreTake(s_reader_idle, pdMS_TO_TICKS(1000)); /* its read waits <= 100 ms */
@@ -586,5 +588,6 @@ esp_err_t mic_stop(void)
     if (s_nports_live == 2) {
         i2s_channel_disable(s_rx2);
     }
+    __atomic_store_n(&s_running, false, __ATOMIC_RELEASE);
     return err;
 }
