@@ -120,6 +120,13 @@ def test_resolve_due_regressions(phrase, today, want):
     ("by 5 Nov", (None, False)),
     ("keep error rate at 10-15%", (None, False)),  # a range, not 10:15
     ("at 10-15 people", (None, False)),
+    ("at 10-15", (None, False)),              # no am/pm: a range
+    ("at 5-30 pm", ("17:30", False)),         # am/pm follows: a time
+    ("at 5-30pm", ("17:30", False)),
+    ("at 9-45 a.m.", ("09:45", False)),
+    ("at 5:30pm", ("17:30", False)),          # no space before pm
+    ("at 5.30pm", ("17:30", False)),
+    ("between 10-15 pm", ("22:15", False)),
     ("at five-thirty pm", ("17:30", False)),  # hyphenated words still read
     ("at 5-ish", ("17:00", False)),
 ])
