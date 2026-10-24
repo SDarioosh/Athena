@@ -181,7 +181,9 @@ class PdaSync(
     private suspend fun stay() {
         val until = clock.nowMs() + maxStayMs
         var lastFeedMs = clock.nowMs()
-        var seenOutbox = status?.outboxWaiting ?: 0
+        // The actions the last sync left on the T5. Not the status read before that sync: its
+        // count also held the actions the sync drained, so as many new ones would go unseen.
+        var seenOutbox = waiting
         log.log(Level.INFO, "PDA in use: staying connected")
         while (clock.nowMs() < until) {
             val raw = link.awaitStatus(keepaliveMs)
@@ -198,7 +200,7 @@ class PdaSync(
                 syncOnce(forceFeed = false)
                 lastFeedMs = clock.nowMs()
                 readStatus()
-                seenOutbox = status?.outboxWaiting ?: 0
+                seenOutbox = waiting
             } else if (clock.nowMs() - lastFeedMs >= feedRefreshMs) {
                 pushFeed(force = false)
                 lastFeedMs = clock.nowMs()
