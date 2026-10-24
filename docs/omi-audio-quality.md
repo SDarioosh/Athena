@@ -521,3 +521,9 @@ under an enrolled name by 25–45 %, names right within 1.4 points, WER unchange
 names right (−6 to −19 points) and owner recall (−2 to −13): more "Speaker N" lines to
 name by hand, fewer wrong ones. `Fb` 0.3 adds nothing over the fix alone. Full table
 (all 24 runs) in the PR.
+
+A looser speech gate on top of the fix (`CONVO_VAD_THRESHOLD=0.35`): WER table 36.1 →
+35.2 %, room 28.4 → 27.6 % (the others gain most: e.g. the ES2004a table meeting 43.1 →
+41.6 %, its missed speech 0.0 % on TS3003a); attribution about the same (table named wrong
+1.6 → 1.8 %, unenrolled named 4.7 → 5.5 %; room 2.1 → 2.1 %, 7.7 → 7.4 %). Same direction
+and size as the sandbox (room 28.1 → 27.1 %): worth turning on with the fix.

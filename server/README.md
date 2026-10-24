@@ -71,7 +71,7 @@ until the owner's server run confirms them:
 | `CONVO_SPEAKER_LINE_CHECK=true` | each named line's own voice (3 s window) is compared with every enrolled voice; a line that fits another enrolled person at least as well becomes `Unknown` (never taken for a person; fix with `reassign_line`). Needs two or more voices on file | wrong names on the table mic 5.3 → 1.8 % |
 | both together | | table mic: wrong names 5.3 → 1.6 %, other people's speech under an enrolled name 8.7 → 4.6 %; late joiners: 4.3 → 2.6 % and 15.8 → 11.0 %; names right unchanged |
 | `CONVO_PYANNOTE_VBX_FB=0.2` | pyannote keeps more speakers apart (community-1 default 0.8; `CONVO_PYANNOTE_VBX_FA`, default 0.07, too) | late joiners: newcomers under an enrolled name 15.8 → 7.8 %, but 8–11 speakers for 4 people, names right 95 → 80 %; 0.3 is no useful middle (14.9 %, names right 92 %) |
-| `CONVO_VAD_THRESHOLD=0.35` (an existing setting, default 0.5) | lets more quiet, far speech through to whisper | room WER 28.1 → 27.1 %, the others' 47.5 → 44.6 % |
+| `CONVO_VAD_THRESHOLD=0.35` (an existing setting, default 0.5) | lets more quiet, far speech through to whisper | room WER 28.1 → 27.1 %, the others' 47.5 → 44.6 %; server GPU: table 36.1 → 35.2 %, room 28.4 → 27.6 % |
 
 Measured and **not** worth it: `CONVO_PYANNOTE_CLUSTER_THRESHOLD` (in community-1 it
 only seeds VBx; 0.2–0.9 gave the same speakers), `CONVO_SPEAKER_MATCH_MARGIN` and
