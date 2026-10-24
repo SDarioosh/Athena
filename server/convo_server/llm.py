@@ -490,17 +490,18 @@ class Summarizer:
         _drop_passing_facts(out)
         _todos_from_commands(out["action_items"], parts, origin, self.owner)
         self._resolve_due_dates(out, origin)
+        self._command_dates(out, origin)
         # only explicit commands make a note: none without the word "note(s)"
         asked = _NOTE_WORD.search("\n".join(parts)) is not None
         out["action_items"] = [i for i in out["action_items"]
                                if i["kind"] != NOTE_ITEM or (asked and i["text"])]
         if asked:  # a command the model missed or took for a task
             _notes_from_commands(out["action_items"], parts, origin)
-        _lone_note(out)
         # a meeting said as a fragment ("Meeting with the team Tuesday 11 a.m."): small
         # models often list no item for it, though the summary says it
         _events_from_lines(out, _lines(parts), origin,
                            datetime.fromtimestamp(origin, self.tz).date(), self.owner)
+        _lone_note(out)  # after the events: a note said with an event is no lone note
         for item in out["action_items"]:
             if item["kind"] == NOTE_ITEM:  # a note is filed as it is: no date or time
                 item.update(due=None, due_date=None, due_time=None, time_unclear=False,
@@ -510,6 +511,7 @@ class Summarizer:
         self._intentions_to_facts(out, spoken)
         _name_meetings(out["action_items"], spoken)
         _drop_event_facts(out)
+        out["action_items"] = _split_list_lines(out["action_items"])
         _mark_explicit(out["action_items"], spoken)
         return out
 
@@ -582,6 +584,40 @@ class Summarizer:
                 at = datetime.strptime(hhmm, "%H:%M").time()
                 item["due_date"] = (today if at >= start.time().replace(second=0, microsecond=0)
                                     else today + timedelta(days=1)).isoformat()
+
+    def _command_dates(self, out: dict[str, Any], origin: float) -> None:
+        """The day and time of a to-do said out loud are the ones in its command: small
+        models drop them ("make a to-do to get eggs tomorrow" -> "Get eggs", no date;
+        "remind me at 5 to call mom" -> no time) and invent a midnight for "remind me to
+        call mom" (a to-do due at 00:00 in the hub). Only items a command asked for."""
+        start = datetime.fromtimestamp(origin, self.tz)
+        for item in out["action_items"]:
+            said, remind = item.pop(_SAID, (None, False))
+            if said is None or item["kind"] == NOTE_ITEM:
+                continue
+            day = resolve_due(said, start.date())
+            hhmm, unclear = resolve_time(said)
+            if day is None and hhmm is None:
+                if item.get("due_time") == "00:00" and not re.search(
+                        r"\bmidnight\b|\b12\s*a\.?m\b|\b0?0:00\b", said, re.IGNORECASE):
+                    log.info("dropped a midnight nobody said: %r", said)
+                    item.update(due_time=None, time_unclear=False)
+                    if not resolve_due(f"{item.get('due') or ''} {item['text']}", start.date()):
+                        item["due_date"] = None
+                    if item["kind"] == "reminder":
+                        item["kind"] = "task"
+                continue
+            if item.get("due_date") or item.get("due_time"):
+                continue  # the model kept a date: its own
+            if hhmm and day is None:
+                at = datetime.strptime(hhmm, "%H:%M").time()
+                day = start.date() if at >= start.time().replace(second=0, microsecond=0) \
+                    else start.date() + timedelta(days=1)
+            log.info("dated a spoken to-do the model left undated: %r", said)
+            item.update(due_date=day.isoformat() if day else None, due_time=hhmm,
+                        time_unclear=unclear)
+            if hhmm and item["kind"] == "task" and remind:
+                item["kind"] = "reminder"
 
     def link_facts(self, date: str, new: list[dict[str, Any]],
                    known: list[dict[str, Any]]) -> list[FactLink]:
@@ -789,16 +825,50 @@ def _list_and_text(text: str, said: str | None) -> tuple[str, str | None]:
 # A voice note that asks for a note says the word: "create a note", "note that", "add to
 # my hardware notes". Transcribers write "notes" and "note" alike.
 _NOTE_WORD = re.compile(r"\bnotes?\b", re.IGNORECASE)
-# command words a model may leave in the note's text
+# command words a model may leave in the note's text: "make a note", "new note:", "note:",
+# "note to self,"
 _NOTE_COMMAND = re.compile(
     r"^(?:(?:please|ok(?:ay)?|so)[,\s]+)?(?:(?:create|make|take|add|save|write(?:\s+down)?|"
-    r"start)\s+(?:a\s+|new\s+|a\s+new\s+)?note|note\s+(?:down\s+)?)"
+    r"start|new)\s+(?:a\s+|new\s+|a\s+new\s+)?note(?:\s+to\s+(?:self|myself))?"
+    r"|note(?:\s+to\s+(?:self|myself))?(?:\s+down)?(?=[\s:,-])"
+    r"|(?:add|put|write(?:\s+down)?)\s+(?:(?:this|it)\s+)?(?:to|in|into)\s+(?:my|the)\s+notes?)"
     r"(?:\s*(?:that|saying|about|of|:|,|-))?\s+", re.IGNORECASE)
-# "... to my hardware notes", "in the car notes": notes the user named
+# "... to my hardware notes", "in the car notes", "to my car note": notes the user named
+# (one "note" only after my / the / our: "add a note to buy eggs" names none)
 _NOTES_PHRASE = re.compile(
-    r"\s*\b(?:to|in|into|on|onto)\s+(?:(?:my|the|our)\s+)?"
-    rf"(?P<name>{_NAME_WORD}(?:\s+{_NAME_WORD}){{0,2}}?)\s+notes\b[\s:,.-]*",
+    r"\s*\b(?:to|in|into|on|onto)\s+(?:(?P<det>my|the|our)\s+)?"
+    rf"(?P<name>{_NAME_WORD}(?:\s+{_NAME_WORD}){{0,2}}?)\s+(?:notes|(?(det)note|(?!)))\b"
+    r"[\s:,.-]*", re.IGNORECASE)
+# "make a note in voice recorder that ...", "make a note under car, ...", "make a note for
+# the voice recorder: ...": the notes named without the word "notes", read only right
+# after a note command (``_note_place``)
+_NOTE_PLACE = re.compile(
+    r"^(?P<prep>in|into|on|onto|under|for|to)\s+(?:(?P<det>my|the|our)\s+)?"
+    r"(?P<name>[\w'&-]+(?:\s+[\w'&-]+){0,3}?)\s*(?:[,:;]|\s[-–—]|\s+that\b|\s+saying\b)\s*"
+    r"(?P<rest>\S.*)$", re.IGNORECASE)
+# what such a phrase names when it is no notes: a time, a person, "case" ("in case ...")
+_NOT_A_PLACE = re.compile(
+    r"^(?:self|myself|me|you|us|him|her|them|later|now|today|tonight|tomorrow|case|general"
+    r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening"
+    r"|(?:this|next|last)\s+\w+|(?:a|an|the)?\s*(?:minute|second|moment|hour|bit|while))\b"
+    r"|\b(?:how|what|why|when|where|if|whether|which|who|a|an|that|this|is|are|was)\b",
     re.IGNORECASE)
+
+
+def _note_place(text: str) -> tuple[str, str] | None:
+    """(notes name, the note) for "in voice recorder that the case needs ..." said right
+    after a note command; None when the words name no notes ("in case I forget, ...",
+    "for later: ...", "to call Mom, ..."). "for" and "to" need my / the / our."""
+    m = _NOTE_PLACE.match(text.strip())
+    if m is None or (m["prep"].lower() in ("for", "to") and not m["det"]):
+        return None
+    name = m["name"].strip()
+    if _NOT_A_PLACE.search(name) or (m["prep"].lower() == "in" and not m["det"]
+                                      and name.lower().startswith("case")):
+        return None
+    clean = clean_notes_name(name)
+    rest = m["rest"].strip()
+    return (clean, rest[:1].upper() + rest[1:]) if clean and rest else None
 
 
 def _note_storage(a: ActionItem, text: str, source_at: float | None) -> dict[str, Any]:
@@ -813,7 +883,15 @@ def _note_storage(a: ActionItem, text: str, source_at: float | None) -> dict[str
                       flags=re.IGNORECASE)
         text = re.sub(r"^(?:add|put|write(?:\s+down)?)\s*[:,-]?\s*", "", rest,
                       flags=re.IGNORECASE) or text
+    commanded = _NOTE_COMMAND.match(text.strip() + " ") is not None
     text = _NOTE_COMMAND.sub("", text.strip()).strip(" :,-") or text.strip()
+    if commanded:  # "make a note to bring the slides" -> "Bring the slides"
+        text = re.sub(r"^to\s+(?=[a-z])(?!self\b|myself\b|(?:my|the|our)\b)", "", text,
+                      flags=re.IGNORECASE)
+    # "make a note in voice recorder that ...": notes named without the word "notes"
+    if commanded and (place := _note_place(text)) and (
+            name is None or name.lower() == place[0].lower()):
+        name, text = place
     text = re.sub(r"(?<!\.)\.$", "", text[:1].upper() + text[1:])  # a sentence's period
     title = re.sub(r"\s+", " ", (a.title or "").strip().strip(".\"'"))[:80] or None
     return {"text": text, "title": short_title(title, text), "kind": NOTE_ITEM,
@@ -825,8 +903,28 @@ def _note_storage(a: ActionItem, text: str, source_at: float | None) -> dict[str
 # "[12] Me: text": a line of format_transcript
 _LINE = re.compile(r"^\[(?P<at>\d+)\] [^:]*: (?P<text>.*)$")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
-_LEAD = re.compile(r"^(?:and|also|then|oh|so)[,\s]+", re.IGNORECASE)
+# What is said before a command and isn't part of it: fillers ("um", "okay so") and
+# requests ("can you", "I want to", "let's"). Whisper writes them, and a command after
+# them is still a command ("Um, make a to-do to get eggs").
+_FILLER = (r"um+|uh+|uhm|erm|er|hmm+|mm+|ah|oh|okay|ok|alright|all\s+right|right|so|and"
+           r"|also|then|hey|please|well|yeah|yes|now|just|actually|oh|anyway")
+_LEAD = re.compile(
+    rf"^(?:(?:{_FILLER})\b[\s,.!-]*"
+    r"|(?:can|could|would|will)\s+you\s+(?:please\s+)?|can\s+we\s+|let's\s+|let\s+us\s+"
+    r"|(?:i|we)\s+(?:want|need|have|got)\s+to\s+|i(?:'d|\s+would)\s+like\s+to\s+"
+    r"|i\s+wanna\s+|go\s+ahead\s+and\s+|i'm\s+going\s+to\s+|i'll\s+)+", re.IGNORECASE)
 _ADD_TO_NOTES = re.compile(r"^(?:add|put|write(?:\s+down)?)\b", re.IGNORECASE)
+# "to... uh... fix the tap": an ellipsis the transcriber put into a sentence, and fillers
+# inside a command, are no part of it
+_ELLIPSIS = re.compile(r"\s*(?:\.{2,}|…)\s*(?=[a-z])")
+_INNER_FILLER = re.compile(r"(?<=\s)(?:um+|uh+|uhm|erm|er|hmm+)\b[\s,.]*", re.IGNORECASE)
+# what may join two commands in one sentence ("make a to-do to get eggs and make a note
+# that ..."): a comma or semicolon, "and", "then", "also", "plus"
+_CLAUSE_JOIN = re.compile(r"\s*[,;]\s*(?:(?:and|then|also|plus)\s+)*"
+                          r"|\s+(?:and|then|also|plus)\s+(?:(?:then|also)\s+)?", re.IGNORECASE)
+_POINTS_BACK = re.compile(r"^(?:add|put|write)\s+(?:it|this|that)\b", re.IGNORECASE)
+# thanks at the end of a command: "make a to-do to get eggs, thanks"
+_THANKS = re.compile(r"[\s,]*\b(?:thanks|thank\s+you|please|cheers)\s*[.!]*$", re.IGNORECASE)
 
 
 # a sentence the transcriber left open is read on into the next lines up to this length
@@ -845,7 +943,8 @@ def _whole_sentences(parts: list[str]) -> list[tuple[str, int]]:
             if not m:
                 continue
             at = int(m["at"])
-            pieces = [p.strip() for p in _SENTENCE_END.split(m["text"]) if p.strip()]
+            said = _INNER_FILLER.sub("", _ELLIPSIS.sub(" ", m["text"]))
+            pieces = [p.strip() for p in _SENTENCE_END.split(said) if p.strip()]
             for i, piece in enumerate(pieces):
                 if open_ is not None and i == 0:
                     piece, start = f"{open_[0]} {piece}", open_[1]
@@ -862,10 +961,42 @@ def _whole_sentences(parts: list[str]) -> list[tuple[str, int]]:
     return out
 
 
+def _starts_command(text: str) -> bool:
+    """Does ``text`` start with a to-do, list or note command?"""
+    t = _LEAD.sub("", text.strip())
+    return bool(_TODO_COMMAND.match(t) or _list_command(t) is not None
+                or _NOTE_COMMAND.match(t + " ")
+                or (_ADD_TO_NOTES.match(t) and _NOTES_PHRASE.search(t)))
+
+
+def _command_units(parts: list[str]) -> list[tuple[str, int]]:
+    """The sentences, with one sentence that holds several commands split at each ("Make
+    a to-do to get eggs and make a note that the car is broken" is a to-do and a note,
+    not one to-do that says both); the lead words of each are taken off."""
+    return [(c, at) for sentence, at in _whole_sentences(parts)
+            for c in (_LEAD.sub("", x) for x in _split_commands(sentence)) if c]
+
+
+def _split_commands(sentence: str) -> list[str]:
+    """``sentence`` cut before each command that follows a comma, "and", "then" ...;
+    one piece when it holds no second command."""
+    out, start = [], 0
+    for m in _CLAUSE_JOIN.finditer(sentence):
+        head = sentence[start:m.start()].strip(" ,;")
+        tail = sentence[m.end():]
+        # "..., add it to the car notes" points back: one command
+        if m.end() < len(sentence) and head and _starts_command(tail) \
+                and not _POINTS_BACK.match(_LEAD.sub("", tail)):
+            out.append(head)
+            start = m.end()
+    out.append(sentence[start:].strip())
+    return [x for x in out if x]
+
+
 def _command_sentences(parts: list[str]) -> list[tuple[str, int]]:
     """Sentences that ask for a note ("create a note ...", "note that ...", "add to my
     hardware notes ..."), with the offset of the line they start on."""
-    sentences = [(_LEAD.sub("", said), at) for said, at in _whole_sentences(parts)]
+    sentences = _command_units(parts)
     out = []
     i = 0
     while i < len(sentences):
@@ -879,7 +1010,7 @@ def _command_sentences(parts: list[str]) -> list[tuple[str, int]]:
             i += 1
         if _NOTE_COMMAND.match(said + " ") or (
                 _ADD_TO_NOTES.match(said) and _NOTES_PHRASE.search(said)):
-            out.append((said, at))
+            out.append((_THANKS.sub("", said), at))
     return out
 
 
@@ -912,7 +1043,8 @@ def _command_only(said: str) -> bool:
 
 
 def _words(text: str) -> set[str]:
-    return set(re.findall(r"[^\W\d_]+|\d+", text.lower()))  # "13mm" = "13 mm"
+    """The words that say what a note is about ("13mm" = "13 mm"); not "the", "is"."""
+    return set(re.findall(r"[^\W\d_]+|\d+", text.lower())) - _STOP
 
 
 def _covers(item: dict[str, Any], want: set[str]) -> bool:
@@ -921,20 +1053,33 @@ def _covers(item: dict[str, Any], want: set[str]) -> bool:
     return bool(got) and len(want & got) >= 0.6 * min(len(want), len(got))
 
 
+# a to-do command the model left in a note's text
+_OTHER_COMMAND = re.compile(r"\b(?:to-?do|task|remind\s+me|reminder)\b", re.IGNORECASE)
+
+
 def _notes_from_commands(items: list[dict[str, Any]], parts: list[str],
                          origin: float) -> None:
     """Make sure each spoken note command gives a note: an item the model already wrote
     for it becomes the note (small models take "add to my hardware notes ..." for a
-    task); a command without an item gets one, untitled (the hub titles it)."""
+    task); a command without an item gets one, untitled (the hub titles it). A model's
+    note that left out the notes the user named ("in voice recorder") goes there.
+    A to-do the user asked for out loud is never taken for a note."""
     for said, at in _command_sentences(parts):
         note = _note_storage(ActionItem(text=said, kind=NOTE_ITEM), said, origin + at)
         want = _words(note["text"])
         if not want:
             continue
-        if any(i["kind"] == NOTE_ITEM and _covers(i, want) for i in items):
+        cover = next((i for i in items if i["kind"] == NOTE_ITEM and _covers(i, want)), None)
+        if cover is not None:
+            if note["list_name"] and not cover.get("list_name"):
+                cover.update(list_name=note["list_name"], text=note["text"])
+            elif _OTHER_COMMAND.search(cover["text"]) and not _OTHER_COMMAND.search(said):
+                # the model wrote the note and the to-do said with it as one note
+                cover.update(text=note["text"], title=note["title"], note_title=None)
             continue
         twin = next((i for i in items if i["kind"] != NOTE_ITEM and not i.get("due_date")
-                     and not i.get("due_time") and _covers(i, want)), None)
+                     and not i.get("due_time") and not i.get(_ASKED)
+                     and _covers(i, want)), None)
         if twin is not None:
             if len(_words(twin["text"])) > len(want):  # the model wrote down more of it
                 text = _NOTE_COMMAND.sub("", twin["text"].strip()).strip(" :,-")
@@ -950,14 +1095,130 @@ def _notes_from_commands(items: list[dict[str, Any]], parts: list[str],
 
 
 # A to-do the user asked for out loud ("Make a to-do to figure out how ...", "add a task:
-# ...", "remind me to ..."): what follows the command is the to-do. Not "make a to-do
-# list" (a list header, see ``_after_list_header``).
+# ...", "new to-do: ...", "remind me (on Friday) to ..."): what follows the command is the
+# to-do. Not "make a to-do list" (a list header, see ``_after_list_header``).
 _ASKED = "_asked"  # set on items a spoken to-do command asked for; dropped by _mark_explicit
+_SAID = "_said"  # the command an item was asked for with; dropped by _command_dates
+# a day said between the command and the to-do: "make a to-do for tomorrow to ...",
+# "remind me on Friday to ...", "remind me at 5 to ..."
+_CMD_WHEN = (r"(?:(?:on|by|for|this|next|at|around|in\s+the)\s+)*(?:today|tonight|tomorrow"
+             r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon"
+             r"|evening|weekend|week|\d{1,2}(?::\d{2})?(?:\s*[ap]\.?m\.?)?|noon)"
+             r"(?:\s+(?:morning|afternoon|evening|night))?"
+             r"(?:\s+(?:at|around)\s+\d{1,2}(?::\d{2})?(?:\s*[ap]\.?m\.?)?)?")
 _TODO_COMMAND = re.compile(
     r"^(?:(?:please|ok(?:ay)?|so|and|also|then)[,\s]+)*(?:"
-    r"(?:make|create|add|set|put|write)\s+(?:(?:a|an|it|me)\s+)?(?:new\s+)?"
-    r"(?:to-?do|to\s+do|task)(?:\s+item)?(?!\s*lists?\b)(?:\s*(?:to|that|for\s+me\s+to|:|,|-))?"
-    r"|(?:to-?do|task)\s*:|remind\s+me\s+to)\s+(?P<what>\S.*)$", re.IGNORECASE)
+    r"(?:make|create|add|set|put|write|new)\s+(?:(?:a|an|it|me)\s+)?(?:new\s+)?"
+    r"(?:to-?do|to\s+do(?!\s+(?:the|my|a|an|some|it|this|that|with|about)\b)|task)"
+    r"(?:\s+item)?(?!\s*lists?\b)"
+    rf"(?:\s+for\s+(?P<when>{_CMD_WHEN})(?=\s*(?:,|:|-|\bto\b)))?"
+    r"(?:\s*(?:to|that|for\s+me\s+to|called|named|saying|:|,|-))?"
+    r"|(?:to-?do|to\s+do|task)\s*[:,-]"
+    rf"|remind\s+me\s+(?:(?P<rwhen>{_CMD_WHEN})\s+)?(?:to|about))\s+(?P<what>\S.*)$",
+    re.IGNORECASE)
+# "add eggs to my shopping list", "put call the bank on my work to-do list", "add to the
+# shopping list: oat milk", "add pick up the parcel to my to-do list"
+_LIST_ITEM_FIRST = re.compile(
+    r"^(?:add|put|write(?:\s+down)?)\s+(?P<what>\S.*?)\s+(?:to|on|onto|in|into)\s+"
+    rf"(?:(?:my|the|our)\s+)?(?P<name>{_NAME_WORD}(?:\s+{_NAME_WORD}){{0,2}}?)\s+list\b"
+    r"(?P<after>.*)$", re.IGNORECASE)
+_LIST_FIRST = re.compile(
+    r"^(?:add|put|write(?:\s+down)?)\s+(?:(?:this|it)\s+)?(?:to|on|onto|in|into)\s+"
+    rf"(?:(?:my|the|our)\s+)?(?P<name>{_NAME_WORD}(?:\s+{_NAME_WORD}){{0,2}}?)\s+list\b"
+    r"\s*[:,-]?\s*(?P<what>\S.*)$", re.IGNORECASE)
+
+
+def _list_command(said: str) -> tuple[str, str | None, str | None] | None:
+    """(what, list, when) for a spoken "add ... to my <name> list [for Friday]" (list
+    None for the plain to-do list), else None. ``when``: the words after the list, if
+    they name a day (the hub shows the date next to the line)."""
+    s = said.strip().rstrip(".!?")
+    m = _LIST_ITEM_FIRST.match(s)
+    what = when = None
+    if m and not re.match(r"^(?:this|it|that)$", m["what"], re.IGNORECASE):
+        what, after = m["what"], m["after"].strip(" ,")
+        if after and _WHEN_WORDS.sub(" ", _meridiem(after)).strip(" ,.;:-"):
+            what = f"{what} {after}"  # more than a day: part of the item
+        else:
+            when = after or None
+    elif m := _LIST_FIRST.match(s):
+        what = m["what"]
+    if not m or not what:
+        return None
+    what = re.sub(r"^(?:a|an|some)\s+", "", what, flags=re.IGNORECASE)
+    return what, clean_list_name(f"{m['name']} list"), when
+
+
+# "Make a to-do list (for the weekend).", "Shopping list: eggs, milk, bread.", "Make a
+# shopping list.": the next short sentences (or what follows the colon) are its lines
+_HEADER_VERB = re.compile(
+    r"^(?:make|create|start|begin|new|write)\s+(?:(?:a|my|the|our)\s+)?(?:new\s+)?"
+    rf"(?:(?P<name>{_NAME_WORD}(?:\s+{_NAME_WORD}){{0,2}}?)\s+)?list\b(?P<tail>.*)$",
+    re.IGNORECASE)
+_HEADER_BARE = re.compile(
+    rf"^(?P<name>{_NAME_WORD}(?:\s+{_NAME_WORD}){{0,2}}?)\s+list\s*:\s*(?P<tail>\S.*)$",
+    re.IGNORECASE)
+_HEADER_WHEN = re.compile(r"^\s*for\s+(?P<when>[^:,]+?)\s*(?=[:,]|$)", re.IGNORECASE)
+_LIST_END = re.compile(r"^(?:okay|ok|alright|so|that's\s+(?:it|all)|that\s+is\s+(?:it|all)"
+                       r"|thanks|thank\s+you|done|end(?:\s+of\s+(?:the\s+)?list)?)\b[\s,.!]*"
+                       r"(?:that's\s+(?:it|all)[\s.!]*)?$", re.IGNORECASE)
+
+
+def _list_header(said: str) -> tuple[str | None, str | None, str] | None:
+    """(list, day, things said after it) when ``said`` starts a list; list None for the
+    plain to-do list."""
+    s = said.strip().rstrip(".!?")
+    m = _HEADER_VERB.match(s) or _HEADER_BARE.match(s)
+    if m is None:
+        return None
+    tail, when = m["tail"] or "", None
+    if w := _HEADER_WHEN.match(tail):
+        when, tail = w["when"], tail[w.end():]
+    if m.re is _HEADER_VERB and tail.strip() and not re.match(r"^\s*[:,-]", tail):
+        return None  # "make a list of what to pack" is no list header
+    tail = tail.strip(" :,-")
+    name = clean_list_name(f"{m['name']} list") if m["name"] else None
+    return name, when, tail
+
+
+def _list_things(text: str) -> list[str]:
+    """"eggs, milk and bread" -> the things; "" -> none."""
+    text = text.strip(" .")
+    if not text:
+        return []
+    return [p.strip() for p in _LIST_SEP.split(text) if p.strip()]
+
+
+def _add_asked(items: list[dict[str, Any]], text: str, list_name: str | None,
+               when: str | None, source_at: float, owner: str) -> None:
+    """A line said for a list: a task on it, unless an item already says it (that one
+    gets the list)."""
+    want = _content_words(text)
+    if not want:
+        return
+    twins = [i for i in items if i["kind"] != NOTE_ITEM and _overlaps(want, i["text"])]
+    for twin in twins:
+        twin[_ASKED] = True
+        if list_name and not twin.get("list_name"):
+            twin["list_name"] = list_name
+    if not twins:
+        items.append({**_item_storage(ActionItem(
+            text=text, kind="task", owner=owner, list_name=list_name, due=when,
+            title=_todo_title(text)), source_at), _ASKED: True})
+
+
+def _todo_text(what: str, when: str | None = None) -> str:
+    text = _THANKS.sub("", re.sub(r"(?<!\.)[.!?]+$", "", what.strip(" ,:-")))
+    if when:
+        text = f"{text} {when.strip()}"
+    return text[:1].upper() + text[1:]
+
+
+def _todo_title(text: str) -> str:
+    """A spoken to-do's title without the day or time ("Get eggs tomorrow" -> "Get
+    eggs"); the hub shows the due date next to it."""
+    bare = re.sub(r"\s+", " ", _WHEN_WORDS.sub(" ", _meridiem(text))).strip(" ,.;:-")
+    return short_title(None, bare if len(bare.split()) >= 2 else text)
 
 
 def _todos_from_commands(items: list[dict[str, Any]], parts: list[str], origin: float,
@@ -970,22 +1231,50 @@ def _todos_from_commands(items: list[dict[str, Any]], parts: list[str], origin: 
     A command no item already covers gets a task; the words the transcriber put on the
     next line ("... works" / "for Bruno.") are part of it. An item that covers one (the
     model reworded it) is marked as asked for (``_ASKED``): it stays a to-do and is
-    explicit even when its words no longer find the command's sentence."""
-    for said, at in _whole_sentences(parts):
-        m = _TODO_COMMAND.match(_LEAD.sub("", said.strip()))
-        if not m:
+    explicit even when its words no longer find the command's sentence. "Add ... to my
+    shopping list" works the same, and gives the list to an item the model left without.
+    "Remind me" with a time is a reminder."""
+    header: tuple[str | None, str | None] | None = None  # (list, day) of a list said
+    for said, at in _command_units(parts):
+        m = _TODO_COMMAND.match(said.strip())
+        list_name = due = None
+        if (got_header := _list_header(said)) is not None:
+            header = got_header[:2]
+            for thing in _list_things(got_header[2]):  # "Shopping list: eggs, milk"
+                _add_asked(items, _todo_text(thing), header[0], header[1], origin + at, owner)
             continue
-        text = re.sub(r"(?<!\.)[.!?]+$", "", m["what"].strip(" ,:-"))
-        text = text[:1].upper() + text[1:]
+        if not m and header is not None:
+            if _LIST_END.match(said) or _starts_command(said) or len(said.split()) > 8:
+                header = None
+            else:  # "Make a to-do list. Get eggs. Fix the car.": each one a line
+                _add_asked(items, _todo_text(said), header[0], header[1], origin + at, owner)
+                continue
+        if m:
+            what = m["what"]
+            if re.match(r"remind\s+me\b.*?\babout\s", said, re.IGNORECASE):
+                what = re.sub(r"^the\s+", "", what, flags=re.IGNORECASE)  # "about the dentist"
+            text = _todo_text(what, m["when"] or m["rwhen"])
+        elif (got := _list_command(said)) is not None:
+            text, list_name, due = _todo_text(got[0]), got[1], got[2]
+        else:
+            continue
         want = _content_words(text)
         if not want:
             continue
         twins = [i for i in items if i["kind"] != NOTE_ITEM and _overlaps(want, i["text"])]
         for twin in twins:
             twin[_ASKED] = True
+            twin[_SAID] = (f"{text} {due or ''}".strip(),
+                           bool(m and re.match(r"remind\b", said.strip(), re.IGNORECASE)))
+            if list_name and not twin.get("list_name"):
+                twin["list_name"] = list_name
         if not twins:
-            items.append({**_item_storage(ActionItem(text=text, kind="task", owner=owner),
-                                          origin + at), _ASKED: True})
+            reminder = bool(m and re.match(r"remind\b", said.strip(), re.IGNORECASE)
+                            and resolve_time(text)[0])
+            item = ActionItem(text=text, kind="reminder" if reminder else "task",
+                              owner=owner, list_name=list_name, title=_todo_title(text),
+                              due=due)
+            items.append({**_item_storage(item, origin + at), _ASKED: True})
 
 
 # A voice note's appointment the model left out (``_events_from_lines``): a sentence
@@ -1027,7 +1316,11 @@ def _events_from_lines(out: dict[str, Any], lines: dict[int, str], origin: float
     """
     items = out["action_items"]
     for at, line in sorted(lines.items()):
-        for sentence in _SENTENCE_END.split(_meridiem(line)):
+        # a to-do or note command said with it ("Meeting with Jason on Wednesday at 12 pm,
+        # make a note to bring the slides") is its own item, never the event's name
+        for sentence in (c for x in _SENTENCE_END.split(_meridiem(line))
+                         for c in _split_commands(x.strip())
+                         if not _starts_command(c)):
             sentence = sentence.strip()
             if not _APPOINTMENT.search(sentence) or _PAST.search(sentence):
                 continue
@@ -1045,7 +1338,8 @@ def _events_from_lines(out: dict[str, Any], lines: dict[int, str], origin: float
             if any(i.get("due_date") == day.isoformat() and i.get("source_at") == source_at
                    for i in items):
                 continue
-            twin = next((i for i in items if _overlaps(want, i["text"])), None)
+            twin = next((i for i in items if i["kind"] != NOTE_ITEM
+                         and _overlaps(want, i["text"])), None)
             if twin is not None:  # the model wrote it as an undated to-do: date it
                 if (twin["kind"] in ("task", "reminder") and not twin.get("due_date")
                         and not twin.get("due_time") and not twin.get("list_name")):
@@ -1298,6 +1592,28 @@ def _mark_explicit(items: list[dict[str, Any]],
         item["explicit"] = (bool(item.pop(_ASKED, False)) or is_explicit(item)
                             or _COMMAND_WORDS.search(said) is not None
                             or (spoken is not None and _after_list_header(item["text"], spoken)))
+
+
+# "eggs, milk and bread": things said as a list, each a line of its own
+_LIST_SEP = re.compile(r"\s*,\s*(?:and\s+)?|\s+and\s+", re.IGNORECASE)
+
+
+def _split_list_lines(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """An item for a named list that says several things ("Eggs, milk and bread" for the
+    shopping list) is one item per thing, so each is a line to tick. Only a comma list of
+    short things ("salt and pepper" alone stays one line)."""
+    out = []
+    for item in items:
+        text = item["text"].strip().rstrip(".")
+        pieces = [p.strip() for p in _LIST_SEP.split(text) if p.strip()]
+        if (item["kind"] != "task" or not item.get("list_name") or "," not in text
+                or len(pieces) < 2 or any(len(p.split()) > 3 for p in pieces)):
+            out.append(item)
+            continue
+        for piece in pieces:
+            piece = piece[:1].upper() + piece[1:]
+            out.append({**item, "text": piece, "title": short_title(None, piece)})
+    return out
 
 
 def _dedupe(items: list[str]) -> list[str]:
