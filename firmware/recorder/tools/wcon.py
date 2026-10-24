@@ -43,9 +43,27 @@ def strip_echo(text: str, cmd: str) -> str:
     return "\n".join(out)
 
 
-def has_prompt(buf: bytes) -> bool:
-    """True if the console printed its prompt at the end of `buf` (ignoring spaces)."""
-    return buf.rstrip().endswith(PROMPT)
+def has_prompt(buf: bytes, cmd: str | None = None) -> bool:
+    """True if the console printed its prompt at the end of `buf` (ignoring spaces).
+
+    With `cmd`, also True if the prompt came back earlier and log lines followed it (ESP-IDF
+    logs are asynchronous): any prompt on a finished line other than the echo of `cmd`."""
+    if buf.rstrip().endswith(PROMPT):
+        return True
+    if not cmd:
+        return False
+    lines = buf.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n")
+    for line in lines[:-1]:  # the last one isn't finished yet (it may be the echo)
+        at = line.find(PROMPT)
+        if at >= 0 and line[at + len(PROMPT):].strip() != cmd.encode():
+            return True
+    return False
+
+
+def _is_device_path(port: str) -> bool:
+    """A port that is a file, so its absence means it went away: POSIX `/dev/...`, not
+    Windows `COM35` (never a path, so os.path.exists() is always False for it)."""
+    return os.name == "posix" and port.startswith("/dev/")
 
 
 def open_port(port: str, wait: float = 15.0):
@@ -69,7 +87,8 @@ def open_port(port: str, wait: float = 15.0):
             time.sleep(0.3)
 
 
-def read_until_prompt(s, timeout: float, min_time: float = 0.0, echo=None) -> bytes:
+def read_until_prompt(s, timeout: float, min_time: float = 0.0, echo=None,
+                      cmd: str | None = None) -> bytes:
     buf = b""
     start = time.monotonic()
     last = start
@@ -84,7 +103,7 @@ def read_until_prompt(s, timeout: float, min_time: float = 0.0, echo=None) -> by
             last = now
             if echo:
                 echo(chunk)
-        if has_prompt(buf) and now - start >= min_time:
+        if has_prompt(buf, cmd) and now - start >= min_time:
             break
         if now - last > timeout:
             break
@@ -140,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
             except OSError:
                 chunk, gone = b"", True
             else:
-                gone = not chunk and not os.path.exists(a.port)
+                gone = not chunk and _is_device_path(a.port) and not os.path.exists(a.port)
             if chunk:
                 write_out(chunk)
             if gone:
@@ -164,10 +183,10 @@ def main(argv: list[str] | None = None) -> int:
         p.error("give a command, --boot or --listen")
     s.reset_input_buffer()
     s.write(cmd.encode() + b"\r\n")
-    buf = read_until_prompt(s, timeout=a.timeout, min_time=a.min)
+    buf = read_until_prompt(s, timeout=a.timeout, min_time=a.min, cmd=cmd)
     s.close()
     print(strip_echo(buf.decode("utf-8", "replace"), cmd))
-    return 0 if has_prompt(buf) else 1
+    return 0 if has_prompt(buf, cmd) else 1
 
 
 if __name__ == "__main__":
