@@ -109,6 +109,41 @@ static void test_invalid(void)
     CHECK_EQ(json_parse(deep, 40, toks, 256), JSON_E_DEPTH);
 }
 
+/* QC P5: broken UTF-8 in the input comes out as U+FFFD, never as part of a sequence, and
+ * json_str_len agrees with what json_str writes */
+static void test_bad_utf8(void)
+{
+    static const struct {
+        const char *in, *out;
+    } cases[] = {
+        {"[\"ab\xe2\x82\"]", "ab\xef\xbf\xbd"},          /* truncated at the end */
+        {"[\"\xe2\x82x\"]", "\xef\xbf\xbdx"},            /* truncated before ASCII */
+        {"[\"\xc3" "A\"]", "\xef\xbf\xbd" "A"},              /* lead byte, then ASCII */
+        {"[\"\xc3\\n\"]", "\xef\xbf\xbd\n"},            /* lead byte, then an escape */
+        {"[\"\x80x\"]", "\xef\xbf\xbdx"},                 /* lone continuation byte */
+        {"[\"\xffx\"]", "\xef\xbf\xbdx"},                 /* never a lead byte */
+        {"[\"\xf0\x9f\x98\x80\xc3\xa9\"]", "\xf0\x9f\x98\x80\xc3\xa9"}, /* valid */
+    };
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        json_doc_t d;
+        CHECK(parse(cases[c].in, &d) > 0);
+        const int i = json_first(&d, 0);
+        char out[32];
+        const int n = json_str(&d, i, out, sizeof(out));
+        if (n < 0 || strcmp(out, cases[c].out) != 0 || json_str_len(&d, i) != n ||
+            n != (int)strlen(cases[c].out)) {
+            fprintf(stderr, "bad utf8 case %zu: got %d bytes\n", c, n);
+            checks_failed++;
+        }
+    }
+    /* a cut still keeps whole characters: "ab" + U+FFFD doesn't fit in 4 + NUL */
+    json_doc_t d;
+    CHECK(parse("[\"ab\xe2\x82\"]", &d) > 0);
+    char out[8];
+    CHECK_EQ(json_str(&d, json_first(&d, 0), out, 5), 2);
+    CHECK(strcmp(out, "ab") == 0);
+}
+
 static void test_quote(void)
 {
     char out[64];
@@ -138,6 +173,7 @@ int main(void)
     test_valid();
     test_strings();
     test_invalid();
+    test_bad_utf8();
     test_quote();
     return checks_done("test_json");
 }
