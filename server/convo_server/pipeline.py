@@ -530,7 +530,9 @@ class Pipeline:
                 except Exception:
                     log.exception("embedding failed for %s", row["conversation_id"])
         for d in self.store.pending_digests():
-            if self.store.rewrite_pending(d["conversation_ids"]):
+            # every conversation of the day, also those the old digest didn't have
+            day = d["conversation_ids"] + [c["id"] for c in self.digest_conversations(d["date"])]
+            if self.store.rewrite_pending(day):
                 continue
             try:
                 self.make_digest(d["date"])
