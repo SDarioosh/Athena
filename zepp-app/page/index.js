@@ -282,6 +282,7 @@ Page(
       // after about 10 s, which drops the upload halfway with no message.
       applyDisplay('screen-on')
       this.render()
+      let serverStop = null // shown in the final message, which replaces the progress line
       const next = (i) => {
         if (i >= todo.length) {
           this.request({ method: 'end', params: { session_id: st.sessionId } }, { timeout: 30000 })
@@ -293,6 +294,7 @@ Page(
           this.state.net = failed.length
             ? `${failed.length} failed: ${String(failed[failed.length - 1].uploaded || 'no answer').slice(0, 90)}`
             : 'upload done'
+          if (serverStop) this.state.net += `; server says stop (${serverStop})`
           this.render()
           return
         }
@@ -316,7 +318,7 @@ Page(
           .then((r) => {
             this.tester.markUploaded(c.seq, r && r.ok ? true : `server: ${r && r.error}`,
               st.sessionId)
-            if (r && r.stop) this.state.net = `server says stop (${r.reason})`
+            if (r && r.stop) serverStop = r.reason
           })
           .catch((e) => this.tester.markUploaded(c.seq, `ble: ${e && e.message ? e.message : e}`,
             st.sessionId))

@@ -134,3 +134,18 @@ test('Clear, Screen ON/OFF and Voice do nothing while an upload runs', async () 
   assert.equal(page.tester.summary().uploaded, 2)
   assert.equal(page.state.uploading, false)
 })
+
+test('a server stop answer is still shown when the upload finishes', async () => {
+  seedChunks(2)
+  const page = await loadPage('index', async (req) => {
+    if (req && req.method === 'end') return { ok: true }
+    return { ok: true, stop: true, reason: 'silence' }
+  })
+  page.onInit()
+  page.build()
+  page.uploadAll()
+  for (let i = 0; i < 6; i++) await flush()
+  assert.equal(page.state.uploading, false)
+  assert.match(page.state.net, /upload done/)
+  assert.match(page.state.net, /server says stop \(silence\)/)
+})
