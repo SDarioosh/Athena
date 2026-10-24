@@ -1549,7 +1549,12 @@ class Store:
                 r = c.execute("SELECT text FROM action_items WHERE id = ?",
                               (item_id,)).fetchone()
                 sets["title"] = short_title(title, r["text"] if r else "")
-            n = c.execute(f"UPDATE action_items SET {', '.join(f'{k} = ?' for k in sets)}"
+                if title is not None:  # a renamed note: the hub files it by note_title
+                    sets["note_title"] = sets["title"]
+            cols = [f"{k} = ?" if k != "note_title"
+                    else "note_title = CASE WHEN kind = 'note' THEN ? ELSE note_title END"
+                    for k in sets]
+            n = c.execute(f"UPDATE action_items SET {', '.join(cols)}"
                           " WHERE id = ?", (*sets.values(), item_id)).rowcount
             if n:
                 r = c.execute("SELECT kind, due_date, due_time, list_name FROM action_items"
