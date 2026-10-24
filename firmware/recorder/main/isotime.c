@@ -3,9 +3,10 @@
 #include <stdio.h>
 #include <string.h>
 
-int64_t isotime_days_from_civil(int year, int month, int day)
+int64_t isotime_days_from_civil(int year_in, int month, int day)
 {
-    year -= month <= 2;
+    /* In 64 bits: year - 1 and year - 399 overflow an int at its low end. */
+    const int64_t year = (int64_t)year_in - (month <= 2);
     const int64_t era = (year >= 0 ? year : year - 399) / 400;
     const int64_t yoe = year - era * 400;
     const int64_t doy = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
@@ -74,6 +75,15 @@ static bool all_digits(const char *s)
     return true;
 }
 
+static int digits(const char *s, int n)
+{
+    int v = 0;
+    for (int i = 0; i < n; i++) {
+        v = v * 10 + (s[i] - '0');
+    }
+    return v;
+}
+
 bool isotime_parse(const char *s, int64_t *epoch)
 {
     if (s == NULL || epoch == NULL) {
@@ -90,17 +100,31 @@ bool isotime_parse(const char *s, int64_t *epoch)
         *epoch = v;
         return true;
     }
-    isotime_fields_t f;
-    char sep;
-    char tail[4] = {0};
-    const int n = sscanf(s, "%4d-%2d-%2d%c%2d:%2d:%2d%3s", &f.year, &f.month, &f.day, &sep,
-                         &f.hour, &f.minute, &f.second, tail);
-    if (n < 7 || (sep != 'T' && sep != 't' && sep != ' ')) {
+    /* Exactly "YYYY-MM-DD", T/t/space, "HH:MM:SS", then an optional Z/z and the end: no
+     * signs, spaces or anything after (sscanf allowed all three). */
+    static const char form[] = "dddd-dd-ddTdd:dd:dd";
+    const size_t len = strlen(s);
+    const size_t base = sizeof(form) - 1;
+    if (len != base && !(len == base + 1 && (s[base] == 'Z' || s[base] == 'z'))) {
         return false;
     }
-    if (n == 8 && strcmp(tail, "Z") != 0 && strcmp(tail, "z") != 0) {
-        return false;
+    for (size_t i = 0; i < base; i++) {
+        const char c = s[i];
+        const bool ok = form[i] == 'd'   ? (c >= '0' && c <= '9')
+                        : form[i] == 'T' ? (c == 'T' || c == 't' || c == ' ')
+                                         : c == form[i];
+        if (!ok) {
+            return false;
+        }
     }
+    const isotime_fields_t f = {
+        .year = digits(s, 4),
+        .month = digits(s + 5, 2),
+        .day = digits(s + 8, 2),
+        .hour = digits(s + 11, 2),
+        .minute = digits(s + 14, 2),
+        .second = digits(s + 17, 2),
+    };
     return isotime_from_fields(&f, epoch);
 }
 
