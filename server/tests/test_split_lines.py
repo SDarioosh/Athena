@@ -145,3 +145,46 @@ def test_pyannote_clustering_threshold_and_speaker_bounds():
     assert speaker_bounds(1, 4) == {"min_speakers": 1, "max_speakers": 4}
     with pytest.raises(ValueError):
         speaker_bounds(3, 2)
+
+
+class _Cuts:
+    """A diarizer whose split_lines answers with fixed parts."""
+
+    def __init__(self, parts):
+        self.parts = parts
+
+    def split_lines(self, runs, pieces, words, labels):
+        return self.parts
+
+
+def test_split_parts_without_words_are_dropped_and_times_never_run_backwards(pipeline):
+    """QC S5: a part that is only punctuation became a line of its own, and a part whose
+    last word ends before its first word starts (whisper word times) ended before it
+    started."""
+    from convo_server.diarize import SpeakerLabel
+
+    a, b = SpeakerLabel("Me", True), SpeakerLabel("Speaker 1", False)
+    words = [(0.0, 1.0, " Hello"), (1.0, 2.0, " there"), (2.0, 3.5, " ..."),
+             (4.0, 4.5, " Fine"), (4.6, 3.9, " thanks")]
+    pipeline.diarizer = _Cuts([[(0, 2, a), (2, 3, b), (3, 5, a)]])
+    pieces, labels = pipeline._split_pieces(
+        [np.zeros(16000 * 5, np.float32)],
+        [(100.0, 104.6, "Hello there ... Fine thanks", PieceRef(0, 0.0, 4.6))],
+        [words], [a])
+    assert [(p[2], lab.name) for p, lab in zip(pieces, labels, strict=True)] == [
+        ("Hello there", "Me"), ("Fine thanks", "Me")]
+    assert all(p[1] >= p[0] and p[3].end >= p[3].start for p in pieces)
+
+
+def test_pyannote_fallback_for_a_too_short_run_doesnt_reuse_speaker_1():
+    """QC S6: a run pyannote heard nobody in and too short to embed got "Speaker 1",
+    the name of a different unknown voice of an earlier run."""
+    from convo_server.diarize_pyannote import PyannoteDiarizer
+
+    runs = [tone(600, 4), tone(400, 0.5)]
+    d = PyannoteDiarizer(MixEmbedder(), [_me()],
+                         segmenter=lambda audio: [(0.0, 4.0, "A")] if audio.size > 16000
+                         else [])
+    labels, unnamed = d.diarize_runs(runs, [PieceRef(0, 0.0, 4.0), PieceRef(1, 0.0, 0.5)])
+    assert labels[0].name == "Speaker 1" and "Speaker 1" in unnamed
+    assert labels[1].name == "Speaker 2" and not labels[1].is_owner

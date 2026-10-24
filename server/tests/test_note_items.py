@@ -152,6 +152,21 @@ def test_status_and_kind_changes(stored):
         stored.store.update_action_item(item["id"], kind="note")
 
 
+def test_renaming_a_note_renames_its_note_title(stored):
+    """QC S9: a note renamed with update_action_item kept its old note_title, the name
+    the hub files the note under."""
+    mcp = build_mcp(stored.store, stored.settings)
+    rows = stored.store.list_action_items(notes=True)
+    note = next(r for r in rows if r["note_title"] == "Battery dimensions")
+    task = next(r for r in rows if r["kind"] == "task")
+    call(mcp, "update_action_item", item_id=note["id"], title="Battery size")
+    call(mcp, "update_action_item", item_id=task["id"], title="Plumber")
+    rows = {r["id"]: r for r in json.loads(call(mcp, "list_action_items", format="json"))}
+    assert (rows[note["id"]]["title"], rows[note["id"]]["note_title"]) == (
+        "Battery size", "Battery size")
+    assert (rows[task["id"]]["title"], rows[task["id"]]["note_title"]) == ("Plumber", None)
+
+
 # ---------------------------------------------------------- commands the model missed
 def test_missed_command_is_made_a_note_in_code():
     (item,) = note_items([], "Note that the router admin page is at 192.168.1.1.")

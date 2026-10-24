@@ -95,3 +95,33 @@ def test_code_date_wins_over_the_model(pipeline):
 ])
 def test_resolve_time(phrase, want):
     assert resolve_time(phrase) == want
+
+
+# QC S4 / S10: regressions
+@pytest.mark.parametrize(("phrase", "today", "want"), [
+    ("February 29", date(2027, 12, 1), "2028-02-29"),  # next year is a leap year
+    ("February 29", date(2026, 10, 24), None),          # neither year has one
+    ("Buy two markers", TUE, None),                    # "two mar(kers)" is no date
+    ("Submit one decision", TUE, None),                # "one dec(ision)"
+    ("by 5 November", TUE, "2026-11-05"),
+    ("the 21 Oct.", TUE, "2026-10-21"),
+])
+def test_resolve_due_regressions(phrase, today, want):
+    got = resolve_due(phrase, today)
+    assert (got.isoformat() if got else None) == want
+
+
+@pytest.mark.parametrize(("phrase", "want"), [
+    ("quarter to 12 pm", ("11:45", False)),  # a quarter before noon
+    ("quarter to 12 am", ("23:45", False)),  # a quarter before midnight
+    ("quarter to 1 am", ("00:45", False)),
+    ("quarter to 1 pm", ("12:45", False)),
+    ("by 5 November", (None, False)),        # a date, not 17:00
+    ("by 5 Nov", (None, False)),
+    ("keep error rate at 10-15%", (None, False)),  # a range, not 10:15
+    ("at 10-15 people", (None, False)),
+    ("at five-thirty pm", ("17:30", False)),  # hyphenated words still read
+    ("at 5-ish", ("17:00", False)),
+])
+def test_resolve_time_regressions(phrase, want):
+    assert resolve_time(phrase) == want
