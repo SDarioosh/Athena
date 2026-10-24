@@ -181,7 +181,9 @@ class PdaSync(
     private suspend fun stay() {
         val until = clock.nowMs() + maxStayMs
         var lastFeedMs = clock.nowMs()
-        var seenOutbox = status?.outboxWaiting ?: 0
+        // The actions the last sync left on the T5. Not the status read before that sync: its
+        // count also held the actions the sync drained, so as many new ones would go unseen.
+        var seenOutbox = waiting
         log.log(Level.INFO, "PDA in use: staying connected")
         while (clock.nowMs() < until) {
             val raw = link.awaitStatus(keepaliveMs)
@@ -198,7 +200,7 @@ class PdaSync(
                 syncOnce(forceFeed = false)
                 lastFeedMs = clock.nowMs()
                 readStatus()
-                seenOutbox = status?.outboxWaiting ?: 0
+                seenOutbox = waiting
             } else if (clock.nowMs() - lastFeedMs >= feedRefreshMs) {
                 pushFeed(force = false)
                 lastFeedMs = clock.nowMs()
@@ -217,10 +219,15 @@ class PdaSync(
             send(PdaCommand.ObList(afterId, PdaGatt.OB_LIST_MAX))
             val entries = ArrayList<OutboxEntry>()
             var remaining = 0L
+            var outOfOrder: Long? = null
             while (true) {
                 when (val r = PdaResponse.decode(link.receive(receiveTimeoutMs))) {
-                    is PdaResponse.Entry -> entries += r.entry
+                    // Plan §3.5: ids above after_id, ascending; anything else could loop forever.
+                    // Read up to OB_END first, so the BYE that follows isn't refused as busy.
+                    is PdaResponse.Entry -> if (r.entry.actionId > (entries.lastOrNull()?.actionId ?: afterId)) entries += r.entry
+                        else outOfOrder = outOfOrder ?: r.entry.actionId
                     is PdaResponse.ObEnd -> {
+                        outOfOrder?.let { throw DeviceProblem("OB_ENTRY $it out of order") }
                         remaining = r.remaining
                         break
                     }
@@ -427,7 +434,8 @@ class PdaSync(
             return
         }
         val now = clock.nowMs()
-        val version = maxOf(now / 1000, lastVersion + 1, t5FeedVersion + 1) and 0xFFFFFFFFL
+        // A u32 on the wire: stop at the largest one (0 would mean "no feed"), as the PC relay does.
+        val version = minOf(maxOf(now / 1000, lastVersion + 1, t5FeedVersion + 1), 0xFFFFFFFFL)
         val bytes = content.render(version, now)
         put(BlobKind.FEED, version, bytes) // a feed's blob id is its version (plan §3.5)
         memory.feedPushed(deviceKey, content.hash, version)

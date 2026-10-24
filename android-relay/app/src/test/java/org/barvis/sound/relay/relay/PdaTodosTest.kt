@@ -150,6 +150,16 @@ class PdaTodosTest {
         assertEquals(listOf(a.actionId, b.actionId, c.actionId).map { it to AckResult.REJECTED }, pda.acks)
     }
 
+    @Test fun blankTextTogglesNothing() {
+        // " " normalises to "", which every item starts with: it must not pick an item.
+        todos.notes[0] = todos.notes[0].copy(items = listOf(TodoItem("Milk", false)))
+        val a = toggle("n1", 0, " ", true)
+        val b = toggle("n1", 7, "  ", true)
+        run()
+        assertTrue(todos.toggles.isEmpty())
+        assertEquals(listOf(a.actionId, b.actionId).map { it to AckResult.REJECTED }, pda.acks)
+    }
+
     @Test fun alreadyInTheWantedStateIsResult0WithoutACall() {
         val e = toggle("n1", 1, "Bread", true)
         run()
@@ -208,6 +218,12 @@ class PdaTodosTest {
             """{"t":"todo_toggle","note":"n1","i":2,"text":"$longText","done":true}""",
             """{"t":"todo_toggle","note":"n1","i":2,"text":"Eggs","done":"yes"}""",
             """{"t":"todo_toggle","note":7,"i":2,"text":"Eggs","done":true}""",
+            // Plan §4.4: i is 0-9999, and neither note nor text may be only whitespace.
+            """{"t":"todo_toggle","note":"n1","i":10000,"text":"Eggs","done":true}""",
+            """{"t":"todo_toggle","note":"n1","i":2,"text":" ","done":true}""",
+            """{"t":"todo_toggle","note":"n1","i":2,"text":"\t \n","done":true}""",
+            """{"t":"todo_toggle","note":" ","i":2,"text":"Eggs","done":true}""",
         )) assertTrue(bad, p(bad) is PdaAction.Invalid)
+        assertEquals(PdaAction.TodoToggle("n1", 9999, "Eggs", true), p("""{"t":"todo_toggle","note":"n1","i":9999,"text":"Eggs","done":true}"""))
     }
 }

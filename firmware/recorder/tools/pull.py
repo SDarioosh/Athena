@@ -35,6 +35,26 @@ import serial
 
 LS_LINE = re.compile(r"^\s*(\d+)\s+(\S+)\s*$")
 B64_LINE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def inside_repo(path: Path) -> bool:
+    """Same check as ble_relay.py --save: recordings must never land in the repository."""
+    try:
+        path.resolve().relative_to(REPO_ROOT)
+    except ValueError:
+        return False
+    return True
+
+
+def safe_name(name: str) -> bool:
+    """A name the firmware's `get` accepts (valid_name in main/console_cmds.c): at most 64
+    characters, an optional `q/`, then no `/`, `\\` or `:` and no leading dot. Anything
+    else could write outside --out (`../x`, `/x`) and is never asked for."""
+    if not name or len(name) > 64:
+        return False
+    base = name[2:] if name.startswith("q/") else name
+    return bool(base) and not base.startswith(".") and not any(c in base for c in "/\\:")
 
 
 def open_port(port: str) -> serial.Serial:
@@ -110,6 +130,8 @@ def main() -> int:
     args = ap.parse_args()
 
     out: Path = args.out.expanduser()
+    if inside_repo(out):
+        ap.error("--out must be outside the repository (recordings are never committed)")
     out.mkdir(parents=True, exist_ok=True)
     with open_port(args.port) as s:
         if args.coredump:
@@ -131,6 +153,10 @@ def main() -> int:
             return 0
         failed = 0
         for name in names:
+            if not safe_name(name):
+                print(f"FAIL  {name!r}: not a plain file name from `ls`", file=sys.stderr)
+                failed += 1
+                continue
             dest = out / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             if name in on_card and dest.exists() and dest.stat().st_size == on_card[name]:

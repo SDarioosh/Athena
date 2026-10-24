@@ -45,6 +45,10 @@ class FakePda(
     val statusScript = ArrayDeque<PdaStatus?>()
     /** Called each time [awaitStatus] runs, e.g. to queue a new outbox entry. */
     var onAwaitStatus: (() -> Unit)? = null
+    /** A buggy firmware: the `after_id` it really lists from, given the one asked for. */
+    var listFrom: (Long) -> Long = { it }
+    /** Fails the test instead of letting a relay loop forever. */
+    var maxLists = 100
 
     private val pending = ArrayDeque<ByteArray>()
     private var putKind = 0
@@ -102,7 +106,8 @@ class FakePda(
                 pending.addLast(PdaResponse.TimeOk.encode())
             }
             is PdaCommand.ObList -> {
-                val all = outbox.tailMap(c.afterId + 1).values.toList()
+                check(commands.count { it is PdaCommand.ObList } <= maxLists) { "relay sent more than $maxLists OB_LISTs" }
+                val all = outbox.tailMap(listFrom(c.afterId) + 1).values.toList()
                 val sent = all.take(c.max)
                 sent.forEach { pending.addLast(it.encode()) }
                 pending.addLast(PdaResponse.ObEnd(sent.size, (all.size - sent.size).toLong()).encode())

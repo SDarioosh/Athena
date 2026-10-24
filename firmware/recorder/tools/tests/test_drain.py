@@ -422,7 +422,10 @@ def test_classify() -> None:
 
 
 def test_uploader_rejects_bad_settings() -> None:
-    for url in ("ftp://x", "http://user:pw@host", "http://h/?access_token=x", "nohost"):
+    for url in ("ftp://x", "http://user:pw@host", "http://h/?access_token=x", "nohost",
+                # each would send the request somewhere other than <server>/v1/...
+                "http://127.0.0.1:8000#foo", "http://127.0.0.1:8000?", "http://@127.0.0.1:8000",
+                "http://h/#"):
         with pytest.raises(ValueError):
             Uploader(url, TOKEN)
     with pytest.raises(ValueError):
