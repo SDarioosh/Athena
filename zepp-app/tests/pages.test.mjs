@@ -55,3 +55,35 @@ test('enroll page draws nothing when an upload answers after onDestroy', async (
   mock.timers.tick(5000)
   assert.equal(fake.widgets.length, before)
 })
+
+test('Done turns red even when the 1 s tick is late around the minimum', async () => {
+  const page = await loadPage('enroll')
+  page.onInit()
+  page.start()
+  mock.timers.tick(20)
+  const red = 0xc0392b
+  assert.notEqual(fake.button('Done').props.normal_color, red)
+  // ticks at 44.97 s and 46.02 s: the second one falls outside |elapsed - MIN_MS| < 1 s
+  mock.timers.setTime(page.enroll.state.startedAt + MIN_MS - 30)
+  page.updateInfo()
+  mock.timers.tick(20)
+  assert.notEqual(fake.button('Done').props.normal_color, red)
+  mock.timers.setTime(page.enroll.state.startedAt + MIN_MS + 1020)
+  page.updateInfo()
+  mock.timers.tick(20)
+  assert.equal(fake.button('Done').props.normal_color, red)
+})
+
+test('Again on the last prompt starts the prompts over', async () => {
+  const page = await loadPage('enroll')
+  page.onInit()
+  page.start()
+  mock.timers.tick(20)
+  for (let i = 0; i < 7; i++) page.next()
+  mock.timers.tick(20)
+  assert.ok(fake.button('Again'))
+  fake.button('Again').props.click_func()
+  mock.timers.tick(20)
+  assert.equal(page.enroll.state.prompt, 0)
+  assert.ok(fake.button('Next'))
+})

@@ -38,6 +38,7 @@ Page(
   BasePage({
     state: {
       widgets: [], info: null, prompt: null, beat: null, renderTimer: null, destroyed: false,
+      doneReady: false,
     },
 
     onInit() {
@@ -125,8 +126,9 @@ Page(
         this.state.prompt = this.text(104, 200, this.enroll.promptText(), 26, 0xffffff)
         const last = st.prompt >= PROMPTS.length - 1
         this.button(last ? 'Again' : 'Next', 40, 316, 195, 76, 0x1f618d, () => this.next())
+        this.state.doneReady = this.enroll.canFinish()
         this.button('Done', 245, 316, 195, 76,
-          this.enroll.canFinish() ? 0xc0392b : 0x5d6d7e, () => this.finish())
+          this.state.doneReady ? 0xc0392b : 0x5d6d7e, () => this.finish())
         this.button('Cancel', 170, 404, 140, 50, 0x424949, () => this.cancel())
       } else if (st.phase === 'recorded') {
         this.text(110, 190, st.error ? `Upload failed: ${st.error}`
@@ -157,9 +159,9 @@ Page(
 
     updateInfo() {
       if (this.state.info) this.state.info.setProperty(hmUI.prop.TEXT, this.infoText())
-      // the Done button changes colour once it can be used
+      // the Done button changes colour once it can be used (a late tick must not miss it)
       if (this.enroll.state.phase === 'recording'
-          && Math.abs(this.enroll.elapsedMs() - MIN_MS) < 1000) this.scheduleRender()
+          && this.enroll.canFinish() !== this.state.doneReady) this.scheduleRender()
     },
 
     start() {
