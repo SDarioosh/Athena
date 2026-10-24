@@ -366,6 +366,16 @@ class PdaSyncTest {
         assertEquals("one OB_LIST: the waiting action isn't new", 1, pda.commands.count { it is PdaCommand.ObList })
     }
 
+    @Test fun outboxListThatDoesNotAdvanceIsADeviceError() {
+        // A firmware that ignores after_id, with actions that stay queued (no Odysseus).
+        repeat(17) { pda.queue("""{"t":"cal_add","title":"Call $it","start":"2026-10-22","all_day":true}""") }
+        pda.listFrom = { 0L }
+        val out = run(NoCalendar)
+        assertTrue(out.toString(), out is PdaOutcome.DeviceError)
+        assertEquals(2, pda.commands.count { it is PdaCommand.ObList })
+        assertEquals("pda:BYE", timeline.events.last())
+    }
+
     @Test fun staysOnlyUntilTheUserLeaves() {
         pda.flags = 0x01 or PdaStatus.FLAG_USER_ACTIVE
         pda.statusScript.addLast(pda.status().copy(flags = 0x01))

@@ -219,10 +219,15 @@ class PdaSync(
             send(PdaCommand.ObList(afterId, PdaGatt.OB_LIST_MAX))
             val entries = ArrayList<OutboxEntry>()
             var remaining = 0L
+            var outOfOrder: Long? = null
             while (true) {
                 when (val r = PdaResponse.decode(link.receive(receiveTimeoutMs))) {
-                    is PdaResponse.Entry -> entries += r.entry
+                    // Plan §3.5: ids above after_id, ascending; anything else could loop forever.
+                    // Read up to OB_END first, so the BYE that follows isn't refused as busy.
+                    is PdaResponse.Entry -> if (r.entry.actionId > (entries.lastOrNull()?.actionId ?: afterId)) entries += r.entry
+                        else outOfOrder = outOfOrder ?: r.entry.actionId
                     is PdaResponse.ObEnd -> {
+                        outOfOrder?.let { throw DeviceProblem("OB_ENTRY $it out of order") }
                         remaining = r.remaining
                         break
                     }
