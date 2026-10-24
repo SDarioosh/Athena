@@ -149,3 +149,25 @@ test('a server stop answer is still shown when the upload finishes', async () =>
   assert.match(page.state.net, /upload done/)
   assert.match(page.state.net, /server says stop \(silence\)/)
 })
+
+// ------------------------------------------------------------------ files
+test('readFile closes the file and refuses bad handles or short reads', async () => {
+  await loadPage('index') // registers the fake modules
+  const { readFile } = await import('../utils/device.js')
+  fake.files.set('a.opus', new Uint8Array([9, 8, 7, 6]))
+  assert.deepEqual(Array.from(new Uint8Array(readFile('a.opus'))), [9, 8, 7, 6])
+  assert.equal(fake.fds.size, 0)
+
+  fake.openResult = -2 // a failed open must not upload a zero-filled buffer
+  assert.throws(() => readFile('a.opus'), /open/)
+  fake.openResult = null
+
+  fake.readResult = 2 // short read: the rest of the buffer would be zeros
+  assert.throws(() => readFile('a.opus'), /read 2 of 4/)
+  assert.equal(fake.fds.size, 0, 'fd leaked after a short read')
+  fake.readResult = null
+
+  fake.readThrows = new Error('io')
+  assert.throws(() => readFile('a.opus'), /io/)
+  assert.equal(fake.fds.size, 0, 'fd leaked after readSync threw')
+})
