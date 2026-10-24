@@ -376,6 +376,14 @@ class PdaSyncTest {
         assertEquals("pda:BYE", timeline.events.last())
     }
 
+    @Test fun feedVersionStaysAU32() {
+        // A T5 reporting the largest u32: the next version must not wrap to 0 ("no feed").
+        pda.feedVersion = 0xFFFFFFFFL
+        assertTrue(run() is PdaOutcome.Done)
+        assertEquals(0xFFFFFFFFL, pda.feedVersion)
+        assertEquals(0xFFFFFFFFL, pda.feedJson()["version"])
+    }
+
     @Test fun staysOnlyUntilTheUserLeaves() {
         pda.flags = 0x01 or PdaStatus.FLAG_USER_ACTIVE
         pda.statusScript.addLast(pda.status().copy(flags = 0x01))

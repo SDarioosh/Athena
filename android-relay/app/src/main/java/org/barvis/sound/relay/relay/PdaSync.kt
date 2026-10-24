@@ -434,7 +434,8 @@ class PdaSync(
             return
         }
         val now = clock.nowMs()
-        val version = maxOf(now / 1000, lastVersion + 1, t5FeedVersion + 1) and 0xFFFFFFFFL
+        // A u32 on the wire: stop at the largest one (0 would mean "no feed"), as the PC relay does.
+        val version = minOf(maxOf(now / 1000, lastVersion + 1, t5FeedVersion + 1), 0xFFFFFFFFL)
         val bytes = content.render(version, now)
         put(BlobKind.FEED, version, bytes) // a feed's blob id is its version (plan §3.5)
         memory.feedPushed(deviceKey, content.hash, version)
