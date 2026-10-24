@@ -376,3 +376,116 @@ Speed and memory, 5 min of AMI audio, same idle 4-core CPU:
   of the T-Watch plan records the real thing.
 - `test_chunk_queue` (firmware host tests) fails in this sandbox with or without these
   changes (`cq_init` returns -5) but passes in CI, so it is sandbox-specific.
+
+## 8. Capture quality: diarization and attribution (sandbox, 2026-10-23/24)
+
+Hub personal-context stage 4.3. A fact attributed to the wrong speaker is wrong evidence
+in the hub's belief ledger, so the numbers that matter most are **named wrong** (speech
+given an enrolled person's name that someone else said) and **unenrolled named** (speech
+of someone with no voice on file that got an enrolled name: a newcomer taking an existing
+name). The owner runs pyannote (`CONVO_DIARIZER=pyannote`), so most work is on it.
+
+Setup: `eval/recognition.py`, 3 AMI meetings × 5 min, whisper large-v3-turbo-q5_0 on 4 CPU
+threads, 24 kbps Opus, 2 speakers enrolled (the owner and the next most active), pyannote
+community-1 on CPU. New this round: `--late-joiners`, `--owner-dips`, owner precision and
+recall, `unenrolled_named`, and `--cache` for pyannote turns. Percentages pooled over the
+meetings; small CPU runs compare only with other sandbox runs. "split" =
+`CONVO_SPEAKER_SPLIT_LINES=true` with `CONVO_SPEAKER_SPLIT_MIN_SECONDS`; "line check" =
+`CONVO_SPEAKER_LINE_CHECK=true`; `Fb` = `CONVO_PYANNOTE_VBX_FB`.
+
+#### Table mic, T-Watch level (array -24 dBFS, 24 kbps)
+
+| run | confusion | named right | named wrong | owner precision | owner recall | unenrolled named |
+|---|---|---|---|---|---|---|
+| ECAPA, cluster 0.45 (default) (`a-ecapa`) | 36.4 | 42.9 | 0.8 | 97.9 | 55.5 | – |
+| ECAPA, cluster 0.30 (`a-ecapa-c30`) | 17.8 | 70.0 | 1.3 | 98.4 | 77.6 | – |
+| pyannote (`a-py2`) | 5.0 | 90.9 | 5.3 | 97.3 | 95.2 | 8.7 |
+| pyannote + split 0.5 s (`a-py-split05`) | 4.8 | 91.4 | 4.9 | 97.7 | 94.9 | 6.7 |
+| pyannote + line check (`a-pyannote-check`) | 7.2 | 88.7 | 1.8 | 98.3 | 94.5 | – |
+| pyannote + split 0.5 s + line check (`a-py-best`) | 5.7 | 90.7 | 1.8 | 98.7 | 94.2 | 4.6 |
+| pyannote + split 0.3 s + line check (`a-py-split03-check`) | 5.9 | 90.7 | 1.6 | 98.7 | 94.2 | 4.6 |
+| … with WeSpeaker naming (`a-py-best-wes`) | 6.9 | 88.3 | 1.7 | 98.7 | 93.8 | 5.7 |
+| pyannote + match margin 0.10 (`a-py-margin10`) | 5.0 | 90.9 | 5.3 | 97.3 | 95.2 | 8.7 |
+| pyannote + name min 5 s (`a-py-min5`) | 5.0 | 90.9 | 5.3 | 97.3 | 95.2 | 8.7 |
+| pyannote cluster threshold 0.5 (`a-py-pct0.5`) | 4.9 | 90.6 | 5.0 | 97.6 | 94.8 | 7.2 |
+| pyannote Fb 0.3 (`a-py-fb0.3`) | – | – | – | – | – | – |
+| pyannote Fb 0.3 + split 0.3 s + line check (`a-py-fb0.3-best3`) | – | – | – | – | – | – |
+
+#### Room, others at 2 m (sim, 24 kbps)
+
+| run | confusion | named right | named wrong | owner precision | owner recall | unenrolled named |
+|---|---|---|---|---|---|---|
+| ECAPA, cluster 0.45 (default) (`sim2o24-ecapa`) | 18.6 | 68.4 | 0.7 | 99.2 | 82.4 | – |
+| ECAPA, cluster 0.30 (`sim2o24-ecapa-c30`) | 6.3 | 93.0 | 1.8 | 98.0 | 97.5 | – |
+| pyannote (`s-py2`) | 2.7 | 97.2 | 3.4 | 97.7 | 98.4 | 13.2 |
+| pyannote + split 0.5 s (`s-py-split05`) | 2.4 | 97.6 | 3.4 | 97.8 | 98.7 | 13.1 |
+| pyannote + line check (`sim2o24-pyannote-check`) | 3.3 | 96.4 | 2.7 | 97.8 | 98.0 | 11.5 |
+| pyannote + split 0.3 s + line check (`s-py-split03-check`) | 3.2 | 96.7 | 2.5 | 98.1 | 98.3 | 10.0 |
+
+#### Late joiners (sim 2 m; 3rd and 4th person join halfway)
+
+| run | confusion | named right | named wrong | owner precision | owner recall | unenrolled named |
+|---|---|---|---|---|---|---|
+| pyannote (`j-py`) | 3.2 | 95.4 | 4.3 | 97.2 | 98.1 | 15.8 |
+| pyannote, owner hint off (`j-py-nohint`) | 3.2 | 95.4 | 4.3 | 97.2 | 98.1 | 15.8 |
+| pyannote + line check (`j-py-check`) | 3.7 | 94.7 | 3.8 | 97.4 | 97.8 | 15.6 |
+| … + floor 0.35 (`j-py-check-f0.35`) | 5.1 | 92.9 | 3.6 | 97.5 | 97.1 | 14.5 |
+| pyannote + split 0.3 s + line check (`j-py-split03-check`) | 3.2 | 95.5 | 2.6 | 98.3 | 97.9 | 11.0 |
+| pyannote cluster threshold 0.4 (`j-py-pct0.4`) | 3.2 | 95.4 | 4.3 | 97.2 | 98.1 | 15.8 |
+| pyannote Fb 0.3 (`j-py-fb0.3`) | – | – | – | – | – | – |
+| pyannote Fb 0.3 + split 0.3 s + line check (`j-py-fb0.3-best3`) | – | – | – | – | – | – |
+| pyannote Fb 0.2 (`j-py-fb0.2`) | 11.0 | 80.5 | 2.2 | 97.6 | 93.1 | 7.8 |
+| pyannote Fb 0.2 + split 0.5 s + line check (`j-py-fb0.2-best`) | 11.6 | 79.6 | 1.4 | 98.4 | 92.5 | 7.8 |
+
+#### Arm movement (sim 2 m; owner drops 6–12 dB in stretches)
+
+| run | confusion | named right | named wrong | owner precision | owner recall | unenrolled named |
+|---|---|---|---|---|---|---|
+| pyannote (`d-py2`) | 4.1 | 93.8 | 4.0 | 97.5 | 97.2 | 12.7 |
+| pyannote, owner hint off (`d-py-nohint`) | 4.1 | 93.8 | 4.0 | 97.5 | 97.2 | 12.7 |
+| pyannote + line check (`d-py-check`) | 4.9 | 93.1 | 2.8 | 97.5 | 96.9 | 11.0 |
+| pyannote + split 0.3 s + line check (`d-py-split03-check`) | 4.3 | 93.7 | 1.9 | 98.6 | 96.8 | 7.7 |
+
+### 8.1 What the numbers say
+
+1. **Where pyannote's wrong names come from** (table mic): about 70 % from whisper lines
+   that run over a short turn pyannote missed or merged, about 30 % from pyannote putting a
+   turn under the wrong speaker; **0 %** from naming a whole speaker after the wrong
+   enrolled person (names matched at cosine 0.8+). So the fixes work on lines, not on
+   whole speakers.
+2. **Split + line check is the recommended pair** (opt-in, for the owner's server run):
+   line splitting at 0.3–0.5 s keeps the short turns pyannote did find (the old fixed
+   1.5 s minimum folded them back), and the line check unnames a line whose own voice fits
+   another enrolled person at least as well. Together: named wrong 5.3 → 1.6 % (table),
+   3.4 → 2.5 % (room), 4.3 → 2.6 % (late joiners), 4.0 → 1.9 % (arm movement); unenrolled
+   named down by a third to a half; names right and owner recall within a point; owner
+   precision up to 98–99 %. Moving such a line to the better-fitting person instead
+   measured worse (the better fit is often someone not enrolled).
+3. **People joining later**: pyannote put newcomers' turns inside an enrolled person's
+   speaker (IS1009a: 29 s of two newcomers under one enrolled name). Its clustering
+   threshold doesn't change that (in community-1 it only seeds VBx: 0.2, 0.4, 0.5, 0.6 and
+   0.9 gave the same speakers). VBx's `Fb` does: at 0.2 newcomers under an enrolled name
+   drop 15.8 → 7.8 % (ES2004a 23.8 → 1.8 %), but pyannote then finds 8–11 speakers for 4
+   people and names right drops 95 → 80 % (more "Speaker N"). See §8.2 for 0.3.
+4. **Owner loudness hint**: never fired in any run, also not with `--owner-dips` (the
+   owner's voice still matched the enrollment). It now logs when it fires, so a real
+   wrist recording shows whether it is the cause of wrong owner labels.
+5. **Not worth it here**: Omi's naming rules (`CONVO_SPEAKER_MATCH_MARGIN`,
+   `CONVO_SPEAKER_NAME_MIN_SECONDS`), naming with pyannote's WeSpeaker model
+   (`CONVO_SPEAKER_EMBEDDER=pyannote`), the "fits nobody" floor
+   (`CONVO_SPEAKER_LINE_FLOOR`), line splitting by voice with ECAPA (removed), whisper
+   beam search 5 (table 35.3 → 36.1 % WER, room 28.1 → 27.7 %). Denoising before whisper
+   was not tried: two published studies found it hurts whisper.
+6. **ECAPA** (the default diarizer) over-splits far-field speakers (4 people → 12–23
+   labels); `CONVO_SPEAKER_CLUSTER_THRESHOLD=0.30` cuts table-mic confusion 36.4 → 17.8 %
+   for 0.5 points more wrong names. Kept at 0.45 by default; the owner uses pyannote.
+
+### 8.2 Not settled here
+
+- The server GPU run (PR Server verification): whether split + line check and `Fb` hold
+  on large-v3-turbo on the GPU and real pyannote speed.
+- Real wrist audio: the simulated room has the owner always closest; a wrist mic facing
+  the ground is not simulated. Owner-hint log lines on real recordings will tell.
+- Open-source ideas not tried yet (research notes in the PR): DiariZen (best published
+  far-field DER, but CC-BY-NC weights: owner decision), word times from whisper-server
+  `--dtw`, score normalisation against past unnamed speakers.
