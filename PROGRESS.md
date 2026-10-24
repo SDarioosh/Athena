@@ -144,6 +144,26 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-24: recorder fixes from a QC report (branch `qc/recorder`)
+
+- **Host-tested** (`test_chunk_queue`, `test_audio_stats`, `test_isotime`): a card read
+  error at boot no longer deletes a chunk; a chunk left open while its session went on gets
+  no LAST at boot; a failed TIME record write is retried; chunk id 0 and id wrap refused;
+  RMS with a fractional DC offset; strict `time <ISO-8601>` parsing.
+- **Device-only, not built here (no ESP-IDF):** no reused sequence after a failed chunk
+  close; `mic_stop()` keeps the mic busy until I2S is off; T-Watch S3 gets
+  `CONFIG_I2S_ISR_IRAM_SAFE` and counts PDM DMA drops; BYE counts only chunks the relay was
+  offered; 6 job-queue slots kept for link events; `ls`/`get`/`sd` wait for a session;
+  T4-S3 polls a resting finger every 50 ms; Ultra status screen fits 502 rows; display off
+  when the band buffer can't be allocated.
+- **Needs real-device testing:** `idf.py build` for twatch_ultra, twatch_s3 (delete
+  `build-s3/sdkconfig` first, or the IRAM-safe option stays off) and t4_s3. T-Watch S3: a
+  long session into flash, then `mic_stop`'s "audio lost" line (PDM has only ~384 ms of DMA
+  slack; if it loses audio, route PDM through the reader task and PSRAM ring as on the
+  T4-S3). Ultra: BOOT press, the button hint shows at the bottom. T4-S3: finger resting on
+  the glass, `power locks`/current. `sd failwrite` during a session: the next chunk's
+  sequence follows. A voice note finished during a phone sync is advertised right after.
+
 ## Done on 2026-10-24: a spoken to-do command always gives a to-do
 
 - Seen on the owner's server: a voice note like "Make a to-do to figure out how renewing a
