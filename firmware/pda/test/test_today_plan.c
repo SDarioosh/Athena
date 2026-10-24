@@ -446,8 +446,8 @@ static void test_weights_edges(void)
     static const char *const garbage[] = {
         "",
         ",\"weights\":{\"version\":1,\"weights\":{}}",
-        ",\"weights\":{\"version\":1,\"weights\":{\"note_type:checklist\":6,\"list:e\":\"6\","
-        "\"list:f\":2.5,\"list:x\":6,\"list:b\":true}}",
+        (",\"weights\":{\"version\":1,\"weights\":{\"note_type:checklist\":6,\"list:e\":\"6\","
+         "\"list:f\":2.5,\"list:x\":6,\"list:b\":true}}"), /* one element: () for clang */
         ",\"weights\":{\"version\":3,\"weights\":{\"list:b\":6}}",
         ",\"weights\":\"list:b=6\"",
     };
