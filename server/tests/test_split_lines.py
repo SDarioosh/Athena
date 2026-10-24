@@ -174,3 +174,17 @@ def test_split_parts_without_words_are_dropped_and_times_never_run_backwards(pip
     assert [(p[2], lab.name) for p, lab in zip(pieces, labels, strict=True)] == [
         ("Hello there", "Me"), ("Fine thanks", "Me")]
     assert all(p[1] >= p[0] and p[3].end >= p[3].start for p in pieces)
+
+
+def test_pyannote_fallback_for_a_too_short_run_doesnt_reuse_speaker_1():
+    """QC S6: a run pyannote heard nobody in and too short to embed got "Speaker 1",
+    the name of a different unknown voice of an earlier run."""
+    from convo_server.diarize_pyannote import PyannoteDiarizer
+
+    runs = [tone(600, 4), tone(400, 0.5)]
+    d = PyannoteDiarizer(MixEmbedder(), [_me()],
+                         segmenter=lambda audio: [(0.0, 4.0, "A")] if audio.size > 16000
+                         else [])
+    labels, unnamed = d.diarize_runs(runs, [PieceRef(0, 0.0, 4.0), PieceRef(1, 0.0, 0.5)])
+    assert labels[0].name == "Speaker 1" and "Speaker 1" in unnamed
+    assert labels[1].name == "Speaker 2" and not labels[1].is_owner
