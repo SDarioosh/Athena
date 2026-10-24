@@ -170,3 +170,15 @@ test('an upload answer for an older session does not mark the new session', () =
   tester.markUploaded(0, true, tester.state.sessionId)
   assert.equal(tester.state.chunks[0].uploaded, true)
 })
+
+test('the chunk timer stops when the page is destroyed', () => {
+  const h = harness()
+  const tester = createTester(h.deps)
+  tester.start('screen-off')
+  h.advance(10_000)
+  tester.pageDestroyed()
+  h.advance(CHUNK_MS * 3) // a JS VM that outlives the page must not rotate chunks
+  assert.equal(h.started.length, 1)
+  assert.equal(tester.state.chunks.length, 0)
+  assert.equal(tester.state.recording, true) // kept, so a relaunch sees the interruption
+})

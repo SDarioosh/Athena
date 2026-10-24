@@ -162,6 +162,9 @@ export function createTester(deps) {
     },
 
     pageDestroyed() {
+      // The page released its recorder; a rotation now would start a new one with no page.
+      if (rotateTimer) deps.clearTimeout(rotateTimer)
+      rotateTimer = null
       if (state.recording) {
         log('page destroyed while recording')
         state.lastBeat = now()
