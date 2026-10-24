@@ -297,11 +297,19 @@ class Pipeline:
                 out_labels.append(cut[0][2] if cut else lab)
                 continue
             base = s - ref.start  # wall-clock time of the run's start
+            kept = 0
             for a, b, who in cut:
-                ra, rb = ws[a][0], ws[b - 1][1]
-                out.append((base + ra, base + rb, "".join(w[2] for w in ws[a:b]).strip(),
-                            PieceRef(ref.run, ra, rb)))
+                part = "".join(w[2] for w in ws[a:b]).strip()
+                if not any(ch.isalnum() for ch in part):  # only punctuation: no line
+                    continue
+                ra = ws[a][0]
+                rb = max(ra, ws[b - 1][1])  # whisper word times can run backwards
+                out.append((base + ra, base + rb, part, PieceRef(ref.run, ra, rb)))
                 out_labels.append(who)
+                kept += 1
+            if not kept:  # no part has words: keep the line whole
+                out.append((s, e, text, ref))
+                out_labels.append(lab)
         return out, out_labels
 
     def whisper_prompt(self) -> str:
