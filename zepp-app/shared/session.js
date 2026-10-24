@@ -213,9 +213,9 @@ export function summarize(state, nowMs) {
     maxGap = Math.max(maxGap, chunks[i].start - chunks[i - 1].end)
   }
   const full = chunks.filter((c) => c.note === 'ok' && c.size > 0)
-  const bytesPerSec = full.length
-    ? full.reduce((a, c) => a + c.size, 0) / (full.reduce((a, c) => a + (c.end - c.start), 0) / 1000)
-    : 0
+  const fullMs = full.reduce((a, c) => a + (c.end - c.start), 0)
+  // fullMs <= 0 only if the wall clock jumped back; avoid Infinity or a negative rate
+  const bytesPerSec = fullMs > 0 ? full.reduce((a, c) => a + c.size, 0) / (fullMs / 1000) : 0
   return {
     chunks: chunks.length,
     empty: chunks.filter((c) => !c.size).length,
