@@ -6,6 +6,7 @@
 #   cd server && eval/capture_quality.sh            # all runs, then the tables
 #   eval/capture_quality.sh compare                 # only the tables of earlier runs
 #
+# 24 diarization runs (4 conditions x 6 variants), then 2 with a looser speech gate.
 # Needs whisper-server with large-v3-turbo-q5_0 (CONVO_WHISPER_SERVER_URL, default
 # http://127.0.0.1:8178) and the extras `vad,diarization,pyannote,eval`. Runs with
 # --cache: whisper results and pyannote turns are reused, so after the first run of a
@@ -32,11 +33,23 @@ VARIANTS=(
   "py-fb0.2-fix:pyannote_vbx_fb=0.2 $FIX"
 )
 
+# Transcription: a looser speech gate (Silero 0.35, default 0.5) for the others' quiet,
+# far speech; it changes what whisper hears, so these runs transcribe again.
+EXTRA=(
+  "table:py-fix-vad35:$FIX vad_threshold=0.35"
+  "room:py-fix-vad35:$FIX vad_threshold=0.35"
+)
+audio_of() { for c in "${CONDITIONS[@]}"; do [[ ${c%%:*} == "$1" ]] && echo "${c#*:}"; done; return 0; }
+
 labels=()
 for c in "${CONDITIONS[@]}"; do
   for v in "${VARIANTS[@]}"; do
     labels+=("gpu-${c%%:*}-${v%%:*}")
   done
+done
+for e in "${EXTRA[@]}"; do
+  IFS=: read -r name var _ <<< "$e"
+  labels+=("gpu-$name-$var")
 done
 
 mkdir -p eval/results  # a fresh checkout has none yet
@@ -45,10 +58,16 @@ if [[ "${1:-run}" != "compare" ]]; then
   "$PY" eval/recognition.py fetch --audio array sim
   "$PY" -c "import torch; print('== GPU for pyannote:', torch.cuda.is_available() and
             torch.cuda.get_device_name(0) or 'none, runs on CPU (slow)')"
+  runs=()
   for c in "${CONDITIONS[@]}"; do
-    name=${c%%:*}; audio=${c#*:}
-    for v in "${VARIANTS[@]}"; do
-      label="gpu-$name-${v%%:*}"; set_args=${v#*:}
+    for v in "${VARIANTS[@]}"; do runs+=("${c%%:*}:$v"); done
+  done
+  runs+=("${EXTRA[@]}")
+  for r in "${runs[@]}"; do
+    IFS=: read -r name var set_args <<< "$r"
+    audio=$(audio_of "$name")
+    {
+      label="gpu-$name-$var"
       if [[ -f "eval/results/recognition-$label.json" ]]; then
         echo "== $label: done before, skipped"
         continue
@@ -59,7 +78,7 @@ if [[ "${1:-run}" != "compare" ]]; then
         --diarizer pyannote ${set_args:+--set $set_args} > "eval/results/$label.log" 2>&1 \
         || { echo "   failed, see eval/results/$label.log"; continue; }
       grep -E "^  WER" "eval/results/$label.log" || true
-    done
+    }
   done
 fi
 

@@ -408,8 +408,8 @@ meetings; small CPU runs compare only with other sandbox runs. "split" =
 | pyannote + match margin 0.10 (`a-py-margin10`) | 5.0 | 90.9 | 5.3 | 97.3 | 95.2 | 8.7 |
 | pyannote + name min 5 s (`a-py-min5`) | 5.0 | 90.9 | 5.3 | 97.3 | 95.2 | 8.7 |
 | pyannote cluster threshold 0.5 (`a-py-pct0.5`) | 4.9 | 90.6 | 5.0 | 97.6 | 94.8 | 7.2 |
-| pyannote Fb 0.3 (`a-py-fb0.3`) | – | – | – | – | – | – |
-| pyannote Fb 0.3 + split 0.3 s + line check (`a-py-fb0.3-best3`) | – | – | – | – | – | – |
+| pyannote Fb 0.3 (`a-py-fb0.3`) | 8.6 | 85.7 | 2.9 | 97.5 | 92.8 | 6.8 |
+| pyannote Fb 0.3 + split 0.3 s + line check (`a-py-fb0.3-best3`) | 11.1 | 82.0 | 0.9 | 99.1 | 89.5 | 2.5 |
 
 #### Room, others at 2 m (sim, 24 kbps)
 
@@ -432,8 +432,8 @@ meetings; small CPU runs compare only with other sandbox runs. "split" =
 | … + floor 0.35 (`j-py-check-f0.35`) | 5.1 | 92.9 | 3.6 | 97.5 | 97.1 | 14.5 |
 | pyannote + split 0.3 s + line check (`j-py-split03-check`) | 3.2 | 95.5 | 2.6 | 98.3 | 97.9 | 11.0 |
 | pyannote cluster threshold 0.4 (`j-py-pct0.4`) | 3.2 | 95.4 | 4.3 | 97.2 | 98.1 | 15.8 |
-| pyannote Fb 0.3 (`j-py-fb0.3`) | – | – | – | – | – | – |
-| pyannote Fb 0.3 + split 0.3 s + line check (`j-py-fb0.3-best3`) | – | – | – | – | – | – |
+| pyannote Fb 0.3 (`j-py-fb0.3`) | 4.8 | 92.4 | 3.5 | 97.3 | 97.1 | 14.9 |
+| pyannote Fb 0.3 + split 0.3 s + line check (`j-py-fb0.3-best3`) | 5.3 | 92.0 | 2.2 | 98.4 | 96.9 | 10.1 |
 | pyannote Fb 0.2 (`j-py-fb0.2`) | 11.0 | 80.5 | 2.2 | 97.6 | 93.1 | 7.8 |
 | pyannote Fb 0.2 + split 0.5 s + line check (`j-py-fb0.2-best`) | 11.6 | 79.6 | 1.4 | 98.4 | 92.5 | 7.8 |
 
@@ -466,7 +466,8 @@ meetings; small CPU runs compare only with other sandbox runs. "split" =
    threshold doesn't change that (in community-1 it only seeds VBx: 0.2, 0.4, 0.5, 0.6 and
    0.9 gave the same speakers). VBx's `Fb` does: at 0.2 newcomers under an enrolled name
    drop 15.8 → 7.8 % (ES2004a 23.8 → 1.8 %), but pyannote then finds 8–11 speakers for 4
-   people and names right drops 95 → 80 % (more "Speaker N"). See §8.2 for 0.3.
+   people and names right drops 95 → 80 % (more "Speaker N"). `Fb` 0.3 is no useful
+   middle: newcomers 15.8 → 14.9 % only, names right 95 → 92 % (table 91 → 86 %).
 4. **Owner loudness hint**: never fired in any run, also not with `--owner-dips` (the
    owner's voice still matched the enrollment). It now logs when it fires, so a real
    wrist recording shows whether it is the cause of wrong owner labels.
@@ -476,6 +477,10 @@ meetings; small CPU runs compare only with other sandbox runs. "split" =
    (`CONVO_SPEAKER_LINE_FLOOR`), line splitting by voice with ECAPA (removed), whisper
    beam search 5 (table 35.3 → 36.1 % WER, room 28.1 → 27.7 %). Denoising before whisper
    was not tried: two published studies found it hurts whisper.
+7. **A looser speech gate** (`CONVO_VAD_THRESHOLD=0.35`, default 0.5) lets more of the
+   others' far speech through to whisper: room WER 28.1 → 27.1 %, the others 47.5 → 44.6 %,
+   their missed speech 13.2 → 10.9 %, the owner unchanged (15.6 → 15.7 %). Small, so it is
+   in the GPU script (`*-fix-vad35`) before anyone turns it on.
 6. **ECAPA** (the default diarizer) over-splits far-field speakers (4 people → 12–23
    labels); `CONVO_SPEAKER_CLUSTER_THRESHOLD=0.30` cuts table-mic confusion 36.4 → 17.8 %
    for 0.5 points more wrong names. Kept at 0.45 by default; the owner uses pyannote.
