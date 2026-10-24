@@ -159,13 +159,20 @@ Page(
         })
         return
       }
-      this.button('Screen ON', 40, 262, 195, 70, 0x1e8449, () => this.startTest('screen-on'))
-      this.button('Screen OFF', 245, 262, 195, 70, 0x1f618d, () => this.startTest('screen-off'))
-      this.button(this.state.uploading ? '...' : 'Upload', 40, 342, 195, 64, 0x6c3483,
+      // While uploading, the buttons that delete chunks or start a new session are grey
+      // and do nothing: the upload loop is still reading this session's files.
+      const busy = this.state.uploading
+      const idle = (color) => (busy ? 0x333333 : color)
+      this.button('Screen ON', 40, 262, 195, 70, idle(0x1e8449), () => this.startTest('screen-on'))
+      this.button('Screen OFF', 245, 262, 195, 70, idle(0x1f618d),
+        () => this.startTest('screen-off'))
+      this.button(busy ? '...' : 'Upload', 40, 342, 195, 64, 0x6c3483,
         () => this.uploadAll())
       this.button('Ping', 245, 342, 195, 64, 0x5d6d7e, () => this.ping())
-      this.button('Clear', 60, 414, 170, 50, 0x424949, () => this.clearAll())
-      this.button('Voice', 250, 414, 170, 50, 0xb9770e, () => push({ url: 'page/enroll' }))
+      this.button('Clear', 60, 414, 170, 50, idle(0x424949), () => this.clearAll())
+      this.button('Voice', 250, 414, 170, 50, idle(0xb9770e), () => {
+        if (!this.state.uploading) push({ url: 'page/enroll' })
+      })
     },
 
     updateInfo() {
@@ -207,6 +214,7 @@ Page(
     },
 
     startTest(mode) {
+      if (this.state.uploading) return
       withMic(
         () => this.beginTest(mode),
         (why) => {
@@ -236,6 +244,7 @@ Page(
     },
 
     clearAll() {
+      if (this.state.uploading) return
       for (const c of this.tester.state.chunks) {
         try {
           rmSync({ path: c.file })
@@ -299,16 +308,18 @@ Page(
             timestamp: new Date(c.start).toISOString(), codec: 'opus',
           }, audio)
         } catch (e) {
-          this.tester.markUploaded(c.seq, `read error: ${e.message || e}`)
+          this.tester.markUploaded(c.seq, `read error: ${e.message || e}`, st.sessionId)
           next(i + 1)
           return
         }
         this.request(env, { timeout: 180000, ...UPLOAD_OPTIONS })
           .then((r) => {
-            this.tester.markUploaded(c.seq, r && r.ok ? true : `server: ${r && r.error}`)
+            this.tester.markUploaded(c.seq, r && r.ok ? true : `server: ${r && r.error}`,
+              st.sessionId)
             if (r && r.stop) this.state.net = `server says stop (${r.reason})`
           })
-          .catch((e) => this.tester.markUploaded(c.seq, `ble: ${e && e.message ? e.message : e}`))
+          .catch((e) => this.tester.markUploaded(c.seq, `ble: ${e && e.message ? e.message : e}`,
+            st.sessionId))
           .finally(() => next(i + 1))
       }
       next(0)

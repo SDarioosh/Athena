@@ -153,3 +153,20 @@ test('envelope round trip and base64 match Node', () => {
   assert.throws(() => buildEnvelope({ name: 'Zoë' }, audio), /ASCII/)
   assert.throws(() => parseEnvelope(new Uint8Array([200, 0, 0, 0, 1])), /header length/)
 })
+
+test('an upload answer for an older session does not mark the new session', () => {
+  const h = harness()
+  const tester = createTester(h.deps)
+  tester.start('screen-on')
+  const old = tester.state.sessionId
+  h.advance(CHUNK_MS)
+  tester.stop()
+  h.advance(1000)
+  tester.start('screen-off') // started while the old session's upload was still running
+  h.advance(CHUNK_MS)
+  tester.stop()
+  tester.markUploaded(0, true, old) // answer for the old session's chunk 0
+  assert.equal(tester.state.chunks[0].uploaded, false)
+  tester.markUploaded(0, true, tester.state.sessionId)
+  assert.equal(tester.state.chunks[0].uploaded, true)
+})

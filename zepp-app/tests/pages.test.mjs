@@ -87,3 +87,50 @@ test('Again on the last prompt starts the prompts over', async () => {
   assert.equal(page.enroll.state.prompt, 0)
   assert.ok(fake.button('Next'))
 })
+
+// ------------------------------------------------------------------ recording test
+function seedChunks(n) {
+  const chunks = []
+  for (let i = 0; i < n; i++) {
+    const file = `c_000001_${String(i).padStart(4, '0')}.opus`
+    fake.files.set(file, new Uint8Array([i + 1, 2, 3]))
+    chunks.push({ seq: i, file, start: T0 - 100_000 + i * 30_000,
+                  end: T0 - 70_000 + i * 30_000, size: 3, note: 'ok', uploaded: false })
+  }
+  fake.storage.set('state', JSON.stringify({
+    recording: false, mode: 'screen-on', sessionId: 'trex-1', seq: n - 1,
+    sessionStart: T0 - 100_000, chunks, events: [],
+  }))
+  return chunks
+}
+
+test('Clear, Screen ON/OFF and Voice do nothing while an upload runs', async () => {
+  const chunks = seedChunks(2)
+  const answers = []
+  const page = await loadPage('index', () => {
+    const d = deferred()
+    answers.push(d)
+    return d.promise
+  })
+  page.onInit()
+  page.build()
+  page.uploadAll()
+  assert.equal(answers.length, 1)
+  for (const name of ['Clear', 'Screen ON', 'Screen OFF', 'Voice']) {
+    const b = fake.button(name)
+    assert.ok(b, `${name} button missing: the page left the idle screen`)
+    b.props.click_func()
+    mock.timers.tick(20)
+  }
+  assert.equal(page.tester.state.recording, false, 'a new test started mid-upload')
+  assert.equal(page.tester.state.sessionId, 'trex-1')
+  assert.equal(page.tester.state.chunks.length, 2, 'chunks were cleared mid-upload')
+  for (const c of chunks) assert.ok(fake.files.has(c.file), `${c.file} was deleted`)
+  assert.equal(fake.pushed.length, 0)
+  answers[0].resolve({ ok: true })
+  await flush()
+  answers[1].resolve({ ok: true })
+  await flush()
+  assert.equal(page.tester.summary().uploaded, 2)
+  assert.equal(page.state.uploading, false)
+})

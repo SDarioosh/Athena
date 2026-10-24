@@ -169,7 +169,9 @@ export function createTester(deps) {
       }
     },
 
-    markUploaded(seq, result) {
+    /** sessionId: the session the upload was for; an answer for an older one is ignored. */
+    markUploaded(seq, result, sessionId) {
+      if (sessionId !== undefined && sessionId !== state.sessionId) return
       const c = state.chunks.find((x) => x.seq === seq)
       if (c) c.uploaded = result
       persist()
