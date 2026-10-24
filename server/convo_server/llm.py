@@ -372,7 +372,12 @@ class LLMClient:
                 raise LLMError(f"llama-server unreachable: {type(e).__name__}: {e}") from e
             if resp.status_code >= 400:
                 raise LLMError(f"llama-server HTTP {resp.status_code}: {resp.text[:300]}")
-            content = resp.json()["choices"][0]["message"].get("content") or ""
+            try:
+                content = resp.json()["choices"][0]["message"].get("content") or ""
+            except (ValueError, LookupError, TypeError, AttributeError) as e:
+                # a proxy's error page or an error object with HTTP 200
+                raise LLMError(f"llama-server answer is not a chat completion: "
+                               f"{resp.text[:300]}") from e
             try:
                 return schema.model_validate_json(_strip_fences(content))
             except ValidationError as e:

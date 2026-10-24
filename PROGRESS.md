@@ -144,6 +144,43 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-24: recorder fixes from a QC report (R1-R14)
+
+- **Host-tested** (`test_chunk_queue`, `test_audio_stats`, `test_isotime`): a card read
+  error at boot no longer deletes a chunk; a chunk left open while its session went on gets
+  no LAST at boot; a failed TIME record write is retried; chunk id 0 and id wrap refused;
+  RMS with a fractional DC offset; strict `time <ISO-8601>` parsing.
+- **Device-only, not built here (no ESP-IDF):** no reused sequence after a failed chunk
+  close; `mic_stop()` keeps the mic busy until I2S is off; T-Watch S3 gets
+  `CONFIG_I2S_ISR_IRAM_SAFE` and counts PDM DMA drops; BYE counts only chunks the relay was
+  offered; 6 job-queue slots kept for link events; `ls`/`get`/`sd` wait for a session;
+  T4-S3 polls a resting finger every 50 ms; Ultra status screen fits 502 rows; display off
+  when the band buffer can't be allocated.
+- **Needs real-device testing:** `idf.py build` for twatch_ultra, twatch_s3 (delete
+  `build-s3/sdkconfig` first, or the IRAM-safe option stays off) and t4_s3. T-Watch S3: a
+  long session into flash, then `mic_stop`'s "audio lost" line (PDM has only ~384 ms of DMA
+  slack; if it loses audio, route PDM through the reader task and PSRAM ring as on the
+  T4-S3). Ultra: BOOT press, the button hint shows at the bottom. T4-S3: finger resting on
+  the glass, `power locks`/current. `sd failwrite` during a session: the next chunk's
+  sequence follows. A voice note finished during a phone sync is advertised right after.
+
+## Done on 2026-10-24: T5 firmware QC fixes (QC report P1-P8)
+
+- **Host tests build under clang** (P1, P2): one concatenated literal in parentheses, and
+  `-Wno-bidi-chars` for `fonts.c` only with GCC. `ctest` passes under GCC and clang.
+- **Feed times** (P3, P4): `pda_time_parse` rejects NULL, `"12:00:00.Z"`, `"+02:"` and offsets
+  beyond ±14:00 or with minutes over 59; `floor_div` no longer overflows at INT64_MIN (no caller
+  gets near it). **JSON strings** (P5): broken UTF-8 in the input becomes U+FFFD. Tests in
+  `test/test_feed.c` and `test/test_json.c` (fail before, pass now).
+- **Touch** (P7, P8): `touch_sleep()` no longer gives a NULL semaphore when `touch_init()`
+  failed after adding the GT911 (a panic on BOOT-hold sleep); a sample whose point read fails
+  is dropped instead of starting a touch at (0,0) (a phantom swipe).
+- Not changed: P6 (the front light on a sync wake): on a timer wake `t5_board_init()` keeps
+  the pin held low and never sets up the PWM, so `t5_backlight_set()` does nothing.
+- **Needs real-device testing:** `idf.py build` (not run here), then normal touch use (taps,
+  swipes, long press) and BOOT-hold sleep and wake. The touch error paths can't be triggered
+  by hand; `touch` on the console shows the error count.
+
 ## Done on 2026-10-24: a spoken to-do command always gives a to-do
 
 - Seen on the owner's server: a voice note like "Make a to-do to figure out how renewing a

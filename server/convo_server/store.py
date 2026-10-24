@@ -783,10 +783,13 @@ class Store:
             self._index_transcript(c, conv_id)
             # a re-summary of a conversation an erased fact was said in: its new text
             # waits for the forget rewrite too
+            # (erased_sources too: the fact may now be owned by another conversation)
             erased = [r[0] for r in c.execute(
                 "SELECT fact FROM facts WHERE conversation_id = ? AND erased_at IS NOT NULL"
                 " UNION SELECT f.fact FROM fact_sources s JOIN facts f ON f.id = s.fact_id"
-                " WHERE s.conversation_id = ? AND f.erased_at IS NOT NULL", (conv_id, conv_id))]
+                " WHERE s.conversation_id = ? AND f.erased_at IS NOT NULL"
+                " UNION SELECT f.fact FROM erased_sources e JOIN facts f ON f.id = e.fact_id"
+                " WHERE e.conversation_id = ?", (conv_id, conv_id, conv_id))]
             if erased:
                 self._queue_rewrite(c, conv_id, erased, time.time())
         return fact_ids
@@ -1029,15 +1032,16 @@ class Store:
                      audio: list[str]) -> int:
         """Redact the transcript line that starts at ``source_at`` (the summary's line
         offset: whole seconds from the conversation start, so the line starts within a
-        second after it). Returns 1 if a line was redacted."""
+        second after it). Returns 1 if a line was redacted; 0 when that line was already
+        redacted (another fact said on it), never a neighbouring line instead."""
         if source_at is None:
             return 0
         line = c.execute(
-            "SELECT id, session_id, started_at, ended_at FROM segments"
-            " WHERE conversation_id = ? AND erased = 0 AND started_at < ? + 1"
+            "SELECT id, session_id, started_at, ended_at, erased FROM segments"
+            " WHERE conversation_id = ? AND started_at < ? + 1"
             " AND ended_at > ? - 1 ORDER BY abs(started_at - ?) LIMIT 1",
             (conv_id, source_at, source_at, source_at)).fetchone()
-        if line is None:
+        if line is None or line["erased"]:
             return 0
         c.execute("UPDATE segments SET text = ?, erased = 1 WHERE id = ?",
                   (ERASED_TEXT, line["id"]))
@@ -1545,7 +1549,12 @@ class Store:
                 r = c.execute("SELECT text FROM action_items WHERE id = ?",
                               (item_id,)).fetchone()
                 sets["title"] = short_title(title, r["text"] if r else "")
-            n = c.execute(f"UPDATE action_items SET {', '.join(f'{k} = ?' for k in sets)}"
+                if title is not None:  # a renamed note: the hub files it by note_title
+                    sets["note_title"] = sets["title"]
+            cols = [f"{k} = ?" if k != "note_title"
+                    else "note_title = CASE WHEN kind = 'note' THEN ? ELSE note_title END"
+                    for k in sets]
+            n = c.execute(f"UPDATE action_items SET {', '.join(cols)}"
                           " WHERE id = ?", (*sets.values(), item_id)).rowcount
             if n:
                 r = c.execute("SELECT kind, due_date, due_time, list_name FROM action_items"
@@ -1953,6 +1962,8 @@ def _move_knowledge(c: sqlite3.Connection, src: str, dst: str) -> None:
         c.execute(f"UPDATE {table} SET conversation_id = ? WHERE conversation_id = ?",
                   (dst, src))
     c.execute("UPDATE OR IGNORE fact_sources SET conversation_id = ? WHERE conversation_id = ?",
+              (dst, src))
+    c.execute("UPDATE OR IGNORE erased_sources SET conversation_id = ? WHERE conversation_id = ?",
               (dst, src))
     # a fact can't be "said again" in the conversation that now owns it
     c.execute("DELETE FROM fact_sources WHERE conversation_id = ? AND fact_id IN"

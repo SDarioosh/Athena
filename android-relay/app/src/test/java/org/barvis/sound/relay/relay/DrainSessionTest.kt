@@ -55,6 +55,17 @@ class DrainSessionTest {
         assertEquals(listOf(0L, b.chunkId, c.chunkId), lists)
     }
 
+    @Test fun listThatDoesNotAdvanceIsAWatchError() {
+        // A firmware that ignores after_id lists the skipped chunk again and again.
+        server.uploadAnswer = { ServerResult.Rejected(422, "bad audio") }
+        watch.add(s1, 0, last = true)
+        watch.listFrom = { 0L }
+        val out = run()
+        assertTrue(out.toString(), out is DrainOutcome.WatchError)
+        assertEquals(2, watch.commands.count { it is Command.List })
+        assertEquals(Command.Bye, watch.commands.last())
+    }
+
     @Test fun noteChunksUploadWithKindNote() {
         watch.add(s1, 0)
         watch.add(s1, 1, last = true)

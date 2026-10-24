@@ -43,6 +43,26 @@ int main(void)
     CHECK_EQ(audio_stats_dc(&s), 300);
     CHECK_EQ(audio_stats_rms(&s), 200);
 
+    /* QC R10: a mean that isn't a whole number. The integer version truncated the mean and
+     * E[x^2] before subtracting, which leaves up to ~2|DC| in the variance: 600/601 (DC
+     * 600.5, RMS 0.5) read 24, and 1011/990 (DC 1000.5, RMS 10.5) read 33. */
+    audio_stats_reset(&s);
+    const int16_t half[4] = {600, 601, 600, 601};
+    audio_stats_add(&s, half, 4);
+    CHECK_EQ(audio_stats_rms(&s), 0);
+    audio_stats_reset(&s);
+    const int16_t neg_half[4] = {-600, -601, -600, -601};
+    audio_stats_add(&s, neg_half, 4);
+    CHECK_EQ(audio_stats_rms(&s), 0);
+    audio_stats_reset(&s);
+    const int16_t small_ac[4] = {1011, 990, 1011, 990};
+    audio_stats_add(&s, small_ac, 4);
+    CHECK_EQ(audio_stats_rms(&s), 10);
+    audio_stats_reset(&s);
+    const int16_t big_dc[4] = {-32000, -31999, -32000, -31999};
+    audio_stats_add(&s, big_dc, 4);
+    CHECK_EQ(audio_stats_rms(&s), 0);
+
     /* Full scale: peak 32768 for INT16_MIN, both ends count as clipped. */
     audio_stats_reset(&s);
     const int16_t fs[4] = {INT16_MIN, INT16_MAX, INT16_MIN, INT16_MAX};

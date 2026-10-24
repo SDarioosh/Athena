@@ -44,6 +44,20 @@ def test_structured_connection_error_is_llm_error():
         llm.structured("s", "u", ConversationSummary)
 
 
+@pytest.mark.parametrize("response", [
+    httpx.Response(200, text="<html>502 Bad Gateway</html>"),  # a proxy's error page
+    httpx.Response(200, json={"error": "loading model"}),
+    httpx.Response(200, json={"choices": []}),
+    httpx.Response(200, json=["not", "an", "object"]),
+])
+def test_structured_odd_200_answer_is_llm_error(response):
+    """QC S8: an HTTP 200 that isn't a chat completion raised JSONDecodeError or
+    KeyError past ``except LLMError`` (a 500 from the API instead of a 502)."""
+    llm = LLMClient("http://x/v1", "m", transport=httpx.MockTransport(lambda r: response))
+    with pytest.raises(LLMError, match="not a chat completion"):
+        llm.structured("s", "u", ConversationSummary)
+
+
 def test_strip_fences():
     assert _strip_fences("```json\n{\"a\": 1}\n```") == '{"a": 1}'
 

@@ -29,6 +29,29 @@ int main(void)
     CHECK(!isotime_parse("now", &e));
     CHECK(!isotime_parse("", &e));
     CHECK(!isotime_parse("99999999999", &e)); /* beyond 2100 */
+    /* QC R14: sscanf took leading spaces and signs in every field and stopped at a space after
+     * the "Z", so these all parsed. The form is exact now. */
+    e = 42;
+    CHECK(!isotime_parse("2026-10-24T12:00:00Z GARBAGE", &e));
+    CHECK(!isotime_parse("2026-10-24T12:00:00 Z", &e));
+    CHECK(!isotime_parse("2026-10-24T12:00:00\tx", &e));
+    CHECK(!isotime_parse(" 2026-10-24T12:00:00Z", &e));
+    CHECK(!isotime_parse("+2026-10-24T12:00:00Z", &e));
+    CHECK(!isotime_parse("2026-+1-24T12:00:00Z", &e));
+    CHECK(!isotime_parse("2026- 1-24T12:00:00Z", &e));
+    CHECK(!isotime_parse("2026-10-24T 1:00:00Z", &e));
+    CHECK(!isotime_parse("2026-10-24T12:-1:00Z", &e));
+    CHECK(!isotime_parse("2026-1-24T12:00:00Z", &e));
+    CHECK(!isotime_parse("-999-10-24T12:00:00Z", &e));
+    CHECK(!isotime_parse("2026-10-24T12:00", &e));
+    CHECK(!isotime_parse("2026-10-24T12:00:00ZZ", &e));
+    CHECK(!isotime_parse("2026-10-24X12:00:00Z", &e));
+    CHECK_EQ(e, 42); /* untouched on failure */
+    CHECK(isotime_parse("2026-10-19t12:34:56z", &e)); /* lower case still fine */
+    CHECK_EQ(e, 1792413296LL);
+    /* No signed overflow at the ends of int (UBSan would flag the old year - 1). */
+    isotime_days_from_civil(-2147483647 - 1, 1, 1);
+    isotime_days_from_civil(2147483647, 12, 31);
 
     isotime_fields_t f;
     isotime_to_fields(1792413296LL, &f);

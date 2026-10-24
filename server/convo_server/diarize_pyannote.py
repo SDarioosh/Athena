@@ -27,6 +27,7 @@ os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
 import logging  # noqa: E402
+import re  # noqa: E402
 from collections.abc import Callable  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
@@ -227,6 +228,9 @@ class PyannoteDiarizer(Diarizer):
             # its "Speaker N" numbering starts again at 1: continue after ours instead
             renumber = {name: f"Speaker {len(unnamed) + k}"
                         for k, name in enumerate(extra, 1)}
+            for lab in labels:  # clips too short to embed: "Speaker 1" with no voice
+                if lab.name not in renumber and re.fullmatch(r"Speaker \d+", lab.name):
+                    renumber[lab.name] = f"Speaker {len(unnamed) + len(renumber) + 1}"
             for name, emb in extra.items():
                 unnamed[renumber[name]] = emb
             for i, lab in zip(rest, labels, strict=True):
