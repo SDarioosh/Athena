@@ -1,4 +1,4 @@
-"""Client for the odysseus-sound server's ingest API, standard library only.
+"""Client for the Athena server's ingest API, standard library only.
 
 - `GET /health` (no token) before any chunk is pulled (§6 step 5).
 - `POST /v1/ingest/chunk` (multipart) and `POST /v1/sessions/{id}/end`, bearer token.

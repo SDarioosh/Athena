@@ -28,6 +28,7 @@ add_library(pda_pure STATIC
     ${FW}/main/ui_nav.c
     ${FW}/main/sleep_plan.c
     ${FW}/main/today_plan.c
+    ${FW}/main/wake_log.c
     ${REC}/main/crc32.c
     ${REC}/main/isotime.c
 )
@@ -35,7 +36,7 @@ target_include_directories(pda_pure PUBLIC ${FW}/main ${REC}/main ${REC}/test)
 
 enable_testing()
 foreach(t test_pda_proto test_json test_feed test_outbox test_feed_store test_gesture test_touch_idle
-        test_ui_nav test_sleep_plan test_today_plan)
+        test_ui_nav test_sleep_plan test_today_plan test_wake_log)
     add_executable(${t} ${t}.c)
     target_link_libraries(${t} pda_pure)
     add_test(NAME ${t} COMMAND ${t})

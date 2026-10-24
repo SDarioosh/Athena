@@ -140,7 +140,7 @@ internal class JsonClient(
 }
 
 /**
- * The odysseus-sound HTTP API (server/convo_server/api.py), directly or through Odysseus
+ * The Athena HTTP API (server/convo_server/api.py), directly or through Odysseus
  * ([routes]: the same paths under `/api/codex/sound` and the same JSON). The token is never
  * logged.
  */

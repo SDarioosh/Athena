@@ -94,6 +94,7 @@ typedef struct {
     size_t cap;
     /* The chunk being written. */
     bool open;
+    bool abandoned;       /* cq_abandon_close() done, cq_abandon_recover() not yet */
     cq_info_t cur;
     FILE *cur_file;
     /* A cached read handle: the BLE side reads a chunk in many small pieces. */
@@ -128,6 +129,13 @@ int cq_end(chunk_queue_t *q, uint32_t duration_ms, bool last);
  * kept, the session's previous chunk does). Without it the session goes on with a new chunk
  * and no flag changes. */
 int cq_abandon(chunk_queue_t *q, bool last, uint32_t *closed_id);
+/* cq_abandon() in two steps, so the caller can power the card off and on in between (the
+ * file is closed after the first): a card that stopped answering can't be read to recover
+ * the chunk until then. cq_abandon_recover() without cq_abandon_close() is CQ_ERR_STATE. If
+ * the card still can't be read, recovery returns CQ_ERR_IO and leaves the chunk on the card
+ * for the next boot's recovery (it is never deleted for a read error). */
+int cq_abandon_close(chunk_queue_t *q);
+int cq_abandon_recover(chunk_queue_t *q, bool last, uint32_t *closed_id);
 /* Set LAST on a closed chunk (the next chunk of its session couldn't be started). */
 int cq_set_last(chunk_queue_t *q, uint32_t chunk_id);
 /* The open chunk, if any. */

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Odysseus Sound Relay</string>
+    <string name="app_name">Athena Relay</string>
     <string name="settings_title">Relay settings</string>
     <string name="channel_name">Relay status</string>
     <string name="channel_description">Shows what the watch relay is doing</string>
@@ -81,20 +81,20 @@
     <string name="pair_done">Paired with %1$s as \"%2$s\". Uploads and the T5 now go through Odysseus.</string>
     <string name="pair_failed">Pairing failed: %1$s</string>
     <string name="pair_state_paired">Paired with %1$s. Uploads and the T5 go through Odysseus. Pair again to replace this phone\'s token.</string>
-    <string name="pair_state_direct">Uploads go straight to the odysseus-sound server (below). Pair to send them through Odysseus instead.</string>
+    <string name="pair_state_direct">Uploads go straight to the Athena server (below). Pair to send them through Odysseus instead.</string>
     <string name="pair_scan_hint">Point the camera at the code on Odysseus\' Pair a phone page</string>
     <string name="pair_camera_denied">No camera permission. Paste the pairing link instead.</string>
     <string name="pair_scan_failed">The scanner couldn\'t start (%1$s). Scan the code with your phone\'s camera app and open the link, or paste it below.</string>
     <string name="pair_confirm">Pairing link for %1$s. Check that this is your Odysseus, then tap \"Pair with this link\".</string>
     <string name="pair_scan_unavailable">No camera app could open the scanner. Paste the link instead.</string>
-    <string name="through_odysseus">Send the watch\'s audio and the T5\'s data through Odysseus (paired). Off: straight to the odysseus-sound server below.</string>
+    <string name="through_odysseus">Send the watch\'s audio and the T5\'s data through Odysseus (paired). Off: straight to the Athena server below.</string>
     <string name="through_odysseus_needs_pairing">Pair with Odysseus first, or enter its URL and token in the PDA section.</string>
-    <string name="direct_heading">odysseus-sound server (direct, fallback)</string>
+    <string name="direct_heading">Athena server (direct, fallback)</string>
     <string name="direct_intro">Only needed when uploads don\'t go through Odysseus.</string>
     <string name="choose_calendar">Choose calendar…</string>
     <string name="choose_calendar_title">Calendar for the T5\'s events</string>
     <string name="choose_calendar_default">Odysseus\' default calendar</string>
     <string name="choose_calendar_failed">Couldn\'t list calendars: %1$s</string>
     <string name="choose_calendar_none">No calendars in Odysseus yet.</string>
-    <string name="privacy_note">Audio goes only from the watch to your own servers (Odysseus or odysseus-sound). Tokens are encrypted on this phone and never shown, logged or backed up. The camera is used only to scan the pairing code, on the phone; nothing is saved.</string>
+    <string name="privacy_note">Audio goes only from the watch to your own servers (Odysseus or Athena). Tokens are encrypted on this phone and never shown, logged or backed up. The camera is used only to scan the pairing code, on the phone; nothing is saved.</string>
 </resources>

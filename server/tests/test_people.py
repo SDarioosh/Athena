@@ -76,8 +76,8 @@ def test_name_speaker_and_reassign_line_create_people(pipeline):
     mcp = build_mcp(store, pipeline.settings)
     process_two_speakers(pipeline)
     conv = store.list_conversations()[0]["id"]
-    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Jen")
-    assert person(store, store.person_id("Jen"))["speaker_id"] is not None
+    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Kat")
+    assert person(store, store.person_id("Kat"))["speaker_id"] is not None
     line = store.conversation_segments(conv)[0]
     call(mcp, "reassign_line", line_id=line.id, name="Dan")
     dan = store.person_id("Dan")
@@ -100,23 +100,23 @@ def test_rename_everywhere_keeps_the_id(pipeline):
     mcp = build_mcp(store, pipeline.settings)
     process_two_speakers(pipeline)
     conv = store.list_conversations()[0]["id"]
-    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Jen")
-    jen = store.person_id("Jen")
-    out = call(mcp, "rename_speaker_everywhere", old_name="jen", new_name="Jenn")
-    assert out.endswith(f"The person id {jen} is kept.")
-    assert store.person_id("Jenn") == store.person_id("JEN") == jen
-    row = person(store, jen)
-    assert row["name"] == "Jenn" and row["speaker_id"] is not None
-    (p,) = [p for p in people_json(pipeline) if p["id"] == jen]
-    assert p["name"] == "Jenn" and p["aliases"] == ["Jen"] and p["has_voice"]
+    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Kat")
+    kat = store.person_id("Kat")
+    out = call(mcp, "rename_speaker_everywhere", old_name="kat", new_name="Kath")
+    assert out.endswith(f"The person id {kat} is kept.")
+    assert store.person_id("Kath") == store.person_id("KAT") == kat
+    row = person(store, kat)
+    assert row["name"] == "Kath" and row["speaker_id"] is not None
+    (p,) = [p for p in people_json(pipeline) if p["id"] == kat]
+    assert p["name"] == "Kath" and p["aliases"] == ["Kat"] and p["has_voice"]
     # renaming back keeps the id too; the new name stops being an alias
-    call(mcp, "rename_speaker_everywhere", old_name="Jenn", new_name="Jen")
-    (p,) = [p for p in people_json(pipeline) if p["id"] == jen]
-    assert p["name"] == "Jen" and p["aliases"] == ["Jenn"]
+    call(mcp, "rename_speaker_everywhere", old_name="Kath", new_name="Kat")
+    (p,) = [p for p in people_json(pipeline) if p["id"] == kat]
+    assert p["name"] == "Kat" and p["aliases"] == ["Kath"]
     # nothing to rename: nobody's id or name changes
-    assert "No lines by 'Jenn'" in call(mcp, "rename_speaker_everywhere", old_name="Jenn",
+    assert "No lines by 'Kath'" in call(mcp, "rename_speaker_everywhere", old_name="Kath",
                                         new_name="X")
-    assert store.person_id("X") is None and person(store, jen)["name"] == "Jen"
+    assert store.person_id("X") is None and person(store, kat)["name"] == "Kat"
 
 
 def test_rename_onto_an_existing_person_merges_into_that_id(pipeline):
@@ -124,32 +124,32 @@ def test_rename_onto_an_existing_person_merges_into_that_id(pipeline):
     mcp = build_mcp(store, pipeline.settings)
     process_two_speakers(pipeline)
     conv = store.list_conversations()[0]["id"]
-    say(store, "other", T0 + 5 * HOUR, "Jennifer", "Jennifer plays chess",
-        people=("Jennifer",))
-    jennifer = store.person_id("Jennifer")  # mentioned only, no voice
-    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Jen")
-    jen = store.person_id("Jen")
-    call(mcp, "rename_speaker_everywhere", old_name="Jen", new_name="Jenny")  # alias "Jen"
-    assert store.person_id("Jenny") == jen
+    say(store, "other", T0 + 5 * HOUR, "Katherine", "Katherine plays chess",
+        people=("Katherine",))
+    katherine = store.person_id("Katherine")  # mentioned only, no voice
+    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Kat")
+    kat = store.person_id("Kat")
+    call(mcp, "rename_speaker_everywhere", old_name="Kat", new_name="Katie")  # alias "Kat"
+    assert store.person_id("Katie") == kat
 
-    out = call(mcp, "rename_speaker_everywhere", old_name="Jenny", new_name="Jennifer")
-    assert f"(person id {jen}) is merged into Jennifer, whose person id {jennifer} is kept" \
+    out = call(mcp, "rename_speaker_everywhere", old_name="Katie", new_name="Katherine")
+    assert f"(person id {kat}) is merged into Katherine, whose person id {katherine} is kept" \
         in out
     # the name that already existed keeps its id; old names and aliases resolve to it
-    assert store.person_id("jenny") == store.person_id("Jen") == jennifer
-    assert person(store, jen)["merged_into"] == jennifer
-    survivor = person(store, jennifer)
+    assert store.person_id("katie") == store.person_id("Kat") == katherine
+    assert person(store, kat)["merged_into"] == katherine
+    survivor = person(store, katherine)
     assert survivor["speaker_id"] is not None  # the voice moved with the merge
     people = people_json(pipeline)
-    assert jen not in [p["id"] for p in people]  # merged rows are not listed
-    (p,) = [p for p in people if p["id"] == jennifer]
-    assert p["aliases"] == ["Jen", "Jenny"] and p["has_voice"]
+    assert kat not in [p["id"] for p in people]  # merged rows are not listed
+    (p,) = [p for p in people if p["id"] == katherine]
+    assert p["aliases"] == ["Kat", "Katie"] and p["has_voice"]
     assert p["conversations"] == 2  # spoke in one, was mentioned in the other
 
     # renaming the survivor to a merged name keeps it whole (no name clash)
-    call(mcp, "rename_speaker_everywhere", old_name="Jennifer", new_name="Jen")
-    assert store.person_id("Jen") == store.person_id("Jennifer") == jennifer
-    assert person(store, jennifer)["name"] == "Jen"
+    call(mcp, "rename_speaker_everywhere", old_name="Katherine", new_name="Kat")
+    assert store.person_id("Kat") == store.person_id("Katherine") == katherine
+    assert person(store, katherine)["name"] == "Kat"
 
 
 def test_owner_moves_with_a_merge(pipeline):
@@ -220,13 +220,13 @@ def test_fact_about_an_old_name_links_to_the_renamed_person(pipeline):
     mcp = build_mcp(store, pipeline.settings)
     process_two_speakers(pipeline)
     conv = store.list_conversations()[0]["id"]
-    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Jen")
-    jen = store.person_id("Jen")
-    call(mcp, "rename_speaker_everywhere", old_name="Jen", new_name="Jenn")
-    say(store, "later", T0 + 5 * HOUR, "Jen", "Jen runs marathons")
-    data = json.loads(call(mcp, "list_facts", subject="Jen", format="json"))
-    (fact,) = [f for f in data["facts"] if f["fact"] == "Jen runs marathons"]
-    assert fact["about"] == "person" and fact["person_id"] == jen
+    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Kat")
+    kat = store.person_id("Kat")
+    call(mcp, "rename_speaker_everywhere", old_name="Kat", new_name="Kath")
+    say(store, "later", T0 + 5 * HOUR, "Kat", "Kat runs marathons")
+    data = json.loads(call(mcp, "list_facts", subject="Kat", format="json"))
+    (fact,) = [f for f in data["facts"] if f["fact"] == "Kat runs marathons"]
+    assert fact["about"] == "person" and fact["person_id"] == kat
 
 
 def test_owner_name_setting_maps_to_the_owner_person(pipeline):

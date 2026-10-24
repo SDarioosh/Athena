@@ -1,4 +1,4 @@
-# odysseus-sound server
+# Athena server
 
 The `convo_server` package (CLI `convo-server`, env prefix `CONVO_`) keeps the project's
 old name, convo-ai. Don't rename it.
@@ -121,7 +121,10 @@ someone else the loudest: if the log shows it naming the wrong person, set
   a stock phrase is dropped when whisper was unsure of it (mean token log-probability
   below `CONVO_WHISPER_DROP_PHRASE_LOGPROB`, -0.7), so a real "thank you" stays. Subtitle
   credits and lines with no words go too, and repetition loops are cut to
-  `CONVO_WHISPER_MAX_REPEATS` (4). `CONVO_WHISPER_DROP_HALLUCINATIONS=false` turns it off.
+  `CONVO_WHISPER_MAX_REPEATS` (4). A whole sentence (4 or more different words) said
+  again right after itself, in one line or as the next lines, is kept once: that is
+  whisper repeating itself over the next pause or someone else's turn, not a person.
+  `CONVO_WHISPER_DROP_HALLUCINATIONS=false` turns it off.
 - Speech goes to whisper in clips of up to `CONVO_WHISPER_WINDOW_SECONDS` (28): the VAD
   regions of a run, padded by `CONVO_WHISPER_PAD_SECONDS` (0.25), are packed in order
   and the silence between them is shortened to `CONVO_WHISPER_WINDOW_GAP_SECONDS` (1.0).
@@ -262,7 +265,7 @@ source of truth, so the frontend can be swapped. Tools:
 | `get_daily_digest(date)` | memory |
 | `list_people(format)` | speakers and people mentioned; `format="json"` returns each person's stable id for programs (the hub links people to its contacts by it, below) |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
-| `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists); the person keeps their id |
+| `rename_speaker_everywhere(old_name, new_name)` | "it's Kath, not Kat": renames in every conversation (merges if the name exists); the person keeps their id |
 | `reassign_line(line_id, name)` | one line given to the wrong person (`#id` from `get_transcript`) |
 | `list_unnamed_speakers(limit)` | voices nobody has named yet, with quotes and a guess, for "who is this?" |
 
@@ -366,8 +369,8 @@ forgets a fact from the hub's review page. The fact gets status `retired` (next 
 `list_facts` (both formats), search (keyword index and embeddings), `get_conversation`
 and `GET /v1/conversations/{id}`. Facts it had replaced stay replaced. It stays
 forgotten: a re-summary of its conversation (e.g. after `name_speaker`) marks the matching
-new fact retired again (a re-summary gives facts new ids, so the hub reconciles by the
-facts returned, not by old ids), and the fact linker is shown retired facts too, so the
+fact retired again (it keeps its id, see below; the hub still reconciles by the facts
+returned), and the fact linker is shown retired facts too, so the
 same fact said in a later conversation becomes another source of the retired fact
 instead of a new one. A later fact that *updates* a retired one is a new belief and is
 shown. Calling it again answers "already retired".
@@ -503,7 +506,16 @@ small local model does better on narrow questions):
    Each item has a `kind`: `event` (meeting, appointment, call: "meeting with Jason on
    Wednesday at 12 pm"), `reminder` ("remind me at 5 to call Mom") or `task` ("get the
    proposal done on Wednesday"), plus `duration_minutes` and `location` for events if
-   said. Something repeating ("every Monday") becomes a task "Set up a repeating event:
+   said. In a voice note, code also finds appointments the model left out: a sentence
+   with an appointment word (meeting, call, lunch, appointment, dentist, …), a day and a
+   time, not in the past tense ("Meeting with the Meshtastic team Tuesday 11 a.m."),
+   becomes an event (text without the day and time) unless an item already says most of
+   its words or has its day from its line; an undated task or reminder that says it gets
+   its day and time and becomes the event. An event is named as said: when the model writes
+   "Meet X" for "meeting with X", code makes it "Meeting with X" ("Meet the Meshtastic
+   team" reads like getting to know them). A fact that only repeats a dated event of
+   the same conversation with its weekday or time ("… has a meeting with the Meshtastic
+   team on Tuesday at 11 a.m.") is left out: the event is on the calendar. Something repeating ("every Monday") becomes a task "Set up a repeating event:
    …". The model returns the time as said; `resolve_time` in `dates.py` turns it into
    `due_time` (HH:MM, `CONVO_TIMEZONE`): "12 pm"/"noon" → 12:00, "3:30 pm" → 15:30, "half
    past two" → 14:30, "midnight" → 00:00; a bare hour 12 → 12:00, 1–6 → afternoon, 7–11 →
@@ -522,7 +534,34 @@ small local model does better on narrow questions):
    voice note says "note"/"notes", strips command words the model leaves in, and gives
    a note no date, time or owner. It also finds the command sentences itself: one the
    model missed becomes a note (untitled; the hub titles it from the text), and an
-   undated task the model wrote for it becomes that note. In a conversation a `note` becomes a `task`. Notes
+   undated task the model wrote for it becomes that note (never a to-do the user asked
+   for out loud). Named notes need not say "notes" right after a note command: "make a
+   note in voice recorder that the case needs to be 3 mm bigger", "… for the voice
+   recorder: …", "… under car, …" and "add to my car note: …" go to `voice recorder` /
+   `car`; a time, a person or "in case …" there names no notes ("make a note for later:
+   …", "make a note for Sam that …"). When the model's note leaves the notes out, they
+   come from the command. In a conversation a `note` becomes a `task`.
+   **Spoken commands in voice notes** are caught in code even when the model lists no
+   item: to-dos ("make a todo to …", "to-do: …", "new task, …", "create a to-do called
+   …", "make a to-do for tomorrow to …", "remind me [at 5 / tomorrow / on Friday] to …",
+   "remind me about …", "add … to my to-do list"), list lines ("add eggs to my shopping
+   list [for Friday]", "add to the shopping list: oat milk", "put … on my work to-do
+   list") and notes ("note: …", "note to self, …", "new note: …", "add to my notes: …").
+   Words said before a command don't hide it ("um", "okay so", "hey", "can you", "I want
+   to", "let's"), nor do an ellipsis or "uh" inside it, and "…, thanks" is not part of
+   it. One sentence with several commands ("make a todo to get eggs and make a note that
+   the car is broken") gives one item per command, and an appointment said in the same
+   sentence as a command is still an event. "Remind me" with a time is a `reminder`. A
+   model item for a list command that lacks the list gets it. A comma list of short
+   things for a named list ("add eggs, milk and bread to my shopping list") is one item
+   per thing, so each is its own line; "salt and pepper" stays one. A list said line by
+   line ("Make a to-do list. Get eggs. Fix the car.", "Make a shopping list. Eggs.
+   Milk.", "Shopping list: eggs, milk, bread", "… for tomorrow: …") gives one item per
+   line on that list (the plain to-do list for a to-do list) until a closer ("okay,
+   that's it"), another command or a long sentence. The day and time said in a command
+   are the item's when the model drops them ("make a to-do to get eggs tomorrow" →
+   "Get eggs" due tomorrow; "remind me at 5 to call mom" → a reminder at 17:00), and a
+   midnight the model gives a command that names no time is dropped.
    are left out of the text `list_action_items`, the digest and `GET /v1/action-items`
    (add `?include_notes=true`); the JSON listing has them. Odysseus files each into its
    notes (a note of its own, or a line on the named notes) and marks it done here.
@@ -539,9 +578,12 @@ small local model does better on narrow questions):
 A re-summary (e.g. after a speaker is renamed) keeps what was known about the old items:
 the id, status, creation time and `explicit` of action items (and the kind, date, time,
 list and title if the user changed them with `update_action_item`; an item with the same text is matched
-before a similar one said nearby), the other sources of a fact, which facts it
-replaced, and whether the owner retired it. Stable ids matter: Odysseus files voice-note
-items by id.
+before a similar one said nearby), and of facts the id (the same text, or the same
+transcript line read alike), the other sources, which facts it replaced, and whether the
+owner retired it. New facts get ids no old fact of the conversation had. Stable ids
+matter: Odysseus files voice-note items and facts by id, and a fact under a new id was a
+second belief there (the same fact twice in its memory when the owner had confirmed the
+first).
 
 ## Recognition eval
 

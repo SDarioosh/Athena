@@ -1,6 +1,6 @@
 # PDA firmware: LilyGO T5 E-Paper Pro
 
-The odysseus-sound pocket PDA ([docs/t5-pda-plan.md](../../docs/t5-pda-plan.md)). It shows
+The Athena pocket PDA ([docs/t5-pda-plan.md](../../docs/t5-pda-plan.md)). It shows
 the daily briefing, recent conversations, open action items and the week's calendar on
 the 4.7" e-paper and queues taps (done, dismiss, add an event, fetch a transcript) as
 actions. The phone (android-relay `PdaSync`) or the PC relay (`ble_relay.py pda`) brings
@@ -28,6 +28,7 @@ the feed in and takes the actions out over BLE: the glance protocol of plan §3.
 | `main/pda_app.*` | state: feed, outbox, pending / failed lists, clock; the BLE store |
 | `main/ui_pda.*`, `ui_chrome.*`, `gfx.*`, `fonts.*` | the screens of plan §5; the header, tabs, headings and Asleep screen; text layout, round ticks, the battery icon; Fira Sans Regular 12/20 and SemiBold 12/20/32 (OFL, `main/fonts/`) |
 | `main/today_plan.*`, `ui_today.*`, `ui_layout.h` | the Today tab: the plan from the hub's insight or from rules (pure), its drawing (gfx only, rendered on the host), the screens' geometry |
+| `main/wake_log.*`, `wake_log_store.*` | the sleep/wake log in NVS: one entry per boot and per deep sleep, 128 kept, read with `wakelog` (text form pure, host-tested) |
 | `main/pda_console.*`, `pda_cmds.c` | USB console |
 | `test/` | host tests (no ESP-IDF needed) |
 | `tools/pda_serial.py` | console helper: run commands, load a blob, dump the screen as PNG |
@@ -144,6 +145,7 @@ cmd "<command>"` runs one from a script.
 | `ble [pair\|forget]` | BLE state, open the pairing window, delete all bonds |
 | `light [0-100]` | front light level (kept in NVS) |
 | `sleep [<min>\|off\|info]` | deep sleep as BOOT held (the USB console goes away); `<min>`: the first sync wake in that many minutes; `off`: no sync wakes; `info`: sync-wake counters since power-on |
+| `wakelog [clear]` | the sleep/wake log: every boot (reset reason, wake cause) and deep sleep (why, sync result, timer), with the battery; kept in flash, so it survives a power cut; flags a sync wake that never went back to sleep |
 | `rotate [90\|270]` | portrait orientation |
 | `wipe` | delete feed, details and outbox |
 | `i2c`, `batt`, `rtc [set <t>]`, `touch [trace <s>]`, `epd [bench\|clean]` | board bring-up and timing |

@@ -41,10 +41,10 @@ def summarizer(items):
     return Summarizer(llm, "Me", timezone="Europe/Berlin")
 
 
-def note_items(items):
-    out = summarizer(items).summarize(
-        [Segment(T0, T0 + 5, "Meeting with Jason on Wednesday at 12 pm", "Me", True)],
-        kind="note")
+def note_items(items, said="Meeting with Jason on Wednesday at 12 pm"):
+    # a line with a day, a time and a meeting gets an event even without the model's
+    # item (test_note_events.py): tests of other items say something else
+    out = summarizer(items).summarize([Segment(T0, T0 + 5, said, "Me", True)], kind="note")
     return out["action_items"]
 
 
@@ -54,7 +54,7 @@ def test_voice_note_items_get_kind_date_and_time():
     got = [(a["text"], a["kind"], a["due_date"], a["due_time"], a["time_unclear"],
             a["duration_minutes"], a["location"]) for a in items]
     assert got == [
-        ("Meet Jason", "event", "2025-10-15", "12:00", False, None, None),
+        ("Meeting with Jason", "event", "2025-10-15", "12:00", False, None, None),  # as said
         ("Get the proposal done", "task", "2025-10-15", None, False, None, None),
         ("Call Mom", "reminder", "2025-10-09", "17:00", False, None, None),  # today
         ("Go to the dentist", "event", "2025-10-10", "15:00", False, 60, "Main Street"),
@@ -72,7 +72,7 @@ def test_time_details():
         {"text": "Team standup", "kind": "event", "due": "every Monday", "time": "9:30 am",
          "duration_minutes": 15},
         {"text": "Buy milk", "duration_minutes": -5},  # kind defaults to task
-    ])
+    ], said="A few things to do.")
     plants, bank, lunch, standup, milk = items
     assert (plants["due_date"], plants["due_time"], plants["time_unclear"]) == (
         "2025-10-10", "09:00", True)
@@ -214,7 +214,7 @@ def test_list_action_items_text(pipeline, note_mcp):
 
 def test_list_action_items_json_mine_flag(pipeline, note_mcp):
     pipeline.store._conn.execute(
-        "UPDATE action_items SET owner = 'Shahyah' WHERE text = 'Meet Jason'")
+        "UPDATE action_items SET owner = 'Marisol' WHERE text = 'Meet Jason'")
     items = json.loads(call(note_mcp, "list_action_items", status="all", format="json"))
     assert next(i for i in items if i["text"] == "Meet Jason")["mine"] is False
     assert all(i["mine"] for i in items if i["text"] != "Meet Jason")

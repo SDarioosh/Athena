@@ -1,4 +1,4 @@
-# odysseus-sound PDA firmware for the LilyGO T5 E-Paper Pro (docs/t5-pda-plan.md).
+# Athena PDA firmware for the LilyGO T5 E-Paper Pro (docs/t5-pda-plan.md).
 #
 # A separate ESP-IDF project (plan §11 Q1 default). It compiles a few pure modules from
 # ../recorder/main (crc32, isotime) without changing them, so recorder behaviour is untouched.

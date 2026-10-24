@@ -83,14 +83,37 @@ def test_explicit_in_voice_notes(said, item, explicit):
     assert got["explicit"] is explicit
 
 
+# the transcriber writes the same command differently: "a to-do" heard as "it to do"
+@pytest.mark.parametrize("said,explicit", [
+    ("Make a to-do to get the garden club Trello board in order.", True),
+    ("Make it to do to get the garden club Trello board in order.", True),
+    ("Make a to do to get the garden club Trello board in order.", True),
+    ("Create a to do item to get the garden club Trello board in order.", True),
+    ("Add a to do, get the garden club Trello board in order.", True),
+    ("I need to do the garden club Trello board in order.", False),
+    ("I want to make it to do the garden club Trello board in order.", False),
+])
+def test_to_do_spelled_with_a_space(said, explicit):
+    (got,) = items_of([{"text": "Get garden club Trello board in order"}], said)
+    assert got["explicit"] is explicit
+
+
+def test_two_notes_a_minute_apart_both_explicit():
+    first = items_of([{"text": "Get book swap Trello board in order"}],
+                     "Make a to-do to get book swap Trello board in order.")
+    second = items_of([{"text": "Get garden club Trello board in order"}],
+                      "Make it to do to get garden club Trello board in order.")
+    assert [i["explicit"] for i in first + second] == [True, True]
+
+
 @pytest.mark.parametrize("said", [
-    "Create a to-do list and get Rock Talk ready for the meeting with the Meshtastic team.",
-    "Create a to do list. Get Rock Talk ready for the meeting with the Meshtastic team.",
-    "Okay, make a to-do list for tomorrow. Get Rock Talk ready for the Meshtastic meeting.",
-    "To-do list: get Rock Talk ready for the meeting with the Meshtastic team.",
+    "Create a to-do list and get Kite Lab ready for the meeting with the Harbor Radio team.",
+    "Create a to do list. Get Kite Lab ready for the meeting with the Harbor Radio team.",
+    "Okay, make a to-do list for tomorrow. Get Kite Lab ready for the Harbor Radio meeting.",
+    "To-do list: get Kite Lab ready for the meeting with the Harbor Radio team.",
 ])
 def test_items_after_a_to_do_list_sentence_are_explicit(said):
-    (got,) = items_of([{"text": "Get Rock Talk ready for meeting with Meshtastic team"}], said)
+    (got,) = items_of([{"text": "Get Kite Lab ready for meeting with Harbor Radio team"}], said)
     assert got["explicit"] is True
 
 

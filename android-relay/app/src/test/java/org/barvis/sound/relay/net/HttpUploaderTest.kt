@@ -128,8 +128,8 @@ class HttpUploaderTest {
         val up = throughOdysseus()
         answer = { 403 to """{"detail": "API token missing required scope: sound:ingest"}""" }
         assertEquals(ServerResult.AuthRejected(403), up.upload(chunk()))
-        // Odysseus can't reach odysseus-sound: retry later, never a token problem.
-        answer = { 502 to """{"detail": "odysseus-sound is not reachable"}""" }
+        // Odysseus can't reach Athena: retry later, never a token problem.
+        answer = { 502 to """{"detail": "Athena is not reachable"}""" }
         assertTrue(up.upload(chunk()) is ServerResult.Transient)
         answer = { 400 to """{"detail": "codec must be one of ['ogg', 'opus']"}""" }
         val r = up.upload(chunk())
