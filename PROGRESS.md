@@ -6,7 +6,7 @@ Athena (formerly convo-ai / barvis-ai / barvis-sound / odysseus-sound) is the fi
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-24 (voice-note bug hunt: ~100 fictional voice notes through the summarizer and the hub's filing; spoken to-do, list and note commands are caught with fillers and request words before them ("um", "can you", "let's"), "new to-do:", "note to self", "remind me on Friday to …", "add … to my to-do list", several commands in one sentence, named notes without the word "notes" ("make a note in voice recorder that …"), comma lists split into lines; a to-do asked for out loud in a voice note ("Make a to-do to figure out how ...") is always a to-do, even when the model lists none or rewords it; events are named as said ("Meeting with Meshtastic team", not "Meet the Meshtastic team"), and a fact that only repeats a dated event is left out; a voice note's appointment said as a fragment ("Meeting with the Meshtastic team Tuesday 11 a.m.") becomes an event even when the model lists no item for it; a re-summary keeps fact ids, so a reworded fact is no second belief in the hub; a sentence whisper repeats on the next lines is kept once; T-Watch event log in flash and card power cycle on write errors, after a call recorded in four pieces; facts name what they are about, passing curiosity is not a fact; "a to-do" transcribed as "a to do" or "it to do" still counts as a command; complete forget: `erase_fact`, MCP 0.10.0; opt-in transcript retention; "Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-24 (capture quality: pyannote line splitting, line voice check and VAD threshold 0.35 by default with pyannote, measured on the server GPU; voice-note bug hunt: ~100 fictional voice notes through the summarizer and the hub's filing; spoken to-do, list and note commands are caught with fillers and request words before them ("um", "can you", "let's"), "new to-do:", "note to self", "remind me on Friday to …", "add … to my to-do list", several commands in one sentence, named notes without the word "notes" ("make a note in voice recorder that …"), comma lists split into lines; a to-do asked for out loud in a voice note ("Make a to-do to figure out how ...") is always a to-do, even when the model lists none or rewords it; events are named as said ("Meeting with Meshtastic team", not "Meet the Meshtastic team"), and a fact that only repeats a dated event is left out; a voice note's appointment said as a fragment ("Meeting with the Meshtastic team Tuesday 11 a.m.") becomes an event even when the model lists no item for it; a re-summary keeps fact ids, so a reworded fact is no second belief in the hub; a sentence whisper repeats on the next lines is kept once; T-Watch event log in flash and card power cycle on write errors, after a call recorded in four pieces; facts name what they are about, passing curiosity is not a fact; "a to-do" transcribed as "a to do" or "it to do" still counts as a command; complete forget: `erase_fact`, MCP 0.10.0; opt-in transcript retention; "Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -43,7 +43,27 @@ _Last updated: 2026-10-24 (voice-note bug hunt: ~100 fictional voice notes throu
 | 18 | One-step pairing through Odysseus: the MCP HTTP server forwards uploads (`/ingest/chunk`, `/sessions/{id}/end`) and the T5's API reads to the ingest API (MCP 0.8.0), so the hub's call recorder and paired phones need only the `convo` MCP server; the Android relay pairs by scanning Odysseus's QR code (ZXing, on-device), stores the Odysseus URL and token, uploads and syncs the T5 through Odysseus (`/api/codex/sound/*`), picks the calendar from a list; direct mode stays as a fallback | **built and tested in the sandbox**, merged (PR #73); fix: the first APK crashed when opening the scanner (ZXing's `CaptureActivity` needs AndroidX), now our own `ScanActivity`; still failed on the owner's Galaxy Z Fold (Android 17) with no permission prompt, cause unknown (no Android 17 test target here): 0.2.1 asks for the camera first, reports scanner errors instead of crashing, opens `odysseus-pair:` links from the camera app (confirm before pairing) and shows the last crash to copy; server tests, relay `assembleDebug test lint` (159 tests), the relay's Kotlin pairing/upload/T5 clients against a real hub and module; **needs a real phone** (scan, pair over Tailscale, watch drain and T5 sync through Odysseus) and the owner's Server verification | `server/convo_server/ingest_relay.py`, `android-relay/` (`net/Pairing.kt`, `net/Routes.kt`), hub `src/call_recorder.py`, `src/phone_pairing.py` |
 | 19 | Open loops for the hub's Today insight (Phase 3, module side): `list_action_items` JSON rows gain `with` (the other people in the item's conversation, person ids, those the item names first; MCP 0.9.0, additive) | ✅ built and tested (`tests/test_item_with.py`); no open question for the owner | `server/convo_server/mcp_server.py`, `server/convo_server/store.py` (`conversation_participants`) |
 | 20 | Complete forget and retention (hub personal context 4.2, module side): `erase_fact` write tool (destructive; MCP 0.10.0, additive, 15 tools) redacts the line that said a fact in every conversation that said it, hides and rewrites (local model) the notes and digests, redoes search and embeddings, deletes kept audio, erases later repeats; opt-in `CONVO_TRANSCRIPT_RETENTION_DAYS` (default 0 = keep forever) prunes old transcripts and kept audio, keeping summaries, facts and action items | **built, tested** (`tests/test_erase_fact.py`, `tests/test_retention.py`); sandbox bakeoff questions 1, 9, 16 through Odysseus: 2/3 (`main` 1/3 the same day), end-to-end forget checked in the sandbox; hub side in SDarioosh/odysseus-expanded; **owner: Server verification** | `server/convo_server/{store,pipeline,llm,mcp_server,links,config}.py` |
+| 21 | Capture quality (hub personal context 4.3): pyannote attribution fixes, all opt-in: line splitting at pyannote turn changes (`CONVO_SPEAKER_SPLIT_LINES`, `_SPLIT_MIN_SECONDS`), line voice check (`CONVO_SPEAKER_LINE_CHECK`), pyannote VBx/clustering settings (`CONVO_PYANNOTE_VBX_FA`/`_FB`, `_CLUSTER_THRESHOLD`, `_MIN/MAX_SPEAKERS`), owner-hint log line; recognition eval: late joiners, arm movement, owner precision/recall, `unenrolled_named`, pyannote cache | **built, measured in the sandbox and on the server GPU** (2026-10-24, split + line check: named wrong 5.8 → 1.6 % on the table mic, 30–70 % less elsewhere, names right within 1.4 points, WER unchanged); no MCP contract change; **default with `CONVO_DIARIZER=pyannote` since 2026-10-24** (owner's call: split 0.3 s + line check + `CONVO_VAD_THRESHOLD=0.35`, any of them overridable in `.env`); **owner: one real recording** (PR Server verification step 2) | `server/convo_server/{diarize,diarize_pyannote,pipeline,config,cli}.py`, `server/eval/recognition.py`, `docs/omi-audio-quality.md` §8 |
 | 10 | End-to-end with real devices | not started | — |
+
+## Done on 2026-10-24: capture quality, diarization (hub personal context 4.3)
+
+- Measured first (`docs/omi-audio-quality.md` §8): with pyannote, wrong names come from
+  whisper lines over short turns and from turns pyannote files under the wrong speaker,
+  never from naming a whole speaker after the wrong person.
+- Built, all opt-in: line splitting at pyannote turn changes with a shorter minimum part,
+  a per-line voice check that unnames a line in another enrolled voice, pyannote's VBx
+  settings (`Fb` decides how many speakers it keeps apart; its clustering threshold
+  doesn't), naming rules and a WeSpeaker option that measured no better, and a log line
+  when the owner loudness hint names someone.
+- Eval: `--late-joiners`, `--owner-dips`, owner precision/recall, `unenrolled_named`,
+  pyannote turns cached; `--cache` keeps word times now.
+- Server GPU eval confirmed it (2026-10-24); on the owner's request split 0.3 s + line
+  check + `CONVO_VAD_THRESHOLD=0.35` are now the defaults with `CONVO_DIARIZER=pyannote`
+  (ECAPA unchanged). `Fb` 0.2 stays opt-in: it keeps newcomers out of existing names but
+  leaves more lines as "Speaker N".
+- No MCP contract change, no hub PR. Still open from the 4.3 plan: enrollment without the
+  Zepp watch and a "speaker unsure" flag for the hub (proposal posted, not decided).
 
 ## Done in this round
 
@@ -1432,6 +1452,9 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 ## Next
 
+- **Owner: capture quality** (4.3 PR, Server verification step 2): the GPU eval is done
+  (2026-10-24); still one real recording with a third person joining, and the owner-hint
+  log lines.
 - **Owner: voice-note commands on real speech** (this branch's PR, Server verification): record a
   few of the PR's sample voice notes on the watch ("um, make a todo to get eggs", "make a note in
   voice recorder that the case needs to be 3 mm bigger", "add eggs, milk and bread to my shopping
@@ -1501,12 +1524,20 @@ Still open:
   ("today, all day") before the timed ones. Keep, or leave all-day events out?
 - Confirmed facts: are 3 conversations over 2 days the right bar once real counts are in,
   or should a fact the owner confirms by hand (Phase 1 review page) be the main path?
-- Recognition: if pyannote on the server GPU names people right without more wrong names
-  than ECAPA (step 3 of SDarioosh/barvis-sound#31's Server verification), should it become the default there?
+- Recognition: answered 2026-10-23: the owner runs pyannote. The sandbox found pyannote
+  names more right but with more wrong names than ECAPA (5.3 vs 1.3 % on the table mic);
+  split + line check bring it to 1.6 %. Default diarizer stays `ecapa` in code until the
+  server run of the 4.3 PR.
+- Diarization (4.3 PR): split + line check are the pyannote defaults now. Use
+  `CONVO_PYANNOTE_VBX_FB=0.2` against newcomers getting an existing name (more
+  "Speaker N" in exchange)? Decide after a real recording.
+- Enrollment without the Zepp watch (quality checks, enrolling from T-Watch voice notes)
+  and a "speaker unsure" flag for the hub: proposed in the 4.3 session, not decided.
 - Insights: should doctor's instructions like "avoid hard food until the follow-up" be
   action items? The model lists them; they're not things to do by a date.
-- Owner loudness hint: it never fired in the eval. Keep it until a real-device recording
-  shows whether it helps, or remove it?
+- Owner loudness hint: it never fired in the eval (also not with simulated arm movement).
+  It now logs `owner hint: speaker N of M named …`; check the log on real wrist
+  recordings, and set `CONVO_OWNER_HINT_MARGIN=0` if it names someone else. Remove it then?
 - Voice notes: is ending the conversation session and resuming it after a note right, or
   should a note be refused while a conversation records? Should notes get their own place
   in the daily digest?

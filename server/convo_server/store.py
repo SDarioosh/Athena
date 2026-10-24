@@ -1646,7 +1646,8 @@ class Store:
         for r in rows:
             r["embedding"] = np.frombuffer(r["embedding"], dtype=np.float32)
             r["is_owner"] = bool(r["is_owner"])
-            got = samples.get(r.pop("id"), [])
+            # only samples of the voiceprint's speaker model (see _refresh_voiceprint)
+            got = [v for v in samples.get(r.pop("id"), []) if v.size == r["embedding"].size]
             r["samples"] = (np.stack(got) if got
                             else np.zeros((0, r["embedding"].size), np.float32))
         return rows
@@ -1817,7 +1818,10 @@ def _unit(v: np.ndarray) -> np.ndarray:
 
 def _refresh_voiceprint(c: sqlite3.Connection, speaker_id: int) -> None:
     vecs = [np.frombuffer(r["embedding"], dtype=np.float32) for r in c.execute(
-        "SELECT embedding FROM voice_samples WHERE speaker_id = ?", (speaker_id,))]
+        "SELECT embedding FROM voice_samples WHERE speaker_id = ? ORDER BY id", (speaker_id,))]
+    # samples of another speaker model (CONVO_SPEAKER_EMBEDDER changed) have another
+    # size: the voiceprint follows the newest sample's model
+    vecs = [v for v in vecs if vecs and v.size == vecs[-1].size]
     if vecs:
         c.execute("UPDATE speakers SET embedding = ? WHERE id = ?",
                   (_unit(np.mean(vecs, axis=0)).tobytes(), speaker_id))

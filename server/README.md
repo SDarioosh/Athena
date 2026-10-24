@@ -60,6 +60,37 @@ The weights come once from the ungated `pyannote-community` copy on Hugging Face
 default; the server turns it off before loading pyannote. pyannoteAI cloud pipelines
 (`precision-2`, `*-cloud`) are refused.
 
+#### Fewer wrong names with pyannote (default with pyannote since 2026-10-24)
+
+Measured with `eval/recognition.py` (see [Recognition eval](#recognition-eval)) in the
+sandbox and on the server GPU (`docs/omi-audio-quality.md` §8.3). With
+`CONVO_DIARIZER=pyannote`, line splitting (parts ≥ 0.3 s), the line check and
+`CONVO_VAD_THRESHOLD=0.35` are **on by default**; set any of them in `.env` to override
+(e.g. `CONVO_SPEAKER_LINE_CHECK=false`, `CONVO_VAD_THRESHOLD=0.5` for the old behaviour).
+With ECAPA nothing changes. The rest of the table stays opt-in:
+
+| setting | what it does | sandbox effect |
+|---|---|---|
+| `CONVO_SPEAKER_SPLIT_LINES=true` + `CONVO_SPEAKER_SPLIT_MIN_SECONDS=0.3` | a whisper line that runs over a pyannote turn change becomes one line per speaker (cut at word times); a part shorter than the minimum joins its neighbour (1.5 s by default, which threw away short interjections) | with the line check, see below |
+| `CONVO_SPEAKER_LINE_CHECK=true` | each named line's own voice (3 s window) is compared with every enrolled voice; a line that fits another enrolled person at least as well becomes `Unknown` (never taken for a person; fix with `reassign_line`). Needs two or more voices on file | wrong names on the table mic 5.3 → 1.8 % |
+| both together | | table mic: wrong names 5.3 → 1.6 %, other people's speech under an enrolled name 8.7 → 4.6 %; late joiners: 4.3 → 2.6 % and 15.8 → 11.0 %; names right unchanged |
+| `CONVO_PYANNOTE_VBX_FB=0.2` | pyannote keeps more speakers apart (community-1 default 0.8; `CONVO_PYANNOTE_VBX_FA`, default 0.07, too) | late joiners: newcomers under an enrolled name 15.8 → 7.8 %, but 8–11 speakers for 4 people, names right 95 → 80 %; 0.3 is no useful middle (14.9 %, names right 92 %) |
+| `CONVO_VAD_THRESHOLD=0.35` (an existing setting, default 0.5) | lets more quiet, far speech through to whisper | room WER 28.1 → 27.1 %, the others' 47.5 → 44.6 %; server GPU: table 36.1 → 35.2 %, room 28.4 → 27.6 % |
+
+Measured and **not** worth it: `CONVO_PYANNOTE_CLUSTER_THRESHOLD` (in community-1 it
+only seeds VBx; 0.2–0.9 gave the same speakers), `CONVO_SPEAKER_MATCH_MARGIN` and
+`CONVO_SPEAKER_NAME_MIN_SECONDS` (Omi's naming rules; whole speakers were already named
+right), `CONVO_SPEAKER_LINE_FLOOR` (unnames a line that fits its name poorly; barely
+moved anything) and `CONVO_SPEAKER_EMBEDDER=pyannote` (names with pyannote's own
+WeSpeaker model instead of ECAPA; same names; switching needs a new enrollment, voices
+of the other model never match). `CONVO_PYANNOTE_MIN_SPEAKERS`/`_MAX_SPEAKERS` bound the
+speaker count per recording; not measured.
+
+The owner loudness hint (below) logs `owner hint: speaker N of M named …` whenever it
+names a speaker. It never fired in the eval, but a wrist mic that turns away can make
+someone else the loudest: if the log shows it naming the wrong person, set
+`CONVO_OWNER_HINT_MARGIN=0`.
+
 ### Speakers
 
 - Each person has several voice samples (enrollment is cut into ~9 s samples; every
@@ -191,8 +222,9 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
 
-VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD`, `CONVO_VAD_MIN_SILENCE_MS` and
-`CONVO_VAD_SPEECH_PAD_MS` tune it. A far-field or wrist recording can be 20-30 dB quieter
+VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD` (0.5; 0.35 by default with
+`CONVO_DIARIZER=pyannote`), `CONVO_VAD_MIN_SILENCE_MS` and `CONVO_VAD_SPEECH_PAD_MS` tune
+it. A far-field or wrist recording can be 20-30 dB quieter
 than a close mic, and Silero then misses some of its speech, so whisper never gets it.
 `CONVO_VAD_AGC_MAX_GAIN` (1 = off, the default) lets Silero score a copy of each chunk
 gained toward a `CONVO_VAD_AGC_TARGET` (0.8) peak, at most that many times; the stored
@@ -572,6 +604,16 @@ away, `--opus-kbps KBPS` (or `--opus`) round-trips the stream through Opus like 
 recorders, and `--level DBFS` sets the input level before encoding (the T-Watch's 30 dB
 mic gain puts speech near -24 dBFS). `--set field=value` overrides any setting. More in
 the script's docstring and `docs/omi-audio-quality.md` §7.
+
+With `--audio sim`, `--late-joiners` silences everyone but the two most active speakers
+for the first half of the window (people joining a conversation) and `--owner-dips DB`
+turns the owner's voice down by 6..DB dB for 2–8 s every 5–20 s (a wrist mic turning away
+as the arm moves). Besides WER and DER, each run reports named right/wrong, owner
+precision and recall (lines labelled as the owner that are the owner's, and the owner's
+lines labelled as the owner) and `unenrolled_named` (speech of people with no voice on
+file that got an enrolled name). `--cache` reuses whisper results (with word times) and
+pyannote's turns, so runs that only change naming take seconds.
+Results of the capture-quality round (2026-10-23/24): `docs/omi-audio-quality.md` §8.
 
 Measured 2026-10-20 in the cloud sandbox (large-v3-turbo on CPU, `--diarizer none`, 3
 meetings x 300 s, ~2,100 words). "Before" turns the transcription changes of that round

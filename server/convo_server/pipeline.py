@@ -227,6 +227,7 @@ class Pipeline:
         prompt = self.whisper_prompt()
         runs: list[np.ndarray] = []
         pieces: list[tuple[float, float, str, PieceRef]] = []
+        piece_words: list[list[tuple[float, float, str]]] = []  # run time, per piece
         cfg = self.settings
         context = ""
         for run_start, run_audio, run_speech in self._runs(chunks):
@@ -250,16 +251,25 @@ class Pipeline:
                     s, e = w.clamp(s, e)
                     pieces.append((run_start + s, run_start + e, p.text,
                                    PieceRef(len(runs) - 1, s, e)))
+                    piece_words.append([(w.to_run(a), w.to_run(b, end=True), t)
+                                        for a, b, t in p.words])
                 if cfg.whisper_context_words > 0 and got:
                     context = tail_words(" ".join([context] + [p.text for p in got]),
                                          cfg.whisper_context_words)
-        pieces.sort(key=lambda p: p[0])
+        order = sorted(range(len(pieces)), key=lambda i: pieces[i][0])
+        pieces = [pieces[i] for i in order]
+        piece_words = [piece_words[i] for i in order]
         labels = None
         owner_name = (self.store.owner_name() or self.settings.owner_name) if note else ""
         if not note and self.diarizer is not None and pieces:
             self.diarizer.voices = load_voices(self.store)  # pick up newly named speakers
             labels, unnamed = self.diarizer.diarize_runs(runs, [p[3] for p in pieces])
             self.store.put_speaker_candidates(session_id, unnamed)
+            if cfg.speaker_split_lines:
+                pieces, labels = self._split_pieces(runs, pieces, piece_words, labels)
+            if cfg.speaker_line_check:  # after splitting: each part is checked on its own
+                labels = self.diarizer.check_lines(runs, [p[3] for p in pieces], labels,
+                                                   cfg.speaker_line_floor)
         segments = []
         for i, (s, e, text, _) in enumerate(pieces):
             if note:
@@ -270,6 +280,29 @@ class Pipeline:
             segments.append(Segment(started_at=s, ended_at=e, text=text, speaker=name,
                                     is_owner=owner))
         return segments, ranges, chunks
+
+    def _split_pieces(self, runs: list[np.ndarray],
+                      pieces: list[tuple[float, float, str, PieceRef]],
+                      piece_words: list[list[tuple[float, float, str]]],
+                      labels: list[Any]) -> tuple[list[tuple[float, float, str, PieceRef]],
+                                                  list[Any]]:
+        """CONVO_SPEAKER_SPLIT_LINES: a line over a speaker change becomes one line per
+        speaker (``Diarizer.split_lines``), cut at word times."""
+        parts = self.diarizer.split_lines(runs, [p[3] for p in pieces], piece_words, labels)
+        out, out_labels = [], []
+        for (s, e, text, ref), ws, lab, cut in zip(pieces, piece_words, labels, parts,
+                                                     strict=True):
+            if len(cut) <= 1:
+                out.append((s, e, text, ref))
+                out_labels.append(cut[0][2] if cut else lab)
+                continue
+            base = s - ref.start  # wall-clock time of the run's start
+            for a, b, who in cut:
+                ra, rb = ws[a][0], ws[b - 1][1]
+                out.append((base + ra, base + rb, "".join(w[2] for w in ws[a:b]).strip(),
+                            PieceRef(ref.run, ra, rb)))
+                out_labels.append(who)
+        return out, out_labels
 
     def whisper_prompt(self) -> str:
         """CONVO_WHISPER_PROMPT plus the names of known speakers, for whisper's spelling."""

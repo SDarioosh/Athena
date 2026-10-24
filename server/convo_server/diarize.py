@@ -23,6 +23,7 @@ Either way, each speaker cluster is then named the same way (``name_clusters``):
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -31,12 +32,22 @@ import numpy as np
 
 from .audio import SAMPLE_RATE
 
+log = logging.getLogger(__name__)
+
 # Speaker embeddings on 1-2 s whisper segments are too noisy (one fast talker split into
 # 7 "speakers" in testing); embedding a >= 3 s window around each segment fixes that.
 DIARIZATION_WINDOW = 3.0
 # A person's score is the mean similarity of their closest voice samples: up to this
 # many, and at most a third of them (so 1 of 2 samples, 3 of 9 or more).
 TOP_SAMPLES = 3
+# A line the voice check unnamed (CONVO_SPEAKER_LINE_CHECK): a placeholder name, so it is
+# never taken for a person.
+UNSURE_LABEL = "Unknown"
+# Line splitting at pyannote turn changes (CONVO_SPEAKER_SPLIT_LINES): a shorter part
+# joins its neighbour.
+SPLIT_MIN_SECONDS = 1.5
+
+Word = tuple[float, float, str]  # start, end (seconds in the run), text
 
 
 class SpeakerEmbedder(Protocol):
@@ -76,6 +87,8 @@ class EnrolledVoice:
     def score(self, vec: np.ndarray) -> float:
         """Similarity of ``vec`` to this voice: mean of the closest few samples."""
         vec = _normalize(vec)
+        if vec.size != np.asarray(self.embedding).size:
+            return -1.0  # a voice of another speaker model never matches
         if self.samples.size == 0:
             return float(vec @ _normalize(self.embedding))
         sims = _normalize_rows(self.samples) @ vec
@@ -205,6 +218,15 @@ def absorb_singletons(embs: np.ndarray, cids: list[int], threshold: float) -> li
 
 
 class Diarizer:
+    # Opt-in naming rules (set from CONVO_* settings by ``cli.build_diarizer``):
+    # a speaker is named only if its best voice beats the runner-up voice by this much
+    # (CONVO_SPEAKER_MATCH_MARGIN, 0 = off) ...
+    match_margin: float = 0.0
+    # ... and only with this much speech (CONVO_SPEAKER_NAME_MIN_SECONDS, pyannote, 0 = off)
+    name_min_seconds: float = 0.0
+    # the shortest part a line split leaves (CONVO_SPEAKER_SPLIT_MIN_SECONDS)
+    split_min_seconds: float = SPLIT_MIN_SECONDS
+
     def __init__(self, embedder: SpeakerEmbedder, voices: list[EnrolledVoice],
                  match_threshold: float = 0.50, cluster_threshold: float = 0.45,
                  min_seconds: float = 1.0, owner_hint_margin: float = 0.10,
@@ -282,12 +304,57 @@ class Diarizer:
                 out[i] = out[int(nearest)]
         return [o for o in out if o is not None], unnamed
 
-    def name_clusters(self, centroids: list[np.ndarray], loudness: list[float] | None = None
+    def check_lines(self, runs: list[np.ndarray], pieces: list[PieceRef],
+                    labels: list[SpeakerLabel], floor: float = 0.0) -> list[SpeakerLabel]:
+        """Line voice check (``CONVO_SPEAKER_LINE_CHECK``): a line named after an enrolled
+        person whose own voice (a >= 3 s window around it) fits another enrolled person
+        at least as well, or fits its own name below ``floor``
+        (``CONVO_SPEAKER_LINE_FLOOR``, 0 = off: someone new), loses the name and becomes
+        ``UNSURE_LABEL``.
+
+        A speaker's lines can include someone else's short turns (the diarizer missed
+        them); those are the wrong names this catches. Moving the line to the other
+        person measured worse than unnaming it: the better fit is often someone who
+        isn't enrolled. The comparison needs two or more enrolled voices; the floor works
+        with one.
+        """
+        by_name = {v.name: v for v in self.voices}
+        if len(by_name) < 2 and floor <= 0:
+            return list(labels)
+        out = []
+        for p, lab in zip(pieces, labels, strict=True):
+            own = by_name.get(lab.name)
+            if own is None:
+                out.append(lab)
+                continue
+            e = self.embedder.embed(window(runs[p.run], p.start, p.end))
+            mine = own.score(e)
+            if mine < floor or any(v.score(e) >= mine for n, v in by_name.items()
+                                   if n != lab.name):
+                out.append(SpeakerLabel(UNSURE_LABEL, False))
+            else:
+                out.append(lab)
+        return out
+
+    def split_lines(self, runs: list[np.ndarray], pieces: list[PieceRef],
+                    words: list[list[Word]], labels: list[SpeakerLabel]
+                    ) -> list[list[tuple[int, int, SpeakerLabel]]]:
+        """Parts of each line by speaker: (first word, end word, label). ECAPA keeps every
+        line whole (splitting by voice measured worse in eval/recognition.py); the
+        pyannote backend splits at its turn changes."""
+        return [[(0, len(ws), lab)] for ws, lab in zip(words, labels, strict=True)]
+
+    def name_clusters(self, centroids: list[np.ndarray], loudness: list[float] | None = None,
+                      seconds: list[float] | None = None
                       ) -> tuple[list[SpeakerLabel], dict[str, np.ndarray]]:
-        """Name each cluster (in order of first appearance) from the enrolled voices."""
+        """Name each cluster (in order of first appearance) from the enrolled voices.
+
+        ``seconds``: each cluster's amount of speech, for ``name_min_seconds``.
+        """
         scores = np.array([[v.score(c) for v in self.voices] for c in centroids],
                           dtype=np.float32).reshape(len(centroids), len(self.voices))
         names: dict[int, SpeakerLabel] = {}
+        blocked = self._unnameable(scores, seconds)
         # best pairs first, so a weak early cluster can't take a voice a later one fits better
         pairs = sorted(((float(scores[c, v]), c, v) for c in range(len(centroids))
                         for v in range(len(self.voices))), reverse=True)
@@ -295,11 +362,13 @@ class Diarizer:
         for s, c, v in pairs:
             if s < self.match_threshold:
                 break
-            if c in names or v in used:
+            if c in names or v in used or c in blocked:
                 continue
             names[c] = SpeakerLabel(self.voices[v].name, self.voices[v].is_owner)
             used.add(v)
         owner = self._owner_hint(scores, names, used, loudness)
+        if owner is not None and owner[0] in blocked:
+            owner = None
         if owner is not None:
             c, v = owner
             names[c] = SpeakerLabel(self.voices[v].name, True)
@@ -313,6 +382,21 @@ class Diarizer:
                 unnamed[names[c].name] = centroids[c]
             out.append(names[c])
         return out, unnamed
+
+    def _unnameable(self, scores: np.ndarray, seconds: list[float] | None) -> set[int]:
+        """Clusters the opt-in naming rules keep unnamed: too little speech, or a best
+        voice that doesn't beat the runner-up voice by ``match_margin`` (two people fit
+        about as well: likely neither, e.g. someone new)."""
+        out: set[int] = set()
+        for c in range(scores.shape[0]):
+            if (self.name_min_seconds > 0 and seconds is not None
+                    and seconds[c] < self.name_min_seconds):
+                out.add(c)
+            elif self.match_margin > 0 and scores.shape[1] >= 2:
+                top2 = np.sort(scores[c])[-2:]
+                if top2[1] - top2[0] < self.match_margin:
+                    out.add(c)
+        return out
 
     def _owner_hint(self, scores: np.ndarray, names: dict[int, SpeakerLabel], used: set[int],
                     loudness: list[float] | None) -> tuple[int, int] | None:
@@ -329,6 +413,10 @@ class Diarizer:
         # not if the cluster looks more like someone else than like the owner
         if int(np.argmax(scores[loudest])) != owner:
             return None
+        log.info("owner hint: speaker %d of %d named %s (voice score %.2f, below the match "
+                 "threshold %.2f; %.1f dB louder than the next speaker)", loudest + 1,
+                 len(loudness), self.voices[owner].name, float(scores[loudest, owner]),
+                 self.match_threshold, loudness[loudest] - max(others))
         return loudest, owner
 
 
