@@ -298,9 +298,10 @@ static void button_task(void *arg)
         if (!down && key_press_idle(&kp)) {
             gpio_intr_enable(PIN_BUTTON);
             uint32_t due = click_counter_wait_ms(&cc, t);
-            if (s_have_touch && !touch_armed) {
-                const uint32_t quiet =
-                    (int32_t)(touch_quiet_until - t) > 0 ? touch_quiet_until - t : 0;
+            if (s_have_touch && !touch_armed && (int32_t)(touch_quiet_until - t) > 0) {
+                /* Wake when the quiet time is over. After it, the touch line below polls
+                 * every TOUCH_POLL_MS; a 0 here made that every tick while a finger rested. */
+                const uint32_t quiet = touch_quiet_until - t;
                 due = quiet < due ? quiet : due;
             }
             wait = due == UINT32_MAX ? portMAX_DELAY : pdMS_TO_TICKS(due) + 1;
