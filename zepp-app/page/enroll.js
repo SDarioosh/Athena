@@ -36,7 +36,9 @@ function removeFile(file) {
 
 Page(
   BasePage({
-    state: { widgets: [], info: null, prompt: null, beat: null, renderTimer: null },
+    state: {
+      widgets: [], info: null, prompt: null, beat: null, renderTimer: null, destroyed: false,
+    },
 
     onInit() {
       this.enroll = createEnrollment({
@@ -63,8 +65,12 @@ Page(
     },
 
     onDestroy() {
+      // Set first: cancel() below and a late upload answer call onChange -> scheduleRender,
+      // which must not draw on a page that is gone.
+      this.state.destroyed = true
       if (this.state.beat) clearInterval(this.state.beat)
       if (this.state.renderTimer) clearTimeout(this.state.renderTimer)
+      this.state.renderTimer = null
       this.enroll.cancel()
       removeFile(this.enroll.state.file)
       releaseRecorder()
@@ -72,7 +78,7 @@ Page(
     },
 
     scheduleRender() {
-      if (this.state.renderTimer) return
+      if (this.state.destroyed || this.state.renderTimer) return
       this.state.renderTimer = setTimeout(() => {
         this.state.renderTimer = null
         this.render()
@@ -100,6 +106,7 @@ Page(
     },
 
     render() {
+      if (this.state.destroyed) return
       for (const w of this.state.widgets) hmUI.deleteWidget(w)
       this.state.widgets = []
       this.state.info = null
