@@ -162,6 +162,9 @@ export function createTester(deps) {
     },
 
     pageDestroyed() {
+      // The page released its recorder; a rotation now would start a new one with no page.
+      if (rotateTimer) deps.clearTimeout(rotateTimer)
+      rotateTimer = null
       if (state.recording) {
         log('page destroyed while recording')
         state.lastBeat = now()
@@ -169,7 +172,9 @@ export function createTester(deps) {
       }
     },
 
-    markUploaded(seq, result) {
+    /** sessionId: the session the upload was for; an answer for an older one is ignored. */
+    markUploaded(seq, result, sessionId) {
+      if (sessionId !== undefined && sessionId !== state.sessionId) return
       const c = state.chunks.find((x) => x.seq === seq)
       if (c) c.uploaded = result
       persist()
@@ -208,9 +213,9 @@ export function summarize(state, nowMs) {
     maxGap = Math.max(maxGap, chunks[i].start - chunks[i - 1].end)
   }
   const full = chunks.filter((c) => c.note === 'ok' && c.size > 0)
-  const bytesPerSec = full.length
-    ? full.reduce((a, c) => a + c.size, 0) / (full.reduce((a, c) => a + (c.end - c.start), 0) / 1000)
-    : 0
+  const fullMs = full.reduce((a, c) => a + (c.end - c.start), 0)
+  // fullMs <= 0 only if the wall clock jumped back; avoid Infinity or a negative rate
+  const bytesPerSec = fullMs > 0 ? full.reduce((a, c) => a + c.size, 0) / (fullMs / 1000) : 0
   return {
     chunks: chunks.length,
     empty: chunks.filter((c) => !c.size).length,

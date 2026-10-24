@@ -89,7 +89,8 @@ export function createEnrollment(deps) {
 
     next() {
       if (state.phase !== 'recording') return
-      state.prompt = Math.min(state.prompt + 1, PROMPTS.length - 1)
+      // After the last prompt ("Again" on the watch) the prompts start over.
+      state.prompt = (state.prompt + 1) % PROMPTS.length
       changed()
     },
 
