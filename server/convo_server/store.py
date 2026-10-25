@@ -740,15 +740,21 @@ class Store:
             before = _knowledge(c, conv_id)
             self._clear_knowledge(c, conv_id)
             now = time.time()
+            # new items get ids above every old one, as facts do below: SQLite would give
+            # a new item the id of an old one that a later item still keeps
+            next_item = max([i["id"] for i in before["items"]] + [c.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM action_items").fetchone()[0]]) + 1
             for item in summary["action_items"]:
                 row = {"id": None, "status": "open", "created_at": now,
                        "kind": item.get("kind") or "task", "due_date": item.get("due_date"),
                        "due_time": item.get("due_time"),
                        "time_unclear": int(bool(item.get("time_unclear"))), "edited": 0,
-                       "list_name": item.get("list_name"),
+                       "list_name": item.get("list_name"), "note_title": item.get("note_title"),
                        "title": short_title(item.get("title"), item["text"])}
                 row["explicit"] = int(bool(item.get("explicit")) or is_explicit(row))
                 row.update(_same_item(before["items"], item))
+                if row["id"] is None:
+                    row["id"], next_item = next_item, next_item + 1
                 cur = c.execute(
                     "INSERT INTO action_items (id, conversation_id, text, owner, due, due_date,"
                     " source_at, status, kind, due_time, duration_minutes, location,"
@@ -758,7 +764,7 @@ class Store:
                      row["due_date"], item.get("source_at"), row["status"], row["kind"],
                      row["due_time"], item.get("duration_minutes"), item.get("location"),
                      row["time_unclear"], row["created_at"], row["edited"],
-                     row["list_name"], item.get("note_title"), row["title"],
+                     row["list_name"], row["note_title"], row["title"],
                      row["explicit"]))
                 c.execute("INSERT INTO search_fts VALUES ('action_item', ?, ?, ?)",
                           (str(cur.lastrowid), conv_id, item["text"]))
@@ -853,8 +859,10 @@ class Store:
                              " ORDER BY id DESC LIMIT ?", (conv_id, subj, limit)):
                 ids[r["id"]] = None
         for f in facts:
-            for hit in self.fts_search(f"{f.get('subject') or ''} {f['fact']}", limit=5):
-                if hit["kind"] == "fact" and hit["conversation_id"] != conv_id:
+            # this conversation's own facts match best: room for 5 others
+            for hit in self.fts_search(f"{f.get('subject') or ''} {f['fact']}",
+                                       limit=5 + len(facts), kind="fact"):
+                if hit["conversation_id"] != conv_id:
                     ids[int(hit["ref_id"])] = None
         # retired facts are out of the search index: match their words here (few rows)
         words = {w for f in facts for w in _norm(f"{f.get('subject') or ''} {f['fact']}").split()
@@ -898,11 +906,17 @@ class Store:
                 newer, older = (new, old) if new["started_at"] >= old["started_at"] else (old, new)
                 if older["status"] == "retired":  # forgotten: not part of any history
                     return
+                # the newer one may itself be replaced already (links of a conversation
+                # processed late): point at the end of its chain, so every replaced fact
+                # points at a current one
+                target = _chain_end(c, newer["id"])
+                if target == older["id"]:
+                    return
                 c.execute("UPDATE facts SET status = 'superseded', superseded_by = ?"
-                          " WHERE id = ?", (newer["id"], older["id"]))
+                          " WHERE id = ?", (target, older["id"]))
                 # whatever the older one had replaced now points at the newer one
                 c.execute("UPDATE facts SET superseded_by = ? WHERE superseded_by = ?",
-                          (newer["id"], older["id"]))
+                          (target, older["id"]))
         if relation == "same" and rows[existing_id]["erased_at"] is not None:
             self._after_erase(audio)
 
@@ -1021,7 +1035,7 @@ class Store:
             if conv_id in done:
                 continue
             done.add(conv_id)
-            lines += self._redact_line(c, conv_id, source_at, audio)
+            lines += self._redact_line(c, conv_id, source_at, audio, fact["fact"])
             self._queue_rewrite(c, conv_id, [fact["fact"]], now)
             c.execute("INSERT OR IGNORE INTO erased_sources VALUES (?, ?, ?)",
                       (fact_id, conv_id, now))
@@ -1029,18 +1043,40 @@ class Store:
         return {"lines": lines, "conversations": convs}
 
     def _redact_line(self, c: sqlite3.Connection, conv_id: str, source_at: float | None,
-                     audio: list[str]) -> int:
+                     audio: list[str], fact: str = "") -> int:
         """Redact the transcript line that starts at ``source_at`` (the summary's line
         offset: whole seconds from the conversation start, so the line starts within a
         second after it). Returns 1 if a line was redacted; 0 when that line was already
-        redacted (another fact said on it), never a neighbouring line instead."""
-        if source_at is None:
+        redacted (another fact said on it): then no other line is redacted instead.
+
+        A model sometimes cites the wrong line. When the cited line shares no word with
+        ``fact`` (or no line is cited) and a line within ``_CITE_SLACK`` seconds shares at
+        least two (all of a one-word fact), that line is the one redacted. A cited line
+        that only paraphrases the fact, with no line nearby that says its words, is
+        still redacted."""
+        line = None
+        if source_at is not None:
+            line = c.execute(
+                "SELECT id, session_id, started_at, ended_at, erased, text FROM segments"
+                " WHERE conversation_id = ? AND started_at < ? + 1"
+                " AND ended_at > ? - 1 ORDER BY abs(started_at - ?) LIMIT 1",
+                (conv_id, source_at, source_at, source_at)).fetchone()
+        if line is not None and line["erased"]:
             return 0
-        line = c.execute(
-            "SELECT id, session_id, started_at, ended_at, erased FROM segments"
-            " WHERE conversation_id = ? AND started_at < ? + 1"
-            " AND ended_at > ? - 1 ORDER BY abs(started_at - ?) LIMIT 1",
-            (conv_id, source_at, source_at, source_at)).fetchone()
+        words = _line_words(fact)
+        if words and (line is None or not words & _line_words(line["text"])):
+            near = [r for r in c.execute(
+                "SELECT id, session_id, started_at, ended_at, erased, text FROM segments"
+                " WHERE conversation_id = ?", (conv_id,))
+                if source_at is None or abs(r["started_at"] - source_at) <= _CITE_SLACK]
+            need = min(2, len(words))
+            scored = [(len(words & _line_words(r["text"])),
+                       -abs(r["started_at"] - source_at) if source_at is not None else 0, r)
+                      for r in near]
+            best = max((x for x in scored if x[0] >= need), default=None,
+                       key=lambda x: x[:2])
+            if best is not None:
+                line = best[2]
         if line is None or line["erased"]:
             return 0
         c.execute("UPDATE segments SET text = ?, erased = 1 WHERE id = ?",
@@ -1280,13 +1316,15 @@ class Store:
             sql += " AND subject LIKE ? COLLATE NOCASE"
             params.append(f"%{subject}%")
         if query:
-            ids = [r["ref_id"] for r in self.fts_search(query, limit=200) if r["kind"] == "fact"]
+            ids = [r["ref_id"] for r in self.fts_search(query, limit=200, kind="fact")]
             if not ids:
                 return []
             sql += f" AND id IN ({','.join('?' * len(ids))})"
             params += [int(i) for i in ids]
-        current = {r["superseded_by"] if r["status"] == "superseded" and r["superseded_by"]
-                   else r["id"] for r in self._q(sql, params)}
+        rows = self._q(sql, params)
+        with self._lock:  # a match on a replaced fact gives the end of its chain
+            current = {_chain_end(self._conn, r["id"]) if r["status"] == "superseded"
+                       else r["id"] for r in rows}
         if not current:
             return []
         return self._q(
@@ -1549,8 +1587,9 @@ class Store:
                 r = c.execute("SELECT text FROM action_items WHERE id = ?",
                               (item_id,)).fetchone()
                 sets["title"] = short_title(title, r["text"] if r else "")
-                if title is not None:  # a renamed note: the hub files it by note_title
-                    sets["note_title"] = sets["title"]
+                # a renamed note (or one whose title went back to its text): the hub files
+                # it by note_title
+                sets["note_title"] = sets["title"]
             cols = [f"{k} = ?" if k != "note_title"
                     else "note_title = CASE WHEN kind = 'note' THEN ? ELSE note_title END"
                     for k in sets]
@@ -1564,14 +1603,18 @@ class Store:
         return self.get_action_item(item_id) if n else None
 
     # ------------------------------------------------------------------ search
-    def fts_search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+    def fts_search(self, query: str, limit: int = 20,
+                   kind: str | None = None) -> list[dict[str, Any]]:
+        """Best matches first; ``kind`` keeps one kind of entry (e.g. "fact"), so the
+        limit isn't used up by transcripts and summaries that match the same words."""
         q = _fts_query(query)
         if not q:
             return []
         return self._q(
             "SELECT kind, ref_id, conversation_id, snippet(search_fts, 3, '[', ']', '…', 12)"
             " AS snippet, bm25(search_fts) AS score FROM search_fts WHERE search_fts MATCH ?"
-            " ORDER BY score LIMIT ?", (q, limit))
+            + (" AND kind = ?" if kind else "") + " ORDER BY score LIMIT ?",
+            (q, *([kind] if kind else []), limit))
 
     def put_embedding(self, kind: str, ref_id: str, conversation_id: str, model: str,
                       vector: np.ndarray) -> None:
@@ -1994,6 +2037,25 @@ def _norm(text: str | None) -> str:
     return " ".join(re.sub(r"[^\w ]+", " ", (text or "").lower()).split())
 
 
+# how far (seconds) from the cited line ``_redact_line`` looks for the line that says a
+# forgotten fact's words
+_CITE_SLACK = 30.0
+
+
+def _line_words(text: str | None) -> set[str]:
+    """Content words of a line or fact, lightly stemmed ("lives" ~ "live")."""
+    out = set()
+    for w in _norm(text).split():
+        if w in _STOPWORDS:
+            continue
+        for suffix in ("ing", "ed", "es", "s"):
+            if len(w) > len(suffix) + 2 and w.endswith(suffix):
+                w = w[: -len(suffix)]
+                break
+        out.add(w.rstrip("e") or w)
+    return out
+
+
 def _same(text_a: str | None, at_a: float | None, text_b: str | None,
           at_b: float | None) -> bool:
     a, b = _norm(text_a), _norm(text_b)
@@ -2059,7 +2121,7 @@ def _same_item(before: list[dict[str, Any]], item: dict[str, Any]) -> dict[str, 
         keep["explicit"] = 1
     if old["edited"]:
         keep.update({k: old[k] for k in ("kind", "due_date", "due_time", "time_unclear",
-                                         "list_name", "title", "edited")})
+                                         "list_name", "title", "note_title", "edited")})
     return keep
 
 
@@ -2081,6 +2143,20 @@ def _retire(c: sqlite3.Connection, fact_id: int, at: float | None,
     c.execute("DELETE FROM embeddings WHERE kind = 'fact' AND ref_id = ?", (str(fact_id),))
 
 
+def _chain_end(c: sqlite3.Connection, fact_id: int) -> int:
+    """The fact at the end of ``fact_id``'s ``superseded_by`` chain (itself if it isn't
+    replaced). Stops at a loop or a missing row."""
+    seen = {fact_id}
+    while True:
+        row = c.execute("SELECT status, superseded_by FROM facts WHERE id = ?",
+                        (fact_id,)).fetchone()
+        nxt = row["superseded_by"] if row and row["status"] == "superseded" else None
+        if nxt is None or nxt in seen:
+            return fact_id
+        seen.add(nxt)
+        fact_id = nxt
+
+
 def _knowledge(c: sqlite3.Connection, conv_id: str) -> dict[str, Any]:
     """What a re-summary must not lose: closed action items and the facts' links."""
     facts = [dict(r) for r in c.execute(
@@ -2097,7 +2173,7 @@ def _knowledge(c: sqlite3.Connection, conv_id: str) -> dict[str, Any]:
     return {
         "items": [dict(r) for r in c.execute(
             "SELECT id, text, source_at, status, created_at, kind, due_date, due_time,"
-            " time_unclear, list_name, title, explicit, edited FROM action_items"
+            " time_unclear, list_name, title, note_title, explicit, edited FROM action_items"
             " WHERE conversation_id = ?"
             " ORDER BY id",
             (conv_id,))],
