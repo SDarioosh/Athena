@@ -807,7 +807,9 @@ _LIST_PHRASE = re.compile(
     r"\s*\b(?:to|on|onto|in|into|for)\s+(?:(?:my|the|our)\s+)?"
     rf"(?P<name>{_NAME_WORD}(?:\s+{_NAME_WORD}){{0,2}}?)\s+(?:to-?do\s+|to\s+do\s+)?list\b",
     re.IGNORECASE)
-_ADD = re.compile(r"^(?:add|put|write(?:\s+down)?)\s+", re.IGNORECASE)
+# "please add ...", "can you put ...": the polite lead-in goes with the command word
+_ADD = re.compile(r"^(?:(?:please|(?:can|could|would|will)\s+you)(?:\s+please)?[\s,]+)?"
+                  r"(?:add|put|write(?:\s+down)?)\s+", re.IGNORECASE)
 
 
 def _list_and_text(text: str, said: str | None) -> tuple[str, str | None]:

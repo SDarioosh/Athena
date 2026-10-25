@@ -126,7 +126,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         """Find what was actually said: transcript lines filtered by speaker and date range,
         optionally matching words. Use for "what did X say (about Y) (on/last DATE)".
         Without a query, lines are returned in time order."""
-        a, b = window(since, until)
+        try:
+            a, b = window(since, until)
+        except ValueError as e:  # returned, not raised: the model sees the message
+            return str(e)
         rows = store.search_segments(query=query or None, speaker=speaker or None,
                                      since=a, until=b, limit=max(1, min(limit, 200)))
         if not rows and speaker:
@@ -151,9 +154,9 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         and summaries are searched as well as what was said. For the user's voice notes
         (memos, notes to self) set kind="note". Returns titles, summaries and links, often
         enough to answer; use get_conversation for details."""
-        a, b = window(since, until)
         limit = max(1, min(limit, 50))
         try:
+            a, b = window(since, until)
             k = _kind(kind)
         except ValueError as e:  # returned, not raised: the model sees the message
             return str(e)
@@ -265,7 +268,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                               description="'text' (default) or 'json' (a JSON array, for "
                                           "programs)")] = "text") -> str:
         """Action items from conversations and voice notes (default: open ones), newest
-        first. Each is a task, an event (meeting, appointment) or a reminder, with its due
+        first; person keeps those the person owns, is named in, or was in the conversation
+        of. Each is a task, an event (meeting, appointment) or a reminder, with its due
         date and time of day if known, and the to-do list the user named for it. The JSON
         format also lists notes the user asked a voice note to save (kind "note", with
         note_title and, in list_name, the notes to add it to); the text format doesn't.
@@ -278,21 +282,28 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         fmt = (format or "text").strip().lower()
         if fmt not in ("text", "json"):
             return "format must be text or json"
-        a, b = window(since, until)
-        rows = store.list_action_items(None if status == "all" else status,
-                                       notes=fmt == "json")
+        st = (status or "open").strip().lower()
+        if st not in ("open", "done", "dismissed", "all"):
+            return "status must be open, done, dismissed or all"
+        try:
+            a, b = window(since, until)
+        except ValueError as e:  # returned, not raised: the model sees the message
+            return str(e)
+        rows = store.list_action_items(None if st == "all" else st, notes=fmt == "json")
         rows = [r for r in rows
                 if (a is None or r["conversation_at"] >= a)
-                and (b is None or r["conversation_at"] < b)
-                and (not person or person.lower() in (r["owner"] or "").lower())]
+                and (b is None or r["conversation_at"] < b)]
+        participants = store.conversation_participants(
+            (r["conversation_id"] for r in rows), _owner_names(settings)) \
+            if fmt == "json" or person.strip() else {}
+        if person.strip():
+            rows = [r for r in rows if _involves(r, person, participants)]
         if fmt == "json":
             mine_names = store.known_names()[0] | _OWNER_WORDS | {
                 settings.owner_name.strip().lower()} - {""}
-            participants = store.conversation_participants(
-                (r["conversation_id"] for r in rows), _owner_names(settings))
             return json.dumps([item_json(r, mine_names, participants) for r in rows],
                               ensure_ascii=False)
-        lines = [header(len(rows), f"{status} action items")]
+        lines = [header(len(rows), f"{st} action items")]
         for r in rows:
             lines.append(f"- #{r['id']} [{r['status']}] {_kind_word(r)}{r['text']}"
                          + (f" (owner {r['owner']})" if r["owner"] else "")
@@ -610,6 +621,19 @@ def _with(text: str, people: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     ranked = sorted(people, key=lambda p: not named(p))
     return [{"id": p["id"], "name": p["name"]} for p in ranked]
+
+
+def _involves(row: dict[str, Any], person: str,
+              participants: dict[str, list[dict[str, Any]]]) -> bool:
+    """list_action_items(person=...): the person owns the item, is named in its text, or
+    is one of the other people in its conversation (the item's ``with``)."""
+    p = person.strip().lower()
+    if p in (row["owner"] or "").lower():
+        return True
+    if re.search(rf"(?<!\w){re.escape(p)}(?!\w)", row["text"] or "", re.IGNORECASE):
+        return True
+    return any(p in n.lower() for e in participants.get(row["conversation_id"], [])
+               for n in e["names"])
 
 
 def _owner_names(settings: Settings) -> tuple[str, ...]:

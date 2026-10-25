@@ -144,6 +144,21 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
 
+## Done on 2026-10-25: action-item and belief fixes from a QC report
+
+- Verdicts and fixes: `docs/qc-report-2026-10-25.md` (11 of 15 fixed, 3 not reproduced,
+  1 left for the owner). Tests: `server/tests/test_qc_action_items_beliefs.py`.
+- Fixed: a re-summary with a new item before a kept one no longer fails on a duplicate id;
+  fact chains linked out of order resolve to the current fact; fact search and fact
+  linking are no longer crowded out by matching transcripts; `erase_fact` redacts the line
+  that says the fact when the model cites the next one; edited and cleared note titles
+  keep `note_title` in step; bad dates and odd-case statuses are answers, not tool errors;
+  `list_action_items(person=...)` also finds items of a conversation with that person;
+  "in 3 days" / "in a week" are dated; "Please add milk to my shopping list" names its list.
+- **Open question for the owner:** should forgetting a fact also take action items that
+  repeat its words out of search and digests? (QC 12; needs the hub side too.)
+- **Server verification:** see the PR (MCP calls on the test instance, a few eval questions).
+
 ## Done on 2026-10-24: recorder fixes from a QC report (R1-R14)
 
 - **Host-tested** (`test_chunk_queue`, `test_audio_stats`, `test_isotime`): a card read

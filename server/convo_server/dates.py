@@ -62,6 +62,11 @@ def _future(year: int, month: int, day: int, today: date) -> date | None:
     return None
 
 
+_COUNTS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+           "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+_COUNT = r"\d{1,3}|" + "|".join(_COUNTS)
+
+
 def resolve_due(phrase: str | None, today: date) -> date | None:
     """The date a deadline phrase names, counted from ``today`` (the conversation date)."""
     if not phrase:
@@ -71,6 +76,16 @@ def resolve_due(phrase: str | None, today: date) -> date | None:
         return today
     if re.search(r"\btomorrow\b", p):
         return today + timedelta(days=1)
+    # "in 3 days", "in a week", "in two weeks" (not "in a day or two": a range)
+    m = re.search(rf"\bin\s+({_COUNT})\s+(days?|weeks?)\b(?!\s+or\b)", p)
+    if m:
+        n = _COUNTS.get(m.group(1)) or int(m.group(1))
+        if m.group(2).startswith("week"):
+            n *= 7
+        elif n < 2:  # "in a day" / "in 1 day" is too loose a deadline to date
+            n = 0
+        if 0 < n <= 366:
+            return today + timedelta(days=n)
     m = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", p)
     if m:
         try:
