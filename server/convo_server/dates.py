@@ -55,11 +55,16 @@ def _future(year: int, month: int, day: int, today: date) -> date | None:
     for y in (year, year + 1):
         try:
             d = date(y, month, day)
-        except ValueError:
-            return None
+        except ValueError:  # February 29 in a year without one: try the next
+            continue
         if d >= today - timedelta(days=7):
             return d
     return None
+
+
+_COUNTS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+           "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+_COUNT = r"\d{1,3}|" + "|".join(_COUNTS)
 
 
 def resolve_due(phrase: str | None, today: date) -> date | None:
@@ -71,6 +76,16 @@ def resolve_due(phrase: str | None, today: date) -> date | None:
         return today
     if re.search(r"\btomorrow\b", p):
         return today + timedelta(days=1)
+    # "in 3 days", "in a week", "in two weeks" (not "in a day or two": a range)
+    m = re.search(rf"\bin\s+({_COUNT})\s+(days?|weeks?)\b(?!\s+or\b)", p)
+    if m:
+        n = _COUNTS.get(m.group(1)) or int(m.group(1))
+        if m.group(2).startswith("week"):
+            n *= 7
+        elif n < 2:  # "in a day" / "in 1 day" is too loose a deadline to date
+            n = 0
+        if 0 < n <= 366:
+            return today + timedelta(days=n)
     m = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", p)
     if m:
         try:
@@ -79,7 +94,7 @@ def resolve_due(phrase: str | None, today: date) -> date | None:
             return None
     # "October 31st", "Oct thirty-first", "31 October", "the 8th of November"
     m = (re.search(rf"\b{_MONTH}\s+(?:the\s+)?{_DAY}\b", p)
-         or re.search(rf"\b(?:the\s+)?{_DAY}\s+(?:of\s+)?{_MONTH}", p))
+         or re.search(rf"\b(?:the\s+)?{_DAY}\s+(?:of\s+)?{_MONTH}(?!\w)", p))
     if m:
         a, b = m.group(1), m.group(2)
         month, day = (a, b) if not a[0].isdigit() and a.rstrip(".")[:3] in [
@@ -109,7 +124,8 @@ _NOT_A_TIME = re.compile(r"\s*(point|of|percent|people|persons|minutes?|mins?|ho
                          r"weeks?|months?|years?|times|items|things|euros?|dollars?|bucks|"
                          r"mm|cm|km|m|meters?|metres?|millimeters?|millimetres?|centimeters?|"
                          r"centimetres?|inch(?:es)?|feet|foot|ft|kg|kilos?|grams?|g|lbs?|"
-                         r"pounds?|volts?|v|amps?|mah|ma|watts?|w|gb|mb|degrees?)\b")
+                         r"pounds?|volts?|v|amps?|mah|ma|watts?|w|gb|mb|degrees?|"
+                         + "|".join(MONTHS + [m[:3] for m in MONTHS]) + r")\b")
 
 
 def _hour(token: str) -> int:
@@ -150,7 +166,10 @@ def resolve_time(phrase: str | None) -> tuple[str | None, bool]:
     """
     if not phrase:
         return None, False
-    p = " " + phrase.lower().replace("-", " ").replace("’", "'") + " "
+    # "5-30 pm" is a time (am/pm follows); "five-thirty" -> "five thirty"; but "10-15"
+    # without am/pm (a range) stays
+    p = re.sub(r"\b(\d{1,2})-([0-5]\d)(?=\s*[ap]\.?\s?m\b)", r"\1:\2", phrase.lower())
+    p = " " + re.sub(r"(?<!\d)-|-(?!\d)", " ", p).replace("’", "'") + " "
     p = re.sub(r"\ba\.\s?m\.?", "am", p)
     p = re.sub(r"\bp\.\s?m\.?", "pm", p)
     p = re.sub(r"\s+", " ", p)
@@ -171,7 +190,9 @@ def resolve_time(phrase: str | None) -> tuple[str | None, bool]:
     elif m := re.search(rf"\bquarter to {_HOUR_RE}\b(?:{meridiem})?", p):
         hour, minute = (_hour(m.group(1)) - 1) or 12, 45
         stated, bare = m.group(2), m.group(2) is None
-    elif m := re.search(r"\b(\d{1,2})[:.](\d{2})\b(?:" + meridiem + ")?", p):
+        if stated and _hour(m.group(1)) == 12:  # before noon (12 pm) / midnight (12 am)
+            stated = "am" if stated == "pm" else "pm"
+    elif m := re.search(r"\b(\d{1,2})[:.](\d{2})(?:\b|(?=[ap]m\b))(?:" + meridiem + ")?", p):
         if ":" not in m.group(0) and m.group(3) is None:  # "3.30" alone may be a price
             m = None
         else:

@@ -1,12 +1,12 @@
-# odysseus-sound progress
+# Athena progress
 
-odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first module of
+Athena (formerly convo-ai / barvis-ai / barvis-sound / odysseus-sound) is the first module of
 [Odysseus](https://github.com/SDarioosh/Barvis), our Odysseus fork. Design: wearables
 (Amazfit T-Rex 3 Pro, T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → local
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-23 (two voices of one call no longer get one name; "a to-do" transcribed as "a to do" or "it to do" still counts as a command; complete forget: `erase_fact`, MCP 0.10.0; opt-in transcript retention; "Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-26 (two voices of one call no longer get one name; written notes from the hub's pen notes, stage H3: `POST /v1/ingest/text` and its relay route, replace on resend, delete, "written by hand" in `/view` and MCP results, MCP 0.12.0; fewer, better facts: thinking aloud and requests to someone else are not facts, a second model call scores each fact and keeps the best 3 per conversation, JSON facts gain `kind`, `conversation_id` and `quote`, MCP 0.11.0; line voice check: short lines in a quick exchange no longer become "Unknown": the voice window stops at other speakers' lines, and a line with under 1 s of its own audio keeps its name; owner: recognition eval in the PR; 2026-10-24: capture quality: pyannote line splitting, line voice check and VAD threshold 0.35 by default with pyannote, measured on the server GPU; voice-note bug hunt: ~100 fictional voice notes through the summarizer and the hub's filing; spoken to-do, list and note commands are caught with fillers and request words before them ("um", "can you", "let's"), "new to-do:", "note to self", "remind me on Friday to …", "add … to my to-do list", several commands in one sentence, named notes without the word "notes" ("make a note in voice recorder that …"), comma lists split into lines; a to-do asked for out loud in a voice note ("Make a to-do to figure out how ...") is always a to-do, even when the model lists none or rewords it; events are named as said ("Meeting with Meshtastic team", not "Meet the Meshtastic team"), and a fact that only repeats a dated event is left out; a voice note's appointment said as a fragment ("Meeting with the Meshtastic team Tuesday 11 a.m.") becomes an event even when the model lists no item for it; a re-summary keeps fact ids, so a reworded fact is no second belief in the hub; a sentence whisper repeats on the next lines is kept once; T-Watch event log in flash and card power cycle on write errors, after a call recorded in four pieces; facts name what they are about, passing curiosity is not a fact; "a to-do" transcribed as "a to do" or "it to do" still counts as a command; complete forget: `erase_fact`, MCP 0.10.0; opt-in transcript retention; "Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -43,7 +43,28 @@ _Last updated: 2026-10-23 (two voices of one call no longer get one name; "a to-
 | 18 | One-step pairing through Odysseus: the MCP HTTP server forwards uploads (`/ingest/chunk`, `/sessions/{id}/end`) and the T5's API reads to the ingest API (MCP 0.8.0), so the hub's call recorder and paired phones need only the `convo` MCP server; the Android relay pairs by scanning Odysseus's QR code (ZXing, on-device), stores the Odysseus URL and token, uploads and syncs the T5 through Odysseus (`/api/codex/sound/*`), picks the calendar from a list; direct mode stays as a fallback | **built and tested in the sandbox**, merged (PR #73); fix: the first APK crashed when opening the scanner (ZXing's `CaptureActivity` needs AndroidX), now our own `ScanActivity`; still failed on the owner's Galaxy Z Fold (Android 17) with no permission prompt, cause unknown (no Android 17 test target here): 0.2.1 asks for the camera first, reports scanner errors instead of crashing, opens `odysseus-pair:` links from the camera app (confirm before pairing) and shows the last crash to copy; server tests, relay `assembleDebug test lint` (159 tests), the relay's Kotlin pairing/upload/T5 clients against a real hub and module; **needs a real phone** (scan, pair over Tailscale, watch drain and T5 sync through Odysseus) and the owner's Server verification | `server/convo_server/ingest_relay.py`, `android-relay/` (`net/Pairing.kt`, `net/Routes.kt`), hub `src/call_recorder.py`, `src/phone_pairing.py` |
 | 19 | Open loops for the hub's Today insight (Phase 3, module side): `list_action_items` JSON rows gain `with` (the other people in the item's conversation, person ids, those the item names first; MCP 0.9.0, additive) | ✅ built and tested (`tests/test_item_with.py`); no open question for the owner | `server/convo_server/mcp_server.py`, `server/convo_server/store.py` (`conversation_participants`) |
 | 20 | Complete forget and retention (hub personal context 4.2, module side): `erase_fact` write tool (destructive; MCP 0.10.0, additive, 15 tools) redacts the line that said a fact in every conversation that said it, hides and rewrites (local model) the notes and digests, redoes search and embeddings, deletes kept audio, erases later repeats; opt-in `CONVO_TRANSCRIPT_RETENTION_DAYS` (default 0 = keep forever) prunes old transcripts and kept audio, keeping summaries, facts and action items | **built, tested** (`tests/test_erase_fact.py`, `tests/test_retention.py`); sandbox bakeoff questions 1, 9, 16 through Odysseus: 2/3 (`main` 1/3 the same day), end-to-end forget checked in the sandbox; hub side in SDarioosh/odysseus-expanded; **owner: Server verification** | `server/convo_server/{store,pipeline,llm,mcp_server,links,config}.py` |
+| 21 | Capture quality (hub personal context 4.3): pyannote attribution fixes, all opt-in: line splitting at pyannote turn changes (`CONVO_SPEAKER_SPLIT_LINES`, `_SPLIT_MIN_SECONDS`), line voice check (`CONVO_SPEAKER_LINE_CHECK`), pyannote VBx/clustering settings (`CONVO_PYANNOTE_VBX_FA`/`_FB`, `_CLUSTER_THRESHOLD`, `_MIN/MAX_SPEAKERS`), owner-hint log line; recognition eval: late joiners, arm movement, owner precision/recall, `unenrolled_named`, pyannote cache | **built, measured in the sandbox and on the server GPU** (2026-10-24, split + line check: named wrong 5.8 → 1.6 % on the table mic, 30–70 % less elsewhere, names right within 1.4 points, WER unchanged); no MCP contract change; **default with `CONVO_DIARIZER=pyannote` since 2026-10-24** (owner's call: split 0.3 s + line check + `CONVO_VAD_THRESHOLD=0.35`, any of them overridable in `.env`); **owner: one real recording** (PR Server verification step 2) | `server/convo_server/{diarize,diarize_pyannote,pipeline,config,cli}.py`, `server/eval/recognition.py`, `docs/omi-audio-quality.md` §8 |
+| 22 | Written notes (hub handwritten notes, stage H3): `POST /v1/ingest/text` / `DELETE /v1/ingest/text/{source_id}` and their relay routes on the MCP HTTP app (MCP 0.12.0, additive); one owner line per written line, voice-note prompts, replace on resend (ids kept where matched), erased lines stay erased, delete removes facts and to-dos | **built, tested** (`tests/test_written_notes.py`); hub side is H4 (Send to Athena, module doc update in SDarioosh/odysseus-expanded); **owner: Server verification** and plan question Q2 (one note per hub note or per page) | `server/convo_server/{api,pipeline,store,ingest_relay,links,mcp_server}.py` |
 | 10 | End-to-end with real devices | not started | — |
+
+## Done on 2026-10-24: capture quality, diarization (hub personal context 4.3)
+
+- Measured first (`docs/omi-audio-quality.md` §8): with pyannote, wrong names come from
+  whisper lines over short turns and from turns pyannote files under the wrong speaker,
+  never from naming a whole speaker after the wrong person.
+- Built, all opt-in: line splitting at pyannote turn changes with a shorter minimum part,
+  a per-line voice check that unnames a line in another enrolled voice, pyannote's VBx
+  settings (`Fb` decides how many speakers it keeps apart; its clustering threshold
+  doesn't), naming rules and a WeSpeaker option that measured no better, and a log line
+  when the owner loudness hint names someone.
+- Eval: `--late-joiners`, `--owner-dips`, owner precision/recall, `unenrolled_named`,
+  pyannote turns cached; `--cache` keeps word times now.
+- Server GPU eval confirmed it (2026-10-24); on the owner's request split 0.3 s + line
+  check + `CONVO_VAD_THRESHOLD=0.35` are now the defaults with `CONVO_DIARIZER=pyannote`
+  (ECAPA unchanged). `Fb` 0.2 stays opt-in: it keeps newcomers out of existing names but
+  leaves more lines as "Speaker N".
+- No MCP contract change, no hub PR. Still open from the 4.3 plan: enrollment without the
+  Zepp watch and a "speaker unsure" flag for the hub (proposal posted, not decided).
 
 ## Done in this round
 
@@ -142,7 +163,217 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Not known yet which path this call took: the server log says
   `pyannote: [1] speaker(s) per run` for path 1. Its audio is gone, so fix its lines with
   `reassign_line` (tap the speaker name in the hub).
+- With main's line voice check and line split (on by default with pyannote, merged in
+  2026-10-26): the one-voice check runs first and moves a line to its person; the line
+  split keeps a moved line whole (pyannote's turns would give it the old name back), and
+  the line voice check then keeps it. Main unnames such lines ("Unknown") instead of
+  moving them because moving measured worse on the table-mic eval; the one-voice check
+  only runs where pyannote heard one voice. **Open question for the owner:** keep fix 1
+  (move) or rely on the line voice check (Unknown) there; `CONVO_SPEAKER_LINE_MARGIN=0`
+  turns fix 1 off.
 - Needs the owner: a short two-person call on the watch, then check both names.
+
+## Done on 2026-10-26: written notes (hub handwritten notes, stage H3)
+
+- Plan: hub `docs/fork/handwritten-notes.md` ("5. Into Athena"). The hub (H4, later) sends
+  a handwritten note's reviewed text; this is the receiving end only.
+- `POST /v1/ingest/text` (JSON `source_id` `hub-note:<id>`, `text`, `written_at`, `link`,
+  optional `title`) and `DELETE /v1/ingest/text/{source_id}`; the same routes on the MCP
+  HTTP app (`/ingest/text`), forwarded with the ingest token, not MCP tools.
+- Stored as one `note` conversation on device `handwriting`, one owner line per written
+  line one second apart, in a `written_notes` table (source id, hub link, text hash,
+  fingerprints of erased lines); summarized by the worker with the voice-note prompts.
+- Resend replaces the lines and re-summarizes; the existing re-summary carry-over keeps
+  ids of facts and to-dos said again and drops the rest. Same text: no-op. A line erased
+  by `erase_fact` stays `[forgotten]` when the hub sends the words again. Digests that
+  covered the note are written again.
+- A summary saved after its conversation changed meanwhile (resend, late chunk, rename) is
+  dropped and the next pass summarizes again (`save_summary(expect_updated_at=)`); before,
+  a resend during a summary would have been lost.
+- `/view` and MCP results say "written by hand" with the hub link; JSON fact and to-do
+  rows gain `written_by_hand` and `note_link` (MCP 0.12.0, additive).
+- Open for the owner: plan Q2, one Athena note per hub note (all pages joined, built
+  that way: the hub chooses what to send) or one per page. A deleted note's erased facts
+  leave their sentence behind (`erased_facts`), so a new note that writes one again keeps
+  that line `[forgotten]`; a recording that says it again makes it a fact again.
+- Tests: `server/tests/test_written_notes.py`. **Server verification:** see the PR.
+- QC bug hunt of the same day (A-1 to A-8, X-1): `docs/qc-report-2026-10-26.md`, 7 fixed
+  (two partly), 2 not reproduced; a line over 4,000 characters is wrapped, not refused.
+  Tests: `server/tests/test_qc_written_notes.py`.
+
+## Done on 2026-10-26: fewer, better facts (hub belief review)
+
+- The owner's belief review showed five tentative beliefs from one technical chat, most of
+  them noise: a request to someone else filed as a "preference", thinking aloud, which
+  tool was used, an unnamed device, a guessed pronoun.
+- Facts prompt: leaves out thinking aloud, requests to someone else, which tool was used
+  and passing details of the work at hand; never "he"/"she"; asks for a `kind`; asks for
+  at most `CONVO_MAX_FACTS_PER_CONVERSATION` facts.
+- Code drops thinking aloud ("is considering", "might", "maybe") unless decided, and
+  requests to someone else ("wants Bo to …").
+- Review call (`REVIEW_SYSTEM`, schema `FactReview`): scores each fact 1–5 with its
+  transcript line; under `CONVO_FACT_MIN_SCORE` (4) is left out; best
+  `CONVO_MAX_FACTS_PER_CONVERSATION` (3) kept. A failed call keeps the facts. One extra
+  local-model call per summarized conversation that has facts.
+- `list_facts` JSON: `kind`, `conversation_id`, `quote` (MCP 0.11.0, additive; schema v14
+  adds `facts.kind`). Hub side (labels by kind, review page grouped by conversation with
+  the quote) on the same branch in SDarioosh/odysseus-expanded.
+- Facts already stored are unchanged; the owner dismisses them on the hub, or re-summarizes.
+- Tests: `server/tests/test_fact_quality.py`. **Server verification:** see the PR.
+- QC report on this PR (16 findings, 10 on this side, all reproduced and fixed): negated
+  "decided" no longer cancels a hedge; hedges count in the main clause only; requests
+  told apart from needs and plans; the review no longer rejects facts about things; the
+  prompt asks for twice the cap; voice notes drop event facts before the review and keep
+  decisions out of it; the quote and the review's line are the cited line (also in a
+  shared second); facts that repeat or update stored ones are never capped; a repeat
+  gives its kind to an older fact; quotes fall back to a later conversation when a
+  transcript was pruned, one query per conversation.
+
+## Done on 2026-10-25: action-item and belief fixes from a QC report
+
+- Verdicts and fixes: `docs/qc-report-2026-10-25.md` (11 of 15 fixed, 3 not reproduced,
+  1 left for the owner). Tests: `server/tests/test_qc_action_items_beliefs.py`.
+- Fixed: a re-summary with a new item before a kept one no longer fails on a duplicate id;
+  fact chains linked out of order resolve to the current fact; fact search and fact
+  linking are no longer crowded out by matching transcripts; `erase_fact` redacts the line
+  that says the fact when the model cites the next one; edited and cleared note titles
+  keep `note_title` in step; bad dates and odd-case statuses are answers, not tool errors;
+  `list_action_items(person=...)` also finds items of a conversation with that person;
+  "in 3 days" / "in a week" are dated; "Please add milk to my shopping list" names its list.
+- **Open question for the owner:** should forgetting a fact also take action items that
+  repeat its words out of search and digests? (QC 12; needs the hub side too.)
+- **Server verification:** see the PR (MCP calls on the test instance, a few eval questions).
+
+## Done on 2026-10-24: recorder fixes from a QC report (R1-R14)
+
+- **Host-tested** (`test_chunk_queue`, `test_audio_stats`, `test_isotime`): a card read
+  error at boot no longer deletes a chunk; a chunk left open while its session went on gets
+  no LAST at boot; a failed TIME record write is retried; chunk id 0 and id wrap refused;
+  RMS with a fractional DC offset; strict `time <ISO-8601>` parsing.
+- **Device-only, not built here (no ESP-IDF):** no reused sequence after a failed chunk
+  close; `mic_stop()` keeps the mic busy until I2S is off; T-Watch S3 gets
+  `CONFIG_I2S_ISR_IRAM_SAFE` and counts PDM DMA drops; BYE counts only chunks the relay was
+  offered; 6 job-queue slots kept for link events; `ls`/`get`/`sd` wait for a session;
+  T4-S3 polls a resting finger every 50 ms; Ultra status screen fits 502 rows; display off
+  when the band buffer can't be allocated.
+- **Needs real-device testing:** `idf.py build` for twatch_ultra, twatch_s3 (delete
+  `build-s3/sdkconfig` first, or the IRAM-safe option stays off) and t4_s3. T-Watch S3: a
+  long session into flash, then `mic_stop`'s "audio lost" line (PDM has only ~384 ms of DMA
+  slack; if it loses audio, route PDM through the reader task and PSRAM ring as on the
+  T4-S3). Ultra: BOOT press, the button hint shows at the bottom. T4-S3: finger resting on
+  the glass, `power locks`/current. `sd failwrite` during a session: the next chunk's
+  sequence follows. A voice note finished during a phone sync is advertised right after.
+
+## Done on 2026-10-24: T5 firmware QC fixes (QC report P1-P8)
+
+- **Host tests build under clang** (P1, P2): one concatenated literal in parentheses, and
+  `-Wno-bidi-chars` for `fonts.c` only with GCC. `ctest` passes under GCC and clang.
+- **Feed times** (P3, P4): `pda_time_parse` rejects NULL, `"12:00:00.Z"`, `"+02:"` and offsets
+  beyond ±14:00 or with minutes over 59; `floor_div` no longer overflows at INT64_MIN (no caller
+  gets near it). **JSON strings** (P5): broken UTF-8 in the input becomes U+FFFD. Tests in
+  `test/test_feed.c` and `test/test_json.c` (fail before, pass now).
+- **Touch** (P7, P8): `touch_sleep()` no longer gives a NULL semaphore when `touch_init()`
+  failed after adding the GT911 (a panic on BOOT-hold sleep); a sample whose point read fails
+  is dropped instead of starting a touch at (0,0) (a phantom swipe).
+- Not changed: P6 (the front light on a sync wake): on a timer wake `t5_board_init()` keeps
+  the pin held low and never sets up the PWM, so `t5_backlight_set()` does nothing.
+- **Needs real-device testing:** `idf.py build` (not run here), then normal touch use (taps,
+  swipes, long press) and BOOT-hold sleep and wake. The touch error paths can't be triggered
+  by hand; `touch` on the console shows the error count.
+
+## Done on 2026-10-24: a spoken to-do command always gives a to-do
+
+- Seen on the owner's server: a voice note like "Make a to-do to figure out how renewing a
+  fishing permit works" / "for Bruno." (made-up example) gave no action item, so the hub
+  neither filed it nor suggested it. The prompts call "figure out how ..." a vague wish (no item unless a
+  command word is said), and the model dropped it despite "to-do".
+- Now each voice-note sentence that asks for a to-do ("make/create/add a to-do ...",
+  "add a task ...", "to-do: ...", "remind me to ...") gives a task when no item covers it,
+  with the words the transcriber put on the next line. An item the model reworded for it
+  stays a to-do (not a "plans to" fact) and is explicit, so the hub files it.
+- Open: only voice notes. In an ordinary conversation recording a one-person command can
+  still be discarded by triage, and command words in a conversation don't make an item
+  explicit. Notes already summarized are not redone; re-summarize one to get its to-do.
+
+## Done on 2026-10-23: a sentence whisper repeats is kept once
+
+- Seen on the owner's server: one sentence ("I think it's a good thing.") on four lines a
+  second apart, the last three under another speaker. whisper fell into a repetition
+  loop and wrote the sentence again over the next pause or turn; the loop filter let a
+  run of identical lines stand up to `CONVO_WHISPER_MAX_REPEATS` (4) times.
+- Now a sentence (4 or more different words) repeated right after itself, as the next
+  lines or within one line, is kept once. Short replies ("Yeah.", "No, no.") still keep
+  up to 4 in a row (`transcribe.repeat_limit`).
+- Open: the speech under the dropped repeats (someone else's turn) is still lost; whisper
+  never transcribed it. Transcripts already stored keep their repeats.
+
+## Done on 2026-10-23: T-Watch event log, card power cycle on write errors (branch `feature/twatch-event-log`)
+
+- **Bug:** during a phone call (2026-10-23, 13:40–13:47 UTC) one PWR press started a
+  recording, and the server got four short sessions (6, 8.5, 6.3 and 20.5 s, each one chunk
+  with LAST) with gaps of 17 s, ~2 min and ~3 min. Nothing was pressed on purpose after the
+  start.
+- **What the watch showed (USB, after the owner had reset it):** no core dump; the power log
+  (`power.csv`) counts uptime straight through the call (62333 → 62634 → 62938 s), so no
+  reboot; battery 73 %, USB unplugged, BLE advertising (not connected) at 13:41 and 13:46.
+  That rules out a crash or watchdog restart, low battery, USB and the relay. Only a PWR short
+  press can start a conversation again after it stopped (besides the console and a crash
+  resume), so the three restarts were PWR events the watch saw. Whether the key was pressed
+  (wrist bent with the phone at the ear) or the PMU reported presses without one is open.
+- **Reproduction (phone held to the ear with the watch arm, relay off, no real speech):**
+  test 1 (34 s) ended with the card dead: one write `0x108`, then every read `0x107` until
+  the session gave up (REC ERROR, 3 buzzes, which the owner didn't notice); the open chunk's
+  24 s were deleted as "nothing to keep" because the card couldn't be read. Test 2 (84 s):
+  clean, no extra PWR event. So card errors may explain the stops (a session ended by a card
+  error closes with LAST, like a normal stop), not the restarts. Not reproduced yet.
+- **What:** `main/event_log.*` (pure, `test/test_event_log.c`) and `main/event_log_store.*`
+  (NVS, 16 blobs of 8 entries, 128 kept). One entry per boot (reset reason, standby wake,
+  resume), button event (PWR short with the PMU interrupt bits, so a press without key edges
+  shows as "no key edges"; PWR short ignored by the 1 s guard, with the gap; PWR held; BOOT
+  short/double/held), recording start and stop request (with what asked: PWR, PWR held,
+  console, resume, after a note, a note, mute, low battery), recording end (stopped, card
+  full, error, length limit; seconds), mute, low battery and card power cycle, with the UTC
+  time, uptime and battery. Console `events [clear]`.
+- **Card power cycle:** after a write error the session closes the chunk file, powers the
+  card off and on (`board_storage_power_cycle()`, ~0.3 s; the mic ring holds the audio) and
+  only then recovers the chunk, so a card that stopped answering gives back what was
+  written. A chunk that couldn't start powers the card off and on before the retry. A card
+  read error during recovery no longer deletes the chunk (only a missing file does); it
+  stays on the card for the next boot. The T-Watch S3 and T4-S3 (flash) skip it.
+- **Checks:** host tests in WSL (all pass, new `test_event_log`, two-step abandon in
+  `test_chunk_queue`); `idf.py build` for twatch_ultra, twatch_s3, t4_s3.
+- **Checked on the owner's T-Watch Ultra (flashed after review):** `events` after the flash
+  shows "boot: USB reset". `session start` + `sd failwrite 1`: the card went off and on in
+  416 ms, the chunk was kept, the session went on into a second chunk and ended normally; the
+  log shows "card powered off and on after write error 0x108: mounted again". Two deliberate
+  PWR presses: both "button PWR short (PMU 0x000b00: key edges + -)", then "started by PWR"
+  and "stop asked by PWR". Test 1's lost chunk (22 s) turned up in the queue: the dead card
+  couldn't delete it either, and a boot recovered it. All test chunks were dropped.
+- **Next (owner):** wear it on calls. If a recording stops or starts by itself again, run
+  `events` over USB before anything else (don't reset): "no key edges" on a PWR press means
+  a phantom from the PMU; key edges mean the key really moved. Not seen yet: a real card
+  failure in use, a phantom press.
+- **Also seen:** `tools/wcon.py --listen` doesn't work on Windows (it takes `COM35` for a
+  file path, thinks the port is gone and reopens it in a loop).
+
+## Done on 2026-10-23: a voice note that is one note becomes that note
+
+Owner report: a voice note "Make a note that the Odysseus system has a bug where a ..."
+made a note that read only "The Odysseus system has a bug where a", titled the same.
+The owner asked for the note to hold the voice note's summary instead.
+
+- A voice note whose only item is one note: the note's text is the voice note's summary
+  (written from the whole recording, so a cut sentence loses nothing) and an untitled
+  note takes the voice note's title ("Odysseus system diarization bug"). A line for named
+  notes ("add to my hardware notes ...") and voice notes with several notes or other
+  items keep the note's own words.
+- Those words are complete now too: the transcriber broke the sentence over two lines and
+  the note command was read one line at a time. A line that doesn't end a sentence now
+  goes on into the next (up to 400 characters). A task the model wrote for the same words
+  that has more of them keeps its text when it becomes the note.
+- Notes already filed are unchanged. Tests: `server/tests/test_note_items.py`. No MCP
+  change (`note_title` and `title` already exist).
+- **Owner: Server verification** (PR): a fictional voice note with one note command.
 
 ## Done on 2026-10-23: the T5 keeps a sleep/wake log in flash (branch `feature/pda-wake-log`)
 
@@ -164,6 +395,23 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   54 s awake, and the BOOT wake, each with the battery. Not seen yet: a sync with the phone, the
   backstop, a crash, a power cut.
 - **Next:** if the T5 freezes again, press RST (not BOOT), then `wakelog` before anything else.
+
+## Done on 2026-10-23: facts name what they are about
+
+Owner report: the Beliefs page offered "<person> is interested in hearing how the voice
+compression technology sounds." It was said, but read alone it doesn't say which
+technology, and wanting to hear something once is not worth remembering for months.
+
+- Facts prompt: never passing curiosity about something that came up; a fact read months
+  later without the conversation must say what it is about, so name the thing instead of
+  "the technology", "the project", "this app"; if it can't be named, leave it out.
+- Code drops what small models still return: curiosity about how or what something is
+  ("is interested in / curious to / wants to hear, see, watch, know, find out how, what,
+  whether, if"). "Is interested in learning Portuguese" and "wants to see Japan" stay.
+  Vague references ("the technology") are left to the prompt: no rule tells them apart
+  from "the Lisbon flat" safely. Stored facts are unchanged (the owner dismisses or
+  forgets them on the hub). Tests: `server/tests/test_passing_facts.py`. No MCP change.
+- **Owner: Server verification** (PR): a fictional conversation with a curious, vague line.
 
 ## Done on 2026-10-23: one-day facts are not facts
 
@@ -195,8 +443,8 @@ facts at all.
 
 ## Done on 2026-10-22: "Create a to-do list." covers the items after it
 
-- Owner report: a voice note "Create a to-do list and get Rock Talk ready for the meeting
-  with the Meshtastic team" stayed under "Not filed yet" in the hub. The command word only
+- Owner report: a voice note "Create a to-do list and get Kite Lab ready for the meeting
+  with the Harbor Radio team" stayed under "Not filed yet" in the hub. The command word only
   counted when it was in the same sentence as the item; when the transcriber ends the
   sentence after "Create a to do list.", the next item was a suggestion, not explicit.
 - Now a sentence that starts a to-do list ("create/make/start a to-do list", "to-do list:")
@@ -237,8 +485,8 @@ facts at all.
 
 ## Done on 2026-10-22: quick errands are not action items
 
-"I'll move my truck" said in passing became the suggested to-do "Walk truck to Shahyah's
-house", shown in the hub's Today insight "with Shahyah's".
+"I'll move my truck" said in passing became the suggested to-do "Walk truck to Marisol's
+house", shown in the hub's Today insight "with Marisol's".
 
 - Prompts: something done during the conversation or right after it that nobody needs
   reminding of ("I'll move my truck", "let me grab my keys") is not an action item; the
@@ -247,7 +495,7 @@ house", shown in the hub's Today insight "with Shahyah's".
 - Code drops what small models still list: an undated task with no list or command word
   whose clause says it happens now ("right now", "real quick", "in a minute"); found by
   the item's words, or by the one-clause line it cites when the model reworded it.
-- People's names lose a possessive ("Shahyah's" -> "Shahyah") in new summaries; schema
+- People's names lose a possessive ("Marisol's" -> "Marisol") in new summaries; schema
   v12 fixes the names already stored once (the person keeps their id, the old spelling
   is an alias; an existing person of that name absorbs it).
 - Hub side: a "Not a task" button on Today's open loops dismisses the item here
@@ -408,7 +656,8 @@ belief on a review page. Forgetting must not come back on the next hourly reconc
   hub can take all current facts and promote them itself.
 - MCP version 0.5.0, 14 tools; `AGENTS.md` and `server/README.md` tables updated.
 - Fact ids change when a conversation is re-summarized; the hub treats "No fact #N." from
-  `retire_fact` as done and reconciles by the facts returned, not by old ids.
+  `retire_fact` as done and reconciles by the facts returned, not by old ids. (Since
+  2026-10-23 a re-summary keeps the id of a fact it says again.)
 - Checks: 364 server tests + ruff.
 
 ## Done on 2026-10-21: Today insight and confirmed facts (hub: same branch in SDarioosh/Barvis)
@@ -558,17 +807,17 @@ parallel agents, one per stream, reviewed and merged by the orchestrator.
   now wraps such uploads in Ogg Opus before ffmpeg (`convo_server/opus_packets.py`,
   `tests/test_opus_packets.py`). An incomplete last packet is dropped.
 
-## Done in round 9: "Speaker 2 was Jenn" renames the speaker
+## Done in round 9: "Speaker 2 was Kath" renames the speaker
 
-- The owner said "/sound … Speaker 1 and Speaker 3 were both Shahyah and Speaker 2 was
-  Jenn" and the model only repeated what they said; nothing was renamed. Reproduced in
+- The owner said "/sound … Speaker 1 and Speaker 3 were both Marisol and Speaker 2 was
+  Kath" and the model only repeated what they said; nothing was renamed. Reproduced in
   the sandbox: Odysseus offered `name_speaker` on the `/sound` turn, but the model read the
   sentence as a claim to check and never called it.
 - `INSTRUCTIONS` now has a "Naming speakers" paragraph (a statement of who a speaker was
   is a request to save it; call `name_speaker` once per label), and the tool description
   says the same. Sandbox, same message: before, only `search_conversations`; after,
   `search_conversations`, `get_conversation`, `name_speaker` (approved) and Speaker 1
-  became Shahyah. The next model call hit the sandbox CPU's read timeout (HTTP 504), so
+  became Marisol. The next model call hit the sandbox CPU's read timeout (HTTP 504), so
   Speakers 2 and 3 still need the server run.
 - Needs the owner: paste the new `INSTRUCTIONS` into the Custom preset and rerun
   `modules_setup.py` (was `barvis_setup.py`) so `/sound` picks it up.
@@ -1340,6 +1589,13 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 ## Next
 
+- **Owner: capture quality** (4.3 PR, Server verification step 2): the GPU eval is done
+  (2026-10-24); still one real recording with a third person joining, and the owner-hint
+  log lines.
+- **Owner: voice-note commands on real speech** (this branch's PR, Server verification): record a
+  few of the PR's sample voice notes on the watch ("um, make a todo to get eggs", "make a note in
+  voice recorder that the case needs to be 3 mm bigger", "add eggs, milk and bread to my shopping
+  list") and check where each lands in the hub.
 - **Owner: forget propagates** (this branch's PR, Server verification): forget one belief on the
   hub's `/beliefs` page on the test instance and confirm the fact is gone from `/sound what facts
   do you know about …` and stays gone after the next hourly run.
@@ -1399,16 +1655,26 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
+- Voice-note commands: "add eggs, milk and bread to my shopping list" is now three lines; "salt
+  and pepper" (no comma) stays one. Should "eggs and milk" (no comma) be two lines too?
 - Today insight: the T5's rule-based fallback puts today's all-day events in DO FIRST
   ("today, all day") before the timed ones. Keep, or leave all-day events out?
 - Confirmed facts: are 3 conversations over 2 days the right bar once real counts are in,
   or should a fact the owner confirms by hand (Phase 1 review page) be the main path?
-- Recognition: if pyannote on the server GPU names people right without more wrong names
-  than ECAPA (step 3 of SDarioosh/barvis-sound#31's Server verification), should it become the default there?
+- Recognition: answered 2026-10-23: the owner runs pyannote. The sandbox found pyannote
+  names more right but with more wrong names than ECAPA (5.3 vs 1.3 % on the table mic);
+  split + line check bring it to 1.6 %. Default diarizer stays `ecapa` in code until the
+  server run of the 4.3 PR.
+- Diarization (4.3 PR): split + line check are the pyannote defaults now. Use
+  `CONVO_PYANNOTE_VBX_FB=0.2` against newcomers getting an existing name (more
+  "Speaker N" in exchange)? Decide after a real recording.
+- Enrollment without the Zepp watch (quality checks, enrolling from T-Watch voice notes)
+  and a "speaker unsure" flag for the hub: proposed in the 4.3 session, not decided.
 - Insights: should doctor's instructions like "avoid hard food until the follow-up" be
   action items? The model lists them; they're not things to do by a date.
-- Owner loudness hint: it never fired in the eval. Keep it until a real-device recording
-  shows whether it helps, or remove it?
+- Owner loudness hint: it never fired in the eval (also not with simulated arm movement).
+  It now logs `owner hint: speaker N of M named …`; check the log on real wrist
+  recordings, and set `CONVO_OWNER_HINT_MARGIN=0` if it names someone else. Remove it then?
 - Voice notes: is ending the conversation session and resuming it after a note right, or
   should a note be refused while a conversation records? Should notes get their own place
   in the daily digest?

@@ -1,6 +1,6 @@
 # Bug hunt, October 2026
 
-A review of odysseus-sound (`server/`, `firmware/recorder/`, the PC and Android relays,
+A review of Athena (`server/`, `firmware/recorder/`, the PC and Android relays,
 `zepp-app/`) and of the fork code in the hub ([SDarioosh/Barvis](https://github.com/SDarioosh/Barvis)).
 Every bug listed below was reproduced in the cloud sandbox with a test that failed
 before the fix and passes after it. Candidates that did not reproduce are listed at the end.

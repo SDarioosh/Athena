@@ -66,8 +66,10 @@ class ToneEmbedder:
 
 def fake_llm_transport(summary: dict | None = None, digest: dict | None = None,
                        log: list | None = None, triage: dict | None = None,
-                       links: list | None = None) -> httpx.MockTransport:
-    """Fake llama-server: answers each structured call by its schema name."""
+                       links: list | None = None,
+                       scores: dict[str, int] | None = None) -> httpx.MockTransport:
+    """Fake llama-server: answers each structured call by its schema name. The fact
+    review scores every fact 5 unless ``scores`` (fact text -> score) says otherwise."""
     summary = summary or {
         "title": "Planning the trip",
         "summary": "Alice and the user planned a trip to Lisbon.",
@@ -89,6 +91,13 @@ def fake_llm_transport(summary: dict | None = None, digest: dict | None = None,
         if log is not None:
             log.append(body)
         name = body["response_format"]["json_schema"]["name"]
+        if name == "FactReview":
+            asked = json.loads(body["messages"][-1]["content"])["facts"]
+            content = {"scores": [{"number": f["number"],
+                                   "score": (scores or {}).get(f["fact"], 5)}
+                                  for f in asked]}
+            return httpx.Response(200, json={"choices": [{"message": {
+                "content": json.dumps(content)}}]})
         content = {
             "DailyDigest": digest, "Triage": triage, "SummaryNotes": notes,
             "ActionItemList": {"action_items": summary["action_items"]},

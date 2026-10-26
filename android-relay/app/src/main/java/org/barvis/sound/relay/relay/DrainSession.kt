@@ -142,10 +142,17 @@ class DrainSession(
     private suspend fun list(afterId: Long): Pair<List<ChunkEntry>, Long> {
         link.write(Command.List(afterId, WatchGatt.LIST_MAX).encode())
         val entries = ArrayList<ChunkEntry>()
+        var outOfOrder: Long? = null
         while (true) {
             when (val r = Response.decode(link.receive(receiveTimeoutMs))) {
-                is Response.Entry -> entries += r.entry
-                is Response.ListEnd -> return entries.sortedBy { it.chunkId } to r.remaining
+                // §5.1: ids above after_id, ascending; anything else could loop forever. Read
+                // up to LIST_END first, so the BYE that follows isn't refused as busy.
+                is Response.Entry -> if (r.entry.chunkId > (entries.lastOrNull()?.chunkId ?: afterId)) entries += r.entry
+                    else outOfOrder = outOfOrder ?: r.entry.chunkId
+                is Response.ListEnd -> {
+                    outOfOrder?.let { throw WatchProtocolError("LIST entry $it out of order") }
+                    return entries.sortedBy { it.chunkId } to r.remaining
+                }
                 is Response.Error -> throw WatchProtocolError("LIST failed: ${r.code}")
                 else -> log.log(Level.DEBUG, "ignored during LIST: $r")
             }

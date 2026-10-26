@@ -31,9 +31,9 @@ def test_whisper_server_gets_prompt_and_temperature_fallback():
 
     t = WhisperServerTranscriber("http://whisper.test", transport=httpx.MockTransport(handler),
                                  temperature_inc=0.3)
-    assert [p.text for p in t.transcribe(tone(300, 1), "Jenn, Shahyah.")] == ["hi"]
+    assert [p.text for p in t.transcribe(tone(300, 1), "Kath, Marisol.")] == ["hi"]
     body = seen[0]
-    assert b'name="prompt"\r\n\r\nJenn, Shahyah.' in body
+    assert b'name="prompt"\r\n\r\nKath, Marisol.' in body
     assert b'name="temperature_inc"\r\n\r\n0.3' in body
     assert _fields(body)["suppress_non_speech"] == "true"  # default: measured best
     t.transcribe(tone(300, 1))
@@ -42,9 +42,9 @@ def test_whisper_server_gets_prompt_and_temperature_fallback():
 
 def test_whisper_cli_command_has_prompt_and_fallback():
     t = WhisperCliTranscriber("whisper-cli", "model.bin", temperature_inc=0.2)
-    cmd = t.command(Path("a.wav"), Path("out"), "Odysseus, Jenn.")
+    cmd = t.command(Path("a.wav"), Path("out"), "Odysseus, Kath.")
     assert cmd[cmd.index("-tpi") + 1] == "0.2"
-    assert cmd[-2:] == ["--prompt", "Odysseus, Jenn."]
+    assert cmd[-2:] == ["--prompt", "Odysseus, Kath."]
     assert "--prompt" not in t.command(Path("a.wav"), Path("out"))
 
 
@@ -104,12 +104,12 @@ def test_non_speech_tags_are_dropped():
 
 def test_prompt_has_vocabulary_and_known_names(pipeline):
     pipeline.settings.whisper_prompt = "Odysseus, Tailscale."
-    pipeline.store.put_speaker("Jenn", np.ones(16, np.float32), is_owner=False)
-    assert pipeline.whisper_prompt() == "Odysseus, Tailscale. Jenn."
+    pipeline.store.put_speaker("Kath", np.ones(16, np.float32), is_owner=False)
+    assert pipeline.whisper_prompt() == "Odysseus, Tailscale. Kath."
     ingest(pipeline, 0, np.concatenate([tone(200, 4), tone(600, 4)]))
     pipeline.end_session("s1")
     pipeline.process_pending()
-    assert pipeline.transcriber.prompts == ["Odysseus, Tailscale. Jenn."]
+    assert pipeline.transcriber.prompts == ["Odysseus, Tailscale. Kath."]
 
 
 # ------------------------------------------------------------------ voice samples
@@ -173,10 +173,13 @@ def owner_diarizer(margin=0.10):
                     match_threshold=0.5, owner_hint_margin=margin)
 
 
-def test_loudest_borderline_cluster_is_the_owner():
+def test_loudest_borderline_cluster_is_the_owner(caplog):
     d = owner_diarizer()
     loud, quiet = unit(0.45, 0.893), unit(0.1, 0.995)  # owner scores 0.45 and 0.10
-    labels, unnamed = d.name_clusters([quiet, loud], loudness=[-30.0, -18.0])
+    with caplog.at_level("INFO", logger="convo_server.diarize"):
+        labels, unnamed = d.name_clusters([quiet, loud], loudness=[-30.0, -18.0])
+    assert "owner hint: speaker 2 of 2 named Me (voice score 0.45" in caplog.text
+    assert "12.0 dB louder" in caplog.text
     assert [(x.name, x.is_owner) for x in labels] == [("Speaker 1", False), ("Me", True)]
     assert set(unnamed) == {"Speaker 1"}
 
@@ -260,10 +263,10 @@ def test_pyannote_keeps_speakers_of_one_run_apart():
     e = ToneEmbedder()
     run = tone(300, 8)  # both "voices" embed the same
     turns = [(0.0, 4.0, "SPEAKER_00"), (4.0, 8.0, "SPEAKER_01")]
-    d = PyannoteDiarizer(e, [EnrolledVoice("Hayden", e.embed(tone(300, 2)), False)],
+    d = PyannoteDiarizer(e, [EnrolledVoice("Tobias", e.embed(tone(300, 2)), False)],
                          segmenter=lambda audio: turns)
     labels, unnamed = d.diarize_runs([run], [PieceRef(0, 0.5, 3.5), PieceRef(0, 4.5, 7.5)])
-    assert sorted(x.name for x in labels) == ["Hayden", "Speaker 1"]  # two people, not one
+    assert sorted(x.name for x in labels) == ["Speaker 1", "Tobias"]  # two people, not one
     assert list(unnamed) == ["Speaker 1"]
 
 
@@ -290,6 +293,11 @@ def test_pyannote_one_voice_run_moves_lines_by_their_own_voice():
     labels, _ = on.diarize_runs([run], pieces)
     assert [(x.name, x.is_owner) for x in labels] == [
         ("Hayden", False), ("Me", True), ("Hayden", False)]
+    # the line split (on with pyannote) must not give a moved line back pyannote's name
+    words = [[(0.2, 1.0, "a"), (1.2, 2.5, "b")], [(3.2, 4.0, "c"), (4.2, 5.5, "d")],
+             [(6.2, 7.0, "e"), (7.2, 8.5, "f")]]
+    parts = on.split_lines([run], pieces, words, labels)
+    assert [[w.name for _, _, w in ps] for ps in parts] == [["Hayden"], ["Me"], ["Hayden"]]
 
     # a run where pyannote kept two voices is left as pyannote split it
     def two_voices(audio):
@@ -371,20 +379,20 @@ def test_rename_everywhere_and_reassign_line(pipeline):
     mcp = build_mcp(pipeline.store, pipeline.settings)
     process_two_speakers(pipeline)
     conv = pipeline.store.list_conversations()[0]["id"]
-    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Jen")
-    process_two_speakers(pipeline, session="s2", start=T0 + 3600)  # recognised as Jen
+    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Kat")
+    process_two_speakers(pipeline, session="s2", start=T0 + 3600)  # recognised as Kat
     assert "per-conversation" in call(mcp, "rename_speaker_everywhere",
                                       old_name="Speaker 1", new_name="Bob")
-    out = call(mcp, "rename_speaker_everywhere", old_name="jen", new_name="Jenn")
+    out = call(mcp, "rename_speaker_everywhere", old_name="kat", new_name="Kath")
     assert "2 lines across 2 conversations" in out
-    assert [s["name"] for s in pipeline.store.speakers()] == ["Me", "Jenn"]
-    assert "No lines by 'Jen'" in call(mcp, "rename_speaker_everywhere", old_name="Jen",
+    assert [s["name"] for s in pipeline.store.speakers()] == ["Me", "Kath"]
+    assert "No lines by 'Kat'" in call(mcp, "rename_speaker_everywhere", old_name="Kat",
                                        new_name="X")
 
     transcript = call(mcp, "get_transcript", conversation_id=conv)
-    line = int(re.search(r"#(\d+) \[\d+s\] Jenn:", transcript).group(1))
+    line = int(re.search(r"#(\d+) \[\d+s\] Kath:", transcript).group(1))
     out = call(mcp, "reassign_line", line_id=line, name="Me")
-    assert "moved from Jenn to Me" in out
+    assert "moved from Kath to Me" in out
     seg = pipeline.store.get_segment(line)
     assert seg.speaker == "Me" and seg.is_owner
     assert "already" in call(mcp, "reassign_line", line_id=line, name="Me")
@@ -618,3 +626,48 @@ def test_opus_round_trip_keeps_length():
     # still the same signal (aligned, no level change worth mentioning)
     assert np.corrcoef(x[1600:-1600], y[1600:-1600])[0, 1] > 0.9
     assert abs(rec.active_level_dbfs(y) - rec.active_level_dbfs(x)) < 1.5
+
+
+def test_owner_precision_and_recall():
+    rec = _recognition()
+    turns = [(0.0, 4.0, "OWN"), (4.0, 8.0, "B"), (8.0, 10.0, "C")]
+    # 0-3 s owner as owner; 3-6 s labelled owner (1 s owner, 2 s B); 6-8 B as B; 8-10 none
+    segs = [(0.0, 3.0, "OWN", "a"), (3.0, 6.0, "OWN", "b"), (6.0, 8.0, "B", "c")]
+    out = rec._naming(turns, 0.0, 10.0, segs, ["OWN", "B"])
+    assert abs(out["owner_precision"] - 4 / 6) < 0.02  # 4 s of the 6 s labelled owner
+    assert abs(out["owner_recall"] - 1.0) < 0.02  # all 4 s of the owner
+    assert out["owner_frames"] == 40
+    pooled = rec.pooled([{**out, "ref_words": 1, "substitutions": 0, "deletions": 0,
+                          "insertions": 0, "total": 1.0, "missed": 0.0,
+                          "false_alarm": 0.0, "confusion": 0.0, "seconds_to_process": 1}])
+    assert abs(pooled["owner_precision"] - 4 / 6) < 0.02
+
+
+def test_late_joiners_are_cut_from_the_reference():
+    rec = _recognition()
+    mutes = rec.late_joiner_mutes(["OWN", "B", "C", "D"], 100.0, 200.0)
+    assert mutes == (("C", 100.0, 150.0), ("D", 100.0, 150.0))
+    turns = [(90.0, 120.0, "C"), (140.0, 160.0, "C"), (110.0, 130.0, "OWN")]
+    assert rec.cut_turns(turns, mutes) == [(90.0, 100.0, "C"), (110.0, 130.0, "OWN"),
+                                           (150.0, 160.0, "C")]
+    words = {"C": [(120.0, 120.3, "early"), (155.0, 155.3, "late")],
+             "OWN": [(120.0, 120.3, "mine")]}
+    assert rec.cut_words(words, mutes) == {"C": [(155.0, 155.3, "late")],
+                                           "OWN": [(120.0, 120.3, "mine")]}
+
+
+def test_owner_dips_turn_the_voice_down_in_stretches():
+    rec = _recognition()
+    env = rec.owner_dips(120 * 16000, 12.0)
+    assert env.max() == 1.0 and 10 ** (-12 / 20) - 1e-6 <= env.min() < 10 ** (-6 / 20)
+    down = (env < 0.99).mean()
+    assert 0.1 < down < 0.6  # dips of 2-8 s every 5-20 s
+    assert np.array_equal(env, rec.owner_dips(120 * 16000, 12.0))  # deterministic
+
+
+def test_unenrolled_speakers_given_an_enrolled_name():
+    rec = _recognition()
+    turns = [(0.0, 4.0, "OWN"), (4.0, 8.0, "NEW")]
+    segs = [(0.0, 4.0, "OWN", "a"), (4.0, 6.0, "OWN", "b"), (6.0, 8.0, "Speaker 1", "c")]
+    out = rec._naming(turns, 0.0, 8.0, segs, ["OWN"])
+    assert abs(out["unenrolled_named"] - 0.5) < 0.03  # 2 s of NEW's 4 s under "OWN"

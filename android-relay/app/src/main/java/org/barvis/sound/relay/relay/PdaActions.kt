@@ -123,8 +123,9 @@ sealed class PdaAction {
                 "fetch" -> Fetch((o["ref"] as? String)?.let { DetailRef.parse(it) } ?: throw Bad("fetch: bad ref"))
                 "todo_toggle" -> TodoToggle(
                     str(o["note"], "note", 64),
-                    (o["i"] as? Long)?.takeIf { it in 0..Int.MAX_VALUE }?.toInt() ?: throw Bad("i must be an integer >= 0"),
-                    (o["text"] as? String)?.takeIf { it.length in 1..80 } ?: throw Bad("text must be 1-80 characters"),
+                    (o["i"] as? Long)?.takeIf { it in 0..9999 }?.toInt() ?: throw Bad("i must be an integer from 0 to 9999"),
+                    // Blank text would match every item (plan §4.4: not only whitespace).
+                    (o["text"] as? String)?.takeIf { it.isNotBlank() && it.length <= 80 } ?: throw Bad("text must be 1-80 characters"),
                     o["done"] as? Boolean ?: throw Bad("done must be true or false"),
                 )
                 else -> calAdd(o)
@@ -167,7 +168,7 @@ sealed class PdaAction {
             }
             val fromItem = if ("from_item" in o) positive(o["from_item"], "from_item") else null
             val description = if (fromItem != null) {
-                "Added on the T5 PDA from odysseus-sound action item #$fromItem"
+                "Added on the T5 PDA from Athena action item #$fromItem"
             } else "Added on the T5 PDA"
             if (allDay) {
                 if ("end" in o) throw Bad("an all-day event has no end")

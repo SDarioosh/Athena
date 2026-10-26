@@ -76,11 +76,23 @@ def test_repetition_loops_are_cut():
     assert collapse_repeats("no, no, no, that's okay", 4) == "no, no, no, that's okay"
     assert collapse_repeats("a b a b", 0) == "a b a b"
     assert texts([seg("We go. " * 12, 0.9)]) == ["We go. We go. We go. We go."]
+    # a sentence said again within one segment: whisper's loop, kept once
+    assert collapse_repeats("I think it's a good thing. " * 3, 4) == "I think it's a good thing."
+    # a short pair repeated is not a sentence, even 8 words long
+    assert collapse_repeats("yeah okay " * 4, 4) == ("yeah okay " * 4).strip()
 
 
 def test_identical_segments_back_to_back_are_cut():
+    # whisper fills the next turns with the sentence it just wrote, one line a second
+    loop = [seg("I think it's a good thing.", 0.9, start=i) for i in range(4)]
+    assert texts(loop) == ["I think it's a good thing."]
     loop = [seg("And then we left.", 0.9, start=i) for i in range(7)]
-    assert texts(loop) == ["And then we left."] * 4
+    assert texts(loop) == ["And then we left."]
+    # short replies people do repeat: cut only past max_repeats
+    assert texts([seg("Yeah.", 0.9, start=i) for i in range(7)]) == ["Yeah."] * 4
+    assert texts([seg("No, no.", 0.9, start=i) for i in range(3)]) == ["No, no."] * 3
+    assert texts([seg("And then we left.", 0.9, start=i) for i in range(3)],
+                 HallucinationFilter(max_repeats=0)) == ["And then we left."] * 3
     # repeated by people, not in a run: kept
     assert texts([seg("Yeah.", 0.9), seg("No.", 0.9), seg("Yeah.", 0.9)]) == [
         "Yeah.", "No.", "Yeah."]

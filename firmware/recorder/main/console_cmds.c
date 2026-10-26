@@ -27,9 +27,11 @@
 #include "esp_rom_crc.h"
 #include "esp_system.h"
 #include "isotime.h"
+#include "event_log_store.h"
 #include "power_log.h"
 #include "mic.h"
 #include "recorder.h"
+#include "session_rec.h"
 
 static const char *TAG = "console";
 
@@ -262,13 +264,24 @@ static int cmd_stop(int argc, char **argv)
     return 0;
 }
 
-/* Mount the card for a console command, unless a recording is using it. */
-static const char *console_mount(void)
+/* Whether a recording (`rec`, a session or a voice note) is using the card: console commands
+ * then leave it alone (their reads would hold up the writer, and a write error power-cycles
+ * the card under them). tools/pull.py waits for this exact message. */
+static bool card_busy(void)
 {
     recorder_state_t rs;
     recorder_get_state(&rs);
-    if (rs.running) {
+    if (rs.running || session_rec_running()) {
         printf("recording in progress; not touching the card\n");
+        return true;
+    }
+    return false;
+}
+
+/* Mount the card for a console command, unless a recording is using it. */
+static const char *console_mount(void)
+{
+    if (card_busy()) {
         return NULL;
     }
     const char *mount = NULL;
@@ -662,10 +675,7 @@ static int cmd_sd(int argc, char **argv)
         return 0;
     }
     printf("card detect: %s\n", board_storage_card_present() ? "card in" : "no card");
-    recorder_state_t rs;
-    recorder_get_state(&rs);
-    if (rs.running) {
-        printf("recording in progress; not touching the card\n");
+    if (card_busy()) {
         return 0;
     }
     const char *mount = NULL;
@@ -703,6 +713,20 @@ static int cmd_reboot(int argc, char **argv)
     return 0;
 }
 
+/* `events [clear]`: the flash event log (event_log.h): what started and ended recordings. */
+static int cmd_events(int argc, char **argv)
+{
+    if (argc >= 2 && strcmp(argv[1], "clear") == 0) {
+        event_log_clear();
+    } else if (argc >= 2) {
+        printf("usage: events [clear]\n");
+        return 1;
+    } else {
+        event_log_print();
+    }
+    return 0;
+}
+
 static const esp_console_cmd_t cmds[] = {
     {.command = "status", .help = "Recorder state, battery, time, card", .func = cmd_status},
     {.command = "batt", .help = "Battery voltage, percent, charging; `batt sim <percent> [mV]` / `batt sim off` fakes it (test)", .func = cmd_batt},
@@ -727,6 +751,7 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "sd", .help = "Power, mount and report the SD card, then power it off; `sd failwrite <n>` makes the next n chunk writes fail (test)", .func = cmd_sd},
     {.command = "standby", .help = "Deep sleep now; PWR or USB power wakes it", .func = cmd_standby},
     {.command = "reboot", .help = "Restart", .func = cmd_reboot},
+    {.command = "events", .help = "What started and ended recordings (buttons with their PMU bits, stops, ends, boots), kept in flash; `events clear`", .func = cmd_events},
     {.command = "power", .help = "Battery, state, drain rate and the power log; `power log <min>|off`, `power flush`, `power locks`", .func = cmd_power},
     {.command = "coredump", .help = "The last crash: summary; `coredump get` sends the ELF (tools/pull.py --coredump), `coredump erase`", .func = cmd_coredump},
     {.command = "crash", .help = "`crash yes` (abort) / `crash wdt` (hang a watched task): crash on purpose to test the core dump, watchdog and resume", .func = cmd_crash},

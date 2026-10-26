@@ -379,6 +379,9 @@ class PdaSync:
             log.info("feed unchanged (v%d on the T5), not sent", held)
             return True
         version = max(feed["version"], int(last.get("version", 0)) + 1, (held or 0) + 1)
+        # A u32 on the wire: stop at the largest one rather than overflow (a T5 or state
+        # file holding 0xFFFFFFFF); 0 would mean "no feed".
+        version = min(version, 0xFFFFFFFF)
         if version != feed["version"]:  # versions only grow, even if clocks disagree
             feed["version"] = version
             data = encode_feed(feed)

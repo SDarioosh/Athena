@@ -140,7 +140,7 @@ internal class JsonClient(
 }
 
 /**
- * The odysseus-sound HTTP API (server/convo_server/api.py), directly or through Odysseus
+ * The Athena HTTP API (server/convo_server/api.py), directly or through Odysseus
  * ([routes]: the same paths under `/api/codex/sound` and the same JSON). The token is never
  * logged.
  */
@@ -239,10 +239,11 @@ class OdysseusTodosClient(
         val a = c.call("POST", TODOS, json = body) ?: return ApiResult.Fail(c.networkError())
         noTodos(a)?.let { return it }
         return when (val r = c.objOf(a)) {
+            // Plan §4.4: an exit_code other than 0 is result 1; only a missing one is temporary.
             is ApiResult.Ok -> when (r.value.long("exit_code")) {
+                null -> ApiResult.Fail(ServerResult.Transient("Odysseus todos answer has no exit_code"))
                 0L -> ApiResult.Ok(true)
-                1L -> ApiResult.Ok(false)
-                else -> ApiResult.Fail(ServerResult.Transient("Odysseus todos answer has no exit_code"))
+                else -> ApiResult.Ok(false)
             }
             is ApiResult.Fail -> r
             is ApiResult.Unsupported -> r
@@ -371,6 +372,9 @@ class OdysseusCalendarClient(
     }
 
     override suspend fun deleteEvent(uid: String): ApiResult<Unit> {
+        // An occurrence id (`<uid>::<occurrence>`): the hub would delete the whole series.
+        // Refused without a call, as by the PC relay (pda_calendar.py), so the T5 gets result 1.
+        if ("::" in uid) return ApiResult.Fail(ServerResult.Rejected(400, "one occurrence of a recurring event can't be deleted"))
         val a = c.call("DELETE", "$EVENTS/${JsonClient.enc(uid)}", logPath = "$EVENTS/…")
             ?: return ApiResult.Fail(c.networkError())
         // FastAPI's 404 for a missing route says "Not Found"; a missing event says "Event not found".

@@ -69,7 +69,7 @@ bool cq_record_decode(const uint8_t in[CQ_RECORD_SIZE], cq_info_t *info)
 {
     if (memcmp(in, RECORD_MAGIC, 4) != 0 || in[4] != CQ_RECORD_VERSION ||
         get32(in + 60) != crc32_update(0, in, 60) ||
-        (in[5] != CQ_STATE_OPEN && in[5] != CQ_STATE_CLOSED)) {
+        (in[5] != CQ_STATE_OPEN && in[5] != CQ_STATE_CLOSED) || get32(in + 8) < FIRST_ID) {
         return false;
     }
     memset(info, 0, sizeof(*info));
@@ -174,19 +174,26 @@ static int write_record(const chunk_queue_t *q, const cq_info_t *info)
     return write_small(path, rec, sizeof(rec));
 }
 
-static bool read_record(const chunk_queue_t *q, uint32_t id, cq_info_t *info)
+/* CQ_OK, CQ_ERR_NOT_FOUND (no file, or a short, torn or foreign record), or CQ_ERR_IO (the
+ * card didn't answer: the record may be fine, so nothing may be deleted for it). */
+static int read_record(const chunk_queue_t *q, uint32_t id, cq_info_t *info)
 {
     char path[128];
     uint8_t rec[CQ_RECORD_SIZE];
     path_of(q, id, "met", path, sizeof(path));
     FILE *f = fopen(path, "rb");
     if (!f) {
-        return false;
+        return errno == ENOENT ? CQ_ERR_NOT_FOUND : CQ_ERR_IO;
     }
-    const bool ok = fread(rec, 1, sizeof(rec), f) == sizeof(rec) && cq_record_decode(rec, info) &&
-                    info->chunk_id == id;
+    const size_t got = fread(rec, 1, sizeof(rec), f);
+    const bool io_err = ferror(f) != 0;
     fclose(f);
-    return ok;
+    if (io_err) {
+        return CQ_ERR_IO;
+    }
+    return got == sizeof(rec) && cq_record_decode(rec, info) && info->chunk_id == id
+               ? CQ_OK
+               : CQ_ERR_NOT_FOUND;
 }
 
 static int write_next(const chunk_queue_t *q, uint32_t next)
@@ -245,7 +252,9 @@ static int scan_file(const char *path, ogg_opus_scan_t *scan, long *size)
 {
     file_reader_t r = {.f = fopen(path, "rb")};
     if (!r.f) {
-        return CQ_ERR_NOT_FOUND;
+        /* Only a missing file means "no audio": a card that doesn't answer (EIO) must not
+         * get a chunk with audio on it deleted. */
+        return errno == ENOENT ? CQ_ERR_NOT_FOUND : CQ_ERR_IO;
     }
     int err = ogg_opus_scan(file_read_at, &r, scan) == OGG_OPUS_OK ? CQ_OK : CQ_ERR_IO;
     if (fseek(r.f, 0, SEEK_END) != 0 || (*size = ftell(r.f)) < 0) {
@@ -411,6 +420,47 @@ static bool idlist_has(const idlist_t *l, uint32_t id)
     return bsearch(&id, l->v, l->n, sizeof(id), cmp_u32) != NULL;
 }
 
+/* Records of the chunks found open at boot. */
+typedef struct {
+    cq_info_t *v;
+    size_t n, cap;
+} infolist_t;
+
+static bool infolist_add(infolist_t *l, const cq_info_t *info)
+{
+    if (l->n == l->cap) {
+        const size_t cap = l->cap ? l->cap * 2 : 8;
+        cq_info_t *v = realloc(l->v, cap * sizeof(*v));
+        if (!v) {
+            return false;
+        }
+        l->v = v;
+        l->cap = cap;
+    }
+    l->v[l->n++] = *info;
+    return true;
+}
+
+/* Whether the session goes on after `c`: a later sequence of it is queued or also open. A
+ * chunk left open after a failed close (the card stopped answering) while the session went
+ * on must not end the session at boot. */
+static bool session_goes_on(const chunk_queue_t *q, const infolist_t *open, const cq_info_t *c)
+{
+    for (size_t i = 0; i < q->count; i++) {
+        if (memcmp(q->items[i].session_id, c->session_id, 8) == 0 &&
+            q->items[i].sequence > c->sequence) {
+            return true;
+        }
+    }
+    for (size_t i = 0; i < open->n; i++) {
+        if (memcmp(open->v[i].session_id, c->session_id, 8) == 0 &&
+            open->v[i].sequence > c->sequence) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* "0000002a.opus" -> 0x2a and "opus". */
 static bool parse_name(const char *name, uint32_t *id, const char **ext)
 {
@@ -441,14 +491,16 @@ static bool ext_is(const char *ext, const char *want)
 }
 
 /* A chunk whose record is missing or unreadable: keep the audio file if it holds audio (the
- * owner can still pull it over USB), otherwise clean up. */
+ * owner can still pull it over USB), otherwise clean up. An audio file that can't be read
+ * (EIO) is kept too: only a file read to the end without audio is deleted. */
 static void handle_orphan(chunk_queue_t *q, uint32_t id, bool has_opus, cq_boot_report_t *rep)
 {
     char path[128];
     path_of(q, id, "opus", path, sizeof(path));
     ogg_opus_scan_t scan;
     long size;
-    if (has_opus && scan_file(path, &scan, &size) == CQ_OK && scan.has_audio) {
+    const int err = has_opus ? scan_file(path, &scan, &size) : CQ_ERR_NOT_FOUND;
+    if (err == CQ_ERR_IO || (err == CQ_OK && scan.has_audio)) {
         rep->corrupt++;
         return;
     }
@@ -500,15 +552,18 @@ int cq_init(chunk_queue_t *q, const char *dir, cq_boot_report_t *report)
 
     /* Closed chunks first, so that recovering an open one can find its session's previous
      * chunk. */
-    idlist_t open_ids = {0};
+    infolist_t open = {0};
     for (size_t i = 0; err == CQ_OK && i < mets.n; i++) {
         const uint32_t id = mets.v[i];
         cq_info_t info;
         const bool has_opus = idlist_has(&opus, id);
-        if (!read_record(q, id, &info)) {
+        const int rd = read_record(q, id, &info);
+        if (rd == CQ_ERR_IO) {
+            rep->corrupt++; /* left as it is: the next boot reads it again */
+        } else if (rd != CQ_OK) {
             handle_orphan(q, id, has_opus, rep);
         } else if (info.state == CQ_STATE_OPEN) {
-            if (!idlist_add(&open_ids, id)) {
+            if (!infolist_add(&open, &info)) {
                 err = CQ_ERR_NO_MEM;
             }
         } else if (!has_opus) {
@@ -525,16 +580,13 @@ int cq_init(chunk_queue_t *q, const char *dir, cq_boot_report_t *report)
             handle_orphan(q, opus.v[i], true, rep);
         }
     }
-    for (size_t i = 0; err == CQ_OK && i < open_ids.n; i++) {
-        cq_info_t info;
+    for (size_t i = 0; err == CQ_OK && i < open.n; i++) {
         uint32_t kept;
-        if (read_record(q, open_ids.v[i], &info)) {
-            err = recover_open(q, info, true, &kept, rep);
-        }
+        err = recover_open(q, open.v[i], !session_goes_on(q, &open, &open.v[i]), &kept, rep);
     }
     free(mets.v);
     free(opus.v);
-    free(open_ids.v);
+    free(open.v);
 
     if (err == CQ_OK && max_id >= q->next_id) {
         q->next_id = max_id + 1;
@@ -566,7 +618,13 @@ int cq_begin(chunk_queue_t *q, const cq_new_t *c, uint32_t *chunk_id)
     if (q->open) {
         return CQ_ERR_STATE;
     }
+    q->abandoned = false; /* an abandoned chunk never recovered stays for the boot recovery */
     const uint32_t id = q->next_id;
+    if (id < FIRST_ID) {
+        /* Every id is used (next_id wrapped past UINT32_MAX, which takes a stray file with a
+         * huge id): handing out 0 and then 1, 2... would write over queued chunks. */
+        return CQ_ERR_STATE;
+    }
     /* Persist the counter first: an id handed out is never handed out again. */
     int err = write_next(q, id + 1);
     if (err) {
@@ -660,17 +718,34 @@ int cq_end(chunk_queue_t *q, uint32_t duration_ms, bool last)
     return insert(q, &q->cur);
 }
 
-int cq_abandon(chunk_queue_t *q, bool last, uint32_t *closed_id)
+int cq_abandon_close(chunk_queue_t *q)
 {
-    *closed_id = 0;
     if (!q->open) {
         return CQ_ERR_STATE;
     }
     fclose(q->cur_file);
     q->cur_file = NULL;
     q->open = false;
+    q->abandoned = true;
+    return CQ_OK;
+}
+
+int cq_abandon_recover(chunk_queue_t *q, bool last, uint32_t *closed_id)
+{
+    *closed_id = 0;
+    if (!q->abandoned) {
+        return CQ_ERR_STATE;
+    }
+    q->abandoned = false;
     cq_boot_report_t rep = {0};
     return recover_open(q, q->cur, last, closed_id, &rep);
+}
+
+int cq_abandon(chunk_queue_t *q, bool last, uint32_t *closed_id)
+{
+    *closed_id = 0;
+    const int err = cq_abandon_close(q);
+    return err ? err : cq_abandon_recover(q, last, closed_id);
 }
 
 int cq_set_last(chunk_queue_t *q, uint32_t chunk_id)
@@ -793,6 +868,7 @@ int cq_delete(chunk_queue_t *q, uint32_t chunk_id, bool *was_queued)
     return CQ_OK;
 }
 
+/* Converts *c in place; callers pass a copy and keep it only once the record is written. */
 static bool fix_one(cq_info_t *c, uint32_t boot_id, int64_t now_epoch_ms, int64_t now_mono_ms)
 {
     if (!(c->flags & CQ_FLAG_TIME_UNSET) || c->boot_id != boot_id) {
@@ -809,19 +885,27 @@ static bool fix_one(cq_info_t *c, uint32_t boot_id, int64_t now_epoch_ms, int64_
 
 int cq_fix_time(chunk_queue_t *q, uint32_t boot_id, int64_t now_epoch_ms, int64_t now_mono_ms)
 {
+    /* A chunk is converted in memory only once its record is on the card: after a failed
+     * write it stays TIME_UNSET in both, and the next TIME tries again. */
     int fixed = 0, err = CQ_OK;
     for (size_t i = 0; i < q->count; i++) {
-        if (fix_one(&q->items[i], boot_id, now_epoch_ms, now_mono_ms)) {
-            fixed++;
-            if (write_record(q, &q->items[i]) != CQ_OK) {
+        cq_info_t c = q->items[i];
+        if (fix_one(&c, boot_id, now_epoch_ms, now_mono_ms)) {
+            if (write_record(q, &c) != CQ_OK) {
                 err = CQ_ERR_IO;
+            } else {
+                q->items[i] = c;
+                fixed++;
             }
         }
     }
     /* The open chunk: its record on the card too, so a power cut keeps the epoch time. */
-    if (q->open && fix_one(&q->cur, boot_id, now_epoch_ms, now_mono_ms)) {
-        if (write_record(q, &q->cur) != CQ_OK) {
+    cq_info_t cur = q->cur;
+    if (q->open && fix_one(&cur, boot_id, now_epoch_ms, now_mono_ms)) {
+        if (write_record(q, &cur) != CQ_OK) {
             err = CQ_ERR_IO;
+        } else {
+            q->cur = cur;
         }
     }
     return err ? err : fixed;

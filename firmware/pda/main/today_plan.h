@@ -21,7 +21,8 @@
  * With the insight: its sections in the hub's order (the weights aren't used), without items that are done, events
  * that are over and repeats. Today's timed events that are still to come all go to the end
  * of DO FIRST in time order (with the hub's reason when it named them), wherever the hub
- * put them. */
+ * put them. DO FIRST is for today only: an event on a later day, or an item of a checklist
+ * due on a later day, that the hub put there goes to the end of COMING UP instead. */
 #pragma once
 
 #include <stdbool.h>

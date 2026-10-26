@@ -36,7 +36,7 @@ def test_clean_list_name(said, name):
 
 
 def test_note_items_get_their_list():
-    got = [(a["text"], a["list_name"]) for a in note_items(LIST_ITEMS)]
+    got = [(a["text"], a["list_name"]) for a in note_items(LIST_ITEMS, said="A few things to do.")]
     assert got == [("Milk", "shopping"), ("Eggs", "shopping"), ("Call the bank", "Work"),
                    ("Call the plumber", None)]
 
@@ -61,7 +61,7 @@ def test_note_items_get_their_list():
     ("Call the bank", "todos", ("Call the bank", None)),
 ])
 def test_list_phrase_in_text(text, said, want):
-    (item,) = note_items([{"text": text, "list_name": said}])
+    (item,) = note_items([{"text": text, "list_name": said}], said="A few things to do.")
     assert (item["text"], item["list_name"]) == want
 
 
@@ -75,7 +75,7 @@ def test_migration_to_v7(tmp_path):
     path = tmp_path / "old.db"
     old_v5_db(path)
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 13
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 14
     assert store.list_action_items()[0]["list_name"] is None
     store.close()
     cols = {r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(action_items)")}

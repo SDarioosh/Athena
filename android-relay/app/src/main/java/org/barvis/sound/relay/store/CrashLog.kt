@@ -38,7 +38,7 @@ object CrashLog {
     }
 
     fun format(threadName: String, error: Throwable): String = buildString {
-        append("Odysseus Sound Relay ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), ")
+        append("Athena Relay ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), ")
         append("Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}\n")
         append("thread $threadName\n")
         var e: Throwable? = error

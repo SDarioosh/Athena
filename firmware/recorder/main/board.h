@@ -59,10 +59,18 @@ typedef enum {
     BOARD_PRESS_SHORT,
     BOARD_PRESS_LONG,
     BOARD_PRESS_DOUBLE,
+    /* A PMIC short press the board ignored (too soon after the previous one): reported for
+     * the event log only, never acted on. */
+    BOARD_PRESS_SHORT_IGNORED,
 } board_press_t;
 
 /* Called from the board's button task, never from an ISR. Keep it short: post an event. */
 typedef void (*board_button_cb_t)(board_button_t button, board_press_t press, void *ctx);
+
+/* Details of the PWR event being reported, valid inside the button callback: the PMIC's
+ * interrupt bits (0 on boards without one) and, for BOARD_PRESS_SHORT_IGNORED, the ms since
+ * the previous short press. */
+void board_pwr_event_info(uint32_t *pmu_irq, int32_t *since_prev_ms);
 
 /* How the board's mics are wired. PDM: one mic, clk + data (T-Watch Ultra, T-Watch S3).
  * I2S: standard (Philips) I2S mics such as the INMP441, 24-bit in 32-bit slots, in stereo
@@ -155,6 +163,12 @@ uint64_t board_storage_reserve_bytes(void);
 /* Power the card rail, mount FAT. *mount_point is e.g. "/sdcard". */
 esp_err_t board_storage_mount(const char **mount_point);
 esp_err_t board_storage_unmount(void);
+/* Power the card off and on and mount it again, keeping its users: a card that stopped
+ * answering after a write error (sdspi 0x107 on every command) comes back only this way. No
+ * file may be open on it. If the mount fails it stays off; the next board_storage_mount()
+ * tries again. ESP_ERR_NOT_SUPPORTED for built-in storage, ESP_ERR_INVALID_STATE when
+ * nothing has it mounted. */
+esp_err_t board_storage_power_cycle(void);
 bool board_storage_is_mounted(void);
 esp_err_t board_storage_info(uint64_t *total_bytes, uint64_t *free_bytes);
 

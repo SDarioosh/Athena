@@ -1,7 +1,7 @@
 """Quick errands are not action items, and a possessive is not part of a name.
 
 "I'll move my truck" said in passing once became the suggested to-do "Walk truck to
-Shahyah's house", shown "with Shahyah's". The prompts say what a quick errand is; code
+Marisol's house", shown "with Marisol's". The prompts say what a quick errand is; code
 drops the ones whose clause says they happen right now, and strips "'s" from people's names
 (new summaries and, once, the names already stored). Fictional data."""
 
@@ -49,7 +49,7 @@ def test_quick_errands_are_dropped(said, item, kind):
 def test_a_reworded_errand_is_found_by_its_line():
     # the model changed the verb, so the item's words don't find the clause: the line
     # it cites does
-    out = summarize([{"text": "Walk truck to Shahyah's house for her", "owner": "Me",
+    out = summarize([{"text": "Walk truck to Marisol's house for her", "owner": "Me",
                       "at_seconds": 10}],
                     ["Thanks for coming over.", "I'll move my truck to your place right now."])
     assert out["action_items"] == []
@@ -80,7 +80,7 @@ def test_to_dos_for_later_stay(said, item):
 
 
 @pytest.mark.parametrize("name,want", [
-    ("Shahyah's", "Shahyah"), ("Ana’s", "Ana"), ("James'", "James"), ("Ross", "Ross"),
+    ("Marisol's", "Marisol"), ("Ana’s", "Ana"), ("James'", "James"), ("Ross", "Ross"),
     (" Lena ", "Lena"), ("O'Neil", "O'Neil"),
 ])
 def test_person_name(name, want):
@@ -88,32 +88,32 @@ def test_person_name(name, want):
 
 
 def test_summary_people_lose_the_possessive():
-    out = summarize([], ["Shahyah lent me her truck for the move."],
-                    people=["Shahyah's", "Shahyah", "Bob"])
-    assert out["people"] == ["Shahyah", "Bob"]
+    out = summarize([], ["Marisol lent me her truck for the move."],
+                    people=["Marisol's", "Marisol", "Bob"])
+    assert out["people"] == ["Marisol", "Bob"]
 
 
 def test_migration_fixes_stored_possessives(tmp_path):
     path = tmp_path / "c.db"
     store = Store(path)
-    c0, _ = say(store, "c0", T0, "Bob", "Bob lives in Berlin", people=("Shahyah's", "Bob"))
+    c0, _ = say(store, "c0", T0, "Bob", "Bob lives in Berlin", people=("Marisol's", "Bob"))
     c1, _ = say(store, "c1", T0 + HOUR, "Ana", "Ana is vegetarian", people=("Ana", "Ana's"))
-    old = store.person_id("Shahyah's")
+    old = store.person_id("Marisol's")
     ana = store.person_id("Ana")
     store._conn.execute("PRAGMA user_version = 11")
     store.close()
 
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 13
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 14
     # renamed in place: the id survives, the old spelling is an alias
-    assert store.person_id("Shahyah") == old == store.person_id("Shahyah's")
+    assert store.person_id("Marisol") == old == store.person_id("Marisol's")
     # "Ana's" merges into the Ana already there
     assert store.person_id("Ana's") == ana
     names = {r[0] for r in store._conn.execute("SELECT name FROM conversation_people")}
-    assert names == {"Shahyah", "Bob", "Ana"}
+    assert names == {"Marisol", "Bob", "Ana"}
     people = {r["id"]: json.loads(r["people"])
               for r in store._conn.execute("SELECT id, people FROM conversations")}
-    assert people[c0] == ["Shahyah", "Bob"] and people[c1] == ["Ana"]
+    assert people[c0] == ["Marisol", "Bob"] and people[c1] == ["Ana"]
     live = {r[0] for r in store._conn.execute(
         "SELECT name FROM people WHERE merged_into IS NULL")}
-    assert "Shahyah's" not in live and "Ana's" not in live
+    assert "Marisol's" not in live and "Ana's" not in live

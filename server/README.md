@@ -1,4 +1,4 @@
-# odysseus-sound server
+# Athena server
 
 The `convo_server` package (CLI `convo-server`, env prefix `CONVO_`) keeps the project's
 old name, convo-ai. Don't rename it.
@@ -60,6 +60,37 @@ The weights come once from the ungated `pyannote-community` copy on Hugging Face
 default; the server turns it off before loading pyannote. pyannoteAI cloud pipelines
 (`precision-2`, `*-cloud`) are refused.
 
+#### Fewer wrong names with pyannote (default with pyannote since 2026-10-24)
+
+Measured with `eval/recognition.py` (see [Recognition eval](#recognition-eval)) in the
+sandbox and on the server GPU (`docs/omi-audio-quality.md` §8.3). With
+`CONVO_DIARIZER=pyannote`, line splitting (parts ≥ 0.3 s), the line check and
+`CONVO_VAD_THRESHOLD=0.35` are **on by default**; set any of them in `.env` to override
+(e.g. `CONVO_SPEAKER_LINE_CHECK=false`, `CONVO_VAD_THRESHOLD=0.5` for the old behaviour).
+With ECAPA nothing changes. The rest of the table stays opt-in:
+
+| setting | what it does | sandbox effect |
+|---|---|---|
+| `CONVO_SPEAKER_SPLIT_LINES=true` + `CONVO_SPEAKER_SPLIT_MIN_SECONDS=0.3` | a whisper line that runs over a pyannote turn change becomes one line per speaker (cut at word times); a part shorter than the minimum joins its neighbour (1.5 s by default, which threw away short interjections) | with the line check, see below |
+| `CONVO_SPEAKER_LINE_CHECK=true` | each named line's own voice (3 s window) is compared with every enrolled voice; a line that fits another enrolled person at least as well becomes `Unknown` (never taken for a person; fix with `reassign_line`). The window stops at neighbouring lines labelled someone else, and a line with under 1 s of its own audio keeps its name (before 2026-10-26 short lines in a quick exchange were judged on the other people's voices and often became `Unknown`). Needs two or more voices on file | wrong names on the table mic 5.3 → 1.8 % |
+| both together | | table mic: wrong names 5.3 → 1.6 %, other people's speech under an enrolled name 8.7 → 4.6 %; late joiners: 4.3 → 2.6 % and 15.8 → 11.0 %; names right unchanged |
+| `CONVO_PYANNOTE_VBX_FB=0.2` | pyannote keeps more speakers apart (community-1 default 0.8; `CONVO_PYANNOTE_VBX_FA`, default 0.07, too) | late joiners: newcomers under an enrolled name 15.8 → 7.8 %, but 8–11 speakers for 4 people, names right 95 → 80 %; 0.3 is no useful middle (14.9 %, names right 92 %) |
+| `CONVO_VAD_THRESHOLD=0.35` (an existing setting, default 0.5) | lets more quiet, far speech through to whisper | room WER 28.1 → 27.1 %, the others' 47.5 → 44.6 %; server GPU: table 36.1 → 35.2 %, room 28.4 → 27.6 % |
+
+Measured and **not** worth it: `CONVO_PYANNOTE_CLUSTER_THRESHOLD` (in community-1 it
+only seeds VBx; 0.2–0.9 gave the same speakers), `CONVO_SPEAKER_MATCH_MARGIN` and
+`CONVO_SPEAKER_NAME_MIN_SECONDS` (Omi's naming rules; whole speakers were already named
+right), `CONVO_SPEAKER_LINE_FLOOR` (unnames a line that fits its name poorly; barely
+moved anything) and `CONVO_SPEAKER_EMBEDDER=pyannote` (names with pyannote's own
+WeSpeaker model instead of ECAPA; same names; switching needs a new enrollment, voices
+of the other model never match). `CONVO_PYANNOTE_MIN_SPEAKERS`/`_MAX_SPEAKERS` bound the
+speaker count per recording; not measured.
+
+The owner loudness hint (below) logs `owner hint: speaker N of M named …` whenever it
+names a speaker. It never fired in the eval, but a wrist mic that turns away can make
+someone else the loudest: if the log shows it naming the wrong person, set
+`CONVO_OWNER_HINT_MARGIN=0`.
+
 ### Speakers
 
 - Each person has several voice samples (enrollment is cut into ~9 s samples; every
@@ -97,7 +128,10 @@ default; the server turns it off before loading pyannote. pyannoteAI cloud pipel
   a stock phrase is dropped when whisper was unsure of it (mean token log-probability
   below `CONVO_WHISPER_DROP_PHRASE_LOGPROB`, -0.7), so a real "thank you" stays. Subtitle
   credits and lines with no words go too, and repetition loops are cut to
-  `CONVO_WHISPER_MAX_REPEATS` (4). `CONVO_WHISPER_DROP_HALLUCINATIONS=false` turns it off.
+  `CONVO_WHISPER_MAX_REPEATS` (4). A whole sentence (4 or more different words) said
+  again right after itself, in one line or as the next lines, is kept once: that is
+  whisper repeating itself over the next pause or someone else's turn, not a person.
+  `CONVO_WHISPER_DROP_HALLUCINATIONS=false` turns it off.
 - Speech goes to whisper in clips of up to `CONVO_WHISPER_WINDOW_SECONDS` (28): the VAD
   regions of a run, padded by `CONVO_WHISPER_PAD_SECONDS` (0.25), are packed in order
   and the silence between them is shortened to `CONVO_WHISPER_WINDOW_GAP_SECONDS` (1.0).
@@ -195,8 +229,58 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
 
-VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD`, `CONVO_VAD_MIN_SILENCE_MS` and
-`CONVO_VAD_SPEECH_PAD_MS` tune it. A far-field or wrist recording can be 20-30 dB quieter
+### Written notes
+
+`POST /v1/ingest/text` (JSON, same bearer token) takes a note the owner wrote by hand in
+the hub (Odysseus) and reviewed there:
+
+| field        | notes                                                                  |
+|--------------|------------------------------------------------------------------------|
+| `source_id`  | the hub's stable id: `hub-note:<id>` (id: `[A-Za-z0-9._-]{1,100}`)     |
+| `text`       | the reviewed text, at most 200,000 characters and 5,000 lines; a line over 4,000 characters is wrapped at a space |
+| `written_at` | when the page was written: ISO-8601 (naive = UTC) or epoch s/ms        |
+| `link`       | the note in the hub, `<hub>/#open=notes&note=<id>` (http/https, ≤ 2,000; no spaces, quotes, `( ) < > { } \| \ ^` or user info, `[ ]` only around an IPv6 host) |
+| `title`      | optional, ≤ 200 characters; shown with the link, not used as the summary title |
+
+It becomes one conversation of kind `note` on device `handwriting`: each non-empty line
+(spaces trimmed, control characters dropped) is a line by the owner at `written_at` plus
+one second per line, so the usual `/view/<id>?sig=…#t=<seconds>` link points at a line.
+No audio, VAD, transcription or diarization. The worker summarizes it with the
+voice-note prompts (summary, to-dos, facts; never discarded). The text is the owner's
+words, never instructions: the model gets it as the note's text, like a transcript.
+
+Answer: `{"ok": true, "source_id", "result": "created"|"replaced"|"unchanged",
+"conversation_id", "lines", "erased_lines", "transcript_link"}`; 400 with a `detail` for a
+bad `source_id`, `link`, `written_at` or text with no words, 422 for a field over its
+size.
+
+- **Resend** (same `source_id`): the lines are replaced, the digests that covered the note
+  are taken down and written again, and the worker summarizes it again. Facts and to-dos
+  said again keep their ids (and a to-do its status); the others are dropped, so the
+  hub's syncs retire them. A retired fact stays retired. The same lines and `written_at`
+  is a no-op (`"unchanged"`; a new `link` or `title` is stored). A resend that lands while
+  the model is summarizing the old text is summarized again on the next pass.
+- **Erased facts stay erased.** The hub still has the words of a fact the owner erased
+  (`erase_fact`), so a resend brings them back: a line with the same words as a line
+  `erase_fact` redacted in this note, or one that says an erased fact of any note or
+  recording (every content word of a fact of up to three, three quarters of a longer
+  one), is stored as `[forgotten]` (`erased_lines` counts them). The same holds for a new
+  note.
+- Until the re-summary, a resend keeps the note's summary, facts and to-dos, and moves
+  each one's line offset (`#t=`) to the same line (or the one with most words in
+  common); a line crossed out leaves the fact without an offset.
+- `DELETE /v1/ingest/text/{source_id}` removes the note: its lines, conversation, to-dos and
+  facts (a fact another conversation said too stays, owned by that one), and its digests
+  are written again. An erased fact's sentence stays (never served) so a later note that
+  writes it again keeps it `[forgotten]`, and what a forgotten fact of the note had
+  replaced stays replaced. `{"ok": true, "result": "deleted", "conversation_id"}`, or
+  `"already"` when there is no such note (idempotent).
+- The `/view` page says "Written by hand" and links to the note in the hub. Conversations
+  in the API carry `written: {"source_id", "link", "title"}` (null for recordings).
+
+VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD` (0.5; 0.35 by default with
+`CONVO_DIARIZER=pyannote`), `CONVO_VAD_MIN_SILENCE_MS` and `CONVO_VAD_SPEECH_PAD_MS` tune
+it. A far-field or wrist recording can be 20-30 dB quieter
 than a close mic, and Silero then misses some of its speech, so whisper never gets it.
 `CONVO_VAD_AGC_MAX_GAIN` (1 = off, the default) lets Silero score a copy of each chunk
 gained toward a `CONVO_VAD_AGC_TARGET` (0.8) peak, at most that many times; the stored
@@ -237,7 +321,7 @@ source of truth, so the frontend can be swapped. Tools:
 | `get_daily_digest(date)` | memory |
 | `list_people(format)` | speakers and people mentioned; `format="json"` returns each person's stable id for programs (the hub links people to its contacts by it, below) |
 | `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
-| `rename_speaker_everywhere(old_name, new_name)` | "it's Jenn, not Jen": renames in every conversation (merges if the name exists); the person keeps their id |
+| `rename_speaker_everywhere(old_name, new_name)` | "it's Kath, not Kat": renames in every conversation (merges if the name exists); the person keeps their id |
 | `reassign_line(line_id, name)` | one line given to the wrong person (`#id` from `get_transcript`) |
 | `list_unnamed_speakers(limit)` | voices nobody has named yet, with quotes and a guess, for "who is this?" |
 
@@ -290,7 +374,9 @@ both formats. `list_facts(format="json")` returns current facts in the text mode
 
 ```json
 {"facts": [{"id": 12, "subject": "Alice", "about": "person", "person_id": 3,
-            "fact": "Alice is vegetarian", "times_said": 3, "days": 2,
+            "fact": "Alice is vegetarian", "kind": "preference",
+            "conversation_id": "c-…", "quote": "Alice doesn't eat meat, remember?",
+            "times_said": 3, "days": 2,
             "first_said": "2025-10-09", "last_said": "2025-10-10",
             "confirmed": false, "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
 ```
@@ -301,6 +387,11 @@ owner, user, the user, `CONVO_OWNER_NAME` or the name of the enrolled owner voic
 former names (aliases, below); else `other`. `person_id` is the subject's person id (below) when `about` is `person`, and
 the owner's person id when it is `owner` (the owner person, below); null for `other`
 or when no such person exists.
+`kind` (MCP 0.11.0) is what sort of fact it is: `preference`, `plan`, `decision`,
+`relationship`, `personal` or `other` (null for facts stored before it). `conversation_id`
+is the conversation the fact was learned in, and `quote` the transcript line it was said
+on (at most 300 characters; null when there is no line, the transcript was pruned or the
+line erased), so a review page can show the words and group facts by conversation.
 `times_said` counts distinct conversations, `days` distinct local dates, and
 `first_said`/`last_said` are the first and last of those dates. `confirmed` is true when
 the fact meets the thresholds above, so a program can take every current fact with its
@@ -308,6 +399,35 @@ counts without knowing them (`confirmed=true` as an argument still filters). `li
 the same transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
 program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
 fact id that stops being returned (replaced, retired, or its conversation deleted).
+
+`written_by_hand` and `note_link` (MCP 0.12.0, additive) are on every JSON fact row and
+every JSON `list_action_items` row: true and the note's URL in the hub when the fact or
+item comes from a written note (`POST /v1/ingest/text`), else false and null. The text
+listings mark such facts, items and conversations `(written by hand: <link>)` instead of
+`(voice note)`.
+
+**Fact quality.** Small models list too many facts. The facts prompt leaves out
+thinking aloud, requests to someone else (action items), which tool was used and passing
+details of what was being worked on, never guesses anyone's gender, and asks for at most
+twice `CONVO_MAX_FACTS_PER_CONVERSATION` candidates (at least 5). Code drops what the model
+still returns of the first two: thinking aloud in the fact's main clause ("is
+considering …", "might …", "hasn't decided …"; not "an allergy that might cause …"), and
+requests: asking or telling someone to do something ("asked the landlord to fix …"), or
+"wants X to <errand>" when X is a person of the conversation ("wants Bo to send …", not
+"needs German to work in Zurich" or "wants Leo to attend the bilingual school"). Then one
+more model call scores each fact 1–5 (worth recalling in three months?), shown the
+line(s) it was said on; facts under `CONVO_FACT_MIN_SCORE` (default 4; 1 = no call) are
+left out (a fact it gives no score counts as that minimum), and at most
+`CONVO_MAX_FACTS_PER_CONVERSATION` (default 3; 0 = no cap) are kept, best first. A fact
+that shares its subject and a word with a stored fact (likely said again, or an update) is
+never cut by the cap, so an update can't be lost and a re-summary doesn't lose a fact that
+had replaced another. If the call fails, the facts are kept. In a voice note, facts that
+only repeat a dated event go first, and the owner's decisions are neither reviewed nor
+capped. Facts already stored are unchanged; a fact said again with a kind gives it to an
+older fact that had none. A fact's `quote` is the line `erase_fact` would redact: the line
+that starts in the cited second (the one sharing most words with the fact), else the
+nearest, else a nearby line that says the fact's words; for a pruned transcript, the
+newest conversation that said it again.
 
 **People.** Every enrolled voice and every person named in a conversation has a row in
 `people` with a stable id, so the hub can link them to its contacts. Names match in any
@@ -341,8 +461,8 @@ forgets a fact from the hub's review page. The fact gets status `retired` (next 
 `list_facts` (both formats), search (keyword index and embeddings), `get_conversation`
 and `GET /v1/conversations/{id}`. Facts it had replaced stay replaced. It stays
 forgotten: a re-summary of its conversation (e.g. after `name_speaker`) marks the matching
-new fact retired again (a re-summary gives facts new ids, so the hub reconciles by the
-facts returned, not by old ids), and the fact linker is shown retired facts too, so the
+fact retired again (it keeps its id, see below; the hub still reconciles by the facts
+returned), and the fact linker is shown retired facts too, so the
 same fact said in a later conversation becomes another source of the retired fact
 instead of a new one. A later fact that *updates* a retired one is a new belief and is
 shown. Calling it again answers "already retired".
@@ -404,7 +524,7 @@ CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 convo-server mcp --http   # docker
 #   http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>
 ```
 
-**Uploads through the MCP server.** `convo-server mcp --http` also serves two plain HTTP
+**Uploads through the MCP server.** `convo-server mcp --http` also serves plain HTTP
 routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 `?access_token=`). They are not MCP tools, so no model ever sees them:
 
@@ -412,6 +532,8 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 |---|---|
 | `POST /ingest/chunk` | `POST /v1/ingest/chunk` (same multipart fields, same JSON answer) |
 | `POST /sessions/{session_id}/end` | `POST /v1/sessions/{id}/end` |
+| `POST /ingest/text` | `POST /v1/ingest/text` (same JSON fields and answer; written notes) |
+| `DELETE /ingest/text/{source_id}` | `DELETE /v1/ingest/text/{source_id}` |
 | `GET /health` | `GET /health` (here behind the token) |
 | `GET /conversations`, `GET /conversations/{id}`, `GET /conversations/{id}/transcript` | the `/v1` routes, same query |
 | `GET /action-items`, `PATCH /action-items/{id}` | the `/v1` routes |
@@ -427,7 +549,8 @@ Each request is forwarded unchanged to this module's own ingest API
 `CONVO_INGEST_TOKEN`, so there is one ingest code path and the ingest token, which also
 signs transcript links, never leaves the module. The API's status and `detail` come back
 as they are; the body is capped like the API's (25 MB of audio); if `convo-server serve`
-isn't running the answer is 502 with a readable `detail`. Odysseus uses these routes to
+isn't running the answer is 502 with a readable `detail`. `/ingest/text` takes
+`application/json` only (415 otherwise) and caps its body at about 1.2 MB. Odysseus uses these routes to
 add recordings (its call recorder, phones paired through it) with the URL and token of
 the `convo` MCP server it already has. **The MCP token can therefore add recordings**:
 treat it like the ingest token, and keep the MCP port on loopback, the Docker bridge or
@@ -478,7 +601,16 @@ small local model does better on narrow questions):
    Each item has a `kind`: `event` (meeting, appointment, call: "meeting with Jason on
    Wednesday at 12 pm"), `reminder` ("remind me at 5 to call Mom") or `task` ("get the
    proposal done on Wednesday"), plus `duration_minutes` and `location` for events if
-   said. Something repeating ("every Monday") becomes a task "Set up a repeating event:
+   said. In a voice note, code also finds appointments the model left out: a sentence
+   with an appointment word (meeting, call, lunch, appointment, dentist, …), a day and a
+   time, not in the past tense ("Meeting with the Meshtastic team Tuesday 11 a.m."),
+   becomes an event (text without the day and time) unless an item already says most of
+   its words or has its day from its line; an undated task or reminder that says it gets
+   its day and time and becomes the event. An event is named as said: when the model writes
+   "Meet X" for "meeting with X", code makes it "Meeting with X" ("Meet the Meshtastic
+   team" reads like getting to know them). A fact that only repeats a dated event of
+   the same conversation with its weekday or time ("… has a meeting with the Meshtastic
+   team on Tuesday at 11 a.m.") is left out: the event is on the calendar. Something repeating ("every Monday") becomes a task "Set up a repeating event:
    …". The model returns the time as said; `resolve_time` in `dates.py` turns it into
    `due_time` (HH:MM, `CONVO_TIMEZONE`): "12 pm"/"noon" → 12:00, "3:30 pm" → 15:30, "half
    past two" → 14:30, "midnight" → 00:00; a bare hour 12 → 12:00, 1–6 → afternoon, 7–11 →
@@ -497,7 +629,34 @@ small local model does better on narrow questions):
    voice note says "note"/"notes", strips command words the model leaves in, and gives
    a note no date, time or owner. It also finds the command sentences itself: one the
    model missed becomes a note (untitled; the hub titles it from the text), and an
-   undated task the model wrote for it becomes that note. In a conversation a `note` becomes a `task`. Notes
+   undated task the model wrote for it becomes that note (never a to-do the user asked
+   for out loud). Named notes need not say "notes" right after a note command: "make a
+   note in voice recorder that the case needs to be 3 mm bigger", "… for the voice
+   recorder: …", "… under car, …" and "add to my car note: …" go to `voice recorder` /
+   `car`; a time, a person or "in case …" there names no notes ("make a note for later:
+   …", "make a note for Sam that …"). When the model's note leaves the notes out, they
+   come from the command. In a conversation a `note` becomes a `task`.
+   **Spoken commands in voice notes** are caught in code even when the model lists no
+   item: to-dos ("make a todo to …", "to-do: …", "new task, …", "create a to-do called
+   …", "make a to-do for tomorrow to …", "remind me [at 5 / tomorrow / on Friday] to …",
+   "remind me about …", "add … to my to-do list"), list lines ("add eggs to my shopping
+   list [for Friday]", "add to the shopping list: oat milk", "put … on my work to-do
+   list") and notes ("note: …", "note to self, …", "new note: …", "add to my notes: …").
+   Words said before a command don't hide it ("um", "okay so", "hey", "can you", "I want
+   to", "let's"), nor do an ellipsis or "uh" inside it, and "…, thanks" is not part of
+   it. One sentence with several commands ("make a todo to get eggs and make a note that
+   the car is broken") gives one item per command, and an appointment said in the same
+   sentence as a command is still an event. "Remind me" with a time is a `reminder`. A
+   model item for a list command that lacks the list gets it. A comma list of short
+   things for a named list ("add eggs, milk and bread to my shopping list") is one item
+   per thing, so each is its own line; "salt and pepper" stays one. A list said line by
+   line ("Make a to-do list. Get eggs. Fix the car.", "Make a shopping list. Eggs.
+   Milk.", "Shopping list: eggs, milk, bread", "… for tomorrow: …") gives one item per
+   line on that list (the plain to-do list for a to-do list) until a closer ("okay,
+   that's it"), another command or a long sentence. The day and time said in a command
+   are the item's when the model drops them ("make a to-do to get eggs tomorrow" →
+   "Get eggs" due tomorrow; "remind me at 5 to call mom" → a reminder at 17:00), and a
+   midnight the model gives a command that names no time is dropped.
    are left out of the text `list_action_items`, the digest and `GET /v1/action-items`
    (add `?include_notes=true`); the JSON listing has them. Odysseus files each into its
    notes (a note of its own, or a line on the named notes) and marks it done here.
@@ -514,9 +673,12 @@ small local model does better on narrow questions):
 A re-summary (e.g. after a speaker is renamed) keeps what was known about the old items:
 the id, status, creation time and `explicit` of action items (and the kind, date, time,
 list and title if the user changed them with `update_action_item`; an item with the same text is matched
-before a similar one said nearby), the other sources of a fact, which facts it
-replaced, and whether the owner retired it. Stable ids matter: Odysseus files voice-note
-items by id.
+before a similar one said nearby), and of facts the id (the same text, or the same
+transcript line read alike), the other sources, which facts it replaced, and whether the
+owner retired it. New facts get ids no old fact of the conversation had. Stable ids
+matter: Odysseus files voice-note items and facts by id, and a fact under a new id was a
+second belief there (the same fact twice in its memory when the owner had confirmed the
+first).
 
 ## Recognition eval
 
@@ -537,6 +699,16 @@ away, `--opus-kbps KBPS` (or `--opus`) round-trips the stream through Opus like 
 recorders, and `--level DBFS` sets the input level before encoding (the T-Watch's 30 dB
 mic gain puts speech near -24 dBFS). `--set field=value` overrides any setting. More in
 the script's docstring and `docs/omi-audio-quality.md` §7.
+
+With `--audio sim`, `--late-joiners` silences everyone but the two most active speakers
+for the first half of the window (people joining a conversation) and `--owner-dips DB`
+turns the owner's voice down by 6..DB dB for 2–8 s every 5–20 s (a wrist mic turning away
+as the arm moves). Besides WER and DER, each run reports named right/wrong, owner
+precision and recall (lines labelled as the owner that are the owner's, and the owner's
+lines labelled as the owner) and `unenrolled_named` (speech of people with no voice on
+file that got an enrolled name). `--cache` reuses whisper results (with word times) and
+pyannote's turns, so runs that only change naming take seconds.
+Results of the capture-quality round (2026-10-23/24): `docs/omi-audio-quality.md` §8.
 
 Measured 2026-10-20 in the cloud sandbox (large-v3-turbo on CPU, `--diarizer none`, 3
 meetings x 300 s, ~2,100 words). "Before" turns the transcription changes of that round

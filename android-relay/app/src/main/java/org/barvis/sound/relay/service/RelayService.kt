@@ -279,7 +279,7 @@ class RelayService : Service() {
                     "its sync window, then try again", 0)
             }
             client.discoverServices()
-            if (!client.hasWatchService()) return DrainOutcome.WatchError("no odysseus-sound service", 0)
+            if (!client.hasWatchService()) return DrainOutcome.WatchError("no Athena service", 0)
             val mtu = client.requestMtu(WatchGatt.REQUESTED_MTU)
             if (mtu < WatchGatt.MIN_MTU) return DrainOutcome.WatchError("MTU $mtu is below ${WatchGatt.MIN_MTU}", 0)
             client.preferPhy2M()

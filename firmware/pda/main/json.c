@@ -349,14 +349,21 @@ static int str_walk(const json_doc_t *d, int i, char *out, size_t cap)
             blen = utf8_put(unescape_one(s + k + 1, n - k - 1, &used), buf);
             k += 1 + used;
         } else {
-            /* copy one whole UTF-8 sequence, so a cut never splits it */
+            /* copy one whole UTF-8 sequence, so a cut never splits it; a broken one (a stray
+             * or missing continuation byte, or not a lead byte) becomes U+FFFD */
             const unsigned char c = (unsigned char)s[k];
-            blen = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
-            if (k + blen > n) {
-                blen = n - k;
+            blen = c < 0x80 ? 1 : c < 0xC0 ? 0 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : c < 0xF8 ? 4 : 0;
+            size_t j = 1;
+            while (j < blen && k + j < n && ((unsigned char)s[k + j] & 0xC0) == 0x80) {
+                j++;
             }
-            memcpy(buf, s + k, blen);
-            k += blen;
+            if (blen > 0 && j == blen) {
+                memcpy(buf, s + k, blen);
+                k += blen;
+            } else {
+                blen = utf8_put(0xFFFD, buf);
+                k += j; /* the lead byte and the continuation bytes it had */
+            }
         }
         if (out) {
             if (w + blen + 1 > cap) {

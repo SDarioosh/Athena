@@ -1,4 +1,4 @@
-# Plan: LilyGO T5 E-Paper Pro as an odysseus-sound PDA
+# Plan: LilyGO T5 E-Paper Pro as an Athena PDA
 
 Status: **firmware milestones 0–3 built** in `firmware/pda/` (2026-10-20; what is verified on
 the board is in `firmware/pda/README.md`). The PC relay (§3.5, `ble_relay.py pda`) and the
@@ -26,7 +26,7 @@ the real T5. Owner decisions are open (§11).
   over IP. A later LAN-only Wi-Fi mode for home use is possible (§11 Q3), but it isn't
   needed: at home the phone is in range anyway.
 - **No Tailscale Funnel or other public exposure**, ever (AGENTS.md privacy rules).
-- **The phone builds the feed.** It calls the odysseus-sound HTTP API and the Odysseus
+- **The phone builds the feed.** It calls the Athena HTTP API and the Odysseus
   calendar REST API, then sends a compact feed to the T5 (§4). Neither server needs a
   new endpoint for v1.
 - **The MCP contract doesn't change.** The PDA uses the HTTP API (`/v1/…`), not MCP.
@@ -34,7 +34,7 @@ the real T5. Owner decisions are open (§11).
 ## TL;DR
 
 ```
-odysseus-sound  /v1/digests, /v1/conversations, /v1/action-items ─┐
+Athena  /v1/digests, /v1/conversations, /v1/action-items ─┐
                                                                    ├─ Tailscale ─ phone (android-relay)
 Odysseus        calendar REST (scoped token)  ─────────────────────┘        │
                                                                        BLE (§3)
@@ -644,7 +644,17 @@ a 3 × 4 grid of hour slots and the durations.
     order, under the hub's `why`; events also show their time. Items whose ref names nothing
     in the feed, done items, events that are over and repeats are dropped. Today's timed
     events still to come all end DO FIRST in time order, wherever the hub put them (with
-    its `why` when it named them).
+    its `why` when it named them). DO FIRST is for today only: an event on a later day, or
+    an item of a checklist due on a later day, that the hub put there moves to the end of
+    COMING UP (with its time or "due Wed 28 Oct").
+  - **A to-do or event shows once:** the hub's `why` is left out when it only restates the
+    to-do or the event's title (it starts with the same word, or holds at least 60 % of the
+    title's words of 3+ letters); an event's second line is then its place or "until 16:00";
+    for a to-do the second line then falls back to the list's title, but only for a list of more than
+    one item (a one-item note's title is the to-do again, often reworded), and never when
+    the title is the same text (any case, or the start of it cut with "…").
+    An item with nothing under its title is one line high, so the next item moves up (an
+    event on another day keeps two lines for its weekday).
   - **Without one** (no key, or `date` isn't today), the same sections from rules, and
     INSIGHT says "All caught up!" (with a small filled tick). The hub's weights (feed
     `weights`, below) reorder items within each group, never across groups; without
@@ -741,8 +751,8 @@ a 3 × 4 grid of hour slots and the durations.
   - a feed builder
   - an Odysseus REST client with its own encrypted token (`TokenCipher`)
   - a settings section: Odysseus URL and token, event templates, sync interval
-- **odysseus-sound server:** no change in v1. Optional later: `GET /v1/glance` that returns
-  the four odysseus-sound sections in one call, so the phone makes 1 request instead of 4.
+- **Athena server:** no change in v1. Optional later: `GET /v1/glance` that returns
+  the four Athena sections in one call, so the phone makes 1 request instead of 4.
 - **Odysseus (hub repo):** checked in `SDarioosh/Barvis` on 2026-10-20 (branch `barvis`,
   commit `5cc32c5`; read only, no code run). File:line references are to that commit.
   1. **Endpoints.** Use the token-aware `/api/codex/calendar/…` routes. They wrap the UI's
@@ -797,7 +807,7 @@ a 3 × 4 grid of hour slots and the durations.
      `app.py:1439-1442`). Production is port 7000 with `APP_BIND=0.0.0.0`
      ([hub deploy.md:203](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/deploy.md)),
      so the phone uses `http://<server's Tailscale name or 100.x address>:7000`, the same
-     host as odysseus-sound on another port. If the owner turned auth off
+     host as Athena on another port. If the owner turned auth off
      (`AUTH_ENABLED=false`), the middleware isn't installed (`app.py:266`), and the routes
      run as `ODYSSEUS_FALLBACK_OWNER` whatever token is sent.
 

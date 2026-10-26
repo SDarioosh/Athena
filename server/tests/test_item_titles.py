@@ -107,13 +107,13 @@ def test_two_notes_a_minute_apart_both_explicit():
 
 
 @pytest.mark.parametrize("said", [
-    "Create a to-do list and get Rock Talk ready for the meeting with the Meshtastic team.",
-    "Create a to do list. Get Rock Talk ready for the meeting with the Meshtastic team.",
-    "Okay, make a to-do list for tomorrow. Get Rock Talk ready for the Meshtastic meeting.",
-    "To-do list: get Rock Talk ready for the meeting with the Meshtastic team.",
+    "Create a to-do list and get Kite Lab ready for the meeting with the Harbor Radio team.",
+    "Create a to do list. Get Kite Lab ready for the meeting with the Harbor Radio team.",
+    "Okay, make a to-do list for tomorrow. Get Kite Lab ready for the Harbor Radio meeting.",
+    "To-do list: get Kite Lab ready for the meeting with the Harbor Radio team.",
 ])
 def test_items_after_a_to_do_list_sentence_are_explicit(said):
-    (got,) = items_of([{"text": "Get Rock Talk ready for meeting with Meshtastic team"}], said)
+    (got,) = items_of([{"text": "Get Kite Lab ready for meeting with Harbor Radio team"}], said)
     assert got["explicit"] is True
 
 
@@ -220,7 +220,7 @@ def test_migration_gives_old_items_a_title_and_explicit(tmp_path):
     c.commit()
     store.close()
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 13
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 14
     got = {r["text"]: r for r in map(dict, store._conn.execute(
         "SELECT * FROM action_items").fetchall())}
     brakes = got["Buy the replacement brake pads for the bike at the shop on Lindenstrasse"]

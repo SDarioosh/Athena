@@ -38,8 +38,10 @@ test('guided recording: prompts, Done only after the minimum, then upload', () =
   assert.equal(h.e.promptText(), PROMPTS[0])
   h.e.next()
   assert.equal(h.e.promptText(), PROMPTS[1])
-  for (let i = 0; i < 20; i++) h.e.next()
-  assert.equal(h.e.state.prompt, PROMPTS.length - 1) // stays on the last prompt
+  for (let i = 0; i < PROMPTS.length - 2; i++) h.e.next()
+  assert.equal(h.e.state.prompt, PROMPTS.length - 1)
+  h.e.next() // "Again" on the last prompt starts over
+  assert.equal(h.e.state.prompt, 0)
 
   h.advance(MIN_MS - 1000)
   assert.equal(h.e.finish(), false) // too short: still recording

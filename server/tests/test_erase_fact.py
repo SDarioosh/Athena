@@ -12,7 +12,7 @@ import numpy as np
 from test_confirmed_facts import DAY, HOUR, T0
 from test_mcp import call
 
-from convo_server.llm import LLMClient, Summarizer, scrub_facts
+from convo_server.llm import LLMClient, LLMError, Summarizer, scrub_facts
 from convo_server.mcp_server import build_mcp
 from convo_server.store import ERASED_TEXT, Segment
 
@@ -269,3 +269,108 @@ def test_other_facts_of_the_conversation_stay(pipeline):
     erase(pipeline, fid)
     assert [f["id"] for f in store.get_conversation(conv)["facts"]] == [other]
     assert texts(store, conv)[2] == "The taqueria then"
+
+
+def test_two_facts_of_one_line_never_redact_the_line_before(pipeline, tmp_path):
+    """QC S1: a line that ends less than a second before the erased line was taken as
+    the line of a second fact said on the erased line, and its kept audio deleted."""
+    store = pipeline.store
+    before, line = tmp_path / "c0.wav", tmp_path / "c1.wav"
+    before.write_bytes(b"RIFF")
+    line.write_bytes(b"RIFF")
+    store.add_chunk(session_id="s", device="omi", sequence=0, started_at=T0, duration=19.5,
+                    codec="wav", audio_path=str(before), speech=[])
+    store.add_chunk(session_id="s", device="omi", sequence=1, started_at=T0 + 19.5,
+                    duration=10, codec="wav", audio_path=str(line), speech=[])
+    store.replace_segments("s", "omi", [
+        Segment(T0, T0 + 19.5, "We should book the taqueria for Friday", "Me", True),
+        Segment(T0 + 20, T0 + 25, "Alice is vegetarian and Bob is vegan, zebra", "Bob"),
+    ], [(T0, T0 + 30)])
+    conv = store.save_conversation(None, "omi", [s.id for s in store.session_segments("s")])
+    first, second = store.save_summary(conv, {
+        "title": "Lunch", "summary": "Lunch.", "key_points": [], "topics": [],
+        "people": [], "action_items": [],
+        "facts": [{"subject": "Alice", "fact": FACT, "source_at": T0 + 20},
+                  {"subject": "Bob", "fact": "Bob is vegan", "source_at": T0 + 20}]})
+    assert store.erase_fact(first)["lines"] == 1
+    assert store.erase_fact(second)["lines"] == 0  # its line is already redacted
+    assert texts(store, conv) == ["We should book the taqueria for Friday", ERASED_TEXT]
+    assert before.exists() and not line.exists()
+
+
+def test_a_resummary_after_the_fact_moved_to_another_source_waits_for_the_rewrite(pipeline):
+    """QC S2: an erased fact said in two conversations is owned by the other one after
+    its own conversation's re-summary drops it; that re-summary still waits for the
+    forget rewrite instead of showing its text."""
+    store = pipeline.store
+    first, fid = conversation(store, "c0", T0)
+    second, again = conversation(store, "c1", T0 + DAY)
+    store.link_fact(again, "same", fid)
+    erase(pipeline, fid)
+    rewriter(pipeline)
+    assert pipeline.rewrite_forgotten() == 2
+    # a speaker rename re-summarizes the first conversation; the fact isn't said again
+    store.save_summary(first, {
+        "title": "Lunch", "summary": f"Lunch. {FACT}.", "key_points": [], "topics": [],
+        "people": [], "action_items": [], "facts": []})
+    assert store._one("SELECT conversation_id FROM facts WHERE id = ?",
+                      (fid,))["conversation_id"] == second
+    c = store.get_conversation(first)
+    assert c["forget_pending"] and c["summary"] is None
+    assert store.fts_search("vegetarian") == []
+
+
+def test_a_digest_waits_for_every_conversation_of_its_day(pipeline):
+    """QC S3: a digest taken down by a forget was dropped for good when another
+    conversation of that day (not in the old digest) still waited for its rewrite."""
+    store = pipeline.store
+    conv, fid = conversation(store, "c0", T0)
+    store.put_digest("2025-10-09", {"headline": FACT, "summary": FACT, "highlights": [],
+                                    "open_action_items": [], "people": [],
+                                    "conversation_ids": [conv]})
+    erase(pipeline, fid)
+    # a conversation of the same day, summarized after that digest was written
+    later, other = conversation(store, "c1", T0 + HOUR, fact="Bob is vegan")
+    erase(pipeline, other)
+    rewriter(pipeline)
+    structured = _digest_aware(pipeline.summarizer.llm.structured)
+    calls = {"n": 0}
+
+    def flaky(system, user, schema, retries=1):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the second conversation's rewrite fails
+            raise LLMError("llama-server HTTP 503")
+        return structured(system, user, schema, retries)
+
+    pipeline.summarizer.llm.structured = flaky
+    assert pipeline.rewrite_forgotten() == 1
+    assert store.get_digest("2025-10-09") is None
+    assert [d["date"] for d in store.pending_digests()] == ["2025-10-09"]
+    pipeline.rewrite_forgotten()  # llama-server is back
+    assert store.get_conversation(later)["forget_pending"] is False
+    assert store.get_digest("2025-10-09") is not None
+    assert store.pending_digests() == []
+
+
+def test_a_merged_conversation_stays_erased(pipeline):
+    """QC S2 (merge): when a conversation an erased fact was said in is merged into
+    another, the merged one counts as erased: a second erase changes nothing and its
+    re-summary waits for the rewrite."""
+    store = pipeline.store
+    first, fid = conversation(store, "c0", T0)
+    erase(pipeline, fid)
+    rewriter(pipeline)
+    pipeline.rewrite_forgotten()
+    store.add_chunk(session_id="c1", device="omi", sequence=0, started_at=T0 + 60,
+                    duration=10, codec="wav", audio_path=None, speech=[])
+    store.replace_segments("c1", "omi", [Segment(T0 + 60, T0 + 64, "See you then", "Me",
+                                                 True)], [(T0 + 60, T0 + 70)])
+    merged = store.save_conversation(None, "omi",
+                                     [s.id for s in store.session_segments("c1")],
+                                     absorb=[first])
+    assert erase(pipeline, fid) == f"Fact #{fid} was already erased."
+    assert store.pending_rewrites() == []
+    store.save_summary(merged, {
+        "title": "Lunch", "summary": f"Lunch. {FACT}.", "key_points": [], "topics": [],
+        "people": [], "action_items": [], "facts": []})
+    assert store.get_conversation(merged)["forget_pending"]

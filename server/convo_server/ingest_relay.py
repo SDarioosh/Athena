@@ -6,6 +6,8 @@ second URL and token, the MCP HTTP app gets two plain HTTP routes:
 
     POST /ingest/chunk               same multipart fields and answer as /v1/ingest/chunk
     POST /sessions/{session_id}/end  same as /v1/sessions/{id}/end
+    POST /ingest/text                same JSON and answer as /v1/ingest/text (written notes)
+    DELETE /ingest/text/{source_id}  same as /v1/ingest/text/{source_id}
 
 The phone relay's T5 sync, paired through Odysseus, also reads a few API routes the same
 way (:data:`READ_ROUTES`): the same paths without ``/v1``, same query, same JSON. The
@@ -27,6 +29,7 @@ import httpx
 
 from .api import MAX_CHUNK_BYTES
 from .config import Settings
+from .pipeline import MAX_TEXT_CHARS
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +39,8 @@ MAX_BODY_BYTES = MAX_CHUNK_BYTES + 256 * 1024
 TIMEOUT = httpx.Timeout(120.0, connect=5.0)
 _ANY_ADDRESS = {"", "0.0.0.0", "::", "[::]"}
 MAX_JSON_BYTES = 64 * 1024
+# A written note: its text (up to 4 bytes per character, escaped in JSON) and fields.
+MAX_TEXT_BODY_BYTES = MAX_TEXT_CHARS * 6 + 16 * 1024
 
 # (method, path on the MCP app); the API path is "/v1" + path ("/health" stays as it is).
 READ_ROUTES = [
@@ -80,15 +85,16 @@ def _passthrough(resp: httpx.Response) -> Any:
     return JSONResponse(body, status_code=resp.status_code)
 
 
-async def _read_capped(request: Any) -> bytes | None:
-    """The request body, or None once it grows past ``MAX_BODY_BYTES``."""
+async def _read_capped(request: Any, cap: int | None = None) -> bytes | None:
+    """The request body, or None once it grows past ``cap`` (``MAX_BODY_BYTES``)."""
+    cap = MAX_BODY_BYTES if cap is None else cap
     declared = request.headers.get("content-length")
-    if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+    if declared and declared.isdigit() and int(declared) > cap:
         return None
     body = bytearray()
     async for part in request.stream():
         body.extend(part)
-        if len(body) > MAX_BODY_BYTES:
+        if len(body) > cap:
             return None
     return bytes(body)
 
@@ -114,7 +120,7 @@ def add_ingest_routes(mcp: Any, settings: Settings,
         except httpx.HTTPError as e:
             # Never log the request: its URL may carry ?access_token=.
             log.warning("ingest API at %s not reachable: %s", base, type(e).__name__)
-            return _json(502, f"odysseus-sound's ingest API is not reachable at {base} "
+            return _json(502, f"Athena's ingest API is not reachable at {base} "
                               "(is `convo-server serve` running?)")
         log.log(logging.WARNING if resp.status_code >= 500 else logging.DEBUG,
                 "ingest API answered %s for %s %s", resp.status_code, method, path)
@@ -154,6 +160,25 @@ def add_ingest_routes(mcp: Any, settings: Settings,
 
     for method, path in READ_ROUTES:
         read_route(method, path)
+
+    @mcp.custom_route("/ingest/text", methods=["POST"], include_in_schema=False)
+    async def ingest_text(request: Any) -> Any:
+        ctype = request.headers.get("content-type", "")
+        if not ctype.lower().startswith("application/json"):
+            return _json(415, "send application/json, like /v1/ingest/text")
+        body = await _read_capped(request, MAX_TEXT_BODY_BYTES)
+        if body is None:
+            return _json(413, "note too large")
+        return await forward("/v1/ingest/text", content=body,
+                             headers={**auth, "Content-Type": "application/json"})
+
+    @mcp.custom_route("/ingest/text/{source_id}", methods=["DELETE"], include_in_schema=False)
+    async def delete_text(request: Any) -> Any:
+        from urllib.parse import quote
+
+        source_id = request.path_params["source_id"]
+        return await forward_method("DELETE", f"/v1/ingest/text/{quote(source_id, safe='')}",
+                                    headers=auth)
 
     @mcp.custom_route("/sessions/{session_id}/end", methods=["POST"], include_in_schema=False)
     async def end_session(request: Any) -> Any:

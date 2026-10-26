@@ -1,9 +1,14 @@
 """Facts are for months: one tied to a single day is dropped.
 
-"Shahyah was very focused and locked in today." and "Shahyah did not drink enough water
+"Marisol was very focused and locked in today." and "Marisol did not drink enough water
 today." reached the hub's memory review as beliefs. The facts prompt names these, and
 code drops any fact that says it is about one day ("today", "tonight", "this morning",
-"right now"). Fictional data."""
+"right now").
+
+"Ana is interested in hearing how the voice compression technology sounds." was true
+when said, but it is passing curiosity, and "the technology" means nothing without the
+conversation. The prompt asks for facts that name what they are about and skips
+curiosity; code drops curiosity about how or what something is. Fictional data."""
 
 from __future__ import annotations
 
@@ -46,3 +51,23 @@ def test_one_day_facts_are_dropped(kind):
 def test_words_inside_other_words_are_not_one_day():
     got = summarize(["Ana writes for the Todayish blog.", "Ana works nights as a nurse."])
     assert got == ["Ana writes for the Todayish blog.", "Ana works nights as a nurse."]
+
+
+def test_prompt_asks_for_named_things_and_skips_curiosity():
+    for words in ("passing curiosity", "months later without the conversation",
+                  '"the technology"', "leave the fact out"):
+        assert words in FACTS_SYSTEM
+
+
+@pytest.mark.parametrize("kind", ["casual", "note"])
+def test_curiosity_facts_are_dropped(kind):
+    got = summarize(["Ana is interested in hearing how the voice compression technology sounds.",
+                     "Ana is curious to see what the new dashboard looks like.",
+                     "Ana wants to know whether the demo worked.",
+                     "Ana was really keen to find out how the prototype performs.",
+                     "Ana is interested in learning Portuguese.",
+                     "Ana wants to see Japan in cherry blossom season.",
+                     "Ana plans to move to Lisbon next spring."], kind=kind)
+    assert got == ["Ana is interested in learning Portuguese.",
+                   "Ana wants to see Japan in cherry blossom season.",
+                   "Ana plans to move to Lisbon next spring."]

@@ -323,10 +323,22 @@ static void IRAM_ATTR line_isr(void *arg)
     portYIELD_FROM_ISR(woken);
 }
 
+/* The PWR event being emitted (board_pwr_event_info()); written and read in the button task. */
+static uint32_t s_pwr_irq;
+static int32_t s_pwr_gap_ms;
+
+void board_pwr_event_info(uint32_t *pmu_irq, int32_t *since_prev_ms)
+{
+    *pmu_irq = s_pwr_irq;
+    *since_prev_ms = s_pwr_gap_ms;
+}
+
 static void emit(board_button_t b, board_press_t p)
 {
-    ESP_LOGI(TAG, "button %s %s", b == BOARD_BUTTON_PWR ? "PWR" : "BOOT",
-             p == BOARD_PRESS_SHORT ? "short" : p == BOARD_PRESS_LONG ? "long" : "double");
+    if (p != BOARD_PRESS_SHORT_IGNORED) { /* handle_pmu_irq() already said so */
+        ESP_LOGI(TAG, "button %s %s", b == BOARD_BUTTON_PWR ? "PWR" : "BOOT",
+                 p == BOARD_PRESS_SHORT ? "short" : p == BOARD_PRESS_LONG ? "long" : "double");
+    }
     if (s_button_cb) {
         s_button_cb(b, p, s_button_ctx);
     }
@@ -338,18 +350,26 @@ static void handle_pmu_irq(void)
     if (axp2101_irq_read_clear(&st) != ESP_OK || st == 0) {
         return;
     }
+    /* The raw bits go with every PWR event to the event log: PKEY_SHORT with no key edge
+     * (PKEY_POSITIVE/NEGATIVE) would be a press the key never made. */
+    s_pwr_irq = st;
+    s_pwr_gap_ms = 0;
     if (st & AXP_IRQ_PKEY_SHORT) {
         static int64_t last_ms = INT64_MIN / 2;
         const int64_t now_ms = esp_timer_get_time() / 1000;
         if (now_ms - last_ms < PWR_SHORT_GUARD_MS) {
-            ESP_LOGI(TAG, "button PWR short ignored: %d ms after the previous one",
-                     (int)(now_ms - last_ms));
+            s_pwr_gap_ms = (int32_t)(now_ms - last_ms);
+            ESP_LOGI(TAG, "button PWR short ignored: %d ms after the previous one (PMU 0x%06" PRIx32 ")",
+                     (int)s_pwr_gap_ms, st);
+            emit(BOARD_BUTTON_PWR, BOARD_PRESS_SHORT_IGNORED);
         } else {
+            ESP_LOGI(TAG, "PMU 0x%06" PRIx32 " with the PWR short press", st);
             emit(BOARD_BUTTON_PWR, BOARD_PRESS_SHORT);
         }
         last_ms = now_ms;
     }
     if (st & AXP_IRQ_PKEY_LONG) {
+        ESP_LOGI(TAG, "PMU 0x%06" PRIx32 " with the PWR long press", st);
         emit(BOARD_BUTTON_PWR, BOARD_PRESS_LONG);
     }
     if (st & AXP_IRQ_VBUS_INSERT) {
@@ -575,6 +595,33 @@ esp_err_t board_storage_unmount(void)
         err = board_rail_set(BOARD_RAIL_SD, false);
     }
     xSemaphoreGive(s_storage_lock);
+    return err;
+}
+
+#define SD_POWER_OFF_MS 100 /* card rail off before it comes back */
+
+esp_err_t board_storage_power_cycle(void)
+{
+    xSemaphoreTake(s_storage_lock, portMAX_DELAY);
+    if (s_storage_users == 0) {
+        xSemaphoreGive(s_storage_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    const int64_t t0 = esp_timer_get_time();
+    sdcard_unmount();
+    board_rail_set(BOARD_RAIL_SD, false);
+    vTaskDelay(pdMS_TO_TICKS(SD_POWER_OFF_MS));
+    esp_err_t err = board_rail_set(BOARD_RAIL_SD, true);
+    if (err == ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+        err = sdcard_mount();
+    }
+    if (err != ESP_OK) {
+        board_rail_set(BOARD_RAIL_SD, false);
+    }
+    xSemaphoreGive(s_storage_lock);
+    ESP_LOGW(TAG, "SD card powered off and on: %s (%lld ms)", esp_err_to_name(err),
+             (long long)((esp_timer_get_time() - t0) / 1000));
     return err;
 }
 

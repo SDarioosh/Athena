@@ -3,7 +3,7 @@ package org.barvis.sound.relay.net
 /**
  * Where the relay sends the watch's audio and the T5's module reads.
  *
- * - [DIRECT]: the odysseus-sound server itself (`/v1/…`, its `CONVO_INGEST_TOKEN`); `/health`
+ * - [DIRECT]: the Athena server itself (`/v1/…`, its `CONVO_INGEST_TOKEN`); `/health`
  *   needs no token there.
  * - [ODYSSEUS]: through Odysseus after pairing (`/api/codex/sound/…`, the phone's `ody_…`
  *   token with `sound:ingest`, `sound:read`, `sound:write`). Odysseus forwards to the module's
@@ -34,7 +34,7 @@ data class Routes(
             chunk = "/v1/ingest/chunk",
             endSession = "/v1/sessions/%s/end",
             tokenCheck = "/v1/sessions?limit=1",
-            name = "odysseus-sound",
+            name = "Athena",
         )
         val ODYSSEUS = Routes(
             prefix = "/api/codex/sound",

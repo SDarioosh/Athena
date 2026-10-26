@@ -82,7 +82,19 @@ class HallucinationFilter:
     phrase_logprob: float = -0.7
     # A word or phrase repeated more than this many times in a row is cut back to this
     # many, and so are runs of identical segments (whisper's repetition loops). 0 = off.
+    # A sentence (SENTENCE_WORDS or more different words) repeated back to back is kept
+    # once: people repeat "yeah" or "no, no", but whisper is the one that says a whole
+    # sentence again (it fills a later pause or someone else's turn with it).
     max_repeats: int = 4
+
+
+# Different words that make a repeated phrase or segment a sentence (see max_repeats).
+SENTENCE_WORDS = 4
+
+
+def repeat_limit(words: list[str], max_repeats: int) -> int:
+    """How many times in a row ``words`` (plain, lowercased) may stand."""
+    return 1 if len(set(words)) >= SENTENCE_WORDS else max_repeats
 
 
 # What whisper says on silence and noise (it learned them from subtitle endings),
@@ -128,11 +140,12 @@ def collapse_repeats(text: str, max_repeats: int) -> str:
             reps = 1
             while keys[i + reps * n: i + (reps + 1) * n] == unit:
                 reps += 1
-            if reps > max_repeats:
+            limit = repeat_limit(unit, max_repeats)
+            if reps > limit:
                 cut = n
                 break
         if cut:
-            out += tokens[i:i + cut * max_repeats]
+            out += tokens[i:i + cut * limit]
             i += cut * reps
         else:
             out.append(tokens[i])
@@ -161,9 +174,10 @@ def filter_segments(segs: list[dict], f: HallucinationFilter | None) -> list[dic
         if is_hallucination(seg, f):
             continue
         text = collapse_repeats(str(seg.get("text", "")), f.max_repeats)
-        same = bool(out) and _plain(text) == _plain(str(out[-1]["text"])) and _plain(text)
+        plain = _plain(text)
+        same = bool(out) and bool(plain) and plain == _plain(str(out[-1]["text"]))
         run = run + 1 if same else 1
-        if f.max_repeats >= 1 and run > f.max_repeats:
+        if f.max_repeats >= 1 and run > repeat_limit(plain.split(), f.max_repeats):
             continue
         # A rewritten text no longer matches its word times; without them the piece is
         # never re-split from words (clips.Window.split), so the cut loop stays cut.

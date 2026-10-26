@@ -32,7 +32,8 @@ def test_focused_calls_with_template_and_due_dates(pipeline):
     log: list = []
     use_llm(pipeline, log, triage={"discard": False, "reason": "none", "kind": "meeting"})
     conv_id = record(pipeline)
-    assert schemas(log) == ["Triage", "SummaryNotes", "ActionItemList", "FactList"]
+    assert schemas(log) == ["Triage", "SummaryNotes", "ActionItemList", "FactList",
+                            "FactReview"]
     systems = [b["messages"][0]["content"] for b in log]
     assert "This is a meeting" in systems[1] and "decisions" in systems[1]
     assert "Thursday 2025-10-09" in systems[2]  # the date due dates are counted from
@@ -221,6 +222,33 @@ def test_resummary_keeps_sources_of_a_repeated_fact(pipeline):
     facts = store.list_facts()
     assert [(f["fact"], f["conversation_id"]) for f in facts] == [
         ("Alice moves to Berlin in January.", second)]
+
+
+def test_resummary_keeps_a_fact_id_and_gives_new_facts_new_ids(pipeline):
+    """The hub files facts by id: a fact said again keeps it, even reworded, and a new
+    fact never gets an id an old one had (that would be a different fact to the hub)."""
+    store = pipeline.store
+
+    def facts(*pairs):
+        return {"title": "t", "summary": "s", "key_points": [], "people": ["Alice"],
+                "topics": [], "action_items": [],
+                "facts": [{"subject": "Alice", "fact": f, "at_seconds": at} for f, at in pairs]}
+
+    bike = "Alice owns a carbureted motorcycle with no computer."
+    reworded = "Alice owns a carbureted motorcycle that has no computer."
+    use_llm(pipeline, summary=facts((bike, 1), ("Alice drinks oat milk.", 3)))
+    conv_id = record(pipeline)
+    old = {f["fact"]: f["id"] for f in store.get_conversation(conv_id)["facts"]}
+    use_llm(pipeline, summary=facts(("Alice plays the cello.", 3), (reworded, 1)))
+    rename_a_line(pipeline, conv_id)
+    now = {f["fact"]: f["id"] for f in store.get_conversation(conv_id)["facts"]}
+    assert now[reworded] == old[bike]
+    assert now["Alice plays the cello."] not in old.values()
+    hits = store.fts_search("cello")
+    assert [h["ref_id"] for h in hits if h["kind"] == "fact"] == [
+        str(now["Alice plays the cello."])]
+    hits = store.fts_search("carbureted motorcycle")
+    assert [h["ref_id"] for h in hits if h["kind"] == "fact"] == [str(old[bike])]
 
 
 def test_resummary_of_older_conversation_keeps_its_fact_replaced(pipeline):

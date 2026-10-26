@@ -298,9 +298,10 @@ static void button_task(void *arg)
         if (!down && key_press_idle(&kp)) {
             gpio_intr_enable(PIN_BUTTON);
             uint32_t due = click_counter_wait_ms(&cc, t);
-            if (s_have_touch && !touch_armed) {
-                const uint32_t quiet =
-                    (int32_t)(touch_quiet_until - t) > 0 ? touch_quiet_until - t : 0;
+            if (s_have_touch && !touch_armed && (int32_t)(touch_quiet_until - t) > 0) {
+                /* Wake when the quiet time is over. After it, the touch line below polls
+                 * every TOUCH_POLL_MS; a 0 here made that every tick while a finger rested. */
+                const uint32_t quiet = touch_quiet_until - t;
                 due = quiet < due ? quiet : due;
             }
             wait = due == UINT32_MAX ? portMAX_DELAY : pdMS_TO_TICKS(due) + 1;
@@ -373,6 +374,13 @@ static esp_err_t buttons_init(void)
     ESP_RETURN_ON_FALSE(xTaskCreate(button_task, "buttons", 4096, NULL, 6, &s_button_task) == pdPASS,
                         ESP_ERR_NO_MEM, TAG, "task");
     return ESP_OK;
+}
+
+/* No PMIC button interrupts on this board: nothing to report. */
+void board_pwr_event_info(uint32_t *pmu_irq, int32_t *since_prev_ms)
+{
+    *pmu_irq = 0;
+    *since_prev_ms = 0;
 }
 
 void board_buttons_set_callback(board_button_cb_t cb, void *ctx)
@@ -472,6 +480,12 @@ esp_err_t board_storage_unmount(void)
     }
     xSemaphoreGive(s_storage_lock);
     return err;
+}
+
+/* Built-in flash: nothing to power off. */
+esp_err_t board_storage_power_cycle(void)
+{
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 bool board_storage_is_mounted(void)

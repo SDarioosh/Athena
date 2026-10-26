@@ -17,7 +17,7 @@ import java.net.URL
 import java.security.SecureRandom
 
 /**
- * Talks to the owner's odysseus-sound server (server/convo_server/api.py), directly or through
+ * Talks to the owner's Athena server (server/convo_server/api.py), directly or through
  * Odysseus ([routes]), with [HttpURLConnection]. Only [baseUrl] is ever contacted; redirects are not followed so the
  * token can't be sent anywhere else. The token is read from [token] per request and never
  * logged. Timeouts stay below the watch's 30 s idle disconnect (§7.2): an upload that is
@@ -138,7 +138,7 @@ class HttpUploader(
         fun classify(code: Int, body: String, needOkField: Boolean = true): ServerResult = when {
             code in 200..299 ->
                 if (!needOkField || OK_TRUE.containsMatchIn(body)) ServerResult.Ok(DUP_TRUE.containsMatchIn(body))
-                else ServerResult.Transient("HTTP $code without \"ok\": true (is this the odysseus-sound server?)")
+                else ServerResult.Transient("HTTP $code without \"ok\": true (is this the Athena server?)")
             code == 401 || code == 403 -> ServerResult.AuthRejected(code)
             code == 408 || code == 429 || code >= 500 -> ServerResult.Transient("HTTP $code")
             code in 300..399 -> ServerResult.Transient("HTTP $code redirect (not followed; check the URL)")

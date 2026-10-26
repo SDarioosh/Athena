@@ -89,6 +89,7 @@ static void poke(uint32_t id, const char *ext, long off, uint8_t xor_mask)
 static const uint8_t SESSION_A[8] = {0x3f, 0x9a, 0x0c, 0x11, 0xd2, 0xe4, 0xb5, 0x07};
 static const uint8_t SESSION_B[8] = {1, 2, 3, 4, 5, 6, 7, 8};
 static const uint8_t SESSION_C[8] = {9, 9, 9, 9, 9, 9, 9, 9};
+static const uint8_t SESSION_D[8] = {4, 4, 4, 4, 4, 4, 4, 4};
 
 /* ---- writing a chunk the way the recorder does ---- */
 
@@ -390,10 +391,37 @@ static void test_abandon_and_set_last(void)
     CHECK(cq_get(&q, c1, &c) && c.flags == 0);
     CHECK(cq_get(&q, c0, &c) && c.flags == 0);
 
+    /* In two steps (the card is power-cycled in between on the watch): the same result. */
+    const uint32_t d0 = begin(&q, SESSION_D, 0, 0, 0, 7, 0);
+    packets(&q, 60);
+    CHECK_EQ(cq_abandon_recover(&q, true, &kept), CQ_ERR_STATE); /* not closed yet */
+    CHECK_EQ(cq_abandon_close(&q), CQ_OK);
+    CHECK(!cq_current(&q, NULL));
+    CHECK_EQ(cq_abandon_close(&q), CQ_ERR_STATE);
+    CHECK_EQ(cq_abandon_recover(&q, true, &kept), CQ_OK);
+    CHECK_EQ(kept, d0);
+    CHECK(cq_get(&q, d0, &c) && c.flags == CQ_FLAG_LAST && c.bytes == file_size(d0, "opus"));
+    CHECK_EQ(cq_abandon_recover(&q, true, &kept), CQ_ERR_STATE); /* once */
+
+    /* Closed but never recovered: a new chunk drops it from memory; the card keeps it and
+     * the next boot recovers it. */
+    const uint32_t d1 = begin(&q, SESSION_D, 1, 0, 0, 7, 0);
+    packets(&q, 60);
+    CHECK_EQ(cq_abandon_close(&q), CQ_OK);
+    const uint32_t d2 = begin(&q, SESSION_D, 2, 0, 0, 7, 0);
+    CHECK_EQ(cq_abandon_recover(&q, false, &kept), CQ_ERR_STATE);
+    CHECK(!cq_get(&q, d1, NULL));
+    packets(&q, 60);
+    CHECK_EQ(ogg_opus_finish(&g_w, 0), OGG_OPUS_OK);
+    CHECK_EQ(cq_end(&q, 1200, true), CQ_OK);
+    cq_boot_report_t rep;
+    reopen_queue(&q, &rep);
+    CHECK(cq_get(&q, d1, &c) && c.state == CQ_STATE_CLOSED);
+    CHECK(cq_get(&q, d2, &c));
+
     CHECK_EQ(cq_set_last(&q, a0), CQ_OK);
     CHECK(cq_get(&q, a0, &c) && c.flags == CQ_FLAG_LAST);
     CHECK_EQ(cq_set_last(&q, 999), CQ_ERR_NOT_FOUND);
-    cq_boot_report_t rep;
     reopen_queue(&q, &rep);
     CHECK(cq_get(&q, a0, &c) && c.flags == CQ_FLAG_LAST);
 
@@ -570,6 +598,192 @@ static void test_torn_records(void)
     cq_deinit(&q);
 }
 
+/* Turn a chunk's file into an (empty) directory: fopen() still works, but every read or
+ * write fails with EISDIR, as a card that stopped answering fails with EIO. remove() takes
+ * an empty directory too, so a file the queue wrongly deletes is gone afterwards. */
+static void make_unreadable(uint32_t id, const char *ext)
+{
+    char path[512];
+    path_of(id, ext, path, sizeof(path));
+    remove(path);
+    CHECK_EQ(mkdir(path, 0777), 0);
+}
+
+/* QC R3: a read error at boot (scan or record) must never delete a chunk: it is left on the
+ * card for the next boot, counted as corrupt. */
+static void test_boot_read_errors_keep_files(void)
+{
+    clear_dir();
+    chunk_queue_t q;
+    cq_boot_report_t rep;
+    CHECK_EQ(cq_init(&q, g_dir, &rep), CQ_OK);
+    const uint32_t a = add_chunk(&q, SESSION_A, 0, 100, false);
+    const uint32_t b = add_chunk(&q, SESSION_A, 1, 100, true);
+    const uint32_t c = add_chunk(&q, SESSION_B, 0, 100, true);
+    cq_deinit(&q);
+
+    /* a: torn record, and its audio can't be read right now. */
+    poke(a, "met", 30, 0x40);
+    make_unreadable(a, "opus");
+    /* b: audio without a record, and the audio can't be read. */
+    char path[512];
+    path_of(b, "met", path, sizeof(path));
+    remove(path);
+    make_unreadable(b, "opus");
+    /* c: the record itself can't be read (its audio is fine). */
+    make_unreadable(c, "met");
+
+    CHECK_EQ(cq_init(&q, g_dir, &rep), CQ_OK);
+    CHECK_EQ(q.count, 0);
+    CHECK_EQ(rep.cleaned, 0);
+    CHECK_EQ(rep.corrupt, 3);
+    CHECK(exists(a, "met") && exists(a, "opus"));
+    CHECK(exists(b, "opus"));
+    CHECK(exists(c, "met") && exists(c, "opus"));
+    cq_deinit(&q);
+}
+
+/* QC R2: a chunk left open on the card (its close and recovery failed) while the session
+ * went on is recovered at boot without LAST, and gives no LAST to an earlier chunk either:
+ * the session has later chunks. */
+static void test_recover_open_mid_session(void)
+{
+    clear_dir();
+    chunk_queue_t q;
+    cq_boot_report_t rep;
+    CHECK_EQ(cq_init(&q, g_dir, &rep), CQ_OK);
+    /* Session A: chunk 0 is left open with audio, chunk 1 follows and ends the session. */
+    const uint32_t a0 = begin(&q, SESSION_A, 0, 1792411200000ull, 0, 7, 0);
+    packets(&q, 120);
+    CHECK_EQ(cq_abandon_close(&q), CQ_OK); /* the card stopped answering: no recovery */
+    const uint32_t a1 = add_chunk(&q, SESSION_A, 1, 100, true);
+    /* Session B: chunk 4 closed, chunk 5 left open without audio, chunk 6 closed. */
+    const uint32_t b4 = add_chunk(&q, SESSION_B, 4, 100, false);
+    const uint32_t b5 = begin(&q, SESSION_B, 5, 0, 0, 7, 0);
+    CHECK_EQ(cq_abandon_close(&q), CQ_OK);
+    const uint32_t b6 = add_chunk(&q, SESSION_B, 6, 100, false);
+    /* Session D: an open chunk without audio after a closed one: the closed one gets LAST. */
+    const uint32_t d0 = add_chunk(&q, SESSION_D, 0, 100, false);
+    /* Session C: chunk 0 closed, chunk 1 open (a power cut): its LAST stays. */
+    const uint32_t c0 = add_chunk(&q, SESSION_C, 0, 100, false);
+    const uint32_t c1 = begin(&q, SESSION_C, 1, 0, 0, 7, 0);
+    packets(&q, 120);
+    cq_info_t c;
+    reopen_queue(&q, &rep); /* c1 was still open: closes it by "power cut" */
+    const uint32_t d1 = begin(&q, SESSION_D, 1, 0, 0, 7, 0);
+    CHECK_EQ(cq_abandon_close(&q), CQ_OK);
+    reopen_queue(&q, &rep);
+
+    CHECK(cq_get(&q, a0, &c));
+    CHECK_EQ(c.flags, 0); /* recovered, but not the session's end */
+    CHECK(cq_get(&q, a1, &c) && c.flags == CQ_FLAG_LAST);
+    CHECK(!exists(b5, "met"));
+    CHECK(cq_get(&q, b4, &c) && c.flags == 0);
+    CHECK(cq_get(&q, b6, &c) && c.flags == 0);
+    CHECK(cq_get(&q, c1, &c) && c.flags == CQ_FLAG_LAST);
+    CHECK(cq_get(&q, c0, &c) && c.flags == 0);
+    CHECK(!exists(d1, "met"));
+    CHECK(cq_get(&q, d0, &c) && c.flags == CQ_FLAG_LAST);
+    cq_deinit(&q);
+}
+
+/* QC R11: a TIME fix-up whose record write fails leaves the chunk as it is on the card
+ * (TIME_UNSET), so the next TIME tries again. */
+static void test_fix_time_write_error(void)
+{
+    clear_dir();
+    chunk_queue_t q;
+    CHECK_EQ(cq_init(&q, g_dir, NULL), CQ_OK);
+    const uint32_t a = begin(&q, SESSION_A, 0, 0, CQ_FLAG_TIME_UNSET, 7, 1000);
+    packets(&q, 10);
+    CHECK_EQ(ogg_opus_finish(&g_w, 0), OGG_OPUS_OK);
+    CHECK_EQ(cq_end(&q, 200, true), CQ_OK);
+    const uint32_t b = begin(&q, SESSION_A, 1, 0, CQ_FLAG_TIME_UNSET, 7, 2000);
+    packets(&q, 60);
+
+    uint8_t saved[CQ_RECORD_SIZE];
+    char path[512];
+    path_of(a, "met", path, sizeof(path));
+    FILE *f = fopen(path, "rb");
+    CHECK(f && fread(saved, 1, sizeof(saved), f) == sizeof(saved));
+    fclose(f);
+    make_unreadable(a, "met");
+    make_unreadable(b, "met");
+
+    const int64_t now_epoch = 1792411200000LL, now_mono = 70000;
+    CHECK(cq_fix_time(&q, 7, now_epoch, now_mono) < 0);
+    cq_info_t c;
+    CHECK(cq_get(&q, a, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_LAST | CQ_FLAG_TIME_UNSET);
+    CHECK_EQ(c.start_ms, 0);
+    CHECK(cq_current(&q, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_TIME_UNSET);
+
+    /* The card answers again: the next TIME converts both. */
+    remove(path);
+    f = fopen(path, "wb");
+    fwrite(saved, 1, sizeof(saved), f);
+    fclose(f);
+    path_of(b, "met", path, sizeof(path));
+    remove(path);
+    CHECK_EQ(cq_fix_time(&q, 7, now_epoch, now_mono), 1); /* the open chunk isn't counted */
+    CHECK(cq_get(&q, a, &c));
+    CHECK_EQ(c.flags, CQ_FLAG_LAST);
+    CHECK_EQ(c.start_ms, (uint64_t)(now_epoch - 69000));
+    CHECK(cq_current(&q, &c));
+    CHECK_EQ(c.flags, 0);
+    cq_boot_report_t rep;
+    reopen_queue(&q, &rep);
+    CHECK(cq_get(&q, a, &c) && c.flags == CQ_FLAG_LAST);
+    CHECK(cq_get(&q, b, &c) && c.start_ms == (uint64_t)(now_epoch - 68000));
+    cq_deinit(&q);
+}
+
+/* QC R12: chunk id 0 is never valid (LIST starts after 0), and the ids don't wrap around
+ * to 0 and then onto chunks still queued: a full id space refuses new chunks. */
+static void test_chunk_id_zero_and_wrap(void)
+{
+    cq_info_t in = {.chunk_id = 0, .sequence = 1, .state = CQ_STATE_CLOSED}, out;
+    uint8_t rec[CQ_RECORD_SIZE];
+    cq_record_encode(&in, rec);
+    CHECK(!cq_record_decode(rec, &out));
+
+    clear_dir();
+    chunk_queue_t q;
+    cq_boot_report_t rep;
+    CHECK_EQ(cq_init(&q, g_dir, &rep), CQ_OK);
+    const uint32_t a = add_chunk(&q, SESSION_A, 0, 100, true);
+    cq_deinit(&q);
+    /* A stray file with the highest id (copied onto the card, or a corrupt directory). */
+    char path[512];
+    path_of(UINT32_MAX, "met", path, sizeof(path));
+    FILE *f = fopen(path, "wb");
+    fputs("not a record", f);
+    fclose(f);
+    CHECK_EQ(cq_init(&q, g_dir, &rep), CQ_OK);
+    CHECK_EQ(rep.cleaned, 1);
+    cq_new_t n = {.sequence = 0};
+    memcpy(n.session_id, SESSION_B, 8);
+    uint32_t id = 12345;
+    CHECK(cq_begin(&q, &n, &id) != CQ_OK);
+    CHECK_EQ(id, 12345);
+    CHECK(!cq_current(&q, NULL));
+    cq_info_t c;
+    CHECK(cq_get(&q, a, &c) && c.flags == CQ_FLAG_LAST && c.sequence == 0); /* untouched */
+    CHECK(!exists(0, "met"));
+    cq_deinit(&q);
+
+    /* The last id itself is handed out once. */
+    clear_dir();
+    CHECK_EQ(cq_init(&q, g_dir, &rep), CQ_OK);
+    q.next_id = UINT32_MAX;
+    CHECK_EQ(cq_begin(&q, &n, &id), CQ_OK);
+    CHECK_EQ(id, UINT32_MAX);
+    CHECK_EQ(cq_abandon(&q, true, &id), CQ_OK);
+    CHECK(cq_begin(&q, &n, &id) != CQ_OK);
+    cq_deinit(&q);
+}
+
 /* `queue drop <id>`: strtoul(base 0) read the zero-padded hex ids `queue` printed as octal,
  * so "00000010" (chunk 16) dropped chunk 8. Decimal or 0x-hex only, never a leading 0. */
 static void test_parse_id(void)
@@ -614,5 +828,9 @@ int main(void)
     test_fix_time();
     test_note_flag();
     test_torn_records();
+    test_boot_read_errors_keep_files();
+    test_recover_open_mid_session();
+    test_fix_time_write_error();
+    test_chunk_id_zero_and_wrap();
     return checks_done("test_chunk_queue");
 }

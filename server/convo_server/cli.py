@@ -71,12 +71,35 @@ def build_diarizer(settings: Settings, store: Store) -> Diarizer | None:
                 absorb_threshold=settings.speaker_absorb_threshold)
     if settings.diarizer == "pyannote":
         args["line_margin"] = settings.speaker_line_margin
-    embedder = EcapaEmbedder(settings.model_cache)
+    if settings.speaker_embedder not in ("ecapa", "pyannote"):
+        raise SystemExit("CONVO_SPEAKER_EMBEDDER must be ecapa or pyannote")
+    if settings.speaker_embedder == "pyannote" and settings.diarizer != "pyannote":
+        raise SystemExit("CONVO_SPEAKER_EMBEDDER=pyannote needs CONVO_DIARIZER=pyannote")
+    embedder = (EcapaEmbedder(settings.model_cache) if settings.speaker_embedder == "ecapa"
+                else None)  # pyannote: built from the loaded pipeline below
+    diarizer = _build_diarizer(settings, store, embedder, args)
+    diarizer.match_margin = settings.speaker_match_margin
+    diarizer.name_min_seconds = settings.speaker_name_min_seconds
+    diarizer.split_min_seconds = settings.speaker_split_min_seconds
+    return diarizer
+
+
+def _build_diarizer(settings: Settings, store: Store, embedder: EcapaEmbedder | None,
+                    args: dict) -> Diarizer:
     if settings.diarizer == "pyannote":
         from .diarize_pyannote import PyannoteDiarizer, PyannoteSegmenter
 
         segmenter = PyannoteSegmenter(settings.pyannote_model, settings.model_cache / "pyannote",
-                                      settings.pyannote_device)
+                                      settings.pyannote_device,
+                                      cluster_threshold=settings.pyannote_cluster_threshold,
+                                      min_speakers=settings.pyannote_min_speakers,
+                                      max_speakers=settings.pyannote_max_speakers,
+                                      vbx_fa=settings.pyannote_vbx_fa,
+                                      vbx_fb=settings.pyannote_vbx_fb)
+        if embedder is None:
+            from .diarize_pyannote import PyannoteEmbedder
+
+            embedder = PyannoteEmbedder(segmenter)
         return PyannoteDiarizer(embedder, load_voices(store), segmenter, **args)
     if settings.diarizer != "ecapa":
         raise SystemExit("CONVO_DIARIZER must be ecapa or pyannote")
@@ -94,7 +117,9 @@ def build_pipeline(settings: Settings) -> Pipeline:
     return Pipeline(settings, store, make_vad(settings.vad_backend, settings),
                     build_transcriber(settings), build_diarizer(settings, store),
                     Summarizer(llm, settings.owner_name, timezone=settings.timezone,
-                               digest_skip_lists=settings.digest_skip_lists),
+                               digest_skip_lists=settings.digest_skip_lists,
+                               fact_min_score=settings.fact_min_score,
+                               max_facts=settings.max_facts_per_conversation),
                     embedder)
 
 

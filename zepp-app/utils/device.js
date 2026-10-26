@@ -107,10 +107,16 @@ export function readFile(file) {
   const size = fileSize(file)
   if (!size) return null
   const fd = openSync({ path: file, flag: O_RDONLY })
-  const buf = new ArrayBuffer(size)
-  readSync({ fd, buffer: buf })
-  closeSync(fd)
-  return buf
+  // A bad handle or a short read would upload a zero-filled buffer as audio.
+  if (typeof fd !== 'number' || fd < 0) throw new Error(`open ${file} failed (${fd})`)
+  try {
+    const buf = new ArrayBuffer(size)
+    const n = readSync({ fd, buffer: buf })
+    if (typeof n === 'number' && n !== size) throw new Error(`read ${n} of ${size} bytes`)
+    return buf
+  } finally {
+    closeSync(fd)
+  }
 }
 
 export function applyDisplay(mode) {

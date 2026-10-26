@@ -1,4 +1,4 @@
-/* odysseus-sound PDA on the LilyGO T5 E-Paper Pro (docs/t5-pda-plan.md).
+/* Athena PDA on the LilyGO T5 E-Paper Pro (docs/t5-pda-plan.md).
  *
  * Boot: board (I2C, buttons, RTC), the e-paper (epdiy), the stored feed and outbox from
  * LittleFS, touch, BLE (the glance protocol, advertising as odysseus-pda), the screens and

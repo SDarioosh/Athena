@@ -1,11 +1,11 @@
-# odysseus-sound Android relay
+# Athena Android relay
 
 Android app that carries recordings from the LilyGO T-Watch Ultra to the owner's
-odysseus-sound server, through Odysseus (paired by QR code) or directly:
+Athena server, through Odysseus (paired by QR code) or directly:
 
 ```
-watch (BLE, protocol v1) → this app → POST /api/codex/sound/chunk on Odysseus  → odysseus-sound
-                                   or POST /v1/ingest/chunk on odysseus-sound (direct fallback)
+watch (BLE, protocol v1) → this app → POST /api/codex/sound/chunk on Odysseus  → Athena
+                                   or POST /v1/ingest/chunk on Athena (direct fallback)
 ```
 
 The watch has no Wi-Fi. This app is the only thing that holds a server token. It
@@ -73,7 +73,7 @@ on the branch you run it from. These are debug-signed builds for sideloading.
    `sound:write`, `calendar:read`, `calendar:write`, `todos:read`, `todos:write`,
    `insight:read`), stores it encrypted, and from then on sends the watch's audio and the
    T5's data through Odysseus. **Test connection** checks Odysseus and, through it,
-   odysseus-sound. Unpair a phone by revoking its token in Odysseus → Settings → API
+   Athena. Unpair a phone by revoking its token in Odysseus → Settings → API
    tokens.
 
    How it works: the QR code holds `odysseus-pair:v1?url=<Odysseus URL>&code=<code>`, no
@@ -81,7 +81,7 @@ on the branch you run it from. These are debug-signed builds for sideloading.
    at `POST <url>/api/pair/redeem` for the token (only that one host, no redirects). A code
    that was used, expired or mistyped gets "make a new one".
 
-   **Direct (fallback):** untick *Send … through Odysseus* and enter the odysseus-sound
+   **Direct (fallback):** untick *Send … through Odysseus* and enter the Athena
    server URL (for example `http://100.x.y.z:8000`) and its `CONVO_INGEST_TOKEN` instead.
    **Test connection** then checks `/health` and the token with
    `GET /v1/sessions?limit=1`. **Save**.
@@ -109,7 +109,7 @@ to the servers.
 ```
 paired:  Odysseus /api/codex/sound/{digests,conversations,action-items},
          /api/codex/calendar/events, /api/codex/todos, /api/codex/insight/today and /weights (one ody_ token) → this app → BLE → T5
-direct:  odysseus-sound /v1/{digests,conversations,action-items} (ingest token)
+direct:  Athena /v1/{digests,conversations,action-items} (ingest token)
          + the Odysseus routes above with an ody_ token
 ```
 
@@ -202,9 +202,9 @@ If the app crashes, the next start shows the error with a **Copy** button
 ## Privacy
 
 - Data goes only from the watch to your own server: Odysseus when paired, else the one
-  odysseus-sound URL you set. No other host, no fallback, no analytics, no crash
+  Athena URL you set. No other host, no fallback, no analytics, no crash
   reporting, no Firebase or Google Play services. HTTP redirects are not followed, so a
-  token can't be sent elsewhere. Through Odysseus the audio goes on to odysseus-sound
+  token can't be sent elsewhere. Through Odysseus the audio goes on to Athena
   over the owner's machine (Odysseus forwards it to the module's MCP server); the module's
   ingest token never reaches the phone.
 - Pairing: the QR code holds no token, only the Odysseus URL and a single-use code that
@@ -257,7 +257,7 @@ fields, bearer header, error classes, no redirects, token never in logs).
 
 For the PDA: glance protocol vectors; a fake T5 (outbox with paging, `PUT` with CRC and
 size checks, MTU-sized frames, injected bad CRCs, a lost `OB_ACKED`, `status`
-notifications for the "user is active" loop) with a fake odysseus-sound API (fictional
+notifications for the "user is active" loop) with a fake Athena API (fictional
 data) and a fake Odysseus calendar; feed shape, cutting and hashing; transcript paging;
 action validation; and the HTTP clients against a fake transport (paths, bodies, bearer
 header, "not supported" for a hub without the codex routes) plus the real transport
@@ -273,7 +273,7 @@ real phone and watch:
   "Paired"; the token appears in Odysseus → Settings → API tokens; revoking it stops the
   relay with "Token rejected" until paired again. **Choose calendar…** lists the
   calendars.
-- A watch drain through Odysseus (audio arrives in odysseus-sound as with the direct
+- A watch drain through Odysseus (audio arrives in Athena as with the direct
   mode) and the T5 sync with the paired token (briefing, conversations, action items,
   calendar add/delete, checklists, insight).
 
