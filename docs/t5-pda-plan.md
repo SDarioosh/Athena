@@ -647,9 +647,10 @@ a 3 × 4 grid of hour slots and the durations.
     its `why` when it named them). DO FIRST is for today only: an event on a later day, or
     an item of a checklist due on a later day, that the hub put there moves to the end of
     COMING UP (with its time or "due Wed 28 Oct").
-  - **A to-do shows once:** the hub's `why` is left out when it only restates the to-do (it
-    starts with the same word, or holds at least 60 % of the to-do's words of 3+ letters);
-    the second line then falls back to the list's title, but only for a list of more than
+  - **A to-do or event shows once:** the hub's `why` is left out when it only restates the
+    to-do or the event's title (it starts with the same word, or holds at least 60 % of the
+    title's words of 3+ letters); an event's second line is then its place or "until 16:00";
+    for a to-do the second line then falls back to the list's title, but only for a list of more than
     one item (a one-item note's title is the to-do again, often reworded), and never when
     the title is the same text (any case, or the start of it cut with "…").
   - **Without one** (no key, or `date` isn't today), the same sections from rules, and

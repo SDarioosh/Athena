@@ -527,6 +527,38 @@ static void test_todo_once(void)
         }
         feed_free(&feed);
     }
+
+    /* the same for an event (all day today, no place: nothing else for the second line) */
+    static const char *const ev_whys[] = {"Baba's Birthday on 11/01. High importance", "Birthday of Baba",
+                                          "bring the cake"};
+    static const bool ev_shown[] = {false, false, true};
+    for (int t = 0; t < 3; t++) {
+        char js[512];
+        snprintf(js, sizeof(js),
+                 "{\"v\":1,\"version\":1,\"calendar\":[{\"id\":\"b\",\"title\":\"Baba's Birthday\","
+                 "\"start\":\"2026-10-20\",\"all_day\":true}],"
+                 "\"insight\":{\"date\":\"2026-10-20\",\"focus\":[{\"ref\":\"event:b\",\"why\":\"%s\"}]}}",
+                 ev_whys[t]);
+        CHECK_EQ(feed_parse(js, strlen(js), &feed), 0);
+        today_plan_for_today(&feed, TODAY, NOW, TZ, &plan);
+        int page = 0;
+        render(&page);
+        const hit_rec_t *h = NULL;
+        for (int i = 0; i < n_hits; i++) {
+            if (hits[i].kind == UI_TODAY_HIT_EVENT) {
+                h = &hits[i];
+            }
+        }
+        CHECK(h != NULL);
+        if (h) {
+            const int second = ink(MARGIN + 88, h->r.y + 33 + 12, W - MARGIN, h->r.y + h->r.height - 2);
+            if (ev_shown[t] != (second > 0)) {
+                fprintf(stderr, "event why \"%s\": second line %s\n", ev_whys[t], second ? "drawn" : "missing");
+                checks_failed++;
+            }
+        }
+        feed_free(&feed);
+    }
 }
 
 int main(void)

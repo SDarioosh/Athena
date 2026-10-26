@@ -130,9 +130,10 @@ static int words(const char *s, char out[WORDS_MAX][WORD_LEN])
     return n;
 }
 
-/* The hub's reason only restates the to-do ("Film demo video for the RokTalk meeting" for
- * "Film a demo video for the meeting"): it starts with the same word (the to-do's verb),
- * or holds most of the to-do's words of 3 letters or more. */
+/* The hub's reason only restates the to-do or event title ("Film demo video for the
+ * RokTalk meeting" for "Film a demo video for the meeting", "Baba's Birthday on 11/01" for
+ * "Baba's Birthday"): it starts with the same word, or holds most of the title's words of
+ * 3 letters or more. */
 static bool restates(const char *why, const char *todo)
 {
     static char a[WORDS_MAX][WORD_LEN], b[WORDS_MAX][WORD_LEN];
@@ -205,6 +206,9 @@ static void draw_item(const lay_t *l, int top, const today_item_t *it, bool firs
         return;
     }
     const feed_event_t *e = &f->events[it->ref.event];
+    if (w && e->title && restates(w, e->title)) {
+        w = NULL; /* the title shows once; the place or end time instead */
+    }
     /* events: the time in the left column (the weekday under it when not today), "›"
      * opens the event; the second line is the hub's why and the place */
     char hm[16];
