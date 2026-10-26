@@ -454,20 +454,22 @@ static void test_clock_digits_stay(void)
     CHECK_EQ(c0, -1);
 }
 
-/* A to-do without a reason shows its list's title under it, but not when the title only
- * repeats the to-do (a one-item note the hub filed): then the to-do shows once. */
+/* A to-do without a reason shows its list's title under it, but not when that only
+ * repeats the to-do: a one-item note (the hub files a voice note's task as one, under a
+ * reworded title), or the same words: then the to-do shows once. */
 static void test_todo_once(void)
 {
     static const char *const titles[] = {"Work", "Call the bank about the card", "call the bank about the card.",
-                                         "Call the bank about the\xe2\x80\xa6", "Call"};
-    static const bool shown[] = {true, false, false, false, true};
-    for (int t = 0; t < 5; t++) {
+                                         "Call the bank about the\xe2\x80\xa6", "Call", "Bank card call"};
+    static const bool two_items[] = {true, true, true, true, true, false};
+    static const bool shown[] = {true, false, false, false, true, false};
+    for (int t = 0; t < 6; t++) {
         char js[512];
         snprintf(js, sizeof(js),
                  "{\"v\":1,\"version\":1,\"todos\":[{\"id\":\"n\",\"title\":\"%s\",\"items\":"
-                 "[{\"i\":0,\"text\":\"Call the bank about the card\"}]}],"
+                 "[{\"i\":0,\"text\":\"Call the bank about the card\"}%s]}],"
                  "\"insight\":{\"date\":\"2026-10-20\",\"focus\":[{\"ref\":\"todo:n:0\"}]}}",
-                 titles[t]);
+                 titles[t], two_items[t] ? ",{\"i\":1,\"text\":\"x\",\"done\":true}" : "");
         CHECK_EQ(feed_parse(js, strlen(js), &feed), 0);
         today_plan_for_today(&feed, TODAY, NOW, TZ, &plan);
         CHECK(plan.from_insight);
@@ -485,6 +487,41 @@ static void test_todo_once(void)
             const int second = ink(MARGIN + 88, h->r.y + 33 + 12, W - MARGIN, h->r.y + h->r.height - 2);
             if (shown[t] != (second > 0)) {
                 fprintf(stderr, "title \"%s\": second line %s\n", titles[t], second ? "drawn" : "missing");
+                checks_failed++;
+            }
+        }
+        feed_free(&feed);
+    }
+
+    /* the hub's reason, on a one-item note (nothing to fall back on): left out when it only
+     * restates the to-do, in other words or with the same verb first */
+    static const char *const whys[] = {"Film demo video for the RokTalk meeting", "Implement PoC for handwriting rec",
+                                       "the morning is clear until the stand-up", "Alice needs it for the Q4 plan"};
+    static const char *const todos[] = {"Film a demo video for the meeting", "Implement proof of concept",
+                                        "Rehearse the demo end to end", "Send the Q4 budget sheet to Alice"};
+    static const bool why_shown[] = {false, false, true, true};
+    for (int t = 0; t < 4; t++) {
+        char js[512];
+        snprintf(js, sizeof(js),
+                 "{\"v\":1,\"version\":1,\"todos\":[{\"id\":\"n\",\"title\":\"T\",\"items\":"
+                 "[{\"i\":0,\"text\":\"%s\"}]}],"
+                 "\"insight\":{\"date\":\"2026-10-20\",\"focus\":[{\"ref\":\"todo:n:0\",\"why\":\"%s\"}]}}",
+                 todos[t], whys[t]);
+        CHECK_EQ(feed_parse(js, strlen(js), &feed), 0);
+        today_plan_for_today(&feed, TODAY, NOW, TZ, &plan);
+        int page = 0;
+        render(&page);
+        const hit_rec_t *h = NULL;
+        for (int i = 0; i < n_hits; i++) {
+            if (hits[i].kind == UI_TODAY_HIT_TODO) {
+                h = &hits[i];
+            }
+        }
+        CHECK(h != NULL);
+        if (h) {
+            const int second = ink(MARGIN + 88, h->r.y + 33 + 12, W - MARGIN, h->r.y + h->r.height - 2);
+            if (why_shown[t] != (second > 0)) {
+                fprintf(stderr, "why \"%s\": second line %s\n", whys[t], second ? "drawn" : "missing");
                 checks_failed++;
             }
         }

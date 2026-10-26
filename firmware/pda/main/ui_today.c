@@ -96,6 +96,69 @@ static bool repeats(const char *line, const char *first)
     return nl == nf || nl >= 20;
 }
 
+#define WORDS_MAX 24
+#define WORD_LEN 24
+
+/* s's words (runs of letters and digits, UTF-8 kept, ASCII lower-cased; cut to WORD_LEN-1
+ * bytes), at most WORDS_MAX: how many */
+static int words(const char *s, char out[WORDS_MAX][WORD_LEN])
+{
+    int n = 0;
+    while (*s && n < WORDS_MAX) {
+        const unsigned char c = (unsigned char)*s;
+        const bool letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                            (c >= 0x80 && strncmp(s, "\xe2\x80\xa6", 3) != 0);
+        if (!letter) {
+            s += strncmp(s, "\xe2\x80\xa6", 3) == 0 ? 3 : 1;
+            continue;
+        }
+        int k = 0;
+        for (;;) {
+            const unsigned char d = (unsigned char)*s;
+            const bool in = (d >= 'a' && d <= 'z') || (d >= 'A' && d <= 'Z') || (d >= '0' && d <= '9') ||
+                            (d >= 0x80 && strncmp(s, "\xe2\x80\xa6", 3) != 0);
+            if (!in) {
+                break;
+            }
+            if (k < WORD_LEN - 1) {
+                out[n][k++] = (char)(d >= 'A' && d <= 'Z' ? d + 32 : d);
+            }
+            s++;
+        }
+        out[n++][k] = 0;
+    }
+    return n;
+}
+
+/* The hub's reason only restates the to-do ("Film demo video for the RokTalk meeting" for
+ * "Film a demo video for the meeting"): it starts with the same word (the to-do's verb),
+ * or holds most of the to-do's words of 3 letters or more. */
+static bool restates(const char *why, const char *todo)
+{
+    static char a[WORDS_MAX][WORD_LEN], b[WORDS_MAX][WORD_LEN];
+    const int na = words(why, a), nb = words(todo, b);
+    if (na == 0 || nb == 0) {
+        return false;
+    }
+    if (strlen(b[0]) >= 3 && strcmp(a[0], b[0]) == 0) {
+        return true;
+    }
+    int big = 0, found = 0;
+    for (int j = 0; j < nb; j++) {
+        if (strlen(b[j]) < 3) {
+            continue;
+        }
+        big++;
+        for (int i = 0; i < na; i++) {
+            if (strcmp(a[i], b[j]) == 0) {
+                found++;
+                break;
+            }
+        }
+    }
+    return big >= 2 && found * 10 >= big * 6;
+}
+
 /* an item: first = right under a heading (no rule above it) */
 static void draw_item(const lay_t *l, int top, const today_item_t *it, bool first)
 {
@@ -108,6 +171,9 @@ static void draw_item(const lay_t *l, int top, const today_item_t *it, bool firs
     const char *w = it->ref.why;
     if (it->ref.kind == FEED_REF_TODO) {
         const char *r = it->reason;
+        if (w && restates(w, f->todos[it->ref.note].items[it->ref.item].text)) {
+            w = NULL; /* the to-do shows once */
+        }
         if (r[0] && w) {
             snprintf(why, sizeof(why), "%s \xc2\xb7 %s", r, w); /* · */
         } else {
@@ -125,8 +191,9 @@ static void draw_item(const lay_t *l, int top, const today_item_t *it, bool firs
         }
         if (st.failed) {
             snprintf(why, sizeof(why), "couldn't sync \xe2\x80\x93 changed on the website?");
-        } else if (!why[0]) {
-            /* no reason given: the list it is on */
+        } else if (!why[0] && f->todos[it->ref.note].n_items > 1) {
+            /* no reason given: the list it is on (a one-item note's title is only the
+             * to-do again, often reworded: the hub files a voice note's task that way) */
             const char *title = f->todos[it->ref.note].title;
             snprintf(why, sizeof(why), "%s", title ? title : "Untitled checklist");
         }
