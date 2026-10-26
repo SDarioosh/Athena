@@ -16,13 +16,19 @@
 #   barvis-sound-whisper  BARVIS_SOUND_WHISPER_CMD    (only if set)
 # They are systemd user services (start at boot, restart on crash) where systemd is
 # available, otherwise background processes with pid files in $CONVO_DATA_DIR/run.
+# With BARVIS_SOUND_RUNNER=docker they are the containers of server/compose.yml instead
+# (sound-api, sound-mcp, whisper-gpu/whisper-cpu; README "Docker"), and the native
+# services above are stopped.
 #
 # Settings: environment, or BARVIS_SOUND_* lines in server/.env (all optional):
 #   BARVIS_SOUND_REMOTE       git remote (default: the one pointing at */barvis-sound or */barvis-ai)
 #   BARVIS_SOUND_BRANCH       branch to follow (default: main)
 #   BARVIS_SOUND_EXTRAS       pip extras (default: vad,diarization; +pyannote if CONVO_DIARIZER=pyannote)
 #   BARVIS_SOUND_WHISPER_CMD  full whisper-server command line, absolute path first
-#   BARVIS_SOUND_RUNNER       systemd, background or auto (default: auto)
+#   BARVIS_SOUND_RUNNER       systemd, background, docker or auto (default: auto = systemd
+#                             if available, else background; docker is never picked by auto)
+#   DOCKER                    docker command for the docker runner (default: docker if it
+#                             works without sudo, else "sudo docker")
 #   BARVIS_SOUND_ODYSSEUS_DIR the Odysseus checkout whose scripts/fork_deploy.sh runs after a
 #                             deploy, or off (default: found from the running Odysseus container)
 set -euo pipefail
@@ -71,7 +77,13 @@ load_config() {
   if [ "$RUNNER" = auto ]; then
     if systemctl --user show-environment >/dev/null 2>&1; then RUNNER=systemd; else RUNNER=background; fi
   fi
-  case $RUNNER in systemd|background) ;; *) die "BARVIS_SOUND_RUNNER must be systemd, background or auto" ;; esac
+  case $RUNNER in systemd|background|docker) ;; *) die "BARVIS_SOUND_RUNNER must be systemd, background, docker or auto" ;; esac
+  if [ "$RUNNER" = docker ]; then
+    DOCKER=$(env_value DOCKER "")
+    if [ -z "$DOCKER" ]; then
+      if docker info >/dev/null 2>&1; then DOCKER=docker; else DOCKER="sudo docker"; fi
+    fi
+  fi
 }
 
 enabled() {  # is service $1 configured to run?
@@ -199,6 +211,53 @@ bg_stop() {
     kill -0 "$pid" 2>/dev/null && kill -9 "$pid"
   fi
   rm -f "$f"
+}
+
+# --- docker (server/compose.yml) ------------------------------------------------------
+
+dc() {
+  # shellcheck disable=SC2086  # DOCKER may be "sudo docker"
+  $DOCKER compose --project-directory "$SERVER_DIR" -f "$SERVER_DIR/compose.yml" "$@"
+}
+
+retire_native() {  # stop what a native deploy started; its unit files stay for a way back
+  local s name
+  for s in "${SERVICES[@]}"; do
+    name=$(unit_name "$s")
+    if [ -f "$UNIT_DIR/$name.service" ] && systemctl --user -q is-enabled "$name" 2>/dev/null; then
+      log "stopping native $name (it runs in Docker now)"
+      systemctl --user disable -q --now "$name" 2>/dev/null || true
+    fi
+    if bg_running "$s"; then
+      log "stopping background $name (it runs in Docker now)"
+      bg_stop "$s"
+    fi
+  done
+}
+
+docker_up() {  # build, (re)create what changed, wait until every container is healthy
+  local s active
+  retire_native
+  # A whisper container of a profile that is no longer selected would keep the
+  # "whisper" name; remove it.
+  active=" $(dc config --services | tr '\n' ' ') "
+  for s in $(dc --profile '*' config --services); do
+    [[ $active == *" $s "* ]] || dc rm -sf "$s" >/dev/null 2>&1 || true
+  done
+  log "building and starting containers ($(echo $active))"
+  dc up -d --build --remove-orphans --wait --wait-timeout 300 && return 0
+  dc ps -a >&2 || true
+  dc logs --tail 40 >&2 || true
+  return 1
+}
+
+docker_service() {  # compose service of serve | mcp | whisper
+  case $1 in
+    serve) echo sound-api ;;
+    mcp) echo sound-mcp ;;
+    whisper) dc config --services | grep -m1 '^whisper-' || echo whisper-gpu ;;
+    *) echo "$1" ;;
+  esac
 }
 
 # --- either runner --------------------------------------------------------------------
@@ -349,10 +408,14 @@ update_checkout() {  # $1 ref or empty; sets PREV and NEW
 
 cmd_deploy() {
   load_config
-  check_ports
+  [ "$RUNNER" = docker ] || check_ports
   update_checkout "${1:-}"
   first_env
   load_config  # .env may be new
+  if [ "$RUNNER" = docker ]; then
+    deploy_docker
+    return
+  fi
   [ -n "$MCP_TOKEN" ] || log "warning: CONVO_MCP_TOKEN is not set in server/.env, so MCP over HTTP (what Odysseus uses) is not started"
   local short; short=$(git -C "$REPO_DIR" rev-parse --short HEAD)
   if [ "$PREV" = "$NEW" ]; then log "already at $short"; else log "updated $(git -C "$REPO_DIR" rev-parse --short "$PREV") -> $short"; fi
@@ -369,6 +432,23 @@ cmd_deploy() {
     install_deps
     apply_services
     check_services || true
+    die "deploy of $short failed and was rolled back (checkout is detached at the old commit; the next deploy returns to $BRANCH)"
+  fi
+  die "Athena is not healthy; see the logs above"
+}
+
+deploy_docker() {  # cmd_deploy for the docker runner
+  local short; short=$(git -C "$REPO_DIR" rev-parse --short HEAD)
+  if [ "$PREV" = "$NEW" ]; then log "already at $short"; else log "updated $(git -C "$REPO_DIR" rev-parse --short "$PREV") -> $short"; fi
+  if docker_up; then
+    log "deployed $short (docker)"
+    deploy_odysseus
+    return 0
+  fi
+  if [ "$PREV" != "$NEW" ]; then
+    log "rolling back to $(git -C "$REPO_DIR" rev-parse --short "$PREV")"
+    git -C "$REPO_DIR" checkout -q --detach "$PREV"
+    docker_up || true
     die "deploy of $short failed and was rolled back (checkout is detached at the old commit; the next deploy returns to $BRANCH)"
   fi
   die "Athena is not healthy; see the logs above"
@@ -420,6 +500,11 @@ deploy_odysseus() {
 cmd_status() {
   load_config
   local s state
+  if [ "$RUNNER" = docker ]; then
+    echo "Athena: $(git -C "$REPO_DIR" rev-parse --short HEAD) $(git -C "$REPO_DIR" log -1 --format=%s) (docker)"
+    dc ps --format 'table {{.Service}}\t{{.Status}}\t{{.Ports}}'
+    return
+  fi
   echo "Athena: $(git -C "$REPO_DIR" rev-parse --short HEAD) $(git -C "$REPO_DIR" log -1 --format=%s) ($RUNNER)"
   for s in "${SERVICES[@]}"; do
     if ! enabled "$s"; then state="not configured"
@@ -430,8 +515,19 @@ cmd_status() {
   done
 }
 
+docker_cmd() {  # start | restart | stop | logs | units for the docker runner
+  case $1 in
+    start) docker_up ;;
+    restart) dc restart && dc up -d --wait --wait-timeout 300 ;;
+    stop) dc stop && log "stopped" ;;
+    logs) dc logs --tail 40 "${@:3}" "$(docker_service "${2:-serve}")" ;;
+    units) dc config ;;
+  esac
+}
+
 case "${1:-}" in
   deploy) shift; cmd_deploy "$@" ;;
+  start|restart|stop|logs|units) load_config; [ "$RUNNER" != docker ] || { docker_cmd "$@"; exit; } ;;&
   odysseus) load_config; deploy_odysseus ;;
   start) load_config; apply_services; check_services ;;
   restart) load_config; for s in "${SERVICES[@]}"; do enabled "$s" && is_running "$s" && stop_service "$s"; done; apply_services; check_services ;;

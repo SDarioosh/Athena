@@ -46,7 +46,8 @@ server. **Nothing in the data path touches the cloud.**
   transcription, diarization, conversation splitting, summaries, SQLite
   storage, search, digest, MCP server (`convo_server/mcp_server.py`), frontend eval
   (`server/eval/bakeoff.py`). `server/scripts/deploy.sh` updates the server and runs it
-  as background services; the hub's `scripts/fork_deploy.sh` calls it. See `server/README.md`.
+  as background services, or as the Docker containers of `server/compose.yml`
+  (`BARVIS_SOUND_RUNNER=docker`); the hub's `scripts/fork_deploy.sh` calls it. See `server/README.md`.
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
   recording feasibility test app; see `zepp-app/README.md`.
 - `firmware/recorder/`: ESP-IDF 5.x firmware for our own recorders, one shared `main/`
