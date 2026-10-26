@@ -38,6 +38,49 @@ def current(store) -> set[str]:
     return {f["fact"] for f in store.list_facts()}
 
 
+# ------------------------------------------------------------------- A-1
+def test_a1_deleting_a_note_keeps_what_its_forgotten_fact_replaced_replaced(pipeline):
+    s = pipeline.store
+    c1 = put(pipeline, "hub-note:one", ["Alice lives in Lisbon."])
+    (f1,) = summarize(s, c1, [("Alice", "Alice lives in Lisbon", T0)])
+    c2 = put(pipeline, "hub-note:two", ["Alice lives in Porto now."], T0 + DAY)
+    (f2,) = summarize(s, c2, [("Alice", "Alice lives in Porto", T0 + DAY)])
+    s.link_fact(f2, "updates", f1)
+    assert s.erase_fact(f2, "private")["result"] == "erased"
+    assert current(s) == set()
+
+    s.delete_written_note("hub-note:two")
+    assert current(s) == set()  # "Lisbon" stays an older value of a rejected belief
+    assert s.list_facts(query="Lisbon") == []
+    # ... also after its own note is summarized again
+    summarize(s, c1, [("Alice", "Alice lives in Lisbon", T0)])
+    assert current(s) == set()
+
+
+def test_a1_deleting_a_note_still_brings_back_what_a_current_fact_replaced(pipeline):
+    """Guard: a fact replaced by a current fact of the deleted note becomes current."""
+    s = pipeline.store
+    c1 = put(pipeline, "hub-note:one", ["Alice lives in Lisbon."])
+    (f1,) = summarize(s, c1, [("Alice", "Alice lives in Lisbon", T0)])
+    c2 = put(pipeline, "hub-note:two", ["Alice lives in Porto now."], T0 + DAY)
+    (f2,) = summarize(s, c2, [("Alice", "Alice lives in Porto", T0 + DAY)])
+    s.link_fact(f2, "updates", f1)
+    s.delete_written_note("hub-note:two")
+    assert current(s) == {"Alice lives in Lisbon"}
+
+
+def test_a1_a_fact_erased_in_a_deleted_note_stays_erased_in_a_new_note(pipeline):
+    s = pipeline.store
+    c1 = put(pipeline, "hub-note:a", ["Secret passcode is Bluebananas42.", "Buy coffee."])
+    (fid,) = summarize(s, c1, [("Me", "The secret passcode is Bluebananas42", T0)])
+    s.erase_fact(fid, "private")
+    s.delete_written_note("hub-note:a")
+
+    c2 = put(pipeline, "hub-note:b", ["Secret passcode is Bluebananas42.", "Buy coffee."])
+    assert texts(s, c2) == [ERASED_TEXT, "Buy coffee."]
+    assert s.search_segments(query="Bluebananas42") == []
+
+
 # ------------------------------------------------------------------- A-2
 def test_a2_a_resend_redacts_only_lines_that_say_the_erased_fact(pipeline):
     s = pipeline.store

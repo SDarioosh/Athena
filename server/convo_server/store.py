@@ -233,6 +233,13 @@ CREATE TABLE IF NOT EXISTS written_notes (
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS written_notes_conv ON written_notes(conversation_id);
+-- Erased facts whose written note was deleted (DELETE /v1/ingest/text): the sentence
+-- (never served) stays, so a note that writes it again keeps it "[forgotten]".
+CREATE TABLE IF NOT EXISTS erased_facts (
+    id INTEGER PRIMARY KEY,                   -- the fact's id
+    fact TEXT NOT NULL,
+    erased_at REAL NOT NULL
+);
 
 -- Line-level full-text index for "what did X say about Y" (kept in sync by triggers).
 CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
@@ -1573,7 +1580,8 @@ class Store:
             # every erased fact, of any conversation: the owner forgot it, so a note that
             # writes it (again, or for the first time in another note) doesn't keep it
             erased_facts = [w for w in (_line_words(r[0]) for r in c.execute(
-                "SELECT fact FROM facts WHERE erased_at IS NOT NULL")) if w]
+                "SELECT fact FROM facts WHERE erased_at IS NOT NULL"
+                " UNION SELECT fact FROM erased_facts")) if w]
             if old_conv is not None:
                 c.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
                 _take_down_digests(c, conv_id, now)
@@ -1629,7 +1637,9 @@ class Store:
         """Remove a written note (``DELETE /v1/ingest/text/{source_id}``): its lines, its
         conversation, its to-dos and facts, and the digests that covered it (written again
         by the worker). A fact this note shares with another conversation (said there
-        too) stays, owned by that one. None when there is no such note (idempotent)."""
+        too) stays, owned by that one. The sentence of an erased fact stays in
+        ``erased_facts`` (never served), and what a forgotten fact had replaced stays
+        replaced. None when there is no such note (idempotent)."""
         now = time.time()
         with self.tx() as c:
             row = c.execute("SELECT * FROM written_notes WHERE source_id = ?",
@@ -1641,6 +1651,9 @@ class Store:
                 before = _knowledge(c, conv_id)
                 self._clear_knowledge(c, conv_id)
                 _carry_over(c, conv_id, before, [])  # facts said elsewhere move there
+                c.execute("INSERT OR IGNORE INTO erased_facts SELECT id, fact, erased_at"
+                          " FROM facts WHERE conversation_id = ? AND erased_at IS NOT NULL",
+                          (conv_id,))
                 _take_down_digests(c, conv_id, now)
                 _delete_conversation(c, conv_id)
             c.execute("DELETE FROM sessions WHERE id = ?", (row["session_id"],))
@@ -2251,9 +2264,14 @@ def _prune_candidates(c: sqlite3.Connection, sessions: Iterable[str]) -> None:
 
 
 def _delete_conversation(c: sqlite3.Connection, conv_id: str) -> None:
-    # its facts go with it (cascade): facts they had replaced become current again
+    # its facts go with it (cascade): facts they had replaced become current again,
+    # except what a forgotten (retired) one had replaced: an older value of a belief the
+    # owner rejected stays replaced, by nothing now (superseded, superseded_by NULL)
     c.execute("UPDATE facts SET status = 'current', superseded_by = NULL"
-              " WHERE superseded_by IN (SELECT id FROM facts WHERE conversation_id = ?)",
+              " WHERE superseded_by IN (SELECT id FROM facts WHERE conversation_id = ?"
+              " AND status != 'retired')", (conv_id,))
+    c.execute("UPDATE facts SET superseded_by = NULL WHERE superseded_by IN"
+              " (SELECT id FROM facts WHERE conversation_id = ? AND status = 'retired')",
               (conv_id,))
     c.execute("DELETE FROM search_fts WHERE conversation_id = ?", (conv_id,))
     c.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
@@ -2528,8 +2546,9 @@ def _carry_over(c: sqlite3.Connection, conv_id: str, before: dict[str, Any],
             c.execute("UPDATE facts SET erased_at = ? WHERE id = ?", (old["erased_at"], target))
             c.execute("UPDATE OR IGNORE erased_sources SET fact_id = ? WHERE fact_id = ?",
                       (target, old["id"]))
-        if old["status"] == "superseded" and old["superseded_by"] and c.execute(
-                "SELECT 1 FROM facts WHERE id = ?", (old["superseded_by"],)).fetchone():
+        if old["status"] == "superseded" and (old["superseded_by"] is None or c.execute(
+                "SELECT 1 FROM facts WHERE id = ?", (old["superseded_by"],)).fetchone()):
+            # (by nothing: a forgotten fact of a deleted note had replaced it)
             c.execute("UPDATE facts SET status = 'superseded', superseded_by = ? WHERE id = ?",
                       (old["superseded_by"], target))
         c.executemany("INSERT OR IGNORE INTO fact_sources VALUES (?, ?, ?)",
