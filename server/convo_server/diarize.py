@@ -130,16 +130,42 @@ def rms_db(audio: np.ndarray) -> float:
 
 
 def window(audio: np.ndarray, start: float, end: float,
-           min_seconds: float = DIARIZATION_WINDOW) -> np.ndarray:
-    """Slice [start, end] seconds, widened symmetrically to ``min_seconds`` where possible."""
+           min_seconds: float = DIARIZATION_WINDOW, lo: float = 0.0,
+           hi: float = float("inf")) -> np.ndarray:
+    """Slice [start, end] seconds, widened symmetrically to ``min_seconds`` where possible,
+    never beyond [``lo``, ``hi``] (the line itself is always kept)."""
     sr = SAMPLE_RATE
-    total = audio.size / sr
+    lo, hi = max(0.0, min(lo, start)), min(audio.size / sr, max(hi, end))
     half = max((end - start) / 2, min_seconds / 2)
     mid = (start + end) / 2
-    a, b = max(0.0, mid - half), min(total, mid + half)
+    a, b = max(lo, mid - half), min(hi, mid + half)
     if b - a < min_seconds:  # near an edge: extend towards the other side
-        a, b = max(0.0, b - min_seconds), min(total, a + min_seconds)
+        a, b = max(lo, b - min_seconds), min(hi, a + min_seconds)
     return audio[int(a * sr): int(b * sr)]
+
+
+def own_bounds(pieces: list[PieceRef], labels: list[SpeakerLabel]
+               ) -> list[tuple[float, float]]:
+    """For each piece, how far its voice window may reach: up to the nearest piece of the
+    same run labelled someone else (the window must not hear their voice)."""
+    out = [(0.0, float("inf"))] * len(pieces)
+    order = sorted(range(len(pieces)), key=lambda i: (pieces[i].run, pieces[i].start))
+    last_end: dict[tuple[int, SpeakerLabel], float] = {}  # latest end per (run, label)
+    for i in order:
+        p, lab = pieces[i], labels[i]
+        ends = [e for (run, other), e in last_end.items() if run == p.run and other != lab]
+        out[i] = (min(max(ends), p.start) if ends else 0.0, out[i][1])
+        key = (p.run, lab)
+        last_end[key] = max(last_end.get(key, 0.0), p.end)
+    first_start: dict[tuple[int, SpeakerLabel], float] = {}  # earliest later start
+    for i in reversed(order):
+        p, lab = pieces[i], labels[i]
+        starts = [s for (run, other), s in first_start.items()
+                  if run == p.run and other != lab]
+        out[i] = (out[i][0], max(min(starts), p.end) if starts else float("inf"))
+        key = (p.run, lab)
+        first_start[key] = min(first_start.get(key, float("inf")), p.start)
+    return out
 
 
 def cluster(embeddings: np.ndarray, threshold: float,
@@ -317,17 +343,27 @@ class Diarizer:
         person measured worse than unnaming it: the better fit is often someone who
         isn't enrolled. The comparison needs two or more enrolled voices; the floor works
         with one.
+
+        The window never reaches into a neighbouring line labelled someone else: a short
+        line in a quick exchange would otherwise be judged mostly on the other people's
+        voices and become ``Unknown``. A line with less than ``min_seconds`` of audio
+        left to judge keeps its name (the diarizer saw more context than this check).
         """
         by_name = {v.name: v for v in self.voices}
         if len(by_name) < 2 and floor <= 0:
             return list(labels)
+        min_len = int(self.min_seconds * SAMPLE_RATE)
         out = []
-        for p, lab in zip(pieces, labels, strict=True):
+        for p, lab, (lo, hi) in zip(pieces, labels, own_bounds(pieces, labels), strict=True):
             own = by_name.get(lab.name)
             if own is None:
                 out.append(lab)
                 continue
-            e = self.embedder.embed(window(runs[p.run], p.start, p.end))
+            clip = window(runs[p.run], p.start, p.end, lo=lo, hi=hi)
+            if clip.size < min_len:
+                out.append(lab)
+                continue
+            e = self.embedder.embed(clip)
             mine = own.score(e)
             if mine < floor or any(v.score(e) >= mine for n, v in by_name.items()
                                    if n != lab.name):
