@@ -797,7 +797,9 @@ class Summarizer:
                              if a.get("status", "open") == "open"
                              and a.get("kind") != NOTE_ITEM
                              and not self._skipped_list(a.get("list_name"))],
-            **({"voice_note": True} if c.get("kind") == "note" else {}),
+            # a note the owner wrote by hand in the hub, or one they spoke
+            **({"written_note": True} if c.get("written") else
+               {"voice_note": True} if c.get("kind") == "note" else {}),
         } for c in conversations]
         result = self.llm.structured(DIGEST_SYSTEM.format(date=date), json.dumps(notes),
                                      DailyDigest)
