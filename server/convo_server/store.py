@@ -1582,7 +1582,11 @@ class Store:
             erased_facts = [w for w in (_line_words(r[0]) for r in c.execute(
                 "SELECT fact FROM facts WHERE erased_at IS NOT NULL"
                 " UNION SELECT fact FROM erased_facts")) if w]
+            old_lines: list[tuple[float, str]] = []
             if old_conv is not None:
+                old_lines = [(r[0], r[1]) for r in c.execute(
+                    "SELECT started_at, text FROM segments WHERE conversation_id = ?"
+                    " ORDER BY started_at", (conv_id,))]
                 c.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
                 _take_down_digests(c, conv_id, now)
             else:
@@ -1599,6 +1603,7 @@ class Store:
                       " received_at = excluded.received_at",
                       (session_id, WRITTEN_DEVICE, written_at, end, now, NOTE))
             redacted = 0
+            stored: list[str] = []
             for i, text in enumerate(lines):
                 # a line erase_fact redacted (its fingerprint), or one that says an erased
                 # fact; only the first are fingerprinted, so a wrong match isn't kept
@@ -1606,12 +1611,15 @@ class Store:
                 erased = (_line_key(text) in erased_keys
                           or any(_says_words(words, f) for f in erased_facts))
                 redacted += erased
+                stored.append(ERASED_TEXT if erased else text)
                 c.execute("INSERT INTO segments (session_id, conversation_id, device,"
                           " started_at, ended_at, speaker, is_owner, text, erased)"
                           " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
                           (session_id, conv_id, WRITTEN_DEVICE, written_at + i,
                            written_at + i + 1, speaker, ERASED_TEXT if erased else text,
                            int(erased)))
+            if old_lines:
+                _move_offsets(c, conv_id, old_lines, stored, written_at)
             c.execute("UPDATE conversations SET started_at = ?, ended_at = ?,"
                       " status = 'pending', error = NULL, transcript_pruned_at = NULL,"
                       " updated_at = ? WHERE id = ?", (written_at, end, now, conv_id))
@@ -2231,6 +2239,44 @@ def _remember_erased_line(c: sqlite3.Connection, conv_id: str, text: str | None)
     if key not in keys:
         c.execute("UPDATE written_notes SET erased_lines = ? WHERE source_id = ?",
                   (json.dumps(keys + [key]), row["source_id"]))
+
+
+def _move_offsets(c: sqlite3.Connection, conv_id: str, old: list[tuple[float, str]],
+                  new: list[str], written_at: float) -> None:
+    """A written note was resent: its facts, to-dos and repeats of other facts keep
+    pointing at their line (``source_at``) until the re-summary, so links and
+    ``erase_fact`` find it. ``old`` is ``(started_at, text)`` of the old lines, ``new`` the
+    new lines' text (at ``written_at`` + index). A line found again as it was (else the
+    one with most words in common, at least ``_ALIKE`` of them; the nearest of equals)
+    gives the new offset; one crossed out gives None, so ``erase_fact`` looks for the
+    fact's words instead of redacting the line that is there now."""
+    new_norm = [_norm(t) for t in new]
+    new_words = [set(t.split()) for t in new_norm]
+    moved: dict[float, float | None] = {}
+
+    def move(at: float) -> float | None:
+        if at not in moved:
+            i = next((k for k, (start, _) in enumerate(old) if at <= start < at + 1), None)
+            best: tuple[float, int, int] | None = None
+            if i is not None:
+                was = _norm(old[i][1])
+                words = set(was.split())
+                same = [j for j, text in enumerate(new_norm) if text == was]
+                for j in same or range(len(new_norm)):
+                    # alike: most words in common (cheap for long lines, unlike _same)
+                    score = 1.0 if same else (
+                        len(words & new_words[j]) / len(words | new_words[j]) if words else 0.0)
+                    if score >= _ALIKE and (best is None or (score, -abs(j - i)) > best[:2]):
+                        best = (score, -abs(j - i), j)
+            moved[at] = written_at + best[2] if best is not None else None
+        return moved[at]
+
+    for table, key in (("facts", "id"), ("action_items", "id"),
+                       ("fact_sources", "rowid")):
+        rows = c.execute(f"SELECT {key}, source_at FROM {table} WHERE conversation_id = ?"
+                         " AND source_at IS NOT NULL", (conv_id,)).fetchall()
+        c.executemany(f"UPDATE {table} SET source_at = ? WHERE {key} = ?",
+                      [(move(r[1]), r[0]) for r in rows])
 
 
 def _says_words(line: set[str], fact: set[str]) -> bool:

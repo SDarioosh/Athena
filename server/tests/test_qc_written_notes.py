@@ -115,6 +115,43 @@ def test_a2_a_resend_still_redacts_the_fact_in_other_words(pipeline):
     assert json.loads(s.written_note("hub-note:n1")["erased_lines"]) == keys
 
 
+# ------------------------------------------------------------------- A-3
+def test_a3_erase_after_a_resend_never_redacts_the_line_that_moved_up(pipeline):
+    s = pipeline.store
+    conv = put(pipeline, "hub-note:n1", ["Buy milk", "Secret: I hate my boss",
+                                         "Call Mom on Sunday"])
+    (fid,) = summarize(s, conv, [("Me", "The owner dislikes their manager", T0 + 1)],
+                       [("Call Mom on Sunday", T0 + 2)])
+    put(pipeline, "hub-note:n1", ["Buy milk", "Call Mom on Sunday"])  # the line crossed out
+    s.erase_fact(fid, "private")
+    assert texts(s, conv) == ["Buy milk", "Call Mom on Sunday"]
+    assert json.loads(s.written_note("hub-note:n1")["erased_lines"]) == []
+
+
+def test_a3_offsets_follow_their_line_on_resend(pipeline):
+    s = pipeline.store
+    conv = put(pipeline, "hub-note:n1", ["Buy milk", "Alice is vegetarian.",
+                                         "Call Mom on Sunday"])
+    summarize(s, conv, [("Alice", "Alice is vegetarian", T0 + 1)],
+              [("Call Mom on Sunday", T0 + 2)])
+    put(pipeline, "hub-note:n1", ["Weekend", "Buy milk", "Call Mom on Sunday",
+                                  "Alice is a vegetarian now."])  # moved, and edited
+    got = s.get_conversation(conv)
+    assert [f["source_at"] for f in got["facts"]] == [T0 + 3]
+    assert [a["source_at"] for a in got["action_items"]] == [T0 + 2]
+    # and erasing it now redacts its line
+    s.erase_fact(got["facts"][0]["id"])
+    assert texts(s, conv) == ["Weekend", "Buy milk", "Call Mom on Sunday", ERASED_TEXT]
+
+
+def test_a3_a_crossed_out_line_leaves_no_offset(pipeline):
+    s = pipeline.store
+    conv = put(pipeline, "hub-note:n1", ["Buy milk", "Alice is vegetarian."])
+    summarize(s, conv, [("Alice", "Alice is vegetarian", T0 + 1)])
+    put(pipeline, "hub-note:n1", ["Buy milk", "Call Mom"])
+    assert [f["source_at"] for f in s.get_conversation(conv)["facts"]] == [None]
+
+
 # ------------------------------------------------------------------- A-4
 def test_a4_a_fact_erased_in_one_note_is_redacted_in_another(pipeline):
     s = pipeline.store
