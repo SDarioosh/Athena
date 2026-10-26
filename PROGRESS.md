@@ -166,8 +166,12 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   rows gain `written_by_hand` and `note_link` (MCP 0.12.0, additive).
 - Open for the owner: plan Q2, one Athena note per hub note (all pages joined, built
   that way: the hub chooses what to send) or one per page. A deleted note's erased facts
-  go with it, so writing the same fact in a new note later makes it a fact again.
+  leave their sentence behind (`erased_facts`), so a new note that writes one again keeps
+  that line `[forgotten]`; a recording that says it again makes it a fact again.
 - Tests: `server/tests/test_written_notes.py`. **Server verification:** see the PR.
+- QC bug hunt of the same day (A-1 to A-8, X-1): `docs/qc-report-2026-10-26.md`, 7 fixed
+  (two partly), 2 not reproduced; a line over 4,000 characters is wrapped, not refused.
+  Tests: `server/tests/test_qc_written_notes.py`.
 
 ## Done on 2026-10-26: fewer, better facts (hub belief review)
 
