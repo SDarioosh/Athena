@@ -206,6 +206,12 @@ class Settings(BaseSettings):
     # this many distinct dates in CONVO_TIMEZONE, and no newer fact has replaced it.
     fact_confirm_sources: int = Field(default=3, ge=1)
     fact_confirm_days: int = Field(default=2, ge=1)
+    # Fact quality: after the facts call, a second local-model call scores each fact 1-5
+    # (would the user want it recalled in three months?); facts under this score are left
+    # out (1 = keep all, no call). Then at most this many facts per conversation are kept,
+    # best first (0 = no cap). Decisions a voice note states are kept either way.
+    fact_min_score: int = Field(default=4, ge=1, le=5)
+    max_facts_per_conversation: int = Field(default=3, ge=0)
 
     @property
     def base_url(self) -> str:

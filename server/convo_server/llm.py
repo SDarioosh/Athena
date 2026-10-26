@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -60,9 +61,18 @@ class ActionItem(BaseModel):
                                    description="Offset in seconds where it was mentioned")
 
 
+# Stored facts that may match some candidate facts (``Summarizer.summarize`` ``known``).
+KnownFacts = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
+
+# What sort of fact it is; the hub labels and files facts by it (list_facts JSON ``kind``).
+FACT_KINDS = ("preference", "plan", "decision", "relationship", "personal", "other")
+
+
 class Fact(BaseModel):
     subject: str = Field(description="Person, project or thing the fact is about")
     fact: str = Field(description="Durable fact worth remembering months from now")
+    # a plain string: a small model's odd kind must not fail the call (kept as "other")
+    kind: str = Field(default="other", description="One of: " + ", ".join(FACT_KINDS))
     at_seconds: int | None = None
 
 
@@ -92,6 +102,16 @@ class ActionItemList(BaseModel):
 
 class FactList(BaseModel):
     facts: list[Fact]
+
+
+class FactScore(BaseModel):
+    number: int = Field(description="Number of the fact")
+    score: int = Field(description="1 (leave out) to 5 (certainly worth keeping)")
+
+
+class FactReview(BaseModel):
+    """The second look at a conversation's facts (``Summarizer._review_facts``)."""
+    scores: list[FactScore]
 
 
 class FactLink(BaseModel):
@@ -229,12 +249,22 @@ today"), and never a plan for the next minutes or hours or the next step of what
 doing ("plans to get a snack", "plans to wire it up on a breadboard to test it"), and \
 never passing curiosity about something that came up ("is interested in hearing how it \
 sounds", "wants to see the demo"). \
+Leave out thinking aloud: what someone is considering, wondering about or might do is \
+not a fact until it is decided. Leave out a request to someone else ("wants Bo to send \
+the report"): that is an action item. Leave out how a task was done or which tool was \
+used for it, and passing details of whatever is being built, fixed or discussed in the \
+conversation, unless they will still matter in a month. \
 Each fact is a complete sentence that names its subject and makes sense on its own, e.g. \
 {{"subject": "Alice", "fact": "Alice is vegetarian."}}, never a bare value like "May". \
 Read months later without the conversation, it must still say what it is about: name the \
 thing ("Alice's bakery", "the Lisbon flat") instead of pointing back into the \
 conversation ("the technology", "the project", "this app", "that idea"). If you can't \
-name it, leave the fact out. \
+name it, leave the fact out. Never guess anyone's gender: repeat the name, never "he" \
+or "she". \
+kind: preference (likes, dislikes, habits, how someone wants things done), plan \
+(something they mean to do later), decision (a choice or principle they settled on), \
+relationship (who someone is to someone else), personal (job, home, health, family, \
+background), other. \
 at_seconds: the bracketed number of the supporting line. Return an empty list if there \
 are none.
 Decisions, priorities and principles someone states about how they want to work or live \
@@ -243,7 +273,22 @@ phrased as a decision, e.g. the user saying "I should stop prioritizing side pro
 before the base system is stable" -> {{"subject": "{owner}", "fact": "The owner decided \
 to stabilise the base system before side projects."}}. A plan with no time is a fact \
 too when it will still matter in a month (a trip, a purchase, a project, a move): "The \
-owner plans to ...". Keys: facts[{{subject, fact, at_seconds}}]."""
+owner plans to ...". Fewer good facts are better than many weak ones. Keys: \
+facts[{{subject, fact, kind, at_seconds}}]."""
+
+# The second look at the facts (``Summarizer._review_facts``): small models list too many.
+REVIEW_SYSTEM = """You check facts picked from one conversation before they go into the \
+user's long-term memory. Score each fact from 1 to 5:
+5: certainly worth recalling in three months: an allergy, a job, a family member, a \
+firm decision, a dated plan, a lasting preference;
+4: likely still useful in three months;
+3: true but minor or short-lived;
+2: thinking aloud (considering, might), a request or task for someone, how a task was \
+done or which tool was used, details of what was being worked on that day;
+1: trivial, or vague (says "the device" or "the project" without naming it). A fact \
+about a named project, place or thing is fine: score it like any other.
+"said" is the transcript line the fact came from. Score every fact by its number. \
+Output JSON only: {"scores": [{"number": <number>, "score": <1-5>}]}."""
 
 LINK_SYSTEM = """You keep the user's memory of facts up to date. You get facts already \
 known (with id and the date they were learned) and new facts from a conversation on \
@@ -408,8 +453,13 @@ class Summarizer:
     def __init__(self, llm: LLMClient, owner_name: str = "Me",
                  max_chars_per_call: int = 120_000, timezone: str = "UTC",
                  min_words: int = 3,
-                 digest_skip_lists: str = "Shopping,Groceries,Grocery") -> None:
+                 digest_skip_lists: str = "Shopping,Groceries,Grocery",
+                 fact_min_score: int = 4, max_facts: int = 3) -> None:
         self.llm = llm
+        # facts scored under this by the review call are left out (1: no review call)
+        self.fact_min_score = fact_min_score
+        # at most this many model facts per conversation, best first (0: no cap)
+        self.max_facts = max_facts
         self.owner = owner_name
         self.max_chars = max_chars_per_call
         self.tz = ZoneInfo(timezone)
@@ -419,8 +469,13 @@ class Summarizer:
         self.digest_skip_lists = {n.lower() for n in map(clean_list_name,
                                   digest_skip_lists.split(",")) if n}
 
-    def summarize(self, segments: list[Segment], kind: str | None = None) -> dict[str, Any]:
+    def summarize(self, segments: list[Segment], kind: str | None = None,
+                  known: KnownFacts | None = None) -> dict[str, Any]:
         """Return a storage-ready dict (absolute ``source_at`` timestamps).
+
+        ``known`` (optional) returns the stored facts that may match some candidate facts
+        (the pipeline passes the store's): a fact that repeats or updates one of them is
+        never cut by the per-conversation cap (``_review_facts``).
 
         ``kind`` is the conversation's stored kind; only ``"note"`` (a voice note) changes
         anything: see ``_summarize_note``. Discarded conversations come back as
@@ -431,7 +486,7 @@ class Summarizer:
         origin = segments[0].started_at
         parts = self._split(segments, origin)
         if kind == "note":
-            return self._summarize_note(parts, origin)
+            return self._summarize_note(parts, origin, known)
         if sum(len(s.text.split()) for s in segments) < self.min_words:
             return {"discard": True, "discard_reason": "too_short", "kind": "other"}
         junk = relevance_rules.discard_reason([s.text for s in segments])
@@ -445,7 +500,7 @@ class Summarizer:
         date = datetime.fromtimestamp(origin, self.tz).strftime("%A %Y-%m-%d")
         notes_sys = SUMMARY_SYSTEM.format(template=TEMPLATES[triage.kind], **fmt)
         actions_sys = ACTIONS_SYSTEM.format(date=date, **fmt)
-        facts_sys = FACTS_SYSTEM.format(**fmt)
+        facts_sys = FACTS_SYSTEM.format(**fmt) + self._fact_limit()
         notes = [self.llm.structured(notes_sys, p, SummaryNotes) for p in parts]
         if len(notes) > 1:
             merged = self.llm.structured(MERGE_SYSTEM, json.dumps(
@@ -469,19 +524,21 @@ class Summarizer:
         _drop_errands(out, spoken, _lines(parts), origin)
         _name_meetings(out["action_items"], spoken)
         _drop_event_facts(out)
+        self._review_facts(out, parts, origin, known)
         _mark_explicit(out["action_items"], None)
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
         return out
 
-    def _summarize_note(self, parts: list[str], origin: float) -> dict[str, Any]:
+    def _summarize_note(self, parts: list[str], origin: float,
+                        known: KnownFacts | None = None) -> dict[str, Any]:
         """A voice note: no length check and no triage (never discarded), the note
         prompts for notes and to-dos, facts as usual; stored with kind "note"."""
         fmt = {"owner": self.owner}
         date = datetime.fromtimestamp(origin, self.tz).strftime("%A %Y-%m-%d")
         notes_sys = NOTE_SYSTEM.format(**fmt)
         actions_sys = NOTE_ACTIONS_SYSTEM.format(date=date, **fmt)
-        facts_sys = FACTS_SYSTEM.format(**fmt)
+        facts_sys = FACTS_SYSTEM.format(**fmt) + self._fact_limit()
         notes = [self.llm.structured(notes_sys, p, SummaryNotes) for p in parts]
         merged = notes[0] if len(notes) == 1 else self.llm.structured(
             MERGE_SYSTEM, json.dumps([n.model_dump() for n in notes]), SummaryNotes)
@@ -513,9 +570,14 @@ class Summarizer:
                             owner=None)
         spoken = _spoken(parts)
         _drop_errands(out, spoken, _lines(parts), origin)
-        self._intentions_to_facts(out, spoken)
+        # events first: a fact that only repeats a dated event goes before the review, so
+        # it can't take one of the cap's places
         _name_meetings(out["action_items"], spoken)
         _drop_event_facts(out)
+        # a decision the owner states in a voice note is kept (not reviewed or capped),
+        # whether the model listed it as a fact or as a to-do (``_intentions_to_facts``)
+        self._review_facts(out, parts, origin, known, keep_decisions=True)
+        self._intentions_to_facts(out, spoken)
         out["action_items"] = _split_list_lines(out["action_items"])
         _mark_explicit(out["action_items"], spoken)
         return out
@@ -539,8 +601,72 @@ class Summarizer:
                        and len(want & got) >= 0.6 * min(len(want), len(got))
                        for f in out["facts"]):
                 out["facts"].append({"subject": self.owner, "fact": fact,
+                                     "kind": "decision" if fact.startswith(
+                                         "The owner decided") else "plan",
                                      "source_at": item.get("source_at")})
         out["action_items"] = items
+
+    def _fact_limit(self) -> str:
+        """The facts prompt's cap sentence (``max_facts``)."""
+        if not self.max_facts:
+            return ""
+        # room above the cap: filters and the review drop some, the review keeps the best
+        return (f"\nList at most {max(5, 2 * self.max_facts)} facts: the ones the user would "
+                "most want recalled months from now.")
+
+    def _review_facts(self, out: dict[str, Any], parts: list[str], origin: float,
+                      known: KnownFacts | None = None, keep_decisions: bool = False) -> None:
+        """A second look at the model's facts. One call scores each 1-5 (worth recalling
+        in three months?, ``REVIEW_SYSTEM``) and facts under ``fact_min_score`` are left
+        out; then the best ``max_facts`` are kept (ties: the model's order). A fact the
+        review gives no score counts as ``fact_min_score``; a failed review call keeps
+        every fact. A fact that repeats or updates a stored one (``known``) is never cut
+        by the cap: it adds nothing new, and cutting an update would leave the old value
+        current. With ``keep_decisions`` (voice notes), the owner's decisions are neither
+        reviewed nor capped."""
+        facts = out["facts"]
+        if not facts:
+            return
+        owner = {self.owner.lower(), *_OWNER_WORDS}
+        kept = [keep_decisions and f.get("kind") == "decision"
+                and (f.get("subject") or "").strip().lower() in owner for f in facts]
+        asked_ids = [i for i, k in enumerate(kept) if not k]
+        scores: dict[int, int] = {}
+        if self.fact_min_score > 1 and asked_ids:
+            lines = _said_lines(parts)
+            asked = [{"number": i, "subject": facts[i]["subject"], "fact": facts[i]["fact"],
+                      "said": lines.get(int(facts[i]["source_at"] - origin), "")
+                      if facts[i].get("source_at") is not None else ""}
+                     for i in asked_ids]
+            try:
+                review = self.llm.structured(REVIEW_SYSTEM, json.dumps(
+                    {"facts": asked}, ensure_ascii=False), FactReview)
+                assert isinstance(review, FactReview)
+                scores = {r.number: min(5, max(1, r.score)) for r in review.scores
+                          if r.number in asked_ids}
+            except LLMError as e:
+                log.warning("fact review failed, keeping the facts: %s", e)
+        repeats = _known_matches(facts, known) if known is not None else set()
+        keep, ranked = [], []
+        for i, fact in enumerate(facts):
+            if kept[i]:
+                keep.append(i)
+                continue
+            score = scores.get(i, self.fact_min_score)
+            if score < self.fact_min_score:
+                log.info("dropped a fact the review scored %d: %r", score, fact["fact"])
+            elif i in repeats:
+                keep.append(i)
+            else:
+                ranked.append((-score, i))
+        ranked.sort()
+        if self.max_facts and len(ranked) > self.max_facts:
+            for _, i in ranked[self.max_facts:]:
+                log.info("dropped a fact over the cap of %d: %r", self.max_facts,
+                         facts[i]["fact"])
+            ranked = ranked[:self.max_facts]
+        keep += [i for _, i in ranked]
+        out["facts"] = [facts[i] for i in sorted(keep)]
 
     def _intention(self, item: dict[str, Any], spoken: list[tuple[str, str]]) -> str | None:
         """The fact an action item really is (see ``_intentions_to_facts``), or None."""
@@ -671,7 +797,9 @@ class Summarizer:
                              if a.get("status", "open") == "open"
                              and a.get("kind") != NOTE_ITEM
                              and not self._skipped_list(a.get("list_name"))],
-            **({"voice_note": True} if c.get("kind") == "note" else {}),
+            # a note the owner wrote by hand in the hub, or one they spoke
+            **({"written_note": True} if c.get("written") else
+               {"voice_note": True} if c.get("kind") == "note" else {}),
         } for c in conversations]
         result = self.llm.structured(DIGEST_SYSTEM.format(date=date), json.dumps(notes),
                                      DailyDigest)
@@ -768,8 +896,8 @@ def to_storage(s: ConversationSummary, origin: float) -> dict[str, Any]:
         "people": [p for p in _dedupe([person_name(p) for p in s.people])
                    if not _PLACEHOLDER.match(p)],
         "action_items": [_item_storage(a, at(a.at_seconds)) for a in s.action_items],
-        "facts": [{"subject": f.subject, "fact": f.fact, "source_at": at(f.at_seconds)}
-                  for f in s.facts],
+        "facts": [{"subject": f.subject, "fact": f.fact, "source_at": at(f.at_seconds),
+                   "kind": fact_kind(f.kind)} for f in s.facts],
     }
 
 
@@ -1520,21 +1648,130 @@ _CURIOUS = re.compile(
     re.IGNORECASE)
 
 
+def fact_kind(kind: Any) -> str:
+    """A model's fact kind as one of ``FACT_KINDS`` ("other" for anything else)."""
+    k = str(kind or "").strip().lower()
+    return k if k in FACT_KINDS else "other"
+
+
+# thinking aloud, not decided: "is considering selling the boat", "might move to Porto",
+# "hasn't decided whether to ..."; looked for in the fact's main clause only, so "an
+# allergy that might cause anaphylaxis" or "..., though the date might shift" stay
+_HEDGE = re.compile(
+    r"\b(?:is|are|was|were|has\s+been|have\s+been)\s+(?:(?:\w+ly|still|also|now|just)\s+)*"
+    r"(?:considering|contemplating|weighing|wondering|unsure|not\s+sure|undecided|"
+    r"debating\s+(?:whether|if|between|\w+ing)\b|thinking\s+(?:about|of)|toying\s+with)\b"
+    r"|\b(?:has|have|had)(?:n't|\s+not)\s+(?:yet\s+)?decided\b|\bnever\s+decided\b"
+    r"|\b(?:might|maybe|perhaps|possibly)\b", re.IGNORECASE)
+# where a fact's main clause ends: a comma or semicolon, or a subordinate clause
+_CLAUSE_CUT = re.compile(r"[,;]|\b(?:that|which|who|though|although|because|if|when|"
+                         r"unless|since|while|so)\b", re.IGNORECASE)
+# a decision settles it, unless negated ("hasn't decided", "not decided", "never decided")
+_DECIDED = re.compile(r"(?<!not\s)(?<!n't\s)(?<!never\s)(?<!yet\s)"
+                      r"\b(?:decided|has\s+chosen|chose)\b", re.IGNORECASE)
+# a request to someone else. Asking or telling someone (a name, a title, a role, a
+# pronoun) to do something always is one: "asked Dr. Patel to send ...", "asked the
+# landlord not to ...", "Priya asked me to send ...". "Wants X to <verb>" only when X is
+# a person of the conversation or a pronoun: "needs German to work in Zurich", "wants
+# Friday to stay free" are facts.
+_NAME = r"[A-Z][\w'-]*(?:\s+(?:[A-Z][\w'-]*|van|von|de|der|da|del|di|le|la))*"
+_TITLE = r"(?:(?:Dr|Mr|Mrs|Ms|Mx|Prof)\.?\s+)"
+_ASKED = re.compile(
+    r"\b(?:asked|asks|told|tells|reminded|reminds)\s+"
+    r"(?:" + _TITLE + r"?" + _NAME + r"(?:\s+(?:and|&)\s+" + _NAME + r")?"
+    r"|me|him|her|them|us|someone|somebody|(?:the|my|our|his|her|their)\s+[a-z]+)"
+    r"\s+(?:not\s+)?to\s+[A-Za-z]\w*")
+# what "wants Bo to ..." asks of Bo when it is a request (an errand), not a plan such as
+# "wants Leo to attend the bilingual school"
+_ERRANDS = ("send|write|bring|call|email|e-mail|text|message|fix|check|test|review|share|"
+            "book|buy|order|pick|finish|draft|prepare|update|forward|reply|schedule|sign|"
+            "pay|look|install|set|clean|return|lend|print|upload|read|ssh|SSH|deliver|"
+            "post|file|submit|confirm|organi[sz]e|arrange|handle|sort|grab|get|do|make")
+_WANTS = re.compile(
+    r"\b(?:wants|wanted|would\s+like|asks\s+for)\s+"
+    r"(?P<who>" + _TITLE + r"?" + _NAME + r"(?:\s+(?:and|&)\s+" + _NAME + r")?"
+    r"|him|her|them|someone|somebody)\s+(?:not\s+)?to\s+(?:" + _ERRANDS + r")\b")
+
+
+def _hedged(text: str) -> bool:
+    """Thinking aloud in the fact's main clause, not settled by a decision there."""
+    main = _CLAUSE_CUT.split(text, maxsplit=1)[0]
+    m = _HEDGE.search(main)
+    return m is not None and not _DECIDED.search(main)
+
+
+def _request(text: str, people: Iterable[str]) -> bool:
+    """A request to someone else (see ``_ASKED``, ``_WANTS``)."""
+    if _ASKED.search(text):
+        return True
+    names = {n.strip().lower() for p in people for n in (p, p.split()[0] if p.split() else "")}
+    for m in _WANTS.finditer(text):
+        who = m["who"]
+        if who.lower() in {"him", "her", "them", "someone", "somebody"}:
+            return True
+        title = re.match(_TITLE, who)
+        bare = who[title.end():] if title else who
+        parts = {x.strip().lower() for x in re.split(r"\s+(?:and|&)\s+", bare)}
+        if title or any(x in names or x.split()[0] in names for x in parts if x):
+            return True
+    return False
+
+
 def _drop_passing_facts(out: dict[str, Any]) -> None:
     """Facts are for months; one tied to a single day ("today", "tonight", "this
     morning", "right now") is not one, and neither is curiosity about something that
-    came up ("is interested in hearing how it sounds"), whatever the model says (small
-    models keep them)."""
+    came up ("is interested in hearing how it sounds"), thinking aloud ("is considering
+    selling the boat", "might move") or a request to someone else ("wants Bo to send the
+    report": an action item), whatever the model says (small models keep them)."""
     keep = []
     for fact in out["facts"]:
-        if _ONE_DAY.search(fact["fact"]):
-            log.info("dropped a one-day fact: %r", fact["fact"])
+        text = fact["fact"]
+        if _ONE_DAY.search(text):
+            log.info("dropped a one-day fact: %r", text)
             continue
-        if _CURIOUS.search(fact["fact"]):
-            log.info("dropped a passing-curiosity fact: %r", fact["fact"])
+        if _CURIOUS.search(text):
+            log.info("dropped a passing-curiosity fact: %r", text)
+            continue
+        if _hedged(text):
+            log.info("dropped a thinking-aloud fact: %r", text)
+            continue
+        if _request(text, out.get("people") or []):
+            log.info("dropped a request to someone else: %r", text)
             continue
         keep.append(fact)
     out["facts"] = keep
+
+
+def _said_lines(parts: list[str]) -> dict[int, str]:
+    """The transcript's lines by offset, lines that start in the same second joined
+    (``_lines`` keeps the first only): what the review is shown as "said"."""
+    out: dict[int, list[str]] = {}
+    for part in parts:
+        for line in part.splitlines():
+            m = _LINE.match(line.strip())
+            if m:
+                out.setdefault(int(m["at"]), []).append(m["text"])
+    return {k: " / ".join(v) for k, v in out.items()}
+
+
+def _known_matches(facts: list[dict[str, Any]], known: KnownFacts) -> set[int]:
+    """Indexes of ``facts`` that share their subject and a content word (beyond the
+    subject's own) with a stored fact: likely the same fact said again, or an update."""
+    try:
+        stored = known(facts)
+    except Exception:  # noqa: BLE001  (a lookup problem must not fail the summary)
+        log.exception("known facts lookup failed; capping all facts")
+        return set()
+    out = set()
+    for i, f in enumerate(facts):
+        subj = (f.get("subject") or "").strip().lower()
+        words = _content_words(f["fact"]) - _content_words(subj)
+        for k in stored:
+            if (k.get("subject") or "").strip().lower() == subj and \
+                    words & (_content_words(k.get("fact") or "") - _content_words(subj)):
+                out.add(i)
+                break
+    return out
 
 
 def _lines(parts: list[str]) -> dict[int, str]:

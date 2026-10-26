@@ -31,7 +31,15 @@ from .diarize import Diarizer, PieceRef, load_voices
 from .lines import join_lines
 from .llm import Summarizer
 from .search import Embedder, index_conversation
-from .store import CONVERSATION, NOTE, SESSION_KINDS, Segment, Store
+from .store import (
+    CONVERSATION,
+    NOTE,
+    SESSION_KINDS,
+    WRITTEN_DEVICE,
+    WRITTEN_SESSION_PREFIX,
+    Segment,
+    Store,
+)
 from .transcribe import Transcriber
 from .vad import VAD, Span, merge_spans
 
@@ -52,6 +60,73 @@ def validate_id(value: str, what: str) -> str:
     if not _SAFE.match(value):
         raise ValueError(f"{what} must match {_SAFE.pattern}")
     return value
+
+
+# Written notes (POST /v1/ingest/text): the hub's stable id of a note, and size limits
+# (a hub note has at most 60 pages; a dense handwritten page is ~2,000 characters).
+SOURCE_ID = re.compile(r"^hub-note:[A-Za-z0-9._-]{1,100}$")
+MAX_TEXT_CHARS = 200_000
+MAX_TEXT_LINES = 5_000
+MAX_LINE_CHARS = 4_000
+MAX_TITLE_CHARS = 200
+MAX_LINK_CHARS = 2_000
+# control characters other than tab and newlines
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# written_at must be a plausible time: 2000-01-01 .. 2100-01-01 UTC
+_EARLIEST, _LATEST = 946_684_800.0, 4_102_444_800.0
+
+
+def written_lines(text: str) -> list[str]:
+    """A written note's text as lines: split at line breaks, control characters
+    dropped, surrounding spaces trimmed, empty lines left out, a line longer than
+    ``MAX_LINE_CHARS`` wrapped at the last space before it (cut when there is none).
+    Raises ValueError when nothing is left or there are too many lines."""
+    if len(text) > MAX_TEXT_CHARS:
+        raise ValueError(f"text is longer than {MAX_TEXT_CHARS} characters")
+    lines = [part for ln in (" ".join(_CONTROL.sub("", raw).split())
+                             for raw in text.splitlines()) if ln for part in _wrap(ln)]
+    if not lines:
+        raise ValueError("text has no words; to remove a note use DELETE "
+                         "/v1/ingest/text/{source_id}")
+    if len(lines) > MAX_TEXT_LINES:
+        raise ValueError(f"text has more than {MAX_TEXT_LINES} lines")
+    return lines
+
+
+def _wrap(line: str) -> list[str]:
+    """``line`` (single spaces, trimmed) in parts of at most ``MAX_LINE_CHARS``."""
+    out = []
+    while len(line) > MAX_LINE_CHARS:
+        cut = line.rfind(" ", 0, MAX_LINE_CHARS + 1)
+        if cut <= 0:
+            cut = MAX_LINE_CHARS
+        out.append(line[:cut].rstrip())
+        line = line[cut:].lstrip()
+    return out + [line] if line else out
+
+
+def validate_source_id(source_id: str) -> str:
+    if not SOURCE_ID.match(source_id or ""):
+        raise ValueError("source_id must look like hub-note:<id> "
+                         "(id: letters, digits, '.', '_' or '-', at most 100)")
+    return source_id
+
+
+# characters a link may not have: they would end "(written by hand: <link>)" in the MCP
+# text or quote it; brackets only around an IPv6 host
+_LINK_BAD = re.compile(r"[\s\x00-\x1f\x7f()<>\"'`{}|\\^]")
+_LINK = re.compile(r"^https?://(\[[0-9A-Fa-f:.]+\]|[^\s/?#\[\]@]+)(:\d+)?([/?#][^\[\]]*)?$")
+
+
+def validate_link(link: str) -> str:
+    """The hub URL of the note: http(s), no spaces, control characters, quotes,
+    parentheses or angle brackets (it is shown in parentheses), square brackets only
+    around an IPv6 host."""
+    link = (link or "").strip()
+    if len(link) > MAX_LINK_CHARS or not _LINK.match(link) or _LINK_BAD.search(link):
+        raise ValueError(f"link must be an http(s) URL of at most {MAX_LINK_CHARS} "
+                         "characters, without spaces, quotes, ( ) < > [ ] { } | \\ ^ `")
+    return link
 
 
 @dataclass
@@ -93,6 +168,10 @@ class Pipeline:
 
         validate_id(device, "device")
         validate_id(session_id, "session_id")
+        if device == WRITTEN_DEVICE or session_id.startswith(WRITTEN_SESSION_PREFIX):
+            raise ValueError(f"device {WRITTEN_DEVICE!r} and session ids starting with "
+                             f"{WRITTEN_SESSION_PREFIX!r} are for written notes "
+                             "(POST /v1/ingest/text)")
         if sequence < 0:
             raise ValueError("sequence must be >= 0")
         kind = (kind or CONVERSATION).strip().lower()
@@ -154,6 +233,32 @@ class Pipeline:
                             speech_seconds=sum(e - s for s, e in speech),
                             trailing_silence_seconds=trailing, session_seconds=length,
                             duplicate=duplicate)
+
+    # ------------------------------------------------------------ written notes
+    def ingest_text(self, *, source_id: str, text: str, written_at: float, link: str,
+                    title: str | None = None, now: float | None = None) -> dict[str, Any]:
+        """Store a note written by hand in the hub (``POST /v1/ingest/text``) or replace
+        the one with the same ``source_id``: one owner line per written line, summarized
+        by the worker with the voice-note prompts. Raises ValueError for bad input."""
+        validate_source_id(source_id)
+        link = validate_link(link)
+        if not (_EARLIEST <= written_at < _LATEST):
+            raise ValueError("written_at must be a date between 2000 and 2100")
+        title = " ".join(_CONTROL.sub("", title or "").split()) or None
+        if title is not None and len(title) > MAX_TITLE_CHARS:
+            raise ValueError(f"title is longer than {MAX_TITLE_CHARS} characters")
+        lines = written_lines(text)
+        speaker = self.store.owner_name() or self.settings.owner_name
+        out = self.store.put_written_note(source_id, lines, written_at, link, title, speaker,
+                                          now=now)
+        log.info("written note %s: %s, %d line(s)", out["conversation_id"], out["result"],
+                 out["lines"])
+        return out
+
+    def delete_text(self, source_id: str) -> dict[str, Any] | None:
+        """Remove a written note and its to-dos and facts; None when there is none."""
+        validate_source_id(source_id)
+        return self.store.delete_written_note(source_id)
 
     def end_session(self, session_id: str, reason: str = "client") -> bool:
         if self.store.get_session(session_id) is None:
@@ -409,8 +514,11 @@ class Pipeline:
             return False
         conv = self.store.get_conversation(conv_id)
         kind = conv.get("kind") if conv else None
+        stamp = conv["updated_at"] if conv else None
         try:
-            summary = self.summarizer.summarize(segments, kind=kind)
+            # facts that repeat or update stored ones are never cut by the fact cap
+            summary = self.summarizer.summarize(
+                segments, kind=kind, known=lambda fs: self.store.facts_like(conv_id, fs))
         except Exception as e:
             log.exception("summary failed for %s", conv_id)
             self.store.mark_conversation_failed(conv_id, f"{type(e).__name__}: {e}")
@@ -419,7 +527,11 @@ class Pipeline:
             log.info("conversation %s discarded: %s", conv_id, summary["discard_reason"])
             self.store.save_discarded(conv_id, summary["discard_reason"], summary.get("kind"))
             return True
-        fact_ids = self.store.save_summary(conv_id, summary)
+        fact_ids = self.store.save_summary(conv_id, summary, expect_updated_at=stamp)
+        if fact_ids is None:  # changed or removed while the model worked: next pass
+            log.info("conversation %s changed during its summary; summarizing it again",
+                     conv_id)
+            return False
         try:
             self._link_facts(conv_id, fact_ids, segments[0].started_at)
         except Exception:  # the summary is saved; facts just stay unlinked
@@ -544,7 +656,8 @@ class Pipeline:
         for d in self.store.pending_digests():
             # every conversation of the day, also those the old digest didn't have
             day = d["conversation_ids"] + [c["id"] for c in self.digest_conversations(d["date"])]
-            if self.store.rewrite_pending(day):
+            # a resent written note waits for its new summary too
+            if self.store.rewrite_pending(day) or self.store.summaries_pending(day):
                 continue
             try:
                 self.make_digest(d["date"])

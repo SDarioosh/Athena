@@ -115,7 +115,9 @@ def build_pipeline(settings: Settings) -> Pipeline:
     return Pipeline(settings, store, make_vad(settings.vad_backend, settings),
                     build_transcriber(settings), build_diarizer(settings, store),
                     Summarizer(llm, settings.owner_name, timezone=settings.timezone,
-                               digest_skip_lists=settings.digest_skip_lists),
+                               digest_skip_lists=settings.digest_skip_lists,
+                               fact_min_score=settings.fact_min_score,
+                               max_facts=settings.max_facts_per_conversation),
                     embedder)
 
 

@@ -232,6 +232,55 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
 
+### Written notes
+
+`POST /v1/ingest/text` (JSON, same bearer token) takes a note the owner wrote by hand in
+the hub (Odysseus) and reviewed there:
+
+| field        | notes                                                                  |
+|--------------|------------------------------------------------------------------------|
+| `source_id`  | the hub's stable id: `hub-note:<id>` (id: `[A-Za-z0-9._-]{1,100}`)     |
+| `text`       | the reviewed text, at most 200,000 characters and 5,000 lines; a line over 4,000 characters is wrapped at a space |
+| `written_at` | when the page was written: ISO-8601 (naive = UTC) or epoch s/ms        |
+| `link`       | the note in the hub, `<hub>/#open=notes&note=<id>` (http/https, ≤ 2,000; no spaces, quotes, `( ) < > { } \| \ ^` or user info, `[ ]` only around an IPv6 host) |
+| `title`      | optional, ≤ 200 characters; shown with the link, not used as the summary title |
+
+It becomes one conversation of kind `note` on device `handwriting`: each non-empty line
+(spaces trimmed, control characters dropped) is a line by the owner at `written_at` plus
+one second per line, so the usual `/view/<id>?sig=…#t=<seconds>` link points at a line.
+No audio, VAD, transcription or diarization. The worker summarizes it with the
+voice-note prompts (summary, to-dos, facts; never discarded). The text is the owner's
+words, never instructions: the model gets it as the note's text, like a transcript.
+
+Answer: `{"ok": true, "source_id", "result": "created"|"replaced"|"unchanged",
+"conversation_id", "lines", "erased_lines", "transcript_link"}`; 400 with a `detail` for a
+bad `source_id`, `link`, `written_at` or text with no words, 422 for a field over its
+size.
+
+- **Resend** (same `source_id`): the lines are replaced, the digests that covered the note
+  are taken down and written again, and the worker summarizes it again. Facts and to-dos
+  said again keep their ids (and a to-do its status); the others are dropped, so the
+  hub's syncs retire them. A retired fact stays retired. The same lines and `written_at`
+  is a no-op (`"unchanged"`; a new `link` or `title` is stored). A resend that lands while
+  the model is summarizing the old text is summarized again on the next pass.
+- **Erased facts stay erased.** The hub still has the words of a fact the owner erased
+  (`erase_fact`), so a resend brings them back: a line with the same words as a line
+  `erase_fact` redacted in this note, or one that says an erased fact of any note or
+  recording (every content word of a fact of up to three, three quarters of a longer
+  one), is stored as `[forgotten]` (`erased_lines` counts them). The same holds for a new
+  note.
+- Until the re-summary, a resend keeps the note's summary, facts and to-dos, and moves
+  each one's line offset (`#t=`) to the same line (or the one with most words in
+  common); a line crossed out leaves the fact without an offset.
+- `DELETE /v1/ingest/text/{source_id}` removes the note: its lines, conversation, to-dos and
+  facts (a fact another conversation said too stays, owned by that one), and its digests
+  are written again. An erased fact's sentence stays (never served) so a later note that
+  writes it again keeps it `[forgotten]`, and what a forgotten fact of the note had
+  replaced stays replaced. `{"ok": true, "result": "deleted", "conversation_id"}`, or
+  `"already"` when there is no such note (idempotent).
+- The `/view` page says "Written by hand" and links to the note in the hub. Conversations
+  in the API carry `written: {"source_id", "link", "title"}` (null for recordings).
+
 VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD` (0.5; 0.35 by default with
 `CONVO_DIARIZER=pyannote`), `CONVO_VAD_MIN_SILENCE_MS` and `CONVO_VAD_SPEECH_PAD_MS` tune
 it. A far-field or wrist recording can be 20-30 dB quieter
@@ -328,7 +377,9 @@ both formats. `list_facts(format="json")` returns current facts in the text mode
 
 ```json
 {"facts": [{"id": 12, "subject": "Alice", "about": "person", "person_id": 3,
-            "fact": "Alice is vegetarian", "times_said": 3, "days": 2,
+            "fact": "Alice is vegetarian", "kind": "preference",
+            "conversation_id": "c-…", "quote": "Alice doesn't eat meat, remember?",
+            "times_said": 3, "days": 2,
             "first_said": "2025-10-09", "last_said": "2025-10-10",
             "confirmed": false, "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
 ```
@@ -339,6 +390,11 @@ owner, user, the user, `CONVO_OWNER_NAME` or the name of the enrolled owner voic
 former names (aliases, below); else `other`. `person_id` is the subject's person id (below) when `about` is `person`, and
 the owner's person id when it is `owner` (the owner person, below); null for `other`
 or when no such person exists.
+`kind` (MCP 0.11.0) is what sort of fact it is: `preference`, `plan`, `decision`,
+`relationship`, `personal` or `other` (null for facts stored before it). `conversation_id`
+is the conversation the fact was learned in, and `quote` the transcript line it was said
+on (at most 300 characters; null when there is no line, the transcript was pruned or the
+line erased), so a review page can show the words and group facts by conversation.
 `times_said` counts distinct conversations, `days` distinct local dates, and
 `first_said`/`last_said` are the first and last of those dates. `confirmed` is true when
 the fact meets the thresholds above, so a program can take every current fact with its
@@ -346,6 +402,35 @@ counts without knowing them (`confirmed=true` as an argument still filters). `li
 the same transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
 program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
 fact id that stops being returned (replaced, retired, or its conversation deleted).
+
+`written_by_hand` and `note_link` (MCP 0.12.0, additive) are on every JSON fact row and
+every JSON `list_action_items` row: true and the note's URL in the hub when the fact or
+item comes from a written note (`POST /v1/ingest/text`), else false and null. The text
+listings mark such facts, items and conversations `(written by hand: <link>)` instead of
+`(voice note)`.
+
+**Fact quality.** Small models list too many facts. The facts prompt leaves out
+thinking aloud, requests to someone else (action items), which tool was used and passing
+details of what was being worked on, never guesses anyone's gender, and asks for at most
+twice `CONVO_MAX_FACTS_PER_CONVERSATION` candidates (at least 5). Code drops what the model
+still returns of the first two: thinking aloud in the fact's main clause ("is
+considering …", "might …", "hasn't decided …"; not "an allergy that might cause …"), and
+requests: asking or telling someone to do something ("asked the landlord to fix …"), or
+"wants X to <errand>" when X is a person of the conversation ("wants Bo to send …", not
+"needs German to work in Zurich" or "wants Leo to attend the bilingual school"). Then one
+more model call scores each fact 1–5 (worth recalling in three months?), shown the
+line(s) it was said on; facts under `CONVO_FACT_MIN_SCORE` (default 4; 1 = no call) are
+left out (a fact it gives no score counts as that minimum), and at most
+`CONVO_MAX_FACTS_PER_CONVERSATION` (default 3; 0 = no cap) are kept, best first. A fact
+that shares its subject and a word with a stored fact (likely said again, or an update) is
+never cut by the cap, so an update can't be lost and a re-summary doesn't lose a fact that
+had replaced another. If the call fails, the facts are kept. In a voice note, facts that
+only repeat a dated event go first, and the owner's decisions are neither reviewed nor
+capped. Facts already stored are unchanged; a fact said again with a kind gives it to an
+older fact that had none. A fact's `quote` is the line `erase_fact` would redact: the line
+that starts in the cited second (the one sharing most words with the fact), else the
+nearest, else a nearby line that says the fact's words; for a pruned transcript, the
+newest conversation that said it again.
 
 **People.** Every enrolled voice and every person named in a conversation has a row in
 `people` with a stable id, so the hub can link them to its contacts. Names match in any
@@ -442,7 +527,7 @@ CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 convo-server mcp --http   # docker
 #   http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>
 ```
 
-**Uploads through the MCP server.** `convo-server mcp --http` also serves two plain HTTP
+**Uploads through the MCP server.** `convo-server mcp --http` also serves plain HTTP
 routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 `?access_token=`). They are not MCP tools, so no model ever sees them:
 
@@ -450,6 +535,8 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 |---|---|
 | `POST /ingest/chunk` | `POST /v1/ingest/chunk` (same multipart fields, same JSON answer) |
 | `POST /sessions/{session_id}/end` | `POST /v1/sessions/{id}/end` |
+| `POST /ingest/text` | `POST /v1/ingest/text` (same JSON fields and answer; written notes) |
+| `DELETE /ingest/text/{source_id}` | `DELETE /v1/ingest/text/{source_id}` |
 | `GET /health` | `GET /health` (here behind the token) |
 | `GET /conversations`, `GET /conversations/{id}`, `GET /conversations/{id}/transcript` | the `/v1` routes, same query |
 | `GET /action-items`, `PATCH /action-items/{id}` | the `/v1` routes |
@@ -465,7 +552,8 @@ Each request is forwarded unchanged to this module's own ingest API
 `CONVO_INGEST_TOKEN`, so there is one ingest code path and the ingest token, which also
 signs transcript links, never leaves the module. The API's status and `detail` come back
 as they are; the body is capped like the API's (25 MB of audio); if `convo-server serve`
-isn't running the answer is 502 with a readable `detail`. Odysseus uses these routes to
+isn't running the answer is 502 with a readable `detail`. `/ingest/text` takes
+`application/json` only (415 otherwise) and caps its body at about 1.2 MB. Odysseus uses these routes to
 add recordings (its call recorder, phones paired through it) with the URL and token of
 the `convo` MCP server it already has. **The MCP token can therefore add recordings**:
 treat it like the ingest token, and keep the MCP port on loopback, the Docker bridge or
