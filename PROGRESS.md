@@ -163,6 +163,14 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   the quote) on the same branch in SDarioosh/odysseus-expanded.
 - Facts already stored are unchanged; the owner dismisses them on the hub, or re-summarizes.
 - Tests: `server/tests/test_fact_quality.py`. **Server verification:** see the PR.
+- QC report on this PR (16 findings, 10 on this side, all reproduced and fixed): negated
+  "decided" no longer cancels a hedge; hedges count in the main clause only; requests
+  told apart from needs and plans; the review no longer rejects facts about things; the
+  prompt asks for twice the cap; voice notes drop event facts before the review and keep
+  decisions out of it; the quote and the review's line are the cited line (also in a
+  shared second); facts that repeat or update stored ones are never capped; a repeat
+  gives its kind to an older fact; quotes fall back to a later conversation when a
+  transcript was pruned, one query per conversation.
 
 ## Done on 2026-10-25: action-item and belief fixes from a QC report
 

@@ -35,15 +35,16 @@ LINES = ["Priya, can you write up how the Larkspur weather station joins the mes
 
 
 def summarize(facts: list[dict], kind: str = "casual", scores: dict[str, int] | None = None,
-              log: list | None = None, **opts) -> dict:
-    summary = {"title": "Chat", "summary": "s", "key_points": [], "people": [],
-               "topics": [], "action_items": [], "facts": facts}
+              log: list | None = None, people: list[str] | None = None, known=None,
+              items: list[dict] | None = None, **opts) -> dict:
+    summary = {"title": "Chat", "summary": "s", "key_points": [], "people": people or [],
+               "topics": [], "action_items": items or [], "facts": facts}
     llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(
         summary=summary, scores=scores, log=log))
     segments = [Segment(T0 + 10 * i, T0 + 10 * i + 5, line, "Me", True)
                 for i, line in enumerate(LINES)]
     return Summarizer(llm, "Me", timezone="Europe/Berlin", **opts).summarize(
-        segments, kind=kind)
+        segments, kind=kind, known=known)
 
 
 def fact(text: str, kind: str = "other", at: int = 0, subject: str = "Me") -> dict:
@@ -72,7 +73,7 @@ def test_thinking_aloud_and_requests_are_dropped(kind):
         fact("Me wants Priya Okafor to write a report on the mesh setup and send it back."),
         fact("Me asked him to bring the spare antenna."),
         fact("Me is allergic to shellfish.", "personal", 20),
-    ], kind=kind)
+    ], kind=kind, people=["Priya Okafor"])
     assert texts(out) == ["Me is allergic to shellfish."]
 
 
@@ -213,3 +214,199 @@ def test_a_re_summary_keeps_the_kind(pipeline):
                               "topics": [], "people": [], "action_items": [],
                               "facts": facts})
     assert json_facts(pipeline)["Me prefers tea to coffee."]["kind"] == "preference"
+
+
+# --- QC report fixes (fictional data) ------------------------------------------------
+
+def kept(texts_in: list[str], people: list[str] | None = None) -> list[str]:
+    return texts(summarize([fact(t) for t in texts_in], people=people, max_facts=0))
+
+
+def test_undecided_is_thinking_aloud():
+    assert kept(["Me hasn't decided whether to take the Zurich role.",
+                 "Me might move to Porto, but hasn't decided yet.",
+                 "Me has not decided whether to sell the boat.",
+                 "Me is currently considering moving to Porto.",
+                 "Me is seriously thinking about selling the kayak.",
+                 "Me decided to keep the flat in Lisbon."]) == [
+        "Me decided to keep the flat in Lisbon."]
+
+
+def test_a_hedge_outside_the_main_clause_is_no_hedge():
+    facts = ["Me has a severe peanut allergy that might cause anaphylaxis.",
+             "Me plans to move to Lisbon in June, though the start date might shift.",
+             "Priya is debating in the regional tournament."]
+    assert kept(facts) == facts
+
+
+def test_requests_are_told_apart_from_needs_and_plans():
+    people = ["Bo Lindqvist", "Priya", "Leo", "Jan van Dijk"]
+    facts = ["Me needs German to work at the Zurich office.",
+             "Me needs Tailscale to reach the home server.",
+             "Me wants Friday to stay free for deep work.",
+             "Me wants Leo to attend the bilingual school in autumn.",
+             "Me wants Dr. Patel to send the lab results.",
+             "Me asked Ana Maria Silva to call the clinic.",
+             "Me asked Bo and Priya to test the relay.",
+             "Me asked the landlord to fix the boiler.",
+             "Priya asked me to send the slides.",
+             "Me asked Bo not to touch the router.",
+             "Me wants Bo Lindqvist to write a report on the mesh setup.",
+             "Me wants Jan van Dijk to SSH into the server."]
+    assert kept(facts, people) == facts[:4]
+
+
+def test_the_review_does_not_reject_facts_about_things():
+    assert "not about anyone" not in REVIEW_SYSTEM
+    assert "named project, place or thing is fine" in REVIEW_SYSTEM
+
+
+def test_the_prompt_asks_for_more_candidates_than_the_cap():
+    log: list = []
+    summarize([fact("Me is allergic to shellfish.")], log=log, max_facts=3)
+    (facts_call,) = [b for b in log
+                     if b["response_format"]["json_schema"]["name"] == "FactList"]
+    assert "List at most 6 facts" in facts_call["messages"][0]["content"]
+
+
+def test_voice_note_decisions_from_the_fact_list_skip_review_and_cap():
+    facts = [fact(f"Me owns {n} bicycles.") for n in range(2, 5)]
+    facts.append(fact("Me decided to keep the flat in Lisbon.", "decision", 30))
+    scores = {f["fact"]: 5 for f in facts[:3]} | {facts[3]["fact"]: 2}
+    out = summarize(facts, kind="note", scores=scores, max_facts=2)
+    assert "Me decided to keep the flat in Lisbon." in texts(out)
+    assert len(out["facts"]) == 3  # two capped bicycles + the decision
+
+
+def test_voice_note_event_facts_do_not_take_cap_places():
+    items = [{"text": "Meeting with Priya", "kind": "event", "due": "Tuesday",
+              "due_date": "2025-10-14", "time": "10am", "owner": "Me", "at_seconds": 0}]
+    facts = [fact("Me has a meeting with Priya on Tuesday at 10am."),
+             fact("Me is allergic to shellfish.", "personal", 20),
+             fact("Me's sister Ines lives in Porto.", "relationship", 30)]
+    out = summarize(facts, kind="note", items=items, max_facts=2)
+    assert texts(out) == ["Me is allergic to shellfish.", "Me's sister Ines lives in Porto."]
+
+
+def test_the_review_sees_every_line_of_a_shared_second():
+    log: list = []
+    llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary={
+        "title": "t", "summary": "s", "key_points": [], "people": [], "topics": [],
+        "action_items": [], "facts": [fact("Me is allergic to shellfish.", at=10)]},
+        log=log))
+    Summarizer(llm, "Me").summarize([
+        Segment(T0, T0 + 5, "So where shall we eat tonight then?", "Priya", False),
+        Segment(T0 + 10.1, T0 + 10.5, "Yeah.", "Priya", False),
+        Segment(T0 + 10.7, T0 + 13, "I'm allergic to shellfish.", "Me", True)])
+    (review,) = [b for b in log if b["response_format"]["json_schema"]["name"] == "FactReview"]
+    said = json.loads(review["messages"][-1]["content"])["facts"][0]["said"]
+    assert "allergic to shellfish" in said
+
+
+def test_unscored_facts_count_as_the_minimum_score():
+    facts = [fact("Me owns 2 bicycles."), fact("Me owns 3 bicycles."),
+             fact("Me owns 4 bicycles.")]
+    inner = fake_llm_transport(summary={"title": "t", "summary": "s", "key_points": [],
+                                        "people": [], "topics": [], "action_items": [],
+                                        "facts": facts})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        name = json.loads(request.content)["response_format"]["json_schema"]["name"]
+        if name == "FactReview":  # no score for number 0
+            return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(
+                {"scores": [{"number": 1, "score": 5}, {"number": 2, "score": 5}]})}}]})
+        return inner.handler(request)
+
+    llm = LLMClient("http://llm.test/v1", "m", transport=httpx.MockTransport(handler))
+    segments = [Segment(T0, T0 + 5, "We talked about bicycles for a while.", "Me", True)]
+    assert texts(Summarizer(llm, "Me", max_facts=3).summarize(segments)) == \
+        [f["fact"] for f in facts]  # kept, at the minimum score
+    assert texts(Summarizer(llm, "Me", max_facts=2).summarize(segments)) == \
+        ["Me owns 3 bicycles.", "Me owns 4 bicycles."]  # ranked under the scored ones
+
+
+def test_a_fact_that_updates_a_stored_one_is_never_capped():
+    stored = [{"subject": "Ines", "fact": "Ines lives in Lisbon."}]
+    facts = [fact(f"Me owns {n} bicycles.") for n in range(2, 5)]
+    facts.append(fact("Ines lives in Porto now.", "personal", 30, subject="Ines"))
+    out = summarize(facts, max_facts=3, known=lambda fs: stored)
+    assert "Ines lives in Porto now." in texts(out) and len(out["facts"]) == 4
+    # a failing lookup only means the cap applies to everything
+    def broken(fs):
+        raise RuntimeError("db locked")
+    assert len(summarize(facts, max_facts=3, known=broken)["facts"]) == 3
+
+
+def test_a_re_summary_keeps_a_fact_that_replaced_another(pipeline):
+    store = pipeline.store
+    old = conversation(store, "c0", "Ines lives in Lisbon.",
+                       [{"subject": "Ines", "fact": "Ines lives in Lisbon.",
+                         "source_at": T0 + 1}])
+    conv = conversation(store, "c1", "Ines moved to Porto.",
+                        [{"subject": "Ines", "fact": "Ines lives in Porto now.",
+                          "source_at": T0 + 1}])
+    new_id = json_facts(pipeline)["Ines lives in Porto now."]["id"]
+    old_id = json_facts(pipeline)["Ines lives in Lisbon."]["id"]
+    store.link_fact(new_id, "updates", old_id)
+    known = store.facts_like(conv, [{"subject": "Ines", "fact": "Ines lives in Porto now."}])
+    assert {"Ines lives in Porto now.", "Ines lives in Lisbon."} <= {k["fact"] for k in known}
+    assert old != conv
+
+
+def test_a_fact_said_again_with_a_kind_gives_it_to_the_old_one(pipeline):
+    store = pipeline.store
+    conversation(store, "c0", "Oat milk for me.",
+                 [{"subject": "Me", "fact": "Me drinks oat milk.", "source_at": T0 + 1}])
+    conversation(store, "c1", "Oat milk, as always.",
+                 [{"subject": "Me", "fact": "Me drinks oat milk.", "kind": "preference",
+                   "source_at": T0 + 1}])
+    ids = sorted(r["id"] for r in store.list_facts())
+    store.link_fact(ids[1], "same", ids[0])
+    assert json_facts(pipeline)["Me drinks oat milk."]["kind"] == "preference"
+
+
+def segments_conversation(store, name: str, segs: list[Segment], facts: list[dict]) -> str:
+    store.add_chunk(session_id=name, device="omi", sequence=0, started_at=T0, duration=30,
+                    codec="wav", audio_path=None, speech=[])
+    store.replace_segments(name, "omi", segs, [(T0, T0 + 30)])
+    conv = store.save_conversation(None, "omi", [s.id for s in store.session_segments(name)])
+    store.save_summary(conv, {"title": name, "summary": "s", "key_points": [],
+                              "topics": [], "people": [], "action_items": [],
+                              "facts": facts})
+    return conv
+
+
+def test_the_quote_is_the_cited_line_not_the_one_before(pipeline):
+    # [9] at 9.7 s and [10] at 10.6 s: the fact cites [10] (source_at = start + 10)
+    segs = [Segment(T0, T0 + 2, "Hi there.", "Me", True),
+            Segment(T0 + 9.7, T0 + 9.9, "Right, okay.", "Priya", False),
+            Segment(T0 + 10.6, T0 + 13, "My sister Ines lives in Porto.", "Me", True)]
+    segments_conversation(pipeline.store, "c1", segs,
+                          [{"subject": "Me", "fact": "Me's sister Ines lives in Porto.",
+                            "source_at": T0 + 10}])
+    assert json_facts(pipeline)["Me's sister Ines lives in Porto."]["quote"] == \
+        "My sister Ines lives in Porto."
+
+
+def test_the_quote_of_a_shared_second_is_the_line_with_the_fact(pipeline):
+    segs = [Segment(T0, T0 + 2, "Hi there.", "Me", True),
+            Segment(T0 + 10.1, T0 + 10.5, "Yeah.", "Priya", False),
+            Segment(T0 + 10.7, T0 + 13, "I'm allergic to shellfish.", "Me", True)]
+    segments_conversation(pipeline.store, "c1", segs,
+                          [{"subject": "Me", "fact": "Me is allergic to shellfish.",
+                            "source_at": T0 + 10}])
+    assert json_facts(pipeline)["Me is allergic to shellfish."]["quote"] == \
+        "I'm allergic to shellfish."
+
+
+def test_a_wrongly_cited_line_is_quoted_as_erase_fact_would_redact_it(pipeline):
+    segs = [Segment(T0, T0 + 2, "Hello.", "Me", True),
+            Segment(T0 + 2.2, T0 + 5, "My sister Ines lives in Porto.", "Me", True)]
+    segments_conversation(pipeline.store, "c1", segs,
+                          [{"subject": "Me", "fact": "Me's sister Ines lives in Porto.",
+                            "source_at": T0}])
+    row = json_facts(pipeline)["Me's sister Ines lives in Porto."]
+    assert row["quote"] == "My sister Ines lives in Porto."
+    pipeline.store.erase_fact(row["id"])
+    texts_left = [s.text for s in pipeline.store.conversation_segments(row["conversation_id"])]
+    assert "Hello." in texts_left and "My sister Ines lives in Porto." not in texts_left

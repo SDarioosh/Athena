@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -59,6 +60,9 @@ class ActionItem(BaseModel):
     at_seconds: int | None = Field(default=None,
                                    description="Offset in seconds where it was mentioned")
 
+
+# Stored facts that may match some candidate facts (``Summarizer.summarize`` ``known``).
+KnownFacts = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
 
 # What sort of fact it is; the hub labels and files facts by it (list_facts JSON ``kind``).
 FACT_KINDS = ("preference", "plan", "decision", "relationship", "personal", "other")
@@ -281,8 +285,8 @@ firm decision, a dated plan, a lasting preference;
 3: true but minor or short-lived;
 2: thinking aloud (considering, might), a request or task for someone, how a task was \
 done or which tool was used, details of what was being worked on that day;
-1: trivial, vague (says "the device" or "the project" without naming it) or not about \
-anyone.
+1: trivial, or vague (says "the device" or "the project" without naming it). A fact \
+about a named project, place or thing is fine: score it like any other.
 "said" is the transcript line the fact came from. Score every fact by its number. \
 Output JSON only: {"scores": [{"number": <number>, "score": <1-5>}]}."""
 
@@ -465,8 +469,13 @@ class Summarizer:
         self.digest_skip_lists = {n.lower() for n in map(clean_list_name,
                                   digest_skip_lists.split(",")) if n}
 
-    def summarize(self, segments: list[Segment], kind: str | None = None) -> dict[str, Any]:
+    def summarize(self, segments: list[Segment], kind: str | None = None,
+                  known: KnownFacts | None = None) -> dict[str, Any]:
         """Return a storage-ready dict (absolute ``source_at`` timestamps).
+
+        ``known`` (optional) returns the stored facts that may match some candidate facts
+        (the pipeline passes the store's): a fact that repeats or updates one of them is
+        never cut by the per-conversation cap (``_review_facts``).
 
         ``kind`` is the conversation's stored kind; only ``"note"`` (a voice note) changes
         anything: see ``_summarize_note``. Discarded conversations come back as
@@ -477,7 +486,7 @@ class Summarizer:
         origin = segments[0].started_at
         parts = self._split(segments, origin)
         if kind == "note":
-            return self._summarize_note(parts, origin)
+            return self._summarize_note(parts, origin, known)
         if sum(len(s.text.split()) for s in segments) < self.min_words:
             return {"discard": True, "discard_reason": "too_short", "kind": "other"}
         junk = relevance_rules.discard_reason([s.text for s in segments])
@@ -515,13 +524,14 @@ class Summarizer:
         _drop_errands(out, spoken, _lines(parts), origin)
         _name_meetings(out["action_items"], spoken)
         _drop_event_facts(out)
-        self._review_facts(out, parts, origin)
+        self._review_facts(out, parts, origin, known)
         _mark_explicit(out["action_items"], None)
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
         return out
 
-    def _summarize_note(self, parts: list[str], origin: float) -> dict[str, Any]:
+    def _summarize_note(self, parts: list[str], origin: float,
+                        known: KnownFacts | None = None) -> dict[str, Any]:
         """A voice note: no length check and no triage (never discarded), the note
         prompts for notes and to-dos, facts as usual; stored with kind "note"."""
         fmt = {"owner": self.owner}
@@ -560,11 +570,14 @@ class Summarizer:
                             owner=None)
         spoken = _spoken(parts)
         _drop_errands(out, spoken, _lines(parts), origin)
-        # the model's facts only: a decision the owner states in a voice note is kept
-        self._review_facts(out, parts, origin)
-        self._intentions_to_facts(out, spoken)
+        # events first: a fact that only repeats a dated event goes before the review, so
+        # it can't take one of the cap's places
         _name_meetings(out["action_items"], spoken)
         _drop_event_facts(out)
+        # a decision the owner states in a voice note is kept (not reviewed or capped),
+        # whether the model listed it as a fact or as a to-do (``_intentions_to_facts``)
+        self._review_facts(out, parts, origin, known, keep_decisions=True)
+        self._intentions_to_facts(out, spoken)
         out["action_items"] = _split_list_lines(out["action_items"])
         _mark_explicit(out["action_items"], spoken)
         return out
@@ -597,45 +610,63 @@ class Summarizer:
         """The facts prompt's cap sentence (``max_facts``)."""
         if not self.max_facts:
             return ""
-        return (f"\nList at most {self.max_facts} facts: the ones the user would most want "
-                "recalled months from now.")
+        # room above the cap: filters and the review drop some, the review keeps the best
+        return (f"\nList at most {max(5, 2 * self.max_facts)} facts: the ones the user would "
+                "most want recalled months from now.")
 
-    def _review_facts(self, out: dict[str, Any], parts: list[str], origin: float) -> None:
+    def _review_facts(self, out: dict[str, Any], parts: list[str], origin: float,
+                      known: KnownFacts | None = None, keep_decisions: bool = False) -> None:
         """A second look at the model's facts. One call scores each 1-5 (worth recalling
         in three months?, ``REVIEW_SYSTEM``) and facts under ``fact_min_score`` are left
         out; then the best ``max_facts`` are kept (ties: the model's order). A fact the
-        review gives no score keeps its place; a failed review call keeps every fact."""
+        review gives no score counts as ``fact_min_score``; a failed review call keeps
+        every fact. A fact that repeats or updates a stored one (``known``) is never cut
+        by the cap: it adds nothing new, and cutting an update would leave the old value
+        current. With ``keep_decisions`` (voice notes), the owner's decisions are neither
+        reviewed nor capped."""
         facts = out["facts"]
         if not facts:
             return
+        owner = {self.owner.lower(), *_OWNER_WORDS}
+        kept = [keep_decisions and f.get("kind") == "decision"
+                and (f.get("subject") or "").strip().lower() in owner for f in facts]
+        asked_ids = [i for i, k in enumerate(kept) if not k]
         scores: dict[int, int] = {}
-        if self.fact_min_score > 1:
-            lines = _lines(parts)
-            asked = [{"number": i, "subject": f["subject"], "fact": f["fact"],
-                      "said": lines.get(round(f["source_at"] - origin), "")
-                      if f.get("source_at") is not None else ""}
-                     for i, f in enumerate(facts)]
+        if self.fact_min_score > 1 and asked_ids:
+            lines = _said_lines(parts)
+            asked = [{"number": i, "subject": facts[i]["subject"], "fact": facts[i]["fact"],
+                      "said": lines.get(int(facts[i]["source_at"] - origin), "")
+                      if facts[i].get("source_at") is not None else ""}
+                     for i in asked_ids]
             try:
                 review = self.llm.structured(REVIEW_SYSTEM, json.dumps(
                     {"facts": asked}, ensure_ascii=False), FactReview)
                 assert isinstance(review, FactReview)
                 scores = {r.number: min(5, max(1, r.score)) for r in review.scores
-                          if 0 <= r.number < len(facts)}
+                          if r.number in asked_ids}
             except LLMError as e:
                 log.warning("fact review failed, keeping the facts: %s", e)
-        keep = []
+        repeats = _known_matches(facts, known) if known is not None else set()
+        keep, ranked = [], []
         for i, fact in enumerate(facts):
+            if kept[i]:
+                keep.append(i)
+                continue
             score = scores.get(i, self.fact_min_score)
             if score < self.fact_min_score:
                 log.info("dropped a fact the review scored %d: %r", score, fact["fact"])
-                continue
-            keep.append((-score, i, fact))
-        keep.sort(key=lambda x: x[:2])
-        if self.max_facts and len(keep) > self.max_facts:
-            for _, _, fact in keep[self.max_facts:]:
-                log.info("dropped a fact over the cap of %d: %r", self.max_facts, fact["fact"])
-            keep = keep[:self.max_facts]
-        out["facts"] = [fact for _, _, fact in sorted(keep, key=lambda x: x[1])]
+            elif i in repeats:
+                keep.append(i)
+            else:
+                ranked.append((-score, i))
+        ranked.sort()
+        if self.max_facts and len(ranked) > self.max_facts:
+            for _, i in ranked[self.max_facts:]:
+                log.info("dropped a fact over the cap of %d: %r", self.max_facts,
+                         facts[i]["fact"])
+            ranked = ranked[:self.max_facts]
+        keep += [i for _, i in ranked]
+        out["facts"] = [facts[i] for i in sorted(keep)]
 
     def _intention(self, item: dict[str, Any], spoken: list[tuple[str, str]]) -> str | None:
         """The fact an action item really is (see ``_intentions_to_facts``), or None."""
@@ -1621,19 +1652,67 @@ def fact_kind(kind: Any) -> str:
     return k if k in FACT_KINDS else "other"
 
 
-# thinking aloud, not decided: "is considering selling the boat", "might move to Porto"
+# thinking aloud, not decided: "is considering selling the boat", "might move to Porto",
+# "hasn't decided whether to ..."; looked for in the fact's main clause only, so "an
+# allergy that might cause anaphylaxis" or "..., though the date might shift" stay
 _HEDGE = re.compile(
-    r"\b(?:is|are|was|were|has\s+been|have\s+been)\s+(?:still\s+|also\s+|now\s+)?"
-    r"(?:considering|contemplating|debating|weighing|wondering|unsure|not\s+sure|"
-    r"thinking\s+(?:about|of)|toying\s+with)\b"
+    r"\b(?:is|are|was|were|has\s+been|have\s+been)\s+(?:(?:\w+ly|still|also|now|just)\s+)*"
+    r"(?:considering|contemplating|weighing|wondering|unsure|not\s+sure|undecided|"
+    r"debating\s+(?:whether|if|between|\w+ing)\b|thinking\s+(?:about|of)|toying\s+with)\b"
+    r"|\b(?:has|have|had)(?:n't|\s+not)\s+(?:yet\s+)?decided\b|\bnever\s+decided\b"
     r"|\b(?:might|maybe|perhaps|possibly)\b", re.IGNORECASE)
-_DECIDED = re.compile(r"\b(?:decided|has\s+chosen|chose)\b", re.IGNORECASE)
-# a request to someone else: "wants Bo Lindqvist to write a report", "asked her to call"
-# (names are capitalised, so no IGNORECASE; "wants to ..." is not one)
-_REQUEST = re.compile(
-    r"\b(?:[Ww]ants?|[Ww]anted|[Aa]sked|[Aa]sks|[Ww]ould\s+like|[Nn]eeds?|[Ee]xpects?|"
-    r"[Tt]old|[Tt]ells)\s+(?:[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)?|him|her|them|someone|"
-    r"somebody)\s+to\s+(?!be\b)[a-z]\w*")
+# where a fact's main clause ends: a comma or semicolon, or a subordinate clause
+_CLAUSE_CUT = re.compile(r"[,;]|\b(?:that|which|who|though|although|because|if|when|"
+                         r"unless|since|while|so)\b", re.IGNORECASE)
+# a decision settles it, unless negated ("hasn't decided", "not decided", "never decided")
+_DECIDED = re.compile(r"(?<!not\s)(?<!n't\s)(?<!never\s)(?<!yet\s)"
+                      r"\b(?:decided|has\s+chosen|chose)\b", re.IGNORECASE)
+# a request to someone else. Asking or telling someone (a name, a title, a role, a
+# pronoun) to do something always is one: "asked Dr. Patel to send ...", "asked the
+# landlord not to ...", "Priya asked me to send ...". "Wants X to <verb>" only when X is
+# a person of the conversation or a pronoun: "needs German to work in Zurich", "wants
+# Friday to stay free" are facts.
+_NAME = r"[A-Z][\w'-]*(?:\s+(?:[A-Z][\w'-]*|van|von|de|der|da|del|di|le|la))*"
+_TITLE = r"(?:(?:Dr|Mr|Mrs|Ms|Mx|Prof)\.?\s+)"
+_ASKED = re.compile(
+    r"\b(?:asked|asks|told|tells|reminded|reminds)\s+"
+    r"(?:" + _TITLE + r"?" + _NAME + r"(?:\s+(?:and|&)\s+" + _NAME + r")?"
+    r"|me|him|her|them|us|someone|somebody|(?:the|my|our|his|her|their)\s+[a-z]+)"
+    r"\s+(?:not\s+)?to\s+[A-Za-z]\w*")
+# what "wants Bo to ..." asks of Bo when it is a request (an errand), not a plan such as
+# "wants Leo to attend the bilingual school"
+_ERRANDS = ("send|write|bring|call|email|e-mail|text|message|fix|check|test|review|share|"
+            "book|buy|order|pick|finish|draft|prepare|update|forward|reply|schedule|sign|"
+            "pay|look|install|set|clean|return|lend|print|upload|read|ssh|SSH|deliver|"
+            "post|file|submit|confirm|organi[sz]e|arrange|handle|sort|grab|get|do|make")
+_WANTS = re.compile(
+    r"\b(?:wants|wanted|would\s+like|asks\s+for)\s+"
+    r"(?P<who>" + _TITLE + r"?" + _NAME + r"(?:\s+(?:and|&)\s+" + _NAME + r")?"
+    r"|him|her|them|someone|somebody)\s+(?:not\s+)?to\s+(?:" + _ERRANDS + r")\b")
+
+
+def _hedged(text: str) -> bool:
+    """Thinking aloud in the fact's main clause, not settled by a decision there."""
+    main = _CLAUSE_CUT.split(text, maxsplit=1)[0]
+    m = _HEDGE.search(main)
+    return m is not None and not _DECIDED.search(main)
+
+
+def _request(text: str, people: Iterable[str]) -> bool:
+    """A request to someone else (see ``_ASKED``, ``_WANTS``)."""
+    if _ASKED.search(text):
+        return True
+    names = {n.strip().lower() for p in people for n in (p, p.split()[0] if p.split() else "")}
+    for m in _WANTS.finditer(text):
+        who = m["who"]
+        if who.lower() in {"him", "her", "them", "someone", "somebody"}:
+            return True
+        title = re.match(_TITLE, who)
+        bare = who[title.end():] if title else who
+        parts = {x.strip().lower() for x in re.split(r"\s+(?:and|&)\s+", bare)}
+        if title or any(x in names or x.split()[0] in names for x in parts if x):
+            return True
+    return False
 
 
 def _drop_passing_facts(out: dict[str, Any]) -> None:
@@ -1651,14 +1730,46 @@ def _drop_passing_facts(out: dict[str, Any]) -> None:
         if _CURIOUS.search(text):
             log.info("dropped a passing-curiosity fact: %r", text)
             continue
-        if _HEDGE.search(text) and not _DECIDED.search(text):
+        if _hedged(text):
             log.info("dropped a thinking-aloud fact: %r", text)
             continue
-        if _REQUEST.search(text):
+        if _request(text, out.get("people") or []):
             log.info("dropped a request to someone else: %r", text)
             continue
         keep.append(fact)
     out["facts"] = keep
+
+
+def _said_lines(parts: list[str]) -> dict[int, str]:
+    """The transcript's lines by offset, lines that start in the same second joined
+    (``_lines`` keeps the first only): what the review is shown as "said"."""
+    out: dict[int, list[str]] = {}
+    for part in parts:
+        for line in part.splitlines():
+            m = _LINE.match(line.strip())
+            if m:
+                out.setdefault(int(m["at"]), []).append(m["text"])
+    return {k: " / ".join(v) for k, v in out.items()}
+
+
+def _known_matches(facts: list[dict[str, Any]], known: KnownFacts) -> set[int]:
+    """Indexes of ``facts`` that share their subject and a content word (beyond the
+    subject's own) with a stored fact: likely the same fact said again, or an update."""
+    try:
+        stored = known(facts)
+    except Exception:  # noqa: BLE001  (a lookup problem must not fail the summary)
+        log.exception("known facts lookup failed; capping all facts")
+        return set()
+    out = set()
+    for i, f in enumerate(facts):
+        subj = (f.get("subject") or "").strip().lower()
+        words = _content_words(f["fact"]) - _content_words(subj)
+        for k in stored:
+            if (k.get("subject") or "").strip().lower() == subj and \
+                    words & (_content_words(k.get("fact") or "") - _content_words(subj)):
+                out.add(i)
+                break
+    return out
 
 
 def _lines(parts: list[str]) -> dict[int, str]:

@@ -346,13 +346,26 @@ fact id that stops being returned (replaced, retired, or its conversation delete
 
 **Fact quality.** Small models list too many facts. The facts prompt leaves out
 thinking aloud, requests to someone else (action items), which tool was used and passing
-details of what was being worked on, and never guesses anyone's gender; code drops what
-the model still returns of the first two ("is considering …", "might …", "wants Bo to
-…"). Then one more model call scores each fact 1–5 (worth recalling in three months?)
-and facts under `CONVO_FACT_MIN_SCORE` (default 4; 1 = no call) are left out, and at most
-`CONVO_MAX_FACTS_PER_CONVERSATION` (default 3; 0 = no cap) are kept, best first. If that
-call fails, the facts are kept. Decisions the owner states in a voice note are not
-reviewed or capped. Facts already stored are unchanged.
+details of what was being worked on, never guesses anyone's gender, and asks for at most
+twice `CONVO_MAX_FACTS_PER_CONVERSATION` candidates (at least 5). Code drops what the model
+still returns of the first two: thinking aloud in the fact's main clause ("is
+considering …", "might …", "hasn't decided …"; not "an allergy that might cause …"), and
+requests: asking or telling someone to do something ("asked the landlord to fix …"), or
+"wants X to <errand>" when X is a person of the conversation ("wants Bo to send …", not
+"needs German to work in Zurich" or "wants Leo to attend the bilingual school"). Then one
+more model call scores each fact 1–5 (worth recalling in three months?), shown the
+line(s) it was said on; facts under `CONVO_FACT_MIN_SCORE` (default 4; 1 = no call) are
+left out (a fact it gives no score counts as that minimum), and at most
+`CONVO_MAX_FACTS_PER_CONVERSATION` (default 3; 0 = no cap) are kept, best first. A fact
+that shares its subject and a word with a stored fact (likely said again, or an update) is
+never cut by the cap, so an update can't be lost and a re-summary doesn't lose a fact that
+had replaced another. If the call fails, the facts are kept. In a voice note, facts that
+only repeat a dated event go first, and the owner's decisions are neither reviewed nor
+capped. Facts already stored are unchanged; a fact said again with a kind gives it to an
+older fact that had none. A fact's `quote` is the line `erase_fact` would redact: the line
+that starts in the cited second (the one sharing most words with the fact), else the
+nearest, else a nearby line that says the fact's words; for a pruned transcript, the
+newest conversation that said it again.
 
 **People.** Every enrolled voice and every person named in a conversation has a row in
 `people` with a stable id, so the hub can link them to its contacts. Names match in any
