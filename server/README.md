@@ -91,6 +91,16 @@ names a speaker. It never fired in the eval, but a wrist mic that turns away can
 someone else the loudest: if the log shows it naming the wrong person, set
 `CONVO_OWNER_HINT_MARGIN=0`.
 
+#### Sentence fragments become one line
+
+Whisper ends lines mid-sentence and the pyannote line split cuts at every turn change, so
+"I just" / "found this" could be two lines. After speakers are named, a line that doesn't
+end a sentence (`.`, `?`, `!`, `…`) joins the next one when the pause is at most
+`CONVO_JOIN_GAP_SECONDS` (1.0) and the joined line at most `CONVO_JOIN_MAX_SECONDS`
+(30): always for the same speaker; when one of them is `Unknown`, the line takes the
+other's name; two different named speakers stay apart (often a real interruption).
+`CONVO_JOIN_LINES=false` keeps whisper's lines. Only new recordings change.
+
 ### Speakers
 
 - Each person has several voice samples (enrollment is cut into ~9 s samples; every

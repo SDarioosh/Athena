@@ -169,6 +169,13 @@ class Settings(BaseSettings):
     # Line splitting: the shortest part a split leaves (shorter ones join a neighbour).
     # Unset: 0.3 with CONVO_DIARIZER=pyannote, else 1.5.
     speaker_split_min_seconds: float | None = None
+    # Join a line that doesn't end a sentence with the next one when the pause between
+    # them is at most join_gap_seconds and the joined line at most join_max_seconds:
+    # same speaker, or one of them "Unknown" (it takes the other's name); two different
+    # named speakers stay apart (convo_server/lines.py).
+    join_lines: bool = True
+    join_gap_seconds: float = 1.0
+    join_max_seconds: float = 30.0
     # Name a speaker only if its best voice beats the runner-up voice by this much
     # (0 = off), and (pyannote) only with this much speech (0 = off).
     speaker_match_margin: float = 0.0
