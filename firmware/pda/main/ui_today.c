@@ -55,6 +55,47 @@ static void short_day(int32_t day, char *out, size_t cap)
     }
 }
 
+/* s without spaces and dots (".", "…") at its ends: its start, *len its length */
+static const char *trimmed(const char *s, size_t *len)
+{
+    while (*s == ' ') {
+        s++;
+    }
+    size_t n = strlen(s);
+    for (;;) {
+        if (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '.')) {
+            n--;
+        } else if (n >= 3 && memcmp(s + n - 3, "\xe2\x80\xa6", 3) == 0) {
+            n -= 3;
+        } else {
+            break;
+        }
+    }
+    *len = n;
+    return s;
+}
+
+/* A second line that only repeats the first: the same words, any case, or the first line
+ * cut short (a note's title is the hub's short form of its one item). */
+static bool repeats(const char *line, const char *first)
+{
+    size_t nl, nf;
+    line = trimmed(line, &nl);
+    first = trimmed(first, &nf);
+    if (nl == 0 || nl > nf) {
+        return false;
+    }
+    for (size_t i = 0; i < nl; i++) {
+        char a = line[i], b = first[i];
+        a = (char)(a >= 'A' && a <= 'Z' ? a + 32 : a);
+        b = (char)(b >= 'A' && b <= 'Z' ? b + 32 : b);
+        if (a != b) {
+            return false;
+        }
+    }
+    return nl == nf || nl >= 20;
+}
+
 /* an item: first = right under a heading (no rule above it) */
 static void draw_item(const lay_t *l, int top, const today_item_t *it, bool first)
 {
@@ -88,6 +129,9 @@ static void draw_item(const lay_t *l, int top, const today_item_t *it, bool firs
             /* no reason given: the list it is on */
             const char *title = f->todos[it->ref.note].title;
             snprintf(why, sizeof(why), "%s", title ? title : "Untitled checklist");
+        }
+        if (!st.failed && repeats(why, ti->text)) {
+            why[0] = 0; /* the to-do shows once */
         }
         gfx_text_fit(TEXT, ITEM_X, y2, ITEM_W, why, GFX_INK);
         hit(l, (EpdRect){0, top, W, ITEM_H}, UI_TODAY_HIT_TODO, it->ref.note * 64 + it->ref.item);

@@ -454,6 +454,44 @@ static void test_clock_digits_stay(void)
     CHECK_EQ(c0, -1);
 }
 
+/* A to-do without a reason shows its list's title under it, but not when the title only
+ * repeats the to-do (a one-item note the hub filed): then the to-do shows once. */
+static void test_todo_once(void)
+{
+    static const char *const titles[] = {"Work", "Call the bank about the card", "call the bank about the card.",
+                                         "Call the bank about the\xe2\x80\xa6", "Call"};
+    static const bool shown[] = {true, false, false, false, true};
+    for (int t = 0; t < 5; t++) {
+        char js[512];
+        snprintf(js, sizeof(js),
+                 "{\"v\":1,\"version\":1,\"todos\":[{\"id\":\"n\",\"title\":\"%s\",\"items\":"
+                 "[{\"i\":0,\"text\":\"Call the bank about the card\"}]}],"
+                 "\"insight\":{\"date\":\"2026-10-20\",\"focus\":[{\"ref\":\"todo:n:0\"}]}}",
+                 titles[t]);
+        CHECK_EQ(feed_parse(js, strlen(js), &feed), 0);
+        today_plan_for_today(&feed, TODAY, NOW, TZ, &plan);
+        CHECK(plan.from_insight);
+        int page = 0;
+        render(&page);
+        const hit_rec_t *h = NULL;
+        for (int i = 0; i < n_hits; i++) {
+            if (hits[i].kind == UI_TODAY_HIT_TODO) {
+                h = &hits[i];
+            }
+        }
+        CHECK(h != NULL);
+        if (h) {
+            /* the second line: below the first line's baseline, above the item's end */
+            const int second = ink(MARGIN + 88, h->r.y + 33 + 12, W - MARGIN, h->r.y + h->r.height - 2);
+            if (shown[t] != (second > 0)) {
+                fprintf(stderr, "title \"%s\": second line %s\n", titles[t], second ? "drawn" : "missing");
+                checks_failed++;
+            }
+        }
+        feed_free(&feed);
+    }
+}
+
 int main(void)
 {
     test_clock_digits_stay();
@@ -462,5 +500,6 @@ int main(void)
     test_no_insight();
     test_weights_day();
     test_long_texts();
+    test_todo_once();
     return checks_done("test_ui_today");
 }
