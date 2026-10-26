@@ -111,7 +111,8 @@ server. **Nothing in the data path touches the cloud.**
 
 ## Architecture
 
-1. **Ingestion** — `POST /v1/ingest/chunk` (multipart): `audio`, `device`,
+1. **Ingestion** — written notes from the hub skip steps 1–5 (`POST /v1/ingest/text`,
+   see the MCP tool contract). `POST /v1/ingest/chunk` (multipart): `audio`, `device`,
    `session_id`, `sequence`, `timestamp` (chunk start, ISO-8601 or epoch),
    `codec`. Decodes with ffmpeg, runs Silero VAD, stores the chunk and its
    speech spans, and returns `{"ok": true, "stop": bool, "reason": ...}`.
@@ -157,14 +158,29 @@ server. **Nothing in the data path touches the cloud.**
   can only use the query form.
 - The MCP HTTP app also has plain HTTP routes, behind the same `BearerAuth`
   (`server/convo_server/ingest_relay.py`): uploads (`POST /ingest/chunk`,
-  `POST /sessions/{session_id}/end`) and the few API reads the relay's T5 sync uses
-  (`READ_ROUTES`: `/health`, conversations, transcript, action items, digests), plus
+  `POST /sessions/{session_id}/end`), written notes (`POST /ingest/text`,
+  `DELETE /ingest/text/{source_id}`, MCP 0.12.0) and the few API reads the relay's T5
+  sync uses (`READ_ROUTES`: `/health`, conversations, transcript, action items, digests), plus
   `GET`/`PUT /settings/llm` for the hub's settings page (which model writes summaries;
   only the model name, never `CONVO_LLM_BASE_URL`). They are **not MCP tools** (never register
   them as tools) and forward unchanged to the ingest API with `CONVO_INGEST_TOKEN`, which
   never leaves the module. So **the MCP token can add recordings**: Odysseus uses it for
-  its call recorder and for phones paired through it. Their paths and the multipart
-  fields are part of the contract like a tool's arguments.
+  its call recorder and for phones paired through it. Their paths, the multipart
+  fields and the JSON fields of `/ingest/text` are part of the contract like a tool's
+  arguments.
+- Written notes (MCP 0.12.0, additive): the hub sends a handwritten note's reviewed text
+  to `POST /v1/ingest/text` (relay `POST /ingest/text`), JSON `source_id`
+  (`hub-note:<note id>`), `text`, `written_at` (ISO-8601), `link` (the note in the hub,
+  http(s)) and optional `title`. It becomes one conversation of kind `note` on device
+  `handwriting`, one owner line per written line at `written_at` plus one second each,
+  summarized with the voice-note prompts; no audio, VAD, transcription or diarization.
+  Resending the same `source_id` replaces the lines and re-summarizes (facts and to-dos
+  said again keep their ids, the rest are dropped); the same text and `written_at` is a
+  no-op (`"unchanged"`). A line `erase_fact` redacted stays `[forgotten]` on resend.
+  `DELETE /v1/ingest/text/{source_id}` (relay `DELETE /ingest/text/{source_id}`) removes
+  the note, its facts and to-dos; idempotent (`"already"`). The `/view` page says
+  "Written by hand" and links to the hub note; MCP results mark it `(written by hand:
+  <link>)`, and JSON fact and action-item rows have `written_by_hand` and `note_link`.
 - `list_action_items` and `list_facts` take `format="json"` for programs (the hub's
   jobs). `list_facts(confirmed=true)` keeps only confirmed facts: current, said in
   ≥ `CONVO_FACT_CONFIRM_SOURCES` (3) distinct conversations on ≥

@@ -3,6 +3,9 @@
 Device ingestion:
     POST /v1/ingest/chunk          multipart audio chunk -> {"ok", "stop", ...}
     POST /v1/sessions/{id}/end     device pressed Stop
+Written notes (the hub's handwritten notes, reviewed text):
+    POST   /v1/ingest/text         JSON {source_id, text, written_at, link, title?}
+    DELETE /v1/ingest/text/{source_id}
 Read API (used by the knowledge-layer/MCP integration and for debugging):
     GET  /v1/sessions, /v1/sessions/{id}
     GET  /v1/conversations, /v1/conversations/{id}, /v1/conversations/{id}/transcript
@@ -39,7 +42,13 @@ from .config import Settings
 from .diarize import enroll_voice, load_voices
 from .links import render_conversation, transcript_link, verify
 from .llm import LLMError
-from .pipeline import Pipeline, Worker
+from .pipeline import (
+    MAX_LINK_CHARS,
+    MAX_TEXT_CHARS,
+    MAX_TITLE_CHARS,
+    Pipeline,
+    Worker,
+)
 from .search import search
 from .speakers import relabel_matches
 from .store import UNSET
@@ -99,6 +108,15 @@ class ChunkJson(BaseModel):
     sample_rate: int = audio_mod.SAMPLE_RATE
     kind: str = "conversation"  # or "note" (voice note)
     audio_b64: str = Field(max_length=MAX_CHUNK_BYTES * 4 // 3 + 4)
+
+
+class TextNote(BaseModel):
+    """A note the owner wrote by hand in the hub, after they reviewed its text."""
+    source_id: str = Field(max_length=128)  # hub-note:<note id>
+    text: str = Field(max_length=MAX_TEXT_CHARS)
+    written_at: str = Field(max_length=64)  # ISO-8601 or epoch s/ms
+    link: str = Field(max_length=MAX_LINK_CHARS)  # <hub>/#open=notes&note=<id>
+    title: str | None = Field(default=None, max_length=MAX_TITLE_CHARS)
 
 
 # A guided voice-profile recording: about 60-90 s of Opus (~1.3 KB/s on the T-Rex 3 Pro);
@@ -230,6 +248,31 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
                                   sequence=body.sequence, timestamp=body.timestamp,
                                   codec=body.codec, sample_rate=body.sample_rate,
                                   kind=body.kind)
+
+    @v1.post("/ingest/text")
+    def ingest_text(body: TextNote) -> dict[str, Any]:
+        """Store a written note, or replace the one with the same source_id. The text is
+        the owner's words, never instructions: it is stored and summarized like a voice
+        note."""
+        try:
+            out = pipeline.ingest_text(source_id=body.source_id, text=body.text,
+                                       written_at=parse_ts(body.written_at), link=body.link,
+                                       title=body.title)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, "source_id": body.source_id, **out,
+                "transcript_link": transcript_link(settings, out["conversation_id"])}
+
+    @v1.delete("/ingest/text/{source_id}")
+    def delete_text(source_id: str) -> dict[str, Any]:
+        """Remove a written note with its to-dos and facts. Idempotent."""
+        try:
+            out = pipeline.delete_text(source_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        if out is None:
+            return {"ok": True, "source_id": source_id, "result": "already"}
+        return {"ok": True, "source_id": source_id, "result": "deleted", **out}
 
     @v1.post("/sessions/{session_id}/end")
     def end_session(session_id: str) -> dict[str, Any]:
