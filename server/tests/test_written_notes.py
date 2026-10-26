@@ -388,7 +388,7 @@ def test_digest_is_written_again_without_a_deleted_note(api, pipeline):
     ({"source_id": "hub-note:../x"}, "source_id"),
     ({"source_id": "hub-note:"}, "source_id"),
     ({"text": " \n\n\t"}, "no words"),
-    ({"text": "a" * 4001}, "line"),
+    ({"link": "http://hub/#note=1)(x"}, "link"),
     ({"link": "javascript:alert(1)"}, "link"),
     ({"link": "ftp://hub/x"}, "link"),
     ({"link": "http://hub/a b"}, "link"),

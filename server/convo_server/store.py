@@ -233,6 +233,13 @@ CREATE TABLE IF NOT EXISTS written_notes (
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS written_notes_conv ON written_notes(conversation_id);
+-- Erased facts whose written note was deleted (DELETE /v1/ingest/text): the sentence
+-- (never served) stays, so a note that writes it again keeps it "[forgotten]".
+CREATE TABLE IF NOT EXISTS erased_facts (
+    id INTEGER PRIMARY KEY,                   -- the fact's id
+    fact TEXT NOT NULL,
+    erased_at REAL NOT NULL
+);
 
 -- Line-level full-text index for "what did X say about Y" (kept in sync by triggers).
 CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
@@ -1545,7 +1552,8 @@ class Store:
         replace the old ones (``"replaced"``) and the worker summarizes the note again;
         the re-summary keeps the ids of facts and to-dos said again (``save_summary``) and
         drops the others. A line erased by ``erase_fact`` stays "[forgotten]" when the
-        same words come back, and so does a line saying an erased fact of this note.
+        same words come back, and a line that says an erased fact (of any conversation,
+        ``_says_words``) is stored "[forgotten]" too.
         The digests that covered the note are taken down and written again.
         Returns ``{"result", "conversation_id", "lines", "erased_lines"}``.
         """
@@ -1569,16 +1577,16 @@ class Store:
                             (session_id,)).fetchone()[0]}
             conv_id = old_conv or uuid.uuid4().hex
             erased_keys = json.loads(row["erased_lines"]) if row is not None else []
-            erased_facts: list[str] = []
+            # every erased fact, of any conversation: the owner forgot it, so a note that
+            # writes it (again, or for the first time in another note) doesn't keep it
+            erased_facts = [w for w in (_line_words(r[0]) for r in c.execute(
+                "SELECT fact FROM facts WHERE erased_at IS NOT NULL"
+                " UNION SELECT fact FROM erased_facts")) if w]
+            old_lines: list[tuple[float, str]] = []
             if old_conv is not None:
-                # erased facts this note said (its own, or another's it said again)
-                erased_facts = [r[0] for r in c.execute(
-                    "SELECT fact FROM facts WHERE conversation_id = ? AND erased_at IS NOT NULL"
-                    " UNION SELECT f.fact FROM fact_sources s JOIN facts f ON f.id = s.fact_id"
-                    " WHERE s.conversation_id = ? AND f.erased_at IS NOT NULL"
-                    " UNION SELECT f.fact FROM erased_sources e JOIN facts f"
-                    " ON f.id = e.fact_id WHERE e.conversation_id = ?",
-                    (conv_id, conv_id, conv_id))]
+                old_lines = [(r[0], r[1]) for r in c.execute(
+                    "SELECT started_at, text FROM segments WHERE conversation_id = ?"
+                    " ORDER BY started_at", (conv_id,))]
                 c.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
                 _take_down_digests(c, conv_id, now)
             else:
@@ -1595,19 +1603,23 @@ class Store:
                       " received_at = excluded.received_at",
                       (session_id, WRITTEN_DEVICE, written_at, end, now, NOTE))
             redacted = 0
+            stored: list[str] = []
             for i, text in enumerate(lines):
-                key = _line_key(text)
-                erased = key in erased_keys or any(_says_fact(text, f) for f in erased_facts)
-                if erased:
-                    redacted += 1
-                    if key not in erased_keys:
-                        erased_keys.append(key)
+                # a line erase_fact redacted (its fingerprint), or one that says an erased
+                # fact; only the first are fingerprinted, so a wrong match isn't kept
+                words = _line_words(text)
+                erased = (_line_key(text) in erased_keys
+                          or any(_says_words(words, f) for f in erased_facts))
+                redacted += erased
+                stored.append(ERASED_TEXT if erased else text)
                 c.execute("INSERT INTO segments (session_id, conversation_id, device,"
                           " started_at, ended_at, speaker, is_owner, text, erased)"
                           " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
                           (session_id, conv_id, WRITTEN_DEVICE, written_at + i,
                            written_at + i + 1, speaker, ERASED_TEXT if erased else text,
                            int(erased)))
+            if old_lines:
+                _move_offsets(c, conv_id, old_lines, stored, written_at)
             c.execute("UPDATE conversations SET started_at = ?, ended_at = ?,"
                       " status = 'pending', error = NULL, transcript_pruned_at = NULL,"
                       " updated_at = ? WHERE id = ?", (written_at, end, now, conv_id))
@@ -1633,7 +1645,9 @@ class Store:
         """Remove a written note (``DELETE /v1/ingest/text/{source_id}``): its lines, its
         conversation, its to-dos and facts, and the digests that covered it (written again
         by the worker). A fact this note shares with another conversation (said there
-        too) stays, owned by that one. None when there is no such note (idempotent)."""
+        too) stays, owned by that one. The sentence of an erased fact stays in
+        ``erased_facts`` (never served), and what a forgotten fact had replaced stays
+        replaced. None when there is no such note (idempotent)."""
         now = time.time()
         with self.tx() as c:
             row = c.execute("SELECT * FROM written_notes WHERE source_id = ?",
@@ -1645,6 +1659,9 @@ class Store:
                 before = _knowledge(c, conv_id)
                 self._clear_knowledge(c, conv_id)
                 _carry_over(c, conv_id, before, [])  # facts said elsewhere move there
+                c.execute("INSERT OR IGNORE INTO erased_facts SELECT id, fact, erased_at"
+                          " FROM facts WHERE conversation_id = ? AND erased_at IS NOT NULL",
+                          (conv_id,))
                 _take_down_digests(c, conv_id, now)
                 _delete_conversation(c, conv_id)
             c.execute("DELETE FROM sessions WHERE id = ?", (row["session_id"],))
@@ -2224,12 +2241,52 @@ def _remember_erased_line(c: sqlite3.Connection, conv_id: str, text: str | None)
                   (json.dumps(keys + [key]), row["source_id"]))
 
 
-def _says_fact(line: str | None, fact: str | None) -> bool:
-    """The written ``line`` says an erased ``fact``'s words: at least two of them (all of a
-    one-word fact) and at least half."""
-    words = _line_words(fact)
-    shared = words & _line_words(line)
-    return bool(words) and len(shared) >= min(2, len(words)) and 2 * len(shared) >= len(words)
+def _move_offsets(c: sqlite3.Connection, conv_id: str, old: list[tuple[float, str]],
+                  new: list[str], written_at: float) -> None:
+    """A written note was resent: its facts, to-dos and repeats of other facts keep
+    pointing at their line (``source_at``) until the re-summary, so links and
+    ``erase_fact`` find it. ``old`` is ``(started_at, text)`` of the old lines, ``new`` the
+    new lines' text (at ``written_at`` + index). A line found again as it was (else the
+    one with most words in common, at least ``_ALIKE`` of them; the nearest of equals)
+    gives the new offset; one crossed out gives None, so ``erase_fact`` looks for the
+    fact's words instead of redacting the line that is there now."""
+    new_norm = [_norm(t) for t in new]
+    new_words = [set(t.split()) for t in new_norm]
+    moved: dict[float, float | None] = {}
+
+    def move(at: float) -> float | None:
+        if at not in moved:
+            i = next((k for k, (start, _) in enumerate(old) if at <= start < at + 1), None)
+            best: tuple[float, int, int] | None = None
+            if i is not None:
+                was = _norm(old[i][1])
+                words = set(was.split())
+                same = [j for j, text in enumerate(new_norm) if text == was]
+                for j in same or range(len(new_norm)):
+                    # alike: most words in common (cheap for long lines, unlike _same)
+                    score = 1.0 if same else (
+                        len(words & new_words[j]) / len(words | new_words[j]) if words else 0.0)
+                    if score >= _ALIKE and (best is None or (score, -abs(j - i)) > best[:2]):
+                        best = (score, -abs(j - i), j)
+            moved[at] = written_at + best[2] if best is not None else None
+        return moved[at]
+
+    for table, key in (("facts", "id"), ("action_items", "id"),
+                       ("fact_sources", "rowid")):
+        rows = c.execute(f"SELECT {key}, source_at FROM {table} WHERE conversation_id = ?"
+                         " AND source_at IS NOT NULL", (conv_id,)).fetchall()
+        c.executemany(f"UPDATE {table} SET source_at = ? WHERE {key} = ?",
+                      [(move(r[1]), r[0]) for r in rows])
+
+
+def _says_words(line: set[str], fact: set[str]) -> bool:
+    """A written line (its ``_line_words``) says an erased fact (its ``_line_words``): every
+    content word of a fact of up to three ("Alice lives in Berlin"), three quarters and at
+    least three of a longer one. "Alice called from the Berlin office" doesn't say it."""
+    shared = len(fact & line)
+    if len(fact) <= 3:
+        return bool(fact) and shared == len(fact)
+    return 4 * shared >= 3 * len(fact)
 
 
 def _touch_conversations(c: sqlite3.Connection, conv_ids: Iterable[str],
@@ -2253,9 +2310,14 @@ def _prune_candidates(c: sqlite3.Connection, sessions: Iterable[str]) -> None:
 
 
 def _delete_conversation(c: sqlite3.Connection, conv_id: str) -> None:
-    # its facts go with it (cascade): facts they had replaced become current again
+    # its facts go with it (cascade): facts they had replaced become current again,
+    # except what a forgotten (retired) one had replaced: an older value of a belief the
+    # owner rejected stays replaced, by nothing now (superseded, superseded_by NULL)
     c.execute("UPDATE facts SET status = 'current', superseded_by = NULL"
-              " WHERE superseded_by IN (SELECT id FROM facts WHERE conversation_id = ?)",
+              " WHERE superseded_by IN (SELECT id FROM facts WHERE conversation_id = ?"
+              " AND status != 'retired')", (conv_id,))
+    c.execute("UPDATE facts SET superseded_by = NULL WHERE superseded_by IN"
+              " (SELECT id FROM facts WHERE conversation_id = ? AND status = 'retired')",
               (conv_id,))
     c.execute("DELETE FROM search_fts WHERE conversation_id = ?", (conv_id,))
     c.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
@@ -2530,8 +2592,9 @@ def _carry_over(c: sqlite3.Connection, conv_id: str, before: dict[str, Any],
             c.execute("UPDATE facts SET erased_at = ? WHERE id = ?", (old["erased_at"], target))
             c.execute("UPDATE OR IGNORE erased_sources SET fact_id = ? WHERE fact_id = ?",
                       (target, old["id"]))
-        if old["status"] == "superseded" and old["superseded_by"] and c.execute(
-                "SELECT 1 FROM facts WHERE id = ?", (old["superseded_by"],)).fetchone():
+        if old["status"] == "superseded" and (old["superseded_by"] is None or c.execute(
+                "SELECT 1 FROM facts WHERE id = ?", (old["superseded_by"],)).fetchone()):
+            # (by nothing: a forgotten fact of a deleted note had replaced it)
             c.execute("UPDATE facts SET status = 'superseded', superseded_by = ? WHERE id = ?",
                       (old["superseded_by"], target))
         c.executemany("INSERT OR IGNORE INTO fact_sources VALUES (?, ?, ?)",

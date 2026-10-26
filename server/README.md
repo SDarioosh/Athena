@@ -230,9 +230,9 @@ the hub (Odysseus) and reviewed there:
 | field        | notes                                                                  |
 |--------------|------------------------------------------------------------------------|
 | `source_id`  | the hub's stable id: `hub-note:<id>` (id: `[A-Za-z0-9._-]{1,100}`)     |
-| `text`       | the reviewed text, at most 200,000 characters, 5,000 lines, 4,000 per line |
+| `text`       | the reviewed text, at most 200,000 characters and 5,000 lines; a line over 4,000 characters is wrapped at a space |
 | `written_at` | when the page was written: ISO-8601 (naive = UTC) or epoch s/ms        |
-| `link`       | the note in the hub, `<hub>/#open=notes&note=<id>` (http/https, ≤ 2,000) |
+| `link`       | the note in the hub, `<hub>/#open=notes&note=<id>` (http/https, ≤ 2,000; no spaces, quotes, `( ) < > { } \| \ ^` or user info, `[ ]` only around an IPv6 host) |
 | `title`      | optional, ≤ 200 characters; shown with the link, not used as the summary title |
 
 It becomes one conversation of kind `note` on device `handwriting`: each non-empty line
@@ -254,12 +254,19 @@ size.
   is a no-op (`"unchanged"`; a new `link` or `title` is stored). A resend that lands while
   the model is summarizing the old text is summarized again on the next pass.
 - **Erased facts stay erased.** The hub still has the words of a fact the owner erased
-  (`erase_fact`), so a resend brings them back: a line with the same words as an erased
-  line, or one that says an erased fact of this note (two or more of its words, at least
-  half), is stored as `[forgotten]` (`erased_lines` counts them).
+  (`erase_fact`), so a resend brings them back: a line with the same words as a line
+  `erase_fact` redacted in this note, or one that says an erased fact of any note or
+  recording (every content word of a fact of up to three, three quarters of a longer
+  one), is stored as `[forgotten]` (`erased_lines` counts them). The same holds for a new
+  note.
+- Until the re-summary, a resend keeps the note's summary, facts and to-dos, and moves
+  each one's line offset (`#t=`) to the same line (or the one with most words in
+  common); a line crossed out leaves the fact without an offset.
 - `DELETE /v1/ingest/text/{source_id}` removes the note: its lines, conversation, to-dos and
   facts (a fact another conversation said too stays, owned by that one), and its digests
-  are written again. `{"ok": true, "result": "deleted", "conversation_id"}`, or
+  are written again. An erased fact's sentence stays (never served) so a later note that
+  writes it again keeps it `[forgotten]`, and what a forgotten fact of the note had
+  replaced stays replaced. `{"ok": true, "result": "deleted", "conversation_id"}`, or
   `"already"` when there is no such note (idempotent).
 - The `/view` page says "Written by hand" and links to the note in the hub. Conversations
   in the API carry `written: {"source_id", "link", "title"}` (null for recordings).

@@ -413,21 +413,27 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
 
             return json.dumps({"facts": [fact_json(f) for f in rows]}, ensure_ascii=False)
         lines = [header(len(rows), "confirmed facts" if confirmed else "facts")]
+        sources = {f["id"]: store.fact_sources(f["id"]) for f in rows}
+        history = {f["id"]: store.fact_history(f["id"]) for f in rows}
+        written.update(store.written_notes_for(
+            r["conversation_id"] for rs in (*sources.values(), *history.values()) for r in rs))
         for f in rows:
             lines.append(f"- [{f['subject']}] {f['fact']} (learned "
                          f"{when(f['conversation_at'], '%Y-%m-%d')}) " + fact_link(f)
                          + written_label(written.get(f["conversation_id"])))
-            for s in store.fact_sources(f["id"]):
+            for s in sources[f["id"]]:
                 lines.append(f"  said again {when(s['conversation_at'], '%Y-%m-%d')} "
                              + transcript_link(settings, s["conversation_id"],
                                                (s["source_at"] or s["conversation_at"])
-                                               - s["conversation_at"]))
-            for old in store.fact_history(f["id"]):
+                                               - s["conversation_at"])
+                             + written_label(written.get(s["conversation_id"])))
+            for old in history[f["id"]]:
                 lines.append(f"  replaces: {old['fact']} (from "
                              f"{when(old['conversation_at'], '%Y-%m-%d')}) "
                              + transcript_link(settings, old["conversation_id"],
                                                (old["source_at"] or old["conversation_at"])
-                                               - old["conversation_at"]))
+                                               - old["conversation_at"])
+                             + written_label(written.get(old["conversation_id"])))
         return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=rw_merge)
