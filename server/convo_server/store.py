@@ -1545,7 +1545,8 @@ class Store:
         replace the old ones (``"replaced"``) and the worker summarizes the note again;
         the re-summary keeps the ids of facts and to-dos said again (``save_summary``) and
         drops the others. A line erased by ``erase_fact`` stays "[forgotten]" when the
-        same words come back, and so does a line saying an erased fact of this note.
+        same words come back, and a line that says an erased fact (of any conversation,
+        ``_says_words``) is stored "[forgotten]" too.
         The digests that covered the note are taken down and written again.
         Returns ``{"result", "conversation_id", "lines", "erased_lines"}``.
         """
@@ -1569,16 +1570,11 @@ class Store:
                             (session_id,)).fetchone()[0]}
             conv_id = old_conv or uuid.uuid4().hex
             erased_keys = json.loads(row["erased_lines"]) if row is not None else []
-            erased_facts: list[str] = []
+            # every erased fact, of any conversation: the owner forgot it, so a note that
+            # writes it (again, or for the first time in another note) doesn't keep it
+            erased_facts = [w for w in (_line_words(r[0]) for r in c.execute(
+                "SELECT fact FROM facts WHERE erased_at IS NOT NULL")) if w]
             if old_conv is not None:
-                # erased facts this note said (its own, or another's it said again)
-                erased_facts = [r[0] for r in c.execute(
-                    "SELECT fact FROM facts WHERE conversation_id = ? AND erased_at IS NOT NULL"
-                    " UNION SELECT f.fact FROM fact_sources s JOIN facts f ON f.id = s.fact_id"
-                    " WHERE s.conversation_id = ? AND f.erased_at IS NOT NULL"
-                    " UNION SELECT f.fact FROM erased_sources e JOIN facts f"
-                    " ON f.id = e.fact_id WHERE e.conversation_id = ?",
-                    (conv_id, conv_id, conv_id))]
                 c.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
                 _take_down_digests(c, conv_id, now)
             else:
@@ -1596,12 +1592,12 @@ class Store:
                       (session_id, WRITTEN_DEVICE, written_at, end, now, NOTE))
             redacted = 0
             for i, text in enumerate(lines):
-                key = _line_key(text)
-                erased = key in erased_keys or any(_says_fact(text, f) for f in erased_facts)
-                if erased:
-                    redacted += 1
-                    if key not in erased_keys:
-                        erased_keys.append(key)
+                # a line erase_fact redacted (its fingerprint), or one that says an erased
+                # fact; only the first are fingerprinted, so a wrong match isn't kept
+                words = _line_words(text)
+                erased = (_line_key(text) in erased_keys
+                          or any(_says_words(words, f) for f in erased_facts))
+                redacted += erased
                 c.execute("INSERT INTO segments (session_id, conversation_id, device,"
                           " started_at, ended_at, speaker, is_owner, text, erased)"
                           " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
@@ -2224,12 +2220,14 @@ def _remember_erased_line(c: sqlite3.Connection, conv_id: str, text: str | None)
                   (json.dumps(keys + [key]), row["source_id"]))
 
 
-def _says_fact(line: str | None, fact: str | None) -> bool:
-    """The written ``line`` says an erased ``fact``'s words: at least two of them (all of a
-    one-word fact) and at least half."""
-    words = _line_words(fact)
-    shared = words & _line_words(line)
-    return bool(words) and len(shared) >= min(2, len(words)) and 2 * len(shared) >= len(words)
+def _says_words(line: set[str], fact: set[str]) -> bool:
+    """A written line (its ``_line_words``) says an erased fact (its ``_line_words``): every
+    content word of a fact of up to three ("Alice lives in Berlin"), three quarters and at
+    least three of a longer one. "Alice called from the Berlin office" doesn't say it."""
+    shared = len(fact & line)
+    if len(fact) <= 3:
+        return bool(fact) and shared == len(fact)
+    return 4 * shared >= 3 * len(fact)
 
 
 def _touch_conversations(c: sqlite3.Connection, conv_ids: Iterable[str],
