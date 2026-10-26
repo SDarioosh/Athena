@@ -193,3 +193,50 @@ def test_pyannote_gets_the_measured_defaults_and_settings_still_win(tmp_path, mo
     py = Settings(**base, diarizer="pyannote")
     assert py.speaker_line_check is False and py.vad_threshold == 0.5
     assert py.speaker_split_lines is True
+
+
+def _three_voices() -> list[EnrolledVoice]:
+    e = ThreeEmbedder()
+    return [EnrolledVoice("Me", e.embed(tone(200, 2)), True),
+            EnrolledVoice("Alice", e.embed(tone(600, 2)), False),
+            EnrolledVoice("Bob", e.embed(tone(1000, 2)), False)]
+
+
+def test_a_short_line_between_other_speakers_keeps_its_name():
+    """A quick exchange: the owner's 1 s line sits between Alice's lines. A 3 s window
+    around it would be two-thirds Alice and unname it; the window stops at her lines."""
+    run = np.concatenate([tone(600, 2), tone(200, 1), tone(600, 2)])
+    pieces = [PieceRef(0, 0.0, 2.0), PieceRef(0, 2.0, 3.0), PieceRef(0, 3.0, 5.0)]
+    me, alice = SpeakerLabel("Me", True), SpeakerLabel("Alice", False)
+    d = Diarizer(ThreeEmbedder(), _three_voices())
+    assert d.check_lines([run], pieces, [alice, me, alice]) == [alice, me, alice]
+
+
+def test_too_little_own_audio_to_judge_keeps_the_name():
+    # Bob's 0.5 s line is in Alice's voice, but half a second is too little to judge
+    run = np.concatenate([tone(200, 2), tone(600, 0.5), tone(200, 2)])
+    pieces = [PieceRef(0, 0.0, 2.0), PieceRef(0, 2.0, 2.5), PieceRef(0, 2.5, 4.5)]
+    me, bob = SpeakerLabel("Me", True), SpeakerLabel("Bob", False)
+    d = Diarizer(ThreeEmbedder(), _three_voices())
+    assert d.check_lines([run], pieces, [me, bob, me]) == [me, bob, me]
+
+
+def test_a_missed_turn_inside_one_speakers_lines_is_still_caught():
+    # all lines labelled the owner, the middle one is Alice: the window may use the
+    # owner's neighbouring lines, and the line still loses the name
+    run = np.concatenate([tone(200, 3), tone(600, 2), tone(200, 3)])
+    pieces = [PieceRef(0, 0.0, 3.0), PieceRef(0, 3.0, 5.0), PieceRef(0, 5.0, 8.0)]
+    me = SpeakerLabel("Me", True)
+    d = Diarizer(ThreeEmbedder(), _three_voices())
+    assert d.check_lines([run], pieces, [me, me, me])[1] == SpeakerLabel(UNSURE_LABEL, False)
+
+
+def test_own_bounds_stop_at_other_speakers_in_the_same_run():
+    from convo_server.diarize import own_bounds
+
+    a, b = SpeakerLabel("A", False), SpeakerLabel("B", False)
+    pieces = [PieceRef(0, 0.0, 2.0), PieceRef(0, 2.5, 3.0), PieceRef(0, 3.0, 4.0),
+              PieceRef(0, 5.0, 6.0), PieceRef(1, 0.0, 1.0)]
+    inf = float("inf")
+    assert own_bounds(pieces, [a, b, b, a, b]) == [
+        (0.0, 2.5), (2.0, 5.0), (2.0, 5.0), (4.0, inf), (0.0, inf)]
