@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from test_confirmed_facts import DAY, T0
 from test_erase_fact import conversation, erase, rewriter
-from test_mcp import call
+from test_mcp import call, process_two_speakers
 
 from convo_server.links import render_conversation
 from convo_server.mcp_server import build_mcp
@@ -51,6 +51,23 @@ def test_old_transcripts_go_and_the_knowledge_stays(pipeline, tmp_path):
     erase(pipeline, fid)
     rewriter(pipeline)
     assert pipeline.rewrite_forgotten() == 1
+
+
+def test_a_new_recording_keeps_pruned_conversations(pipeline):
+    store = pipeline.store
+    old, fid = conversation(store, "c0", T0)
+    store._conn.execute(
+        "INSERT INTO action_items (conversation_id, text, status, title)"
+        " VALUES (?, 'Book the taqueria', 'open', 'Book the taqueria')", (old,))
+    retention(pipeline, 30)
+    assert pipeline.prune_transcripts(now=T0 + 45 * DAY)["conversations"] == 1
+    process_two_speakers(pipeline, session="s9", start=T0 + 45 * DAY)
+    c = store.get_conversation(old)
+    assert c is not None and c["transcript_pruned_at"]
+    assert c["summary"].startswith("They planned lunch")
+    assert [f["id"] for f in c["facts"]] == [fid]
+    assert [i["text"] for i in c["action_items"]] == ["Book the taqueria"]
+    assert store._conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 2
 
 
 def test_pending_and_failed_conversations_keep_their_lines(pipeline):
