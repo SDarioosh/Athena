@@ -485,6 +485,8 @@ static void test_todo_once(void)
         if (h) {
             /* the second line: below the first line's baseline, above the item's end */
             const int second = ink(MARGIN + 88, h->r.y + 33 + 12, W - MARGIN, h->r.y + h->r.height - 2);
+            /* nothing under the title: the item is one line high, so the next comes up */
+            CHECK_EQ(h->r.height, shown[t] ? 2 * LH + 12 : LH + 12);
             if (shown[t] != (second > 0)) {
                 fprintf(stderr, "title \"%s\": second line %s\n", titles[t], second ? "drawn" : "missing");
                 checks_failed++;
@@ -520,6 +522,7 @@ static void test_todo_once(void)
         CHECK(h != NULL);
         if (h) {
             const int second = ink(MARGIN + 88, h->r.y + 33 + 12, W - MARGIN, h->r.y + h->r.height - 2);
+            CHECK_EQ(h->r.height, why_shown[t] ? 2 * LH + 12 : LH + 12);
             if (why_shown[t] != (second > 0)) {
                 fprintf(stderr, "why \"%s\": second line %s\n", whys[t], second ? "drawn" : "missing");
                 checks_failed++;
@@ -552,6 +555,7 @@ static void test_todo_once(void)
         CHECK(h != NULL);
         if (h) {
             const int second = ink(MARGIN + 88, h->r.y + 33 + 12, W - MARGIN, h->r.y + h->r.height - 2);
+            CHECK_EQ(h->r.height, ev_shown[t] ? 2 * LH + 12 : LH + 12);
             if (ev_shown[t] != (second > 0)) {
                 fprintf(stderr, "event why \"%s\": second line %s\n", ev_whys[t], second ? "drawn" : "missing");
                 checks_failed++;

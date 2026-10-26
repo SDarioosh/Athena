@@ -653,6 +653,8 @@ a 3 × 4 grid of hour slots and the durations.
     for a to-do the second line then falls back to the list's title, but only for a list of more than
     one item (a one-item note's title is the to-do again, often reworded), and never when
     the title is the same text (any case, or the start of it cut with "…").
+    An item with nothing under its title is one line high, so the next item moves up (an
+    event on another day keeps two lines for its weekday).
   - **Without one** (no key, or `date` isn't today), the same sections from rules, and
     INSIGHT says "All caught up!" (with a small filled tick). The hub's weights (feed
     `weights`, below) reorder items within each group, never across groups; without

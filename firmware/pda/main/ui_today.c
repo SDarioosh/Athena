@@ -10,6 +10,7 @@
 
 #define HEAD_H UI_HEADING_H
 #define ITEM_H (2 * LH + 12)  /* an item: its title, then the reason, a hairline between */
+#define ITEM_H_ONE (LH + 12)  /* an item with nothing under its title */
 #define COL_W 88              /* the left column: a tick box, or an event's time */
 #define ITEM_X (MARGIN + COL_W)
 #define ITEM_W (W - MARGIN - ITEM_X)
@@ -160,6 +161,77 @@ static bool restates(const char *why, const char *todo)
     return big >= 2 && found * 10 >= big * 6;
 }
 
+/* An item's second line (empty when there is nothing to add): a to-do's reason, the hub's
+ * why or its list; an event's why, place or end time. */
+static void second_line(const ui_today_in_t *in, const today_item_t *it, char *why, size_t cap)
+{
+    const feed_t *f = in->f;
+    const char *w = it->ref.why;
+    why[0] = 0;
+    if (it->ref.kind == FEED_REF_TODO) {
+        const feed_todo_item_t *ti = &f->todos[it->ref.note].items[it->ref.item];
+        ui_today_todo_t st = {.done = ti->done};
+        if (in->todo_state) {
+            in->todo_state(in->ctx, it->ref.note, it->ref.item, &st);
+        }
+        if (st.failed) {
+            snprintf(why, cap, "couldn't sync \xe2\x80\x93 changed on the website?");
+            return;
+        }
+        const char *r = it->reason;
+        if (w && restates(w, ti->text)) {
+            w = NULL; /* the to-do shows once */
+        }
+        if (r[0] && w) {
+            snprintf(why, cap, "%s \xc2\xb7 %s", r, w); /* · */
+        } else {
+            snprintf(why, cap, "%s", r[0] ? r : w ? w : "");
+        }
+        if (!why[0] && f->todos[it->ref.note].n_items > 1) {
+            /* no reason given: the list it is on (a one-item note's title is only the
+             * to-do again, often reworded: the hub files a voice note's task that way) */
+            const char *title = f->todos[it->ref.note].title;
+            snprintf(why, cap, "%s", title ? title : "Untitled checklist");
+        }
+        if (repeats(why, ti->text)) {
+            why[0] = 0; /* the to-do shows once */
+        }
+        return;
+    }
+    const feed_event_t *e = &f->events[it->ref.event];
+    if (w && e->title && restates(w, e->title)) {
+        w = NULL; /* the title shows once; the place or end time instead */
+    }
+    if (w) {
+        snprintf(why, cap, "%s", w);
+    }
+    if (e->where && strlen(why) + strlen(e->where) + 8 < cap) {
+        const size_t n = strlen(why);
+        snprintf(why + n, cap - n, "%s%s", n ? " \xc2\xb7 " : "", e->where);
+    }
+    if (!why[0] && !e->all_day && e->end > e->start) {
+        char end[12];
+        pda_fmt_hm(e->end, in->tz_min, end, sizeof(end));
+        snprintf(why, cap, "until %s", end);
+    }
+}
+
+/* An item's height: one line when it has nothing under its title (an event on another day
+ * keeps two, for its weekday in the left column). */
+static int item_h(const ui_today_in_t *in, const today_item_t *it)
+{
+    char why[400];
+    second_line(in, it, why, sizeof(why));
+    if (why[0]) {
+        return ITEM_H;
+    }
+    if (it->ref.kind == FEED_REF_EVENT &&
+        today_event_day(&in->f->events[it->ref.event], in->tz_min) != in->today) {
+        return ITEM_H;
+    }
+    return ITEM_H_ONE;
+}
+
 /* an item: first = right under a heading (no rule above it) */
 static void draw_item(const lay_t *l, int top, const today_item_t *it, bool first)
 {
@@ -169,17 +241,9 @@ static void draw_item(const lay_t *l, int top, const today_item_t *it, bool firs
         gfx_hline(ITEM_X, top + 3, W - MARGIN - ITEM_X, 0x00); /* a hairline between items */
     }
     char why[400]; /* the hub's why is up to 80 characters of UTF-8 */
-    const char *w = it->ref.why;
+    second_line(l->in, it, why, sizeof(why));
+    const int h = item_h(l->in, it);
     if (it->ref.kind == FEED_REF_TODO) {
-        const char *r = it->reason;
-        if (w && restates(w, f->todos[it->ref.note].items[it->ref.item].text)) {
-            w = NULL; /* the to-do shows once */
-        }
-        if (r[0] && w) {
-            snprintf(why, sizeof(why), "%s \xc2\xb7 %s", r, w); /* · */
-        } else {
-            snprintf(why, sizeof(why), "%s", r[0] ? r : w ? w : "");
-        }
         const feed_todo_item_t *ti = &f->todos[it->ref.note].items[it->ref.item];
         ui_today_todo_t st = {.done = ti->done};
         if (l->in->todo_state) {
@@ -190,25 +254,13 @@ static void draw_item(const lay_t *l, int top, const today_item_t *it, bool firs
         if (st.done) {
             gfx_strike(TEXT_B, ITEM_X, y1, x_end - ITEM_X);
         }
-        if (st.failed) {
-            snprintf(why, sizeof(why), "couldn't sync \xe2\x80\x93 changed on the website?");
-        } else if (!why[0] && f->todos[it->ref.note].n_items > 1) {
-            /* no reason given: the list it is on (a one-item note's title is only the
-             * to-do again, often reworded: the hub files a voice note's task that way) */
-            const char *title = f->todos[it->ref.note].title;
-            snprintf(why, sizeof(why), "%s", title ? title : "Untitled checklist");
+        if (why[0]) {
+            gfx_text_fit(TEXT, ITEM_X, y2, ITEM_W, why, GFX_INK);
         }
-        if (!st.failed && repeats(why, ti->text)) {
-            why[0] = 0; /* the to-do shows once */
-        }
-        gfx_text_fit(TEXT, ITEM_X, y2, ITEM_W, why, GFX_INK);
-        hit(l, (EpdRect){0, top, W, ITEM_H}, UI_TODAY_HIT_TODO, it->ref.note * 64 + it->ref.item);
+        hit(l, (EpdRect){0, top, W, h}, UI_TODAY_HIT_TODO, it->ref.note * 64 + it->ref.item);
         return;
     }
     const feed_event_t *e = &f->events[it->ref.event];
-    if (w && e->title && restates(w, e->title)) {
-        w = NULL; /* the title shows once; the place or end time instead */
-    }
     /* events: the time in the left column (the weekday under it when not today), "›"
      * opens the event; the second line is the hub's why and the place */
     char hm[16];
@@ -227,21 +279,10 @@ static void draw_item(const lay_t *l, int top, const today_item_t *it, bool firs
     const int aw = gfx_text_width(TEXT_B, "\xe2\x80\xba") + 8;
     gfx_text_fit(TEXT_B, ITEM_X, y1, ITEM_W - aw, e->title, GFX_INK);
     gfx_text_right(TEXT_B, W - MARGIN, y1, "\xe2\x80\xba", GFX_INK); /* › */
-    why[0] = 0;
-    if (w) {
-        snprintf(why, sizeof(why), "%s", w);
+    if (why[0]) {
+        gfx_text_fit(TEXT, ITEM_X, y2, ITEM_W, why, GFX_INK);
     }
-    if (e->where && strlen(why) + strlen(e->where) + 8 < sizeof(why)) {
-        const size_t n = strlen(why);
-        snprintf(why + n, sizeof(why) - n, "%s%s", n ? " \xc2\xb7 " : "", e->where);
-    }
-    if (!why[0] && !e->all_day && e->end > e->start) {
-        char end[12];
-        pda_fmt_hm(e->end, l->in->tz_min, end, sizeof(end));
-        snprintf(why, sizeof(why), "until %s", end);
-    }
-    gfx_text_fit(TEXT, ITEM_X, y2, ITEM_W, why, GFX_INK);
-    hit(l, (EpdRect){0, top, W, ITEM_H}, UI_TODAY_HIT_EVENT, it->ref.event);
+    hit(l, (EpdRect){0, top, W, h}, UI_TODAY_HIT_EVENT, it->ref.event);
 }
 
 static void centred(const EpdFont *f, int y, const char *s)
@@ -295,7 +336,7 @@ static int layout(const ui_today_in_t *in, int want)
             continue;
         }
         /* the heading stays with the first item */
-        int top = place(&l, HEAD_H + ITEM_H);
+        int top = place(&l, HEAD_H + item_h(in, &sec->items[0]));
         const int page0 = l.page;
         if (top >= 0) {
             char more[32] = "";
@@ -312,11 +353,12 @@ static int layout(const ui_today_in_t *in, int want)
         }
         int cont_page = page0;
         for (int i = 1; i < sec->n; i++) {
-            if (l.y + ITEM_H > LIST_BOTTOM) {
+            const int h = item_h(in, &sec->items[i]);
+            if (l.y + h > LIST_BOTTOM) {
                 /* the section goes on on the next page, under its heading again */
-                top = place(&l, HEAD_H + ITEM_H);
+                top = place(&l, HEAD_H + h);
             } else {
-                top = place(&l, ITEM_H);
+                top = place(&l, h);
             }
             bool first = false;
             if (l.page != cont_page) {
