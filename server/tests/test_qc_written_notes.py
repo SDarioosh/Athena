@@ -15,7 +15,7 @@ from test_written_notes import LINK, note_llm
 
 from convo_server.api import create_app
 from convo_server.llm import LLMClient, Summarizer
-from convo_server.pipeline import validate_link
+from convo_server.pipeline import MAX_LINE_CHARS, validate_link, written_lines
 from convo_server.store import ERASED_TEXT
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
@@ -248,3 +248,30 @@ def test_a7_a_failed_note_is_retried_by_the_worker_after_an_unchanged_resend(api
     pipeline.settings.summary_retry_seconds = 0
     Worker(pipeline).tick()
     assert pipeline.store.get_conversation(conv)["status"] == "summarized"
+
+
+# ------------------------------------------------------------------- X-1
+def test_x1_a_long_line_is_wrapped_at_word_boundaries():
+    para = " ".join(["handwriting"] * 1000)  # 11,999 characters, no line break
+    out = written_lines(para)
+    assert len(out) > 1 and all(len(ln) <= MAX_LINE_CHARS for ln in out)
+    assert " ".join(out) == para
+    # one "word" longer than a line is cut
+    out = written_lines("x" * (MAX_LINE_CHARS * 2 + 5))
+    assert [len(ln) for ln in out] == [MAX_LINE_CHARS, MAX_LINE_CHARS, 5]
+
+
+def test_x1_a_long_line_is_accepted_over_http(api, pipeline):
+    body = {"source_id": "hub-note:long", "text": "word " * 1000, "written_at": str(T0),
+            "link": LINK}
+    r = api.post("/v1/ingest/text", json=body)
+    assert r.status_code == 200 and r.json()["lines"] == 2
+
+
+def test_x1_limits_that_stay(api, pipeline):
+    """Guard: empty text is 400, over 200,000 characters 422, over 5,000 lines 400."""
+    body = {"source_id": "hub-note:x", "written_at": str(T0), "link": LINK}
+    assert api.post("/v1/ingest/text", json={**body, "text": " \n"}).status_code == 400
+    assert api.post("/v1/ingest/text", json={**body, "text": "x" * 200_001}).status_code == 422
+    assert api.post("/v1/ingest/text", json={**body, "text": "x\n" * 5001}).status_code == 400
+    assert api.post("/v1/ingest/text", json={**body, "text": "x" * 200_000}).status_code == 200

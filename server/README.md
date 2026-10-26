@@ -230,7 +230,7 @@ the hub (Odysseus) and reviewed there:
 | field        | notes                                                                  |
 |--------------|------------------------------------------------------------------------|
 | `source_id`  | the hub's stable id: `hub-note:<id>` (id: `[A-Za-z0-9._-]{1,100}`)     |
-| `text`       | the reviewed text, at most 200,000 characters, 5,000 lines, 4,000 per line |
+| `text`       | the reviewed text, at most 200,000 characters and 5,000 lines; a line over 4,000 characters is wrapped at a space |
 | `written_at` | when the page was written: ISO-8601 (naive = UTC) or epoch s/ms        |
 | `link`       | the note in the hub, `<hub>/#open=notes&note=<id>` (http/https, ≤ 2,000) |
 | `title`      | optional, ≤ 200 characters; shown with the link, not used as the summary title |

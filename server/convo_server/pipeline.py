@@ -77,20 +77,31 @@ _EARLIEST, _LATEST = 946_684_800.0, 4_102_444_800.0
 
 def written_lines(text: str) -> list[str]:
     """A written note's text as lines: split at line breaks, control characters
-    dropped, surrounding spaces trimmed, empty lines left out. Raises ValueError when
-    nothing is left, or there are too many lines or a line is too long."""
+    dropped, surrounding spaces trimmed, empty lines left out, a line longer than
+    ``MAX_LINE_CHARS`` wrapped at the last space before it (cut when there is none).
+    Raises ValueError when nothing is left or there are too many lines."""
     if len(text) > MAX_TEXT_CHARS:
         raise ValueError(f"text is longer than {MAX_TEXT_CHARS} characters")
-    lines = [ln for ln in (" ".join(_CONTROL.sub("", raw).split())
-                           for raw in text.splitlines()) if ln]
+    lines = [part for ln in (" ".join(_CONTROL.sub("", raw).split())
+                             for raw in text.splitlines()) if ln for part in _wrap(ln)]
     if not lines:
         raise ValueError("text has no words; to remove a note use DELETE "
                          "/v1/ingest/text/{source_id}")
     if len(lines) > MAX_TEXT_LINES:
         raise ValueError(f"text has more than {MAX_TEXT_LINES} lines")
-    if any(len(ln) > MAX_LINE_CHARS for ln in lines):
-        raise ValueError(f"a line is longer than {MAX_LINE_CHARS} characters")
     return lines
+
+
+def _wrap(line: str) -> list[str]:
+    """``line`` (single spaces, trimmed) in parts of at most ``MAX_LINE_CHARS``."""
+    out = []
+    while len(line) > MAX_LINE_CHARS:
+        cut = line.rfind(" ", 0, MAX_LINE_CHARS + 1)
+        if cut <= 0:
+            cut = MAX_LINE_CHARS
+        out.append(line[:cut].rstrip())
+        line = line[cut:].lstrip()
+    return out + [line] if line else out
 
 
 def validate_source_id(source_id: str) -> str:
