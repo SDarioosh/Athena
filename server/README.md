@@ -318,7 +318,9 @@ both formats. `list_facts(format="json")` returns current facts in the text mode
 
 ```json
 {"facts": [{"id": 12, "subject": "Alice", "about": "person", "person_id": 3,
-            "fact": "Alice is vegetarian", "times_said": 3, "days": 2,
+            "fact": "Alice is vegetarian", "kind": "preference",
+            "conversation_id": "c-…", "quote": "Alice doesn't eat meat, remember?",
+            "times_said": 3, "days": 2,
             "first_said": "2025-10-09", "last_said": "2025-10-10",
             "confirmed": false, "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
 ```
@@ -329,6 +331,11 @@ owner, user, the user, `CONVO_OWNER_NAME` or the name of the enrolled owner voic
 former names (aliases, below); else `other`. `person_id` is the subject's person id (below) when `about` is `person`, and
 the owner's person id when it is `owner` (the owner person, below); null for `other`
 or when no such person exists.
+`kind` (MCP 0.11.0) is what sort of fact it is: `preference`, `plan`, `decision`,
+`relationship`, `personal` or `other` (null for facts stored before it). `conversation_id`
+is the conversation the fact was learned in, and `quote` the transcript line it was said
+on (at most 300 characters; null when there is no line, the transcript was pruned or the
+line erased), so a review page can show the words and group facts by conversation.
 `times_said` counts distinct conversations, `days` distinct local dates, and
 `first_said`/`last_said` are the first and last of those dates. `confirmed` is true when
 the fact meets the thresholds above, so a program can take every current fact with its
@@ -336,6 +343,16 @@ counts without knowing them (`confirmed=true` as an argument still filters). `li
 the same transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
 program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
 fact id that stops being returned (replaced, retired, or its conversation deleted).
+
+**Fact quality.** Small models list too many facts. The facts prompt leaves out
+thinking aloud, requests to someone else (action items), which tool was used and passing
+details of what was being worked on, and never guesses anyone's gender; code drops what
+the model still returns of the first two ("is considering …", "might …", "wants Bo to
+…"). Then one more model call scores each fact 1–5 (worth recalling in three months?)
+and facts under `CONVO_FACT_MIN_SCORE` (default 4; 1 = no call) are left out, and at most
+`CONVO_MAX_FACTS_PER_CONVERSATION` (default 3; 0 = no cap) are kept, best first. If that
+call fails, the facts are kept. Decisions the owner states in a voice note are not
+reviewed or capped. Facts already stored are unchanged.
 
 **People.** Every enrolled voice and every person named in a conversation has a row in
 `people` with a stable id, so the hub can link them to its contacts. Names match in any

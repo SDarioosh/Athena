@@ -94,7 +94,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.10.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.11.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -387,13 +387,16 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             owners, people = store.known_names()
             owners |= _OWNER_WORDS | {settings.owner_name.strip().lower()} - {""}
             owner_id = store.owner_person_id(_owner_names(settings))
+            quotes = store.fact_quotes(rows)
 
             def fact_json(f: dict[str, Any]) -> dict[str, Any]:
                 about = _about(f["subject"], owners, people)
                 pid = (owner_id if about == "owner" else
                        store.person_id(f["subject"] or "") if about == "person" else None)
                 return {"id": f["id"], "subject": f["subject"] or "", "about": about,
-                        "person_id": pid, "fact": f["fact"],
+                        "person_id": pid, "fact": f["fact"], "kind": f.get("kind"),
+                        "conversation_id": f["conversation_id"],
+                        "quote": quotes.get(f["id"]),
                         "times_said": f["times_said"], "days": f["days"],
                         "first_said": f["first_said"], "last_said": f["last_said"],
                         "confirmed": (f["times_said"] >= settings.fact_confirm_sources

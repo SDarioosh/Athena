@@ -60,9 +60,15 @@ class ActionItem(BaseModel):
                                    description="Offset in seconds where it was mentioned")
 
 
+# What sort of fact it is; the hub labels and files facts by it (list_facts JSON ``kind``).
+FACT_KINDS = ("preference", "plan", "decision", "relationship", "personal", "other")
+
+
 class Fact(BaseModel):
     subject: str = Field(description="Person, project or thing the fact is about")
     fact: str = Field(description="Durable fact worth remembering months from now")
+    # a plain string: a small model's odd kind must not fail the call (kept as "other")
+    kind: str = Field(default="other", description="One of: " + ", ".join(FACT_KINDS))
     at_seconds: int | None = None
 
 
@@ -92,6 +98,16 @@ class ActionItemList(BaseModel):
 
 class FactList(BaseModel):
     facts: list[Fact]
+
+
+class FactScore(BaseModel):
+    number: int = Field(description="Number of the fact")
+    score: int = Field(description="1 (leave out) to 5 (certainly worth keeping)")
+
+
+class FactReview(BaseModel):
+    """The second look at a conversation's facts (``Summarizer._review_facts``)."""
+    scores: list[FactScore]
 
 
 class FactLink(BaseModel):
@@ -229,12 +245,22 @@ today"), and never a plan for the next minutes or hours or the next step of what
 doing ("plans to get a snack", "plans to wire it up on a breadboard to test it"), and \
 never passing curiosity about something that came up ("is interested in hearing how it \
 sounds", "wants to see the demo"). \
+Leave out thinking aloud: what someone is considering, wondering about or might do is \
+not a fact until it is decided. Leave out a request to someone else ("wants Bo to send \
+the report"): that is an action item. Leave out how a task was done or which tool was \
+used for it, and passing details of whatever is being built, fixed or discussed in the \
+conversation, unless they will still matter in a month. \
 Each fact is a complete sentence that names its subject and makes sense on its own, e.g. \
 {{"subject": "Alice", "fact": "Alice is vegetarian."}}, never a bare value like "May". \
 Read months later without the conversation, it must still say what it is about: name the \
 thing ("Alice's bakery", "the Lisbon flat") instead of pointing back into the \
 conversation ("the technology", "the project", "this app", "that idea"). If you can't \
-name it, leave the fact out. \
+name it, leave the fact out. Never guess anyone's gender: repeat the name, never "he" \
+or "she". \
+kind: preference (likes, dislikes, habits, how someone wants things done), plan \
+(something they mean to do later), decision (a choice or principle they settled on), \
+relationship (who someone is to someone else), personal (job, home, health, family, \
+background), other. \
 at_seconds: the bracketed number of the supporting line. Return an empty list if there \
 are none.
 Decisions, priorities and principles someone states about how they want to work or live \
@@ -243,7 +269,22 @@ phrased as a decision, e.g. the user saying "I should stop prioritizing side pro
 before the base system is stable" -> {{"subject": "{owner}", "fact": "The owner decided \
 to stabilise the base system before side projects."}}. A plan with no time is a fact \
 too when it will still matter in a month (a trip, a purchase, a project, a move): "The \
-owner plans to ...". Keys: facts[{{subject, fact, at_seconds}}]."""
+owner plans to ...". Fewer good facts are better than many weak ones. Keys: \
+facts[{{subject, fact, kind, at_seconds}}]."""
+
+# The second look at the facts (``Summarizer._review_facts``): small models list too many.
+REVIEW_SYSTEM = """You check facts picked from one conversation before they go into the \
+user's long-term memory. Score each fact from 1 to 5:
+5: certainly worth recalling in three months: an allergy, a job, a family member, a \
+firm decision, a dated plan, a lasting preference;
+4: likely still useful in three months;
+3: true but minor or short-lived;
+2: thinking aloud (considering, might), a request or task for someone, how a task was \
+done or which tool was used, details of what was being worked on that day;
+1: trivial, vague (says "the device" or "the project" without naming it) or not about \
+anyone.
+"said" is the transcript line the fact came from. Score every fact by its number. \
+Output JSON only: {"scores": [{"number": <number>, "score": <1-5>}]}."""
 
 LINK_SYSTEM = """You keep the user's memory of facts up to date. You get facts already \
 known (with id and the date they were learned) and new facts from a conversation on \
@@ -408,8 +449,13 @@ class Summarizer:
     def __init__(self, llm: LLMClient, owner_name: str = "Me",
                  max_chars_per_call: int = 120_000, timezone: str = "UTC",
                  min_words: int = 3,
-                 digest_skip_lists: str = "Shopping,Groceries,Grocery") -> None:
+                 digest_skip_lists: str = "Shopping,Groceries,Grocery",
+                 fact_min_score: int = 4, max_facts: int = 3) -> None:
         self.llm = llm
+        # facts scored under this by the review call are left out (1: no review call)
+        self.fact_min_score = fact_min_score
+        # at most this many model facts per conversation, best first (0: no cap)
+        self.max_facts = max_facts
         self.owner = owner_name
         self.max_chars = max_chars_per_call
         self.tz = ZoneInfo(timezone)
@@ -445,7 +491,7 @@ class Summarizer:
         date = datetime.fromtimestamp(origin, self.tz).strftime("%A %Y-%m-%d")
         notes_sys = SUMMARY_SYSTEM.format(template=TEMPLATES[triage.kind], **fmt)
         actions_sys = ACTIONS_SYSTEM.format(date=date, **fmt)
-        facts_sys = FACTS_SYSTEM.format(**fmt)
+        facts_sys = FACTS_SYSTEM.format(**fmt) + self._fact_limit()
         notes = [self.llm.structured(notes_sys, p, SummaryNotes) for p in parts]
         if len(notes) > 1:
             merged = self.llm.structured(MERGE_SYSTEM, json.dumps(
@@ -469,6 +515,7 @@ class Summarizer:
         _drop_errands(out, spoken, _lines(parts), origin)
         _name_meetings(out["action_items"], spoken)
         _drop_event_facts(out)
+        self._review_facts(out, parts, origin)
         _mark_explicit(out["action_items"], None)
         if not any(s.is_owner for s in segments):  # models tend to add the user anyway
             out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
@@ -481,7 +528,7 @@ class Summarizer:
         date = datetime.fromtimestamp(origin, self.tz).strftime("%A %Y-%m-%d")
         notes_sys = NOTE_SYSTEM.format(**fmt)
         actions_sys = NOTE_ACTIONS_SYSTEM.format(date=date, **fmt)
-        facts_sys = FACTS_SYSTEM.format(**fmt)
+        facts_sys = FACTS_SYSTEM.format(**fmt) + self._fact_limit()
         notes = [self.llm.structured(notes_sys, p, SummaryNotes) for p in parts]
         merged = notes[0] if len(notes) == 1 else self.llm.structured(
             MERGE_SYSTEM, json.dumps([n.model_dump() for n in notes]), SummaryNotes)
@@ -513,6 +560,8 @@ class Summarizer:
                             owner=None)
         spoken = _spoken(parts)
         _drop_errands(out, spoken, _lines(parts), origin)
+        # the model's facts only: a decision the owner states in a voice note is kept
+        self._review_facts(out, parts, origin)
         self._intentions_to_facts(out, spoken)
         _name_meetings(out["action_items"], spoken)
         _drop_event_facts(out)
@@ -539,8 +588,54 @@ class Summarizer:
                        and len(want & got) >= 0.6 * min(len(want), len(got))
                        for f in out["facts"]):
                 out["facts"].append({"subject": self.owner, "fact": fact,
+                                     "kind": "decision" if fact.startswith(
+                                         "The owner decided") else "plan",
                                      "source_at": item.get("source_at")})
         out["action_items"] = items
+
+    def _fact_limit(self) -> str:
+        """The facts prompt's cap sentence (``max_facts``)."""
+        if not self.max_facts:
+            return ""
+        return (f"\nList at most {self.max_facts} facts: the ones the user would most want "
+                "recalled months from now.")
+
+    def _review_facts(self, out: dict[str, Any], parts: list[str], origin: float) -> None:
+        """A second look at the model's facts. One call scores each 1-5 (worth recalling
+        in three months?, ``REVIEW_SYSTEM``) and facts under ``fact_min_score`` are left
+        out; then the best ``max_facts`` are kept (ties: the model's order). A fact the
+        review gives no score keeps its place; a failed review call keeps every fact."""
+        facts = out["facts"]
+        if not facts:
+            return
+        scores: dict[int, int] = {}
+        if self.fact_min_score > 1:
+            lines = _lines(parts)
+            asked = [{"number": i, "subject": f["subject"], "fact": f["fact"],
+                      "said": lines.get(round(f["source_at"] - origin), "")
+                      if f.get("source_at") is not None else ""}
+                     for i, f in enumerate(facts)]
+            try:
+                review = self.llm.structured(REVIEW_SYSTEM, json.dumps(
+                    {"facts": asked}, ensure_ascii=False), FactReview)
+                assert isinstance(review, FactReview)
+                scores = {r.number: min(5, max(1, r.score)) for r in review.scores
+                          if 0 <= r.number < len(facts)}
+            except LLMError as e:
+                log.warning("fact review failed, keeping the facts: %s", e)
+        keep = []
+        for i, fact in enumerate(facts):
+            score = scores.get(i, self.fact_min_score)
+            if score < self.fact_min_score:
+                log.info("dropped a fact the review scored %d: %r", score, fact["fact"])
+                continue
+            keep.append((-score, i, fact))
+        keep.sort(key=lambda x: x[:2])
+        if self.max_facts and len(keep) > self.max_facts:
+            for _, _, fact in keep[self.max_facts:]:
+                log.info("dropped a fact over the cap of %d: %r", self.max_facts, fact["fact"])
+            keep = keep[:self.max_facts]
+        out["facts"] = [fact for _, _, fact in sorted(keep, key=lambda x: x[1])]
 
     def _intention(self, item: dict[str, Any], spoken: list[tuple[str, str]]) -> str | None:
         """The fact an action item really is (see ``_intentions_to_facts``), or None."""
@@ -768,8 +863,8 @@ def to_storage(s: ConversationSummary, origin: float) -> dict[str, Any]:
         "people": [p for p in _dedupe([person_name(p) for p in s.people])
                    if not _PLACEHOLDER.match(p)],
         "action_items": [_item_storage(a, at(a.at_seconds)) for a in s.action_items],
-        "facts": [{"subject": f.subject, "fact": f.fact, "source_at": at(f.at_seconds)}
-                  for f in s.facts],
+        "facts": [{"subject": f.subject, "fact": f.fact, "source_at": at(f.at_seconds),
+                   "kind": fact_kind(f.kind)} for f in s.facts],
     }
 
 
@@ -1520,18 +1615,47 @@ _CURIOUS = re.compile(
     re.IGNORECASE)
 
 
+def fact_kind(kind: Any) -> str:
+    """A model's fact kind as one of ``FACT_KINDS`` ("other" for anything else)."""
+    k = str(kind or "").strip().lower()
+    return k if k in FACT_KINDS else "other"
+
+
+# thinking aloud, not decided: "is considering selling the boat", "might move to Porto"
+_HEDGE = re.compile(
+    r"\b(?:is|are|was|were|has\s+been|have\s+been)\s+(?:still\s+|also\s+|now\s+)?"
+    r"(?:considering|contemplating|debating|weighing|wondering|unsure|not\s+sure|"
+    r"thinking\s+(?:about|of)|toying\s+with)\b"
+    r"|\b(?:might|maybe|perhaps|possibly)\b", re.IGNORECASE)
+_DECIDED = re.compile(r"\b(?:decided|has\s+chosen|chose)\b", re.IGNORECASE)
+# a request to someone else: "wants Bo Lindqvist to write a report", "asked her to call"
+# (names are capitalised, so no IGNORECASE; "wants to ..." is not one)
+_REQUEST = re.compile(
+    r"\b(?:[Ww]ants?|[Ww]anted|[Aa]sked|[Aa]sks|[Ww]ould\s+like|[Nn]eeds?|[Ee]xpects?|"
+    r"[Tt]old|[Tt]ells)\s+(?:[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)?|him|her|them|someone|"
+    r"somebody)\s+to\s+(?!be\b)[a-z]\w*")
+
+
 def _drop_passing_facts(out: dict[str, Any]) -> None:
     """Facts are for months; one tied to a single day ("today", "tonight", "this
     morning", "right now") is not one, and neither is curiosity about something that
-    came up ("is interested in hearing how it sounds"), whatever the model says (small
-    models keep them)."""
+    came up ("is interested in hearing how it sounds"), thinking aloud ("is considering
+    selling the boat", "might move") or a request to someone else ("wants Bo to send the
+    report": an action item), whatever the model says (small models keep them)."""
     keep = []
     for fact in out["facts"]:
-        if _ONE_DAY.search(fact["fact"]):
-            log.info("dropped a one-day fact: %r", fact["fact"])
+        text = fact["fact"]
+        if _ONE_DAY.search(text):
+            log.info("dropped a one-day fact: %r", text)
             continue
-        if _CURIOUS.search(fact["fact"]):
-            log.info("dropped a passing-curiosity fact: %r", fact["fact"])
+        if _CURIOUS.search(text):
+            log.info("dropped a passing-curiosity fact: %r", text)
+            continue
+        if _HEDGE.search(text) and not _DECIDED.search(text):
+            log.info("dropped a thinking-aloud fact: %r", text)
+            continue
+        if _REQUEST.search(text):
+            log.info("dropped a request to someone else: %r", text)
             continue
         keep.append(fact)
     out["facts"] = keep

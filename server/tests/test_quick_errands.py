@@ -104,7 +104,7 @@ def test_migration_fixes_stored_possessives(tmp_path):
     store.close()
 
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 13
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 14
     # renamed in place: the id survives, the old spelling is an alias
     assert store.person_id("Marisol") == old == store.person_id("Marisol's")
     # "Ana's" merges into the Ana already there

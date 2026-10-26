@@ -240,6 +240,8 @@ _PLACEHOLDER_SPEAKER = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
 
 # What an erased transcript line says instead (erase_fact)
 ERASED_TEXT = "[forgotten]"
+# a fact's transcript line in list_facts JSON (``quote``) is cut to this many characters
+QUOTE_CHARS = 300
 
 # Session kinds (sessions.kind). A voice note's conversation also gets conversations.kind
 # NOTE; ordinary conversations get the kind the summary triage picks.
@@ -463,6 +465,11 @@ class Store:
             self._add_column("segments", "erased", "INTEGER NOT NULL DEFAULT 0")
             self._add_column("conversations", "transcript_pruned_at", "REAL")
             self._conn.execute("PRAGMA user_version = 13")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 14:
+            # what sort of fact it is (preference, plan, decision, ...: FACT_KINDS), from
+            # the summary model; older facts have none
+            self._add_column("facts", "kind", "TEXT")
+            self._conn.execute("PRAGMA user_version = 14")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -775,7 +782,8 @@ class Store:
                           ) + 1
             for fact in summary["facts"]:
                 fact_ids.append(_insert_fact(c, conv_id, fact.get("subject"), fact["fact"],
-                                             fact.get("source_at"), fact_id=next_id))
+                                             fact.get("source_at"), fact_id=next_id,
+                                             kind=fact.get("kind")))
                 next_id += 1
             fact_ids = _carry_over(c, conv_id, before, fact_ids)
             c.executemany("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
@@ -1291,6 +1299,24 @@ class Store:
             out[fid] = {"times_said": len(convs), "days": len(days),
                         "first_said": days[0] if days else None,
                         "last_said": days[-1] if days else None}
+        return out
+
+    def fact_quotes(self, facts: Iterable[dict[str, Any]]) -> dict[int, str | None]:
+        """For each fact (``id``, ``conversation_id``, ``source_at``): the transcript line
+        it was said on, so a reviewer can judge it without opening the transcript. None
+        when there is no such line (no offset, transcript pruned) or it was erased."""
+        out: dict[int, str | None] = {}
+        for f in facts:
+            at, line = f.get("source_at"), None
+            if at is not None:
+                rows = self._q(
+                    "SELECT text, erased FROM segments WHERE conversation_id = ?"
+                    " AND started_at < ? + 1 AND ended_at > ? - 1"
+                    " ORDER BY abs(started_at - ?) LIMIT 1",
+                    (f["conversation_id"], at, at, at))
+                if rows and not rows[0]["erased"]:
+                    line = " ".join(str(rows[0]["text"] or "").split())[:QUOTE_CHARS] or None
+            out[f["id"]] = line
         return out
 
     def known_names(self) -> tuple[set[str], set[str]]:
@@ -2126,9 +2152,11 @@ def _same_item(before: list[dict[str, Any]], item: dict[str, Any]) -> dict[str, 
 
 
 def _insert_fact(c: sqlite3.Connection, conv_id: str, subject: str | None, fact: str,
-                 source_at: float | None, fact_id: int | None = None) -> int:
-    cur = c.execute("INSERT INTO facts (id, conversation_id, subject, fact, source_at)"
-                    " VALUES (?, ?, ?, ?, ?)", (fact_id, conv_id, subject, fact, source_at))
+                 source_at: float | None, fact_id: int | None = None,
+                 kind: str | None = None) -> int:
+    cur = c.execute("INSERT INTO facts (id, conversation_id, subject, fact, source_at, kind)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (fact_id, conv_id, subject, fact, source_at, kind))
     c.execute("INSERT INTO search_fts VALUES ('fact', ?, ?, ?)",
               (str(cur.lastrowid), conv_id, f"{subject or ''}: {fact}"))
     return int(cur.lastrowid or 0)
@@ -2161,7 +2189,7 @@ def _knowledge(c: sqlite3.Connection, conv_id: str) -> dict[str, Any]:
     """What a re-summary must not lose: closed action items and the facts' links."""
     facts = [dict(r) for r in c.execute(
         "SELECT id, subject, fact, source_at, status, superseded_by, retired_at,"
-        " retired_reason, erased_at FROM facts WHERE conversation_id = ? ORDER BY id",
+        " retired_reason, erased_at, kind FROM facts WHERE conversation_id = ? ORDER BY id",
         (conv_id,))]
     for f in facts:
         f["sources"] = [dict(r) for r in c.execute(
@@ -2212,12 +2240,12 @@ def _carry_over(c: sqlite3.Connection, conv_id: str, before: dict[str, Any],
         elif sources:  # said elsewhere too: keep it, owned by the first other source
             first, sources = sources[0], sources[1:]
             target = _insert_fact(c, first["conversation_id"], old["subject"], old["fact"],
-                                  first["source_at"], fact_id=old["id"])
+                                  first["source_at"], fact_id=old["id"], kind=old["kind"])
         elif old["status"] == "retired":
             # not said this time: keep the retired row, so a later re-summary that says it
             # again still finds it retired
             target = _insert_fact(c, conv_id, old["subject"], old["fact"], old["source_at"],
-                                  fact_id=old["id"])
+                                  fact_id=old["id"], kind=old["kind"])
         else:
             continue
         if old["status"] == "retired":
