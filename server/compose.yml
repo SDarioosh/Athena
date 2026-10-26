@@ -1,0 +1,127 @@
+# odysseus-sound in Docker (README "Docker"). From server/:
+#
+#   docker compose up -d --build --wait
+#
+# Settings: server/.env, the same file a native install uses. Compose reads it twice: as
+# the services' environment (env_file) and for the ${...} values below. The CONVO_DOCKER_*
+# lines at the bottom of .env.example only matter here.
+#
+# Services:
+#   sound-api    convo-server serve: ingestion API + worker (devices and phones)
+#   sound-mcp    convo-server mcp --http: what Odysseus talks to
+#   whisper-gpu  whisper-server on an NVIDIA GPU   (COMPOSE_PROFILES=whisper-gpu)
+#   whisper-cpu  whisper-server on CPU             (COMPOSE_PROFILES=whisper-cpu)
+# With neither profile, set CONVO_DOCKER_WHISPER_URL to a whisper-server outside Docker.
+# llama-server stays outside Docker: loopback URLs in .env (http://127.0.0.1:8082/v1)
+# are pointed at the Docker host by the image's entrypoint.
+name: odysseus-sound
+
+x-sound: &sound
+  build:
+    context: .
+    args:
+      EXTRAS: ${CONVO_DOCKER_EXTRAS:-vad,diarization}
+  image: odysseus-sound:${CONVO_DOCKER_TAG:-current}
+  env_file: .env
+  # Run as the host user, so files in the data dir stay theirs (id -u / id -g).
+  user: "${PUID:-1000}:${PGID:-1000}"
+  volumes:
+    # The same data dir a native install uses (CONVO_DATA_DIR, relative to server/).
+    - type: bind
+      source: ${CONVO_DATA_DIR:-./data}
+      target: /data
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+
+services:
+  sound-api:
+    <<: *sound
+    command: ["serve"]
+    environment:
+      CONVO_DATA_DIR: /data
+      CONVO_HOST: 0.0.0.0
+      CONVO_PORT: "8000"
+      CONVO_PUBLIC_URL: ${CONVO_PUBLIC_URL:-http://127.0.0.1:${CONVO_PORT:-8000}}
+      CONVO_WHISPER_SERVER_URL: ${CONVO_DOCKER_WHISPER_URL:-http://whisper:8178}
+    ports:
+      # CONVO_HOST/CONVO_PORT keep their meaning: where devices reach the API.
+      - "${CONVO_HOST:-127.0.0.1}:${CONVO_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  sound-mcp:
+    <<: *sound
+    command: ["mcp", "--http"]
+    environment:
+      CONVO_DATA_DIR: /data
+      CONVO_MCP_HOST: 0.0.0.0
+      CONVO_MCP_PORT: "8001"
+      # The relay routes (ingest_relay.py: uploads, notes, T5 reads, /settings/llm)
+      # forward to the ingest API at CONVO_HOST:CONVO_PORT: here the sound-api container.
+      CONVO_HOST: sound-api
+      CONVO_PORT: "8000"
+      CONVO_MCP_TOKEN: ${CONVO_MCP_TOKEN:?set CONVO_MCP_TOKEN in server/.env (16+ characters)}
+      CONVO_PUBLIC_URL: ${CONVO_PUBLIC_URL:-http://127.0.0.1:${CONVO_PORT:-8000}}
+    ports:
+      # Where Odysseus reaches MCP today: 172.17.0.1 for Odysseus in Docker
+      # (http://host.docker.internal:8001/mcp?access_token=...), else 127.0.0.1.
+      - "${CONVO_MCP_HOST:-127.0.0.1}:${CONVO_MCP_PORT:-8001}:8001"
+    healthcheck:
+      # Any HTTP answer counts: a request without the token gets 401.
+      test: ["CMD", "python", "-c", "import urllib.request as u, urllib.error as e\ntry: u.urlopen('http://127.0.0.1:8001/mcp', timeout=4)\nexcept e.HTTPError: pass"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  whisper-gpu: &whisper
+    profiles: ["whisper-gpu"]
+    build:
+      context: docker
+      dockerfile: whisper.Dockerfile
+      args:
+        BACKEND: cuda
+        CUDA_ARCH: ${CONVO_DOCKER_CUDA_ARCH:-75;80;86;89}
+        CUDA_VERSION: ${CONVO_DOCKER_CUDA_VERSION:-12.4.1}
+    image: odysseus-sound-whisper:cuda
+    environment:
+      WHISPER_MODEL: ${CONVO_DOCKER_WHISPER_MODEL:-ggml-large-v3-turbo-q5_0.bin}
+      WHISPER_ARGS: ${CONVO_DOCKER_WHISPER_ARGS:-}
+    volumes:
+      - type: bind
+        source: ${CONVO_DOCKER_WHISPER_MODELS:-./data/whisper-models}
+        target: /models
+        read_only: true
+    networks:
+      default:
+        aliases: ["whisper"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://127.0.0.1:8178/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  whisper-cpu:
+    <<: *whisper
+    profiles: ["whisper-cpu"]
+    build:
+      context: docker
+      dockerfile: whisper.Dockerfile
+      args:
+        BACKEND: cpu
+    image: odysseus-sound-whisper:cpu
+    deploy: {}

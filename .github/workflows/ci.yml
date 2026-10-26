@@ -22,6 +22,35 @@ jobs:
           ruff check .
           python -m pytest -q
 
+  server-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Docker: build the images, start sound-api, sound-mcp and whisper-cpu"
+        working-directory: server
+        run: |
+          cat > .env <<EOF
+          CONVO_INGEST_TOKEN=ci-ingest-token-0123456789abcdef
+          CONVO_MCP_TOKEN=ci-mcp-token-0123456789abcdef
+          CONVO_DIARIZATION=false
+          COMPOSE_PROFILES=whisper-cpu
+          CONVO_DOCKER_WHISPER_MODEL=ggml-tiny.en.bin
+          PUID=$(id -u)
+          PGID=$(id -g)
+          EOF
+          mkdir -p data/whisper-models
+          curl -sSL -o data/whisper-models/ggml-tiny.en.bin \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+          docker compose up -d --build --wait --wait-timeout 300
+          curl -sf http://127.0.0.1:8000/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8001/mcp)" = 401
+          docker compose exec -T sound-api python -c \
+            "import urllib.request as u; u.urlopen('http://whisper:8178/', timeout=5)"
+      - name: Container logs
+        if: failure()
+        working-directory: server
+        run: docker compose logs --tail 80
+
   firmware-twatch-ultra:
     runs-on: ubuntu-latest
     steps:
