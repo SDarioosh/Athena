@@ -4,7 +4,8 @@ Frontends (Hermes Agent, Odysseus, ...) connect over stdio (``convo-server mcp``
 Streamable HTTP with a bearer token (``convo-server mcp --http``). The SQLite store stays
 the source of truth; tools return compact text with a link to the transcript for every
 claim so the frontend's model can cite sources. Over HTTP the same token can also upload
-recordings (``/ingest/chunk``, see ``ingest_relay.py``); those routes are not tools.
+recordings (``/ingest/chunk``) and written notes (``/ingest/text``, see
+``ingest_relay.py``); those routes are not tools.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from pydantic import Field
 
 from .config import Settings
 from .diarize import load_voices
-from .links import local_time, transcript_link
+from .links import local_time, transcript_link, written_label
 from .search import Embedder, search
 from .speakers import relabel_matches, suggestion
 from .store import CONVERSATION, ITEM_KINDS, NOTE, UNSET, Store, short_title
@@ -56,7 +57,8 @@ list_unnamed_speakers shows voices nobody has named yet, with quotes and a guess
 Voice notes: recordings the user made for themselves (an idea, a reminder) are voice \
 notes, marked "(voice note)" after the title. When the user asks about their voice notes, \
 notes or memos, call search_conversations with kind="note" (no query needed for the \
-latest ones).
+latest ones). Notes the user wrote by hand are notes too, marked "(written by hand: \
+<link>)" instead; that link opens the handwritten page.
 
 Showing a transcript: when the user asks to see or read a transcript, answer with its link \
 and a short summary of who said what; don't copy the transcript lines into your answer \
@@ -94,7 +96,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.11.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.12.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -136,12 +138,13 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             known = ", ".join(r["name"] for r in store.speaker_stats()[:20])
             return f"No lines by {speaker!r} in that range. Known speakers: {known or 'none'}."
         lines = [header(len(rows), "transcript lines")]
+        written = store.written_notes_for(r["conversation_id"] for r in rows)
         for r in rows:
             link = transcript_link(settings, r["conversation_id"],
                                    r["started_at"] - r["conversation_at"])
             lines.append(f"- #{r['id']} {when(r['started_at'])} {r['speaker']}: \"{r['text']}\" "
                          f"(conversation \"{r['conversation_title'] or 'untitled'}\""
-                         f"{_note(r.get('conversation_kind'))}, "
+                         f"{_note(r.get('conversation_kind'), written.get(r['conversation_id']))}, "
                          f"id {r['conversation_id']}) {link}")
         return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
@@ -176,7 +179,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         for c in convs:
             lines.append(
                 f"- {when(c['started_at'])}–{when(c['ended_at'], '%H:%M')} "
-                f"\"{_title(c)}\"{_note(c.get('kind'))} id {c['id']}; people: "
+                f"\"{_title(c)}\"{_note(c.get('kind'), c.get('written'))} id {c['id']}; people: "
                 f"{', '.join(c['people']) or '—'}\n  {c['summary'] or ''}\n  "
                 f"{transcript_link(settings, c['id'])}")
         return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
@@ -188,7 +191,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if c is None:
             return f"No conversation {conversation_id!r}."
         speakers = sorted({s.speaker for s in store.conversation_segments(conversation_id)})
-        out = [f"\"{_title(c)}\"{_note(c.get('kind'))} — {when(c['started_at'])}–"
+        out = [f"\"{_title(c)}\"{_note(c.get('kind'), c.get('written'))} — {when(c['started_at'])}–"
                f"{when(c['ended_at'], '%H:%M')} ({settings.timezone}), device {c['device']}"
                + (f", type {c['kind']}" if c.get("kind") else ""),
                f"Speakers: {', '.join(speakers) or '—'}. People: {', '.join(c['people']) or '—'}",
@@ -240,7 +243,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                                (r["source_at"] or r["conversation_at"]) - r["conversation_at"])
 
     def item_json(r: dict[str, Any], mine_names: set[str],
-                  participants: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+                  participants: dict[str, list[dict[str, Any]]],
+                  written: dict[str, dict[str, Any]]) -> dict[str, Any]:
         owner = (r["owner"] or "").strip().lower()
         kind = r.get("kind") or "task"
         others = [] if kind == "note" else _with(r["text"], participants.get(
@@ -259,7 +263,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                 "conversation_kind": r.get("conversation_kind"),
                 "conversation_at": _iso(r["conversation_at"]),
                 "created_at": _iso(r.get("created_at") or r["conversation_at"]),
-                "timezone": settings.timezone, "link": item_link(r), "with": others}
+                "timezone": settings.timezone, "link": item_link(r), "with": others,
+                **_written_json(written.get(r["conversation_id"]))}
 
     @mcp.tool(annotations=ro)
     def list_action_items(status: Annotated[str, Field(description="open, done, dismissed or all")]
@@ -298,10 +303,11 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             if fmt == "json" or person.strip() else {}
         if person.strip():
             rows = [r for r in rows if _involves(r, person, participants)]
+        written = store.written_notes_for(r["conversation_id"] for r in rows)
         if fmt == "json":
             mine_names = store.known_names()[0] | _OWNER_WORDS | {
                 settings.owner_name.strip().lower()} - {""}
-            return json.dumps([item_json(r, mine_names, participants) for r in rows],
+            return json.dumps([item_json(r, mine_names, participants, written) for r in rows],
                               ensure_ascii=False)
         lines = [header(len(rows), f"{st} action items")]
         for r in rows:
@@ -310,8 +316,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                          + _due(r)
                          + (f" [list {r['list_name']}]" if r.get("list_name") else "")
                          + f" — from \"{r['conversation_title']}\""
-                         + f"{_note(r.get('conversation_kind'))} {when(r['conversation_at'])} "
-                         + item_link(r))
+                         + _note(r.get("conversation_kind"), written.get(r["conversation_id"]))
+                         + f" {when(r['conversation_at'])} " + item_link(r))
         return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=rw)
@@ -383,6 +389,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             counts_tz=settings.timezone if counted else None,
             min_sources=settings.fact_confirm_sources if confirmed else 0,
             min_days=settings.fact_confirm_days if confirmed else 0)
+        written = store.written_notes_for(f["conversation_id"] for f in rows)
         if fmt == "json":
             owners, people = store.known_names()
             owners |= _OWNER_WORDS | {settings.owner_name.strip().lower()} - {""}
@@ -401,13 +408,15 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                         "first_said": f["first_said"], "last_said": f["last_said"],
                         "confirmed": (f["times_said"] >= settings.fact_confirm_sources
                                       and f["days"] >= settings.fact_confirm_days),
-                        "link": fact_link(f)}
+                        "link": fact_link(f),
+                        **_written_json(written.get(f["conversation_id"]))}
 
             return json.dumps({"facts": [fact_json(f) for f in rows]}, ensure_ascii=False)
         lines = [header(len(rows), "confirmed facts" if confirmed else "facts")]
         for f in rows:
             lines.append(f"- [{f['subject']}] {f['fact']} (learned "
-                         f"{when(f['conversation_at'], '%Y-%m-%d')}) " + fact_link(f))
+                         f"{when(f['conversation_at'], '%Y-%m-%d')}) " + fact_link(f)
+                         + written_label(written.get(f["conversation_id"])))
             for s in store.fact_sources(f["id"]):
                 lines.append(f"  said again {when(s['conversation_at'], '%Y-%m-%d')} "
                              + transcript_link(settings, s["conversation_id"],
@@ -467,7 +476,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         out += [f"TODO: {t}" for t in d.get("open_action_items", [])]
         for cid in d.get("conversation_ids", []):
             conv = store.get_conversation(cid)
-            what = "Voice note" if conv and conv.get("kind") == "note" else "Conversation"
+            what = ("Written note" if conv and conv.get("written") else
+                    "Voice note" if conv and conv.get("kind") == "note" else "Conversation")
             out.append(f"{what}: {transcript_link(settings, cid)}")
         out.append(f"{cite}.")
         return "\n".join(out)
@@ -712,9 +722,19 @@ def _kind(value: str) -> str | None:
     raise ValueError(f"bad kind {value!r}; use 'note', 'conversation' or ''")
 
 
-def _note(kind: str | None) -> str:
-    """Marks a voice note (the owner talking to themselves) next to its title."""
+def _note(kind: str | None, written: dict[str, Any] | None = None) -> str:
+    """Marks a voice note (the owner talking to themselves) next to its title, or a note
+    written by hand in the hub, with the link to it there."""
+    if written:
+        return written_label(written)
     return " (voice note)" if kind == "note" else ""
+
+
+def _written_json(written: dict[str, Any] | None) -> dict[str, Any]:
+    """JSON rows' fields for a written note (MCP 0.12.0): ``written_by_hand`` and
+    ``note_link``, the note in the hub (null for spoken ones)."""
+    return {"written_by_hand": bool(written),
+            "note_link": written["link"] if written else None}
 
 
 def _due(a: dict[str, Any]) -> str:

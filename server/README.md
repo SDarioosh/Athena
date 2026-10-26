@@ -222,6 +222,48 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
 
+### Written notes
+
+`POST /v1/ingest/text` (JSON, same bearer token) takes a note the owner wrote by hand in
+the hub (Odysseus) and reviewed there:
+
+| field        | notes                                                                  |
+|--------------|------------------------------------------------------------------------|
+| `source_id`  | the hub's stable id: `hub-note:<id>` (id: `[A-Za-z0-9._-]{1,100}`)     |
+| `text`       | the reviewed text, at most 200,000 characters, 5,000 lines, 4,000 per line |
+| `written_at` | when the page was written: ISO-8601 (naive = UTC) or epoch s/ms        |
+| `link`       | the note in the hub, `<hub>/#open=notes&note=<id>` (http/https, ≤ 2,000) |
+| `title`      | optional, ≤ 200 characters; shown with the link, not used as the summary title |
+
+It becomes one conversation of kind `note` on device `handwriting`: each non-empty line
+(spaces trimmed, control characters dropped) is a line by the owner at `written_at` plus
+one second per line, so the usual `/view/<id>?sig=…#t=<seconds>` link points at a line.
+No audio, VAD, transcription or diarization. The worker summarizes it with the
+voice-note prompts (summary, to-dos, facts; never discarded). The text is the owner's
+words, never instructions: the model gets it as the note's text, like a transcript.
+
+Answer: `{"ok": true, "source_id", "result": "created"|"replaced"|"unchanged",
+"conversation_id", "lines", "erased_lines", "transcript_link"}`; 400 with a `detail` for a
+bad `source_id`, `link`, `written_at` or text with no words, 422 for a field over its
+size.
+
+- **Resend** (same `source_id`): the lines are replaced, the digests that covered the note
+  are taken down and written again, and the worker summarizes it again. Facts and to-dos
+  said again keep their ids (and a to-do its status); the others are dropped, so the
+  hub's syncs retire them. A retired fact stays retired. The same lines and `written_at`
+  is a no-op (`"unchanged"`; a new `link` or `title` is stored). A resend that lands while
+  the model is summarizing the old text is summarized again on the next pass.
+- **Erased facts stay erased.** The hub still has the words of a fact the owner erased
+  (`erase_fact`), so a resend brings them back: a line with the same words as an erased
+  line, or one that says an erased fact of this note (two or more of its words, at least
+  half), is stored as `[forgotten]` (`erased_lines` counts them).
+- `DELETE /v1/ingest/text/{source_id}` removes the note: its lines, conversation, to-dos and
+  facts (a fact another conversation said too stays, owned by that one), and its digests
+  are written again. `{"ok": true, "result": "deleted", "conversation_id"}`, or
+  `"already"` when there is no such note (idempotent).
+- The `/view` page says "Written by hand" and links to the note in the hub. Conversations
+  in the API carry `written: {"source_id", "link", "title"}` (null for recordings).
+
 VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD` (0.5; 0.35 by default with
 `CONVO_DIARIZER=pyannote`), `CONVO_VAD_MIN_SILENCE_MS` and `CONVO_VAD_SPEECH_PAD_MS` tune
 it. A far-field or wrist recording can be 20-30 dB quieter
@@ -344,6 +386,12 @@ the same transcript link as in the text. `limit` goes up to 1000 in JSON mode (2
 program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
 fact id that stops being returned (replaced, retired, or its conversation deleted).
 
+`written_by_hand` and `note_link` (MCP 0.12.0, additive) are on every JSON fact row and
+every JSON `list_action_items` row: true and the note's URL in the hub when the fact or
+item comes from a written note (`POST /v1/ingest/text`), else false and null. The text
+listings mark such facts, items and conversations `(written by hand: <link>)` instead of
+`(voice note)`.
+
 **Fact quality.** Small models list too many facts. The facts prompt leaves out
 thinking aloud, requests to someone else (action items), which tool was used and passing
 details of what was being worked on, never guesses anyone's gender, and asks for at most
@@ -462,7 +510,7 @@ CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 convo-server mcp --http   # docker
 #   http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>
 ```
 
-**Uploads through the MCP server.** `convo-server mcp --http` also serves two plain HTTP
+**Uploads through the MCP server.** `convo-server mcp --http` also serves plain HTTP
 routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 `?access_token=`). They are not MCP tools, so no model ever sees them:
 
@@ -470,6 +518,8 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 |---|---|
 | `POST /ingest/chunk` | `POST /v1/ingest/chunk` (same multipart fields, same JSON answer) |
 | `POST /sessions/{session_id}/end` | `POST /v1/sessions/{id}/end` |
+| `POST /ingest/text` | `POST /v1/ingest/text` (same JSON fields and answer; written notes) |
+| `DELETE /ingest/text/{source_id}` | `DELETE /v1/ingest/text/{source_id}` |
 | `GET /health` | `GET /health` (here behind the token) |
 | `GET /conversations`, `GET /conversations/{id}`, `GET /conversations/{id}/transcript` | the `/v1` routes, same query |
 | `GET /action-items`, `PATCH /action-items/{id}` | the `/v1` routes |
@@ -485,7 +535,8 @@ Each request is forwarded unchanged to this module's own ingest API
 `CONVO_INGEST_TOKEN`, so there is one ingest code path and the ingest token, which also
 signs transcript links, never leaves the module. The API's status and `detail` come back
 as they are; the body is capped like the API's (25 MB of audio); if `convo-server serve`
-isn't running the answer is 502 with a readable `detail`. Odysseus uses these routes to
+isn't running the answer is 502 with a readable `detail`. `/ingest/text` takes
+`application/json` only (415 otherwise) and caps its body at about 1.2 MB. Odysseus uses these routes to
 add recordings (its call recorder, phones paired through it) with the URL and token of
 the `convo` MCP server it already has. **The MCP token can therefore add recordings**:
 treat it like the ingest token, and keep the MCP port on loopback, the Docker bridge or

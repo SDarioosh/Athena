@@ -5,6 +5,7 @@ All timestamps are UTC epoch seconds (REAL). The API layer formats them as ISO-8
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -214,6 +215,25 @@ CREATE TABLE IF NOT EXISTS erased_sources (
     PRIMARY KEY (fact_id, conversation_id)
 );
 
+-- Written notes (POST /v1/ingest/text): text the owner wrote by hand in the hub, one
+-- conversation of kind 'note' on device 'handwriting', one owner line per written line.
+-- source_id is the hub's stable id ("hub-note:<id>"); a resend with it replaces the
+-- lines. erased_lines holds sha256 fingerprints of lines erase_fact redacted, so a resend
+-- of the same words keeps them "[forgotten]".
+CREATE TABLE IF NOT EXISTS written_notes (
+    source_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    link TEXT NOT NULL,                       -- the note in the hub
+    title TEXT,
+    written_at REAL NOT NULL,
+    text_hash TEXT NOT NULL,
+    erased_lines TEXT NOT NULL DEFAULT '[]',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS written_notes_conv ON written_notes(conversation_id);
+
 -- Line-level full-text index for "what did X say about Y" (kept in sync by triggers).
 CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
     text, content='segments', content_rowid='id', tokenize = 'porter unicode61'
@@ -248,6 +268,10 @@ QUOTE_CHARS = 300
 CONVERSATION = "conversation"
 NOTE = "note"
 SESSION_KINDS = (CONVERSATION, NOTE)
+# The device of written notes (POST /v1/ingest/text); no recorder uploads as it.
+WRITTEN_DEVICE = "handwriting"
+# A written note's session id is this prefix plus its source id.
+WRITTEN_SESSION_PREFIX = "written:"
 
 
 class DuplicateChunk(Exception):
@@ -723,8 +747,14 @@ class Store:
                 " WHERE id = ?", (conv_id, conv_id, conv_id))
         return conv_id
 
-    def save_summary(self, conv_id: str, summary: dict[str, Any]) -> list[int]:
+    def save_summary(self, conv_id: str, summary: dict[str, Any],
+                     expect_updated_at: float | None = None) -> list[int] | None:
         """Store structured LLM output and refresh the FTS index for the conversation.
+
+        With ``expect_updated_at`` (the conversation's ``updated_at`` when the summary
+        was started) nothing is saved and None is returned if the conversation changed
+        meanwhile (a written note resent, a late chunk, a rename) or is gone: it stays
+        'pending' and the next pass summarizes what it says now.
 
         A re-summary (e.g. after a speaker was renamed) keeps what is known about the
         old items: action-item status, fact links and other conversations' sources. A
@@ -734,9 +764,16 @@ class Store:
         """
         conv = self.get_conversation(conv_id)
         if conv is None:
+            if expect_updated_at is not None:
+                return None
             raise KeyError(conv_id)
         fact_ids: list[int] = []
         with self.tx() as c:
+            if expect_updated_at is not None:
+                now_at = c.execute("SELECT updated_at FROM conversations WHERE id = ?",
+                                   (conv_id,)).fetchone()
+                if now_at is None or now_at[0] != expect_updated_at:
+                    return None
             c.execute(
                 "UPDATE conversations SET status = 'summarized', error = NULL, title = ?,"
                 " summary = ?, key_points = ?, topics = ?, people = ?, kind = ?,"
@@ -1072,6 +1109,7 @@ class Store:
         line = _cited_line(rows, source_at, fact)
         if line is None or line["erased"]:
             return 0
+        _remember_erased_line(c, conv_id, line["text"])
         c.execute("UPDATE segments SET text = ?, erased = 1 WHERE id = ?",
                   (ERASED_TEXT, line["id"]))
         c.execute("DELETE FROM search_fts WHERE kind = 'transcript' AND conversation_id = ?",
@@ -1113,13 +1151,7 @@ class Store:
                   (conv_id,))
         c.execute("DELETE FROM embeddings WHERE kind = 'conversation' AND conversation_id = ?",
                   (conv_id,))
-        for d in c.execute("SELECT date, content FROM digests WHERE content LIKE ?",
-                           (f"%{conv_id}%",)).fetchall():
-            ids = json.loads(d["content"]).get("conversation_ids", [])
-            if conv_id in ids:
-                c.execute("INSERT OR REPLACE INTO forget_digests VALUES (?, ?, ?)",
-                          (d["date"], json.dumps(ids), now))
-                c.execute("DELETE FROM digests WHERE date = ?", (d["date"],))
+        _take_down_digests(c, conv_id, now)
 
     def _after_erase(self, audio: list[str]) -> None:
         for path in audio:
@@ -1481,6 +1513,152 @@ class Store:
                 _touch_conversations(c, [row["conversation_id"]], name)
             return _segment(dict(row))
 
+    # ------------------------------------------------------------ written notes
+    def written_note(self, source_id: str) -> dict[str, Any] | None:
+        return self._one("SELECT * FROM written_notes WHERE source_id = ?", (source_id,))
+
+    def written_notes_for(self, conv_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """``{conversation_id: {"source_id", "link", "title"}}`` for the written notes
+        among ``conv_ids`` (others are left out)."""
+        ids = list(dict.fromkeys(conv_ids))
+        out: dict[str, dict[str, Any]] = {}
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            for r in self._q("SELECT source_id, conversation_id, link, title FROM written_notes"
+                             f" WHERE conversation_id IN ({','.join('?' * len(part))})", part):
+                out[r["conversation_id"]] = {"source_id": r["source_id"], "link": r["link"],
+                                             "title": r["title"]}
+        return out
+
+    def put_written_note(self, source_id: str, lines: list[str], written_at: float,
+                         link: str, title: str | None, speaker: str,
+                         now: float | None = None) -> dict[str, Any]:
+        """Store or replace a written note (``POST /v1/ingest/text``).
+
+        One conversation of kind NOTE on ``WRITTEN_DEVICE``; ``lines`` (non-empty, in
+        order) become owner lines at ``written_at`` plus one second each, so a fact's
+        ``#t=<seconds>`` link points at its line. The conversation is left 'pending' for
+        the worker to summarize (the voice-note prompts).
+
+        A second call with the same ``source_id`` and the same lines and ``written_at``
+        changes nothing (``link`` and ``title`` are updated): ``"unchanged"``. Other lines
+        replace the old ones (``"replaced"``) and the worker summarizes the note again;
+        the re-summary keeps the ids of facts and to-dos said again (``save_summary``) and
+        drops the others. A line erased by ``erase_fact`` stays "[forgotten]" when the
+        same words come back, and so does a line saying an erased fact of this note.
+        The digests that covered the note are taken down and written again.
+        Returns ``{"result", "conversation_id", "lines", "erased_lines"}``.
+        """
+        now = time.time() if now is None else now
+        text_hash = hashlib.sha256(json.dumps(
+            {"lines": lines, "written_at": round(written_at, 3)},
+            ensure_ascii=False).encode()).hexdigest()
+        session_id = WRITTEN_SESSION_PREFIX + source_id
+        with self.tx() as c:
+            row = c.execute("SELECT * FROM written_notes WHERE source_id = ?",
+                            (source_id,)).fetchone()
+            old_conv = row["conversation_id"] if row is not None and c.execute(
+                "SELECT 1 FROM conversations WHERE id = ?",
+                (row["conversation_id"],)).fetchone() else None
+            if old_conv is not None and row["text_hash"] == text_hash:
+                c.execute("UPDATE written_notes SET link = ?, title = ? WHERE source_id = ?",
+                          (link, title, source_id))
+                return {"result": "unchanged", "conversation_id": old_conv,
+                        "lines": len(lines), "erased_lines": c.execute(
+                            "SELECT COUNT(*) FROM segments WHERE session_id = ? AND erased = 1",
+                            (session_id,)).fetchone()[0]}
+            conv_id = old_conv or uuid.uuid4().hex
+            erased_keys = json.loads(row["erased_lines"]) if row is not None else []
+            erased_facts: list[str] = []
+            if old_conv is not None:
+                # erased facts this note said (its own, or another's it said again)
+                erased_facts = [r[0] for r in c.execute(
+                    "SELECT fact FROM facts WHERE conversation_id = ? AND erased_at IS NOT NULL"
+                    " UNION SELECT f.fact FROM fact_sources s JOIN facts f ON f.id = s.fact_id"
+                    " WHERE s.conversation_id = ? AND f.erased_at IS NOT NULL"
+                    " UNION SELECT f.fact FROM erased_sources e JOIN facts f"
+                    " ON f.id = e.fact_id WHERE e.conversation_id = ?",
+                    (conv_id, conv_id, conv_id))]
+                c.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
+                _take_down_digests(c, conv_id, now)
+            else:
+                c.execute("DELETE FROM sessions WHERE id = ?", (session_id,))  # a stale one
+                c.execute("INSERT INTO conversations (id, device, started_at, ended_at,"
+                          " updated_at, kind) VALUES (?, ?, ?, ?, ?, ?)",
+                          (conv_id, WRITTEN_DEVICE, written_at, written_at, now, NOTE))
+            end = written_at + len(lines)
+            c.execute("INSERT INTO sessions (id, device, started_at, last_chunk_at,"
+                      " received_at, status, stop_reason, kind)"
+                      " VALUES (?, ?, ?, ?, ?, 'done', 'text', ?) ON CONFLICT(id) DO UPDATE"
+                      " SET started_at = excluded.started_at,"
+                      " last_chunk_at = excluded.last_chunk_at,"
+                      " received_at = excluded.received_at",
+                      (session_id, WRITTEN_DEVICE, written_at, end, now, NOTE))
+            redacted = 0
+            for i, text in enumerate(lines):
+                key = _line_key(text)
+                erased = key in erased_keys or any(_says_fact(text, f) for f in erased_facts)
+                if erased:
+                    redacted += 1
+                    if key not in erased_keys:
+                        erased_keys.append(key)
+                c.execute("INSERT INTO segments (session_id, conversation_id, device,"
+                          " started_at, ended_at, speaker, is_owner, text, erased)"
+                          " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                          (session_id, conv_id, WRITTEN_DEVICE, written_at + i,
+                           written_at + i + 1, speaker, ERASED_TEXT if erased else text,
+                           int(erased)))
+            c.execute("UPDATE conversations SET started_at = ?, ended_at = ?,"
+                      " status = 'pending', error = NULL, transcript_pruned_at = NULL,"
+                      " updated_at = ? WHERE id = ?", (written_at, end, now, conv_id))
+            c.execute("DELETE FROM search_fts WHERE kind = 'transcript'"
+                      " AND conversation_id = ?", (conv_id,))
+            self._index_transcript(c, conv_id)
+            c.execute("INSERT INTO written_notes (source_id, session_id, conversation_id,"
+                      " link, title, written_at, text_hash, erased_lines, created_at,"
+                      " updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                      " ON CONFLICT(source_id) DO UPDATE SET session_id = excluded.session_id,"
+                      " conversation_id = excluded.conversation_id, link = excluded.link,"
+                      " title = excluded.title, written_at = excluded.written_at,"
+                      " text_hash = excluded.text_hash, erased_lines = excluded.erased_lines,"
+                      " updated_at = excluded.updated_at",
+                      (source_id, session_id, conv_id, link, title, written_at, text_hash,
+                       json.dumps(erased_keys), now, now))
+        if old_conv is not None:
+            self.compact()  # the old lines' words leave the indexes and the -wal file
+        return {"result": "replaced" if old_conv else "created", "conversation_id": conv_id,
+                "lines": len(lines), "erased_lines": redacted}
+
+    def delete_written_note(self, source_id: str) -> dict[str, Any] | None:
+        """Remove a written note (``DELETE /v1/ingest/text/{source_id}``): its lines, its
+        conversation, its to-dos and facts, and the digests that covered it (written again
+        by the worker). A fact this note shares with another conversation (said there
+        too) stays, owned by that one. None when there is no such note (idempotent)."""
+        now = time.time()
+        with self.tx() as c:
+            row = c.execute("SELECT * FROM written_notes WHERE source_id = ?",
+                            (source_id,)).fetchone()
+            if row is None:
+                return None
+            conv_id = row["conversation_id"]
+            if c.execute("SELECT 1 FROM conversations WHERE id = ?", (conv_id,)).fetchone():
+                before = _knowledge(c, conv_id)
+                self._clear_knowledge(c, conv_id)
+                _carry_over(c, conv_id, before, [])  # facts said elsewhere move there
+                _take_down_digests(c, conv_id, now)
+                _delete_conversation(c, conv_id)
+            c.execute("DELETE FROM sessions WHERE id = ?", (row["session_id"],))
+            c.execute("DELETE FROM written_notes WHERE source_id = ?", (source_id,))
+        self.compact()
+        return {"conversation_id": conv_id}
+
+    def summaries_pending(self, conv_ids: Iterable[str]) -> bool:
+        """Some of ``conv_ids`` wait for their (first or next) summary."""
+        ids = list(conv_ids)
+        return bool(ids) and self._one(
+            "SELECT 1 AS x FROM conversations WHERE status = 'pending' AND id IN"
+            f" ({','.join('?' * len(ids))}) LIMIT 1", ids) is not None
+
     def delete_empty_conversations(self) -> int:
         with self.tx() as c:
             ids = [r["id"] for r in c.execute(
@@ -1508,6 +1686,8 @@ class Store:
                                " AND status != 'retired' ORDER BY id", (conv_id,))
         # erase_fact took its summary down until the worker has rewritten it
         row["forget_pending"] = self.rewrite_pending([conv_id])
+        # a note written by hand in the hub: {"source_id", "link", "title"}, else None
+        row["written"] = self.written_notes_for([conv_id]).get(conv_id)
         return row
 
     def list_conversations(self, *, since: float | None = None, until: float | None = None,
@@ -1536,9 +1716,11 @@ class Store:
         sql += " ORDER BY started_at DESC LIMIT ?"
         params.append(limit)
         rows = self._q(sql, params)
+        written = self.written_notes_for(r["id"] for r in rows)
         for row in rows:
             for k in ("key_points", "topics", "people"):
                 row[k] = json.loads(row[k])
+            row["written"] = written.get(row["id"])
         return rows
 
     def conversations_with_status(self, status: str) -> list[str]:
@@ -2008,6 +2190,46 @@ def _rename_person(c: sqlite3.Connection, old: str, new: str) -> None:
     c.execute("UPDATE people SET name = ? WHERE id = ?", (new.strip(), target))
     _add_alias(c, target, current)
     _add_alias(c, target, old)
+
+
+def _take_down_digests(c: sqlite3.Connection, conv_id: str, now: float) -> None:
+    """Take down the daily digests that cover ``conv_id``; the worker writes them again
+    (``Pipeline.rewrite_forgotten``) once that day's conversations are summarized."""
+    for d in c.execute("SELECT date, content FROM digests WHERE content LIKE ?",
+                       (f"%{conv_id}%",)).fetchall():
+        ids = json.loads(d["content"]).get("conversation_ids", [])
+        if conv_id in ids:
+            c.execute("INSERT OR REPLACE INTO forget_digests VALUES (?, ?, ?)",
+                      (d["date"], json.dumps(ids), now))
+            c.execute("DELETE FROM digests WHERE date = ?", (d["date"],))
+
+
+def _line_key(text: str | None) -> str:
+    """A written line's fingerprint (``written_notes.erased_lines``): the sha256 of its
+    normalized words, so the same words written again are recognized."""
+    return hashlib.sha256(_norm(text).encode()).hexdigest()
+
+
+def _remember_erased_line(c: sqlite3.Connection, conv_id: str, text: str | None) -> None:
+    """A line of a written note is being erased: keep its fingerprint, so a resend of the
+    note (the hub still has the words) keeps it erased."""
+    row = c.execute("SELECT source_id, erased_lines FROM written_notes"
+                    " WHERE conversation_id = ?", (conv_id,)).fetchone()
+    if row is None or not _norm(text):
+        return
+    keys = json.loads(row["erased_lines"])
+    key = _line_key(text)
+    if key not in keys:
+        c.execute("UPDATE written_notes SET erased_lines = ? WHERE source_id = ?",
+                  (json.dumps(keys + [key]), row["source_id"]))
+
+
+def _says_fact(line: str | None, fact: str | None) -> bool:
+    """The written ``line`` says an erased ``fact``'s words: at least two of them (all of a
+    one-word fact) and at least half."""
+    words = _line_words(fact)
+    shared = words & _line_words(line)
+    return bool(words) and len(shared) >= min(2, len(words)) and 2 * len(shared) >= len(words)
 
 
 def _touch_conversations(c: sqlite3.Connection, conv_ids: Iterable[str],
