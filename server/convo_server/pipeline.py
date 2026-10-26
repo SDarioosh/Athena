@@ -406,7 +406,9 @@ class Pipeline:
         conv = self.store.get_conversation(conv_id)
         kind = conv.get("kind") if conv else None
         try:
-            summary = self.summarizer.summarize(segments, kind=kind)
+            # facts that repeat or update stored ones are never cut by the fact cap
+            summary = self.summarizer.summarize(
+                segments, kind=kind, known=lambda fs: self.store.facts_like(conv_id, fs))
         except Exception as e:
             log.exception("summary failed for %s", conv_id)
             self.store.mark_conversation_failed(conv_id, f"{type(e).__name__}: {e}")

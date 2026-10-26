@@ -186,7 +186,10 @@ server. **Nothing in the data path touches the cloud.**
   person here to one of its contacts. `list_people(format="json")` returns
   `{"people": [{id, name, aliases, is_owner, has_voice, conversations, first_seen,
   last_seen}]}` (people merged into another are left out), and each `list_facts` JSON
-  row has `person_id` (the subject's person for `about` person or owner, else null).
+  row has `person_id` (the subject's person for `about` person or owner, else null), and
+  (MCP 0.11.0, additive) `kind` (preference, plan, decision, relationship, personal,
+  other; null for older facts), `conversation_id` and `quote` (the transcript line it was
+  said on, null when erased or pruned), so the hub's review page labels and groups them.
   `rename_speaker_everywhere` keeps the id and keeps the old name as an alias; renaming
   onto an existing person merges into that person, whose id survives.
 - `retire_fact(fact_id, reason)` forgets a fact (the hub's review page): status

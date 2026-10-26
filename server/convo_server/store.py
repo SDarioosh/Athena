@@ -240,6 +240,8 @@ _PLACEHOLDER_SPEAKER = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
 
 # What an erased transcript line says instead (erase_fact)
 ERASED_TEXT = "[forgotten]"
+# a fact's transcript line in list_facts JSON (``quote``) is cut to this many characters
+QUOTE_CHARS = 300
 
 # Session kinds (sessions.kind). A voice note's conversation also gets conversations.kind
 # NOTE; ordinary conversations get the kind the summary triage picks.
@@ -463,6 +465,11 @@ class Store:
             self._add_column("segments", "erased", "INTEGER NOT NULL DEFAULT 0")
             self._add_column("conversations", "transcript_pruned_at", "REAL")
             self._conn.execute("PRAGMA user_version = 13")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 14:
+            # what sort of fact it is (preference, plan, decision, ...: FACT_KINDS), from
+            # the summary model; older facts have none
+            self._add_column("facts", "kind", "TEXT")
+            self._conn.execute("PRAGMA user_version = 14")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -775,7 +782,8 @@ class Store:
                           ) + 1
             for fact in summary["facts"]:
                 fact_ids.append(_insert_fact(c, conv_id, fact.get("subject"), fact["fact"],
-                                             fact.get("source_at"), fact_id=next_id))
+                                             fact.get("source_at"), fact_id=next_id,
+                                             kind=fact.get("kind")))
                 next_id += 1
             fact_ids = _carry_over(c, conv_id, before, fact_ids)
             c.executemany("INSERT OR IGNORE INTO conversation_people VALUES (?, ?)",
@@ -888,7 +896,7 @@ class Store:
         with self.tx() as c:
             rows = {r["id"]: r for r in c.execute(
                 "SELECT f.id, f.conversation_id, f.source_at, f.status, f.erased_at,"
-                " c.started_at FROM facts f"
+                " f.kind, c.started_at FROM facts f"
                 " JOIN conversations c ON c.id = f.conversation_id WHERE f.id IN (?, ?)",
                 (new_id, existing_id))}
             if len(rows) != 2:
@@ -900,6 +908,10 @@ class Store:
                 c.execute("DELETE FROM search_fts WHERE kind = 'fact' AND ref_id = ?",
                           (str(new_id),))
                 c.execute("DELETE FROM facts WHERE id = ?", (new_id,))
+                if new["kind"] and new["kind"] != "other" and old["kind"] in (None, "other"):
+                    # said again with a kind: an older fact without one takes it
+                    c.execute("UPDATE facts SET kind = ? WHERE id = ?",
+                              (new["kind"], existing_id))
                 if old["erased_at"] is not None:  # said again after a forget: erase it too
                     self._erase_mentions(c, existing_id, time.time(), audio)
             elif relation == "updates":
@@ -1054,29 +1066,10 @@ class Store:
         least two (all of a one-word fact), that line is the one redacted. A cited line
         that only paraphrases the fact, with no line nearby that says its words, is
         still redacted."""
-        line = None
-        if source_at is not None:
-            line = c.execute(
-                "SELECT id, session_id, started_at, ended_at, erased, text FROM segments"
-                " WHERE conversation_id = ? AND started_at < ? + 1"
-                " AND ended_at > ? - 1 ORDER BY abs(started_at - ?) LIMIT 1",
-                (conv_id, source_at, source_at, source_at)).fetchone()
-        if line is not None and line["erased"]:
-            return 0
-        words = _line_words(fact)
-        if words and (line is None or not words & _line_words(line["text"])):
-            near = [r for r in c.execute(
-                "SELECT id, session_id, started_at, ended_at, erased, text FROM segments"
-                " WHERE conversation_id = ?", (conv_id,))
-                if source_at is None or abs(r["started_at"] - source_at) <= _CITE_SLACK]
-            need = min(2, len(words))
-            scored = [(len(words & _line_words(r["text"])),
-                       -abs(r["started_at"] - source_at) if source_at is not None else 0, r)
-                      for r in near]
-            best = max((x for x in scored if x[0] >= need), default=None,
-                       key=lambda x: x[:2])
-            if best is not None:
-                line = best[2]
+        rows = c.execute(
+            "SELECT id, session_id, started_at, ended_at, erased, text FROM segments"
+            " WHERE conversation_id = ? ORDER BY started_at", (conv_id,)).fetchall()
+        line = _cited_line(rows, source_at, fact)
         if line is None or line["erased"]:
             return 0
         c.execute("UPDATE segments SET text = ?, erased = 1 WHERE id = ?",
@@ -1292,6 +1285,55 @@ class Store:
                         "first_said": days[0] if days else None,
                         "last_said": days[-1] if days else None}
         return out
+
+    def fact_quotes(self, facts: Iterable[dict[str, Any]]) -> dict[int, str | None]:
+        """For each fact (``id``, ``conversation_id``, ``source_at``, ``fact``): the
+        transcript line it was said on (``_cited_line``, the line ``erase_fact`` would
+        redact), so a reviewer can judge it without opening the transcript. When its own
+        conversation has no transcript left (pruned), the newest conversation that said
+        it again is used. None when there is no such line or it was erased. One query per
+        conversation."""
+        facts = list(facts)
+        lines: dict[str, list[sqlite3.Row]] = {}
+
+        def rows(conv_id: str) -> list[sqlite3.Row]:
+            if conv_id not in lines:
+                with self._lock:
+                    lines[conv_id] = self._conn.execute(
+                        "SELECT id, session_id, started_at, ended_at, erased, text"
+                        " FROM segments WHERE conversation_id = ? ORDER BY started_at",
+                        (conv_id,)).fetchall()
+            return lines[conv_id]
+
+        out: dict[int, str | None] = {}
+        for f in facts:
+            said = [(f["conversation_id"], f.get("source_at"))]
+            if not rows(f["conversation_id"]):
+                said += [(r["conversation_id"], r["source_at"]) for r in self._q(
+                    "SELECT s.conversation_id, s.source_at FROM fact_sources s"
+                    " JOIN conversations c ON c.id = s.conversation_id WHERE s.fact_id = ?"
+                    " ORDER BY c.started_at DESC", (f["id"],))]
+            line = None
+            for conv_id, at in said:
+                if at is None or not rows(conv_id):
+                    continue
+                hit = _cited_line(rows(conv_id), at, f.get("fact") or "")
+                if hit is not None and not hit["erased"]:
+                    line = " ".join(str(hit["text"] or "").split())[:QUOTE_CHARS] or None
+                break
+            out[f["id"]] = line
+        return out
+
+    def facts_like(self, conv_id: str, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Stored facts a candidate fact of conversation ``conv_id`` may repeat or update
+        (the summarizer's cap spares those): ``related_facts``, this conversation's own
+        current facts (a re-summary) and the facts they had replaced."""
+        own = self._q("SELECT id, subject, fact FROM facts WHERE conversation_id = ?"
+                      " AND status = 'current'", (conv_id,))
+        replaced = self._q(
+            "SELECT id, subject, fact FROM facts WHERE superseded_by IN"
+            " (SELECT id FROM facts WHERE conversation_id = ?)", (conv_id,))
+        return self.related_facts(conv_id, facts) + own + replaced
 
     def known_names(self) -> tuple[set[str], set[str]]:
         """(owner names, person names), lower-cased: enrolled speakers marked as the
@@ -2042,6 +2084,44 @@ def _norm(text: str | None) -> str:
 _CITE_SLACK = 30.0
 
 
+def _cited_line(rows: list[sqlite3.Row], source_at: float | None,
+                fact: str = "") -> sqlite3.Row | None:
+    """The transcript line (of ``rows``, one conversation's segments) a fact cites.
+
+    ``source_at`` is the conversation start plus the line's ``[N]`` in the summary prompt,
+    whole seconds rounded down, so the cited line starts in ``[source_at, source_at+1)``;
+    of several lines there, the one sharing most words with ``fact`` (then the first).
+    Without one, the line nearest ``source_at`` within a second. When that line is
+    already erased it is returned as it is (no other line is taken instead). A model
+    sometimes cites the wrong line: when the line shares no word with ``fact`` (or no
+    line is cited) and a line within ``_CITE_SLACK`` seconds shares at least two (all of
+    a one-word fact), that line is the one."""
+    words = _line_words(fact)
+    line = None
+    if source_at is not None:
+        same = [r for r in rows if source_at <= r["started_at"] < source_at + 1]
+        if same:
+            line = max(same, key=lambda r: (len(words & _line_words(r["text"])),
+                                            -r["started_at"]))
+        else:
+            near = [r for r in rows
+                    if r["started_at"] < source_at + 1 and r["ended_at"] > source_at - 1]
+            line = min(near, key=lambda r: abs(r["started_at"] - source_at), default=None)
+    if line is not None and line["erased"]:
+        return line
+    if words and (line is None or not words & _line_words(line["text"])):
+        near = [r for r in rows
+                if source_at is None or abs(r["started_at"] - source_at) <= _CITE_SLACK]
+        need = min(2, len(words))
+        scored = [(len(words & _line_words(r["text"])),
+                   -abs(r["started_at"] - source_at) if source_at is not None else 0, r)
+                  for r in near]
+        best = max((x for x in scored if x[0] >= need), default=None, key=lambda x: x[:2])
+        if best is not None:
+            line = best[2]
+    return line
+
+
 def _line_words(text: str | None) -> set[str]:
     """Content words of a line or fact, lightly stemmed ("lives" ~ "live")."""
     out = set()
@@ -2126,9 +2206,11 @@ def _same_item(before: list[dict[str, Any]], item: dict[str, Any]) -> dict[str, 
 
 
 def _insert_fact(c: sqlite3.Connection, conv_id: str, subject: str | None, fact: str,
-                 source_at: float | None, fact_id: int | None = None) -> int:
-    cur = c.execute("INSERT INTO facts (id, conversation_id, subject, fact, source_at)"
-                    " VALUES (?, ?, ?, ?, ?)", (fact_id, conv_id, subject, fact, source_at))
+                 source_at: float | None, fact_id: int | None = None,
+                 kind: str | None = None) -> int:
+    cur = c.execute("INSERT INTO facts (id, conversation_id, subject, fact, source_at, kind)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (fact_id, conv_id, subject, fact, source_at, kind))
     c.execute("INSERT INTO search_fts VALUES ('fact', ?, ?, ?)",
               (str(cur.lastrowid), conv_id, f"{subject or ''}: {fact}"))
     return int(cur.lastrowid or 0)
@@ -2161,7 +2243,7 @@ def _knowledge(c: sqlite3.Connection, conv_id: str) -> dict[str, Any]:
     """What a re-summary must not lose: closed action items and the facts' links."""
     facts = [dict(r) for r in c.execute(
         "SELECT id, subject, fact, source_at, status, superseded_by, retired_at,"
-        " retired_reason, erased_at FROM facts WHERE conversation_id = ? ORDER BY id",
+        " retired_reason, erased_at, kind FROM facts WHERE conversation_id = ? ORDER BY id",
         (conv_id,))]
     for f in facts:
         f["sources"] = [dict(r) for r in c.execute(
@@ -2212,12 +2294,12 @@ def _carry_over(c: sqlite3.Connection, conv_id: str, before: dict[str, Any],
         elif sources:  # said elsewhere too: keep it, owned by the first other source
             first, sources = sources[0], sources[1:]
             target = _insert_fact(c, first["conversation_id"], old["subject"], old["fact"],
-                                  first["source_at"], fact_id=old["id"])
+                                  first["source_at"], fact_id=old["id"], kind=old["kind"])
         elif old["status"] == "retired":
             # not said this time: keep the retired row, so a later re-summary that says it
             # again still finds it retired
             target = _insert_fact(c, conv_id, old["subject"], old["fact"], old["source_at"],
-                                  fact_id=old["id"])
+                                  fact_id=old["id"], kind=old["kind"])
         else:
             continue
         if old["status"] == "retired":

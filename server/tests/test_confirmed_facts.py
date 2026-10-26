@@ -116,7 +116,9 @@ def test_json_mode_shape_and_counts(pipeline):
     link = transcript_link(settings, fact["conversation_id"], 2.0)
     assert data == {"facts": [{
         "id": fid, "subject": "Alice", "about": "other", "person_id": None,
-        "fact": "Alice is vegetarian",
+        "fact": "Alice is vegetarian", "kind": None,
+        "conversation_id": fact["conversation_id"],
+        "quote": "Alice is vegetarian, really",
         "times_said": 3, "days": 2, "first_said": "2025-10-09", "last_said": "2025-10-10",
         "confirmed": True, "link": link}]}
     assert "/view/" in link and "#t=2" in link

@@ -32,7 +32,8 @@ def test_focused_calls_with_template_and_due_dates(pipeline):
     log: list = []
     use_llm(pipeline, log, triage={"discard": False, "reason": "none", "kind": "meeting"})
     conv_id = record(pipeline)
-    assert schemas(log) == ["Triage", "SummaryNotes", "ActionItemList", "FactList"]
+    assert schemas(log) == ["Triage", "SummaryNotes", "ActionItemList", "FactList",
+                            "FactReview"]
     systems = [b["messages"][0]["content"] for b in log]
     assert "This is a meeting" in systems[1] and "decisions" in systems[1]
     assert "Thursday 2025-10-09" in systems[2]  # the date due dates are counted from
