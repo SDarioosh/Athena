@@ -246,6 +246,9 @@ bool today_plan_from_insight(const feed_t *f, int32_t today, int64_t now, int tz
     int n_seen = 0;
     const char *event_why[FEED_MAX_EVENTS] = {0};
     bool event_named[FEED_MAX_EVENTS] = {0};
+    /* what the hub put in DO FIRST but is for a later day: moved to the end of COMING UP */
+    today_item_t later[FEED_MAX_INSIGHT_ITEMS];
+    int n_later = 0;
     for (int s = 0; s < FEED_INSIGHT_SECTIONS; s++) {
         const feed_insight_list_t *l = &f->insight[s];
         for (int k = 0; k < l->n; k++) {
@@ -259,10 +262,18 @@ bool today_plan_from_insight(const feed_t *f, int32_t today, int64_t now, int tz
             }
             seen[n_seen++] = r;
             today_item_t it = {.ref = *r};
+            bool future = false;
             if (r->kind == FEED_REF_TODO) {
                 if (r->note < 0 || r->note >= f->n_todos || r->item < 0 ||
                     r->item >= f->todos[r->note].n_items || f->todos[r->note].items[r->item].done) {
                     continue;
+                }
+                const int32_t due = f->todos[r->note].due_day;
+                if (s == TODAY_DO_FIRST && due != FEED_NO_DAY && due > today) {
+                    char d[24];
+                    pda_fmt_day(due, d, sizeof(d));
+                    snprintf(it.reason, sizeof(it.reason), "due %s", d);
+                    future = true;
                 }
             } else {
                 if (r->event < 0 || r->event >= f->n_events) {
@@ -278,9 +289,17 @@ bool today_plan_from_insight(const feed_t *f, int32_t today, int64_t now, int tz
                     continue;
                 }
                 today_event_when(e, today, tz_min, it.reason, sizeof(it.reason));
+                future = s == TODAY_DO_FIRST && today_event_day(e, tz_min) > today;
+            }
+            if (future) {
+                later[n_later++] = it;
+                continue;
             }
             push(&out->sec[s], &it);
         }
+    }
+    for (int i = 0; i < n_later; i++) {
+        push(&out->sec[TODAY_COMING_UP], &later[i]);
     }
     /* today's timed events still to come, in time order (the events are sorted) */
     for (int i = 0; i < f->n_events; i++) {

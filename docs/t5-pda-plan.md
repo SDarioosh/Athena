@@ -644,7 +644,17 @@ a 3 × 4 grid of hour slots and the durations.
     order, under the hub's `why`; events also show their time. Items whose ref names nothing
     in the feed, done items, events that are over and repeats are dropped. Today's timed
     events still to come all end DO FIRST in time order, wherever the hub put them (with
-    its `why` when it named them).
+    its `why` when it named them). DO FIRST is for today only: an event on a later day, or
+    an item of a checklist due on a later day, that the hub put there moves to the end of
+    COMING UP (with its time or "due Wed 28 Oct").
+  - **A to-do or event shows once:** the hub's `why` is left out when it only restates the
+    to-do or the event's title (it starts with the same word, or holds at least 60 % of the
+    title's words of 3+ letters); an event's second line is then its place or "until 16:00";
+    for a to-do the second line then falls back to the list's title, but only for a list of more than
+    one item (a one-item note's title is the to-do again, often reworded), and never when
+    the title is the same text (any case, or the start of it cut with "…").
+    An item with nothing under its title is one line high, so the next item moves up (an
+    event on another day keeps two lines for its weekday).
   - **Without one** (no key, or `date` isn't today), the same sections from rules, and
     INSIGHT says "All caught up!" (with a small filled tick). The hub's weights (feed
     `weights`, below) reorder items within each group, never across groups; without
