@@ -340,6 +340,50 @@ class PdaSyncTest {
         assertEquals("pda:BYE", timeline.events.last())
     }
 
+    @Test fun anActionQueuedRightAfterTheSyncIsNotMistakenForTheDrainedOnes() {
+        // One action is drained by the first sync; the user then queues one more, so the
+        // outbox count is 1 again, as it was before the sync.
+        pda.flags = 0x01 or PdaStatus.FLAG_USER_ACTIVE
+        pda.queue("""{"t":"item_status","id":42,"status":"done"}""")
+        var queued = false
+        pda.onAwaitStatus = {
+            if (!queued) {
+                queued = true
+                pda.queue("""{"t":"item_status","id":43,"status":"done"}""")
+            }
+        }
+        val stayer = PdaSync(pda, server, cal, memory, "AA:BB", clock, zone, maxStayMs = 2 * 60_000L)
+        assertTrue(runBlocking { stayer.run() } is PdaOutcome.Done)
+        assertEquals(listOf(42L to "done", 43L to "done"), server.patches)
+        assertTrue(pda.outbox.isEmpty())
+    }
+
+    @Test fun actionsLeftWaitingDoNotResyncEveryStatus() {
+        pda.flags = 0x01 or PdaStatus.FLAG_USER_ACTIVE
+        pda.queue("""{"t":"cal_add","title":"Call","start":"2026-10-22","all_day":true}""")
+        val stayer = PdaSync(pda, server, NoCalendar, memory, "AA:BB", clock, zone, maxStayMs = 2 * 60_000L)
+        assertTrue(runBlocking { stayer.run() } is PdaOutcome.Done)
+        assertEquals("one OB_LIST: the waiting action isn't new", 1, pda.commands.count { it is PdaCommand.ObList })
+    }
+
+    @Test fun outboxListThatDoesNotAdvanceIsADeviceError() {
+        // A firmware that ignores after_id, with actions that stay queued (no Odysseus).
+        repeat(17) { pda.queue("""{"t":"cal_add","title":"Call $it","start":"2026-10-22","all_day":true}""") }
+        pda.listFrom = { 0L }
+        val out = run(NoCalendar)
+        assertTrue(out.toString(), out is PdaOutcome.DeviceError)
+        assertEquals(2, pda.commands.count { it is PdaCommand.ObList })
+        assertEquals("pda:BYE", timeline.events.last())
+    }
+
+    @Test fun feedVersionStaysAU32() {
+        // A T5 reporting the largest u32: the next version must not wrap to 0 ("no feed").
+        pda.feedVersion = 0xFFFFFFFFL
+        assertTrue(run() is PdaOutcome.Done)
+        assertEquals(0xFFFFFFFFL, pda.feedVersion)
+        assertEquals(0xFFFFFFFFL, pda.feedJson()["version"])
+    }
+
     @Test fun staysOnlyUntilTheUserLeaves() {
         pda.flags = 0x01 or PdaStatus.FLAG_USER_ACTIVE
         pda.statusScript.addLast(pda.status().copy(flags = 0x01))

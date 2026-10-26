@@ -58,6 +58,10 @@ static const char *TAG = "ble";
 #define DLE_TX_OCTETS 251
 #define DLE_TX_TIME 2120    /* us for 251 octets on 1M, the longest uncoded packet */
 #define JOB_QUEUE_LEN 12
+/* Slots a relay's writes can't take: link and timer events (connected, disconnected, idle,
+ * BYE, kick, host sync) always find room, so a write flood while the task is busy can't drop
+ * a disconnect (which would leave the card powered). */
+#define JOB_RESERVE 6
 #define TASK_STACK 6144
 #define TASK_PRIO 5
 
@@ -160,6 +164,11 @@ static int64_t s_last_sync_ms = -1; /* a BYE ended a sync; -1 = not since boot *
  * left them (e.g. the server rejected them): they only bring advertising back through the
  * hourly stale rule, so a rejected LAST chunk can't keep the radio on. BLE task only. */
 static uint32_t s_bye_seen_id;
+/* Newest chunk this connection's relay was offered: the newest queued when it connected, then
+ * the newest any LIST answer carried. A chunk closed after the relay's last LIST was never
+ * offered, so a BYE must not count it as seen (it would wait for the hourly rule). BLE task
+ * only. */
+static uint32_t s_offered_id;
 static int64_t s_batt_ms = -BATTERY_MAX_AGE_MS;
 static ble_adv_reason_t s_adv_reason;
 static bool s_adv_fast; /* the running advertising uses the fast interval */
@@ -621,6 +630,9 @@ static size_t st_list(void *ctx, uint32_t after_id, ble_proto_entry_t *out, size
     for (size_t i = 0; i < n; i++) {
         to_entry(&info[i], &out[i]);
     }
+    if (n > 0 && info[n - 1].chunk_id > s_offered_id) {
+        s_offered_id = info[n - 1].chunk_id;
+    }
     return n;
 }
 
@@ -752,12 +764,10 @@ static void run_command(const job_t *job)
     switch (r) {
     case BLE_PROTO_BYE:
         s_last_sync_ms = now_ms();
-        {
-            bool last;
-            uint32_t ms;
-            queued_after(0, &last, &ms, &s_bye_seen_id);
+        if (s_offered_id > s_bye_seen_id) {
+            s_bye_seen_id = s_offered_id;
         }
-        ESP_LOGI(TAG, "BYE: sync done (queued up to chunk %" PRIu32 ")", s_bye_seen_id);
+        ESP_LOGI(TAG, "BYE: sync done (offered up to chunk %" PRIu32 ")", s_bye_seen_id);
         restart_timer(s_bye_timer, BYE_DISCONNECT_MS);
         post_kick();
         break;
@@ -794,12 +804,16 @@ static void handle_job(const job_t *job)
         }
         refresh();
         break;
-    case JOB_CONNECTED:
+    case JOB_CONNECTED: {
+        bool last;
+        uint32_t ms;
+        queued_after(0, &last, &ms, &s_offered_id); /* what this relay is offered so far */
         s_stats.connections++;
         s_status_sent_valid = false;
         refresh_battery(true);
         refresh();
         break;
+    }
     case JOB_DISCONNECTED:
         if (s_media_open) {
             chunk_store_media_close();
@@ -1122,6 +1136,11 @@ static int on_ctrl_write(uint16_t conn_handle, struct ble_gatt_access_ctxt *ctxt
         return BLE_ATT_ERR_UNLIKELY;
     }
     restart_timer(s_idle_timer, IDLE_DISCONNECT_MS);
+    if (uxQueueSpacesAvailable(s_jobs) <= JOB_RESERVE) {
+        /* A relay waits for each answer, so only a flood gets here. */
+        ESP_LOGW(TAG, "job queue nearly full: write refused");
+        return BLE_ATT_ERR_UNLIKELY;
+    }
 
     ble_proto_cmd_t cmd;
     uint8_t err[BLE_PROTO_ERROR_LEN];

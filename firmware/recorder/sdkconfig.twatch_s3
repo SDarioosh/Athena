@@ -24,3 +24,8 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_80=y
 
 # A crash reboots rather than hanging.
 CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+
+# The I2S interrupt keeps running while the flash queue is written (caches off), as on the
+# T4-S3 (sdkconfig.t4_s3: 20.7 s of audio in 21.8 s without it). The T-Watch S3 records into
+# flash the same way. An existing build-s3/sdkconfig keeps the old value: delete it first.
+CONFIG_I2S_ISR_IRAM_SAFE=y

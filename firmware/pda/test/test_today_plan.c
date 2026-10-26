@@ -446,8 +446,8 @@ static void test_weights_edges(void)
     static const char *const garbage[] = {
         "",
         ",\"weights\":{\"version\":1,\"weights\":{}}",
-        ",\"weights\":{\"version\":1,\"weights\":{\"note_type:checklist\":6,\"list:e\":\"6\","
-        "\"list:f\":2.5,\"list:x\":6,\"list:b\":true}}",
+        (",\"weights\":{\"version\":1,\"weights\":{\"note_type:checklist\":6,\"list:e\":\"6\","
+         "\"list:f\":2.5,\"list:x\":6,\"list:b\":true}}"), /* one element: () for clang */
         ",\"weights\":{\"version\":3,\"weights\":{\"list:b\":6}}",
         ",\"weights\":\"list:b=6\"",
     };
@@ -508,6 +508,39 @@ static void test_weights_cap(void)
     feed_free(&feed);
 }
 
+/* DO FIRST is for today: a meeting on Wednesday and a checklist due Thursday that the hub
+ * put there on Tuesday move to the end of COMING UP; on Wednesday the meeting is back. */
+static void test_insight_later_day(void)
+{
+    const char *js =
+        "{\"v\":1,\"version\":1,"
+        "\"calendar\":["
+        "{\"id\":\"m\",\"title\":\"Meeting\",\"start\":\"2026-10-21T13:00:00Z\",\"end\":\"2026-10-21T14:00:00Z\"},"
+        "{\"id\":\"d\",\"title\":\"Dentist\",\"start\":\"2026-10-23T08:00:00Z\"}],"
+        "\"todos\":[{\"id\":\"a\",\"title\":\"A\",\"due\":\"2026-10-20\",\"items\":[{\"i\":0,\"text\":\"today\"}]},"
+        "{\"id\":\"b\",\"title\":\"B\",\"due\":\"2026-10-22\",\"items\":[{\"i\":0,\"text\":\"thursday\"}]},"
+        "{\"id\":\"c\",\"title\":\"C\",\"items\":[{\"i\":0,\"text\":\"undated\"}]}],"
+        "\"insight\":{\"date\":\"2026-10-20\","
+        "\"focus\":[{\"ref\":\"event:m\",\"why\":\"prepare\"},{\"ref\":\"todo:a:0\"},"
+        "{\"ref\":\"todo:b:0\"},{\"ref\":\"todo:c:0\"}],"
+        "\"coming_up\":[{\"ref\":\"event:d\"}]}}";
+    parse(js);
+    CHECK(today_plan_from_insight(&feed, TODAY, NOW, TZ, &plan));
+    SEC(TODAY_DO_FIRST, "today", "undated");
+    SEC(TODAY_COMING_UP, "Dentist", "Meeting", "thursday");
+    REASON(TODAY_COMING_UP, 1, "Wed 21 Oct 15:00");
+    CHECK(strcmp(plan.sec[TODAY_COMING_UP].items[1].ref.why, "prepare") == 0);
+    REASON(TODAY_COMING_UP, 2, "due Thu 22 Oct");
+
+    /* the same insight dated Wednesday, at 09:00: the meeting is today and ends DO FIRST */
+    memcpy(feed.insight_date, "2026-10-21", 11);
+    feed.insight_day = TODAY + 1;
+    CHECK(today_plan_from_insight(&feed, TODAY + 1, NOW + 86400, TZ, &plan));
+    SEC(TODAY_DO_FIRST, "today", "undated", "Meeting");
+    SEC(TODAY_COMING_UP, "Dentist", "thursday");
+    feed_free(&feed);
+}
+
 int main(void)
 {
     test_shopping();
@@ -516,6 +549,7 @@ int main(void)
     test_rules_insight_fixture();
     test_insight();
     test_insight_edges();
+    test_insight_later_day();
     test_caps();
     test_weights_fixture();
     test_weights_edges();

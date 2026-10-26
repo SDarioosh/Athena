@@ -31,6 +31,7 @@
 #include "power_log.h"
 #include "mic.h"
 #include "recorder.h"
+#include "session_rec.h"
 
 static const char *TAG = "console";
 
@@ -263,13 +264,24 @@ static int cmd_stop(int argc, char **argv)
     return 0;
 }
 
-/* Mount the card for a console command, unless a recording is using it. */
-static const char *console_mount(void)
+/* Whether a recording (`rec`, a session or a voice note) is using the card: console commands
+ * then leave it alone (their reads would hold up the writer, and a write error power-cycles
+ * the card under them). tools/pull.py waits for this exact message. */
+static bool card_busy(void)
 {
     recorder_state_t rs;
     recorder_get_state(&rs);
-    if (rs.running) {
+    if (rs.running || session_rec_running()) {
         printf("recording in progress; not touching the card\n");
+        return true;
+    }
+    return false;
+}
+
+/* Mount the card for a console command, unless a recording is using it. */
+static const char *console_mount(void)
+{
+    if (card_busy()) {
         return NULL;
     }
     const char *mount = NULL;
@@ -663,10 +675,7 @@ static int cmd_sd(int argc, char **argv)
         return 0;
     }
     printf("card detect: %s\n", board_storage_card_present() ? "card in" : "no card");
-    recorder_state_t rs;
-    recorder_get_state(&rs);
-    if (rs.running) {
-        printf("recording in progress; not touching the card\n");
+    if (card_busy()) {
         return 0;
     }
     const char *mount = NULL;

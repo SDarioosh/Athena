@@ -182,11 +182,15 @@ static void track_touch(gesture_state_t *g, bool by_int)
             s_reads++;
             if (st & 0x80) { /* buffer ready: a new sample */
                 const int n = st & 0x0f;
-                touching = n > 0;
-                last_sample = now_ms();
-                if (touching) {
-                    uint8_t p[8];
-                    if (rd(REG_POINT1, p, sizeof(p)) == ESP_OK) {
+                uint8_t p[8] = {0};
+                if (n > 0 && rd(REG_POINT1, p, sizeof(p)) != ESP_OK) {
+                    /* no position: drop the sample, as for a failed status read; on a touch's
+                     * first sample x,y are still 0,0, and the next good one made a swipe */
+                    s_errors++;
+                } else {
+                    touching = n > 0;
+                    last_sample = now_ms();
+                    if (touching) {
                         const int rx = p[1] | (p[2] << 8), ry = p[3] | (p[4] << 8);
                         map_point(rx, ry, &x, &y);
                         if (now_ms() < s_trace_until) {
@@ -327,7 +331,9 @@ void touch_sleep(void)
 {
     s_asleep = true;
     if (s_dev) {
-        xSemaphoreGive(s_int_sem); /* end an idle wait now */
+        if (s_int_sem) { /* NULL when touch_init() failed after adding the device */
+            xSemaphoreGive(s_int_sem); /* end an idle wait now */
+        }
         for (int i = 0; i < 20 && !s_parked; i++) {
             vTaskDelay(pdMS_TO_TICKS(10)); /* let a poll in progress finish */
         }

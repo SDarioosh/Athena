@@ -173,10 +173,13 @@ def owner_diarizer(margin=0.10):
                     match_threshold=0.5, owner_hint_margin=margin)
 
 
-def test_loudest_borderline_cluster_is_the_owner():
+def test_loudest_borderline_cluster_is_the_owner(caplog):
     d = owner_diarizer()
     loud, quiet = unit(0.45, 0.893), unit(0.1, 0.995)  # owner scores 0.45 and 0.10
-    labels, unnamed = d.name_clusters([quiet, loud], loudness=[-30.0, -18.0])
+    with caplog.at_level("INFO", logger="convo_server.diarize"):
+        labels, unnamed = d.name_clusters([quiet, loud], loudness=[-30.0, -18.0])
+    assert "owner hint: speaker 2 of 2 named Me (voice score 0.45" in caplog.text
+    assert "12.0 dB louder" in caplog.text
     assert [(x.name, x.is_owner) for x in labels] == [("Speaker 1", False), ("Me", True)]
     assert set(unnamed) == {"Speaker 1"}
 
@@ -549,3 +552,48 @@ def test_opus_round_trip_keeps_length():
     # still the same signal (aligned, no level change worth mentioning)
     assert np.corrcoef(x[1600:-1600], y[1600:-1600])[0, 1] > 0.9
     assert abs(rec.active_level_dbfs(y) - rec.active_level_dbfs(x)) < 1.5
+
+
+def test_owner_precision_and_recall():
+    rec = _recognition()
+    turns = [(0.0, 4.0, "OWN"), (4.0, 8.0, "B"), (8.0, 10.0, "C")]
+    # 0-3 s owner as owner; 3-6 s labelled owner (1 s owner, 2 s B); 6-8 B as B; 8-10 none
+    segs = [(0.0, 3.0, "OWN", "a"), (3.0, 6.0, "OWN", "b"), (6.0, 8.0, "B", "c")]
+    out = rec._naming(turns, 0.0, 10.0, segs, ["OWN", "B"])
+    assert abs(out["owner_precision"] - 4 / 6) < 0.02  # 4 s of the 6 s labelled owner
+    assert abs(out["owner_recall"] - 1.0) < 0.02  # all 4 s of the owner
+    assert out["owner_frames"] == 40
+    pooled = rec.pooled([{**out, "ref_words": 1, "substitutions": 0, "deletions": 0,
+                          "insertions": 0, "total": 1.0, "missed": 0.0,
+                          "false_alarm": 0.0, "confusion": 0.0, "seconds_to_process": 1}])
+    assert abs(pooled["owner_precision"] - 4 / 6) < 0.02
+
+
+def test_late_joiners_are_cut_from_the_reference():
+    rec = _recognition()
+    mutes = rec.late_joiner_mutes(["OWN", "B", "C", "D"], 100.0, 200.0)
+    assert mutes == (("C", 100.0, 150.0), ("D", 100.0, 150.0))
+    turns = [(90.0, 120.0, "C"), (140.0, 160.0, "C"), (110.0, 130.0, "OWN")]
+    assert rec.cut_turns(turns, mutes) == [(90.0, 100.0, "C"), (110.0, 130.0, "OWN"),
+                                           (150.0, 160.0, "C")]
+    words = {"C": [(120.0, 120.3, "early"), (155.0, 155.3, "late")],
+             "OWN": [(120.0, 120.3, "mine")]}
+    assert rec.cut_words(words, mutes) == {"C": [(155.0, 155.3, "late")],
+                                           "OWN": [(120.0, 120.3, "mine")]}
+
+
+def test_owner_dips_turn_the_voice_down_in_stretches():
+    rec = _recognition()
+    env = rec.owner_dips(120 * 16000, 12.0)
+    assert env.max() == 1.0 and 10 ** (-12 / 20) - 1e-6 <= env.min() < 10 ** (-6 / 20)
+    down = (env < 0.99).mean()
+    assert 0.1 < down < 0.6  # dips of 2-8 s every 5-20 s
+    assert np.array_equal(env, rec.owner_dips(120 * 16000, 12.0))  # deterministic
+
+
+def test_unenrolled_speakers_given_an_enrolled_name():
+    rec = _recognition()
+    turns = [(0.0, 4.0, "OWN"), (4.0, 8.0, "NEW")]
+    segs = [(0.0, 4.0, "OWN", "a"), (4.0, 6.0, "OWN", "b"), (6.0, 8.0, "Speaker 1", "c")]
+    out = rec._naming(turns, 0.0, 8.0, segs, ["OWN"])
+    assert abs(out["unenrolled_named"] - 0.5) < 0.03  # 2 s of NEW's 4 s under "OWN"

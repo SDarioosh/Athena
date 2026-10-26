@@ -44,6 +44,10 @@ class FakeWatch(
     val sdFailAfterBytes = mutableMapOf<Long, Int>()
     /** chunk ids the watch "forgets" just before their ACK (as if acked by an earlier link). */
     val forgetBeforeAck = mutableSetOf<Long>()
+    /** A buggy firmware: the `after_id` it really lists from, given the one asked for. */
+    var listFrom: (Long) -> Long = { it }
+    /** Fails the test instead of letting a relay loop forever. */
+    var maxLists = 100
 
     private val pending = ArrayDeque<ByteArray>()
     private var nextId = 1L
@@ -103,7 +107,8 @@ class FakeWatch(
         timeline.add("watch:" + describe(c))
         when (c) {
             is Command.List -> {
-                val all = chunks.tailMap(c.afterId + 1).values.toList()
+                check(commands.count { it is Command.List } <= maxLists) { "relay sent more than $maxLists LISTs" }
+                val all = chunks.tailMap(listFrom(c.afterId) + 1).values.toList()
                 val sent = all.take(minOf(c.max, listCap))
                 sent.forEach { pending.addLast(it.entry.encode()) }
                 pending.addLast(Response.ListEnd(sent.size, (all.size - sent.size).toLong()).encode())

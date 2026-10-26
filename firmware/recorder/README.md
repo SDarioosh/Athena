@@ -79,7 +79,8 @@ records everything between start and stop.
 - **Copy recordings off over USB** (no card reader): `ls` lists the card, `get <file>` sends
   one file as base64 with a CRC-32, and `tools/pull.py` does both and saves the files
   (~16 KB/s, so a 60 s recording takes about 2 minutes). Keep the output folder outside
-  the repository. A card reader is faster for many files.
+  the repository. A card reader is faster for many files. `ls`, `get` and `sd` leave the
+  card alone while a recording, session or voice note is running.
   ```bash
   python firmware/recorder/tools/pull.py --port COM35 --out ~/barvis-recordings
   ```

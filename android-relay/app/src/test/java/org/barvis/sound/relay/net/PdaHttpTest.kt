@@ -157,8 +157,14 @@ class PdaHttpTest {
         assertEquals(mapOf("summary" to "Call Ben", "dtstart" to "2026-10-22", "all_day" to true,
             "description" to "Added on the T5 PDA", "calendar_href" to "cal-caldav-1"), body)
 
-        assertEquals(ApiResult.Ok(Unit), c.deleteEvent("u1::2026-10-21"))
-        assertTrue(t.calls.last().second.endsWith("/api/codex/calendar/events/u1%3A%3A2026-10-21"))
+        assertEquals(ApiResult.Ok(Unit), c.deleteEvent("u1"))
+        assertEquals("DELETE" to "http://hub.example.ts.net:7000/api/codex/calendar/events/u1", t.calls.last().first to t.calls.last().second)
+        // An occurrence of a recurring event: the hub would delete the whole series, so it is
+        // refused without a call (result 1), as by the PC relay.
+        val calls = t.calls.size
+        assertEquals(ApiResult.Fail(ServerResult.Rejected(400, "one occurrence of a recurring event can't be deleted")),
+            c.deleteEvent("u1::2026-10-21"))
+        assertEquals(calls, t.calls.size)
         assertEquals(ApiResult.Fail(ServerResult.Rejected(404, "Event not found")), c.deleteEvent("gone"))
 
         // An older hub without the codex routes, or without a calendar: "not supported", no guessing.
@@ -199,6 +205,15 @@ class PdaHttpTest {
             Json.parseObject(t.bodies.last()!!))
         t.answer = { _, _ -> HttpAnswer(200, """{"exit_code": 1, "error": "index out of range"}""") }
         assertEquals(ApiResult.Ok(false), c.toggle("n1", 9, true))
+        // Plan §4.4: any exit_code other than 0 is result 1; only a missing one is temporary.
+        t.answer = { _, _ -> HttpAnswer(200, """{"exit_code": 2, "error": "bad note"}""") }
+        assertEquals(ApiResult.Ok(false), c.toggle("n1", 0, true))
+        t.answer = { _, _ -> HttpAnswer(200, """{"exit_code": -1}""") }
+        assertEquals(ApiResult.Ok(false), c.toggle("n1", 0, true))
+        for (body in listOf("""{"output": "ok"}""", """{"exit_code": true}""", """{"exit_code": "0"}""")) {
+            t.answer = { _, _ -> HttpAnswer(200, body) }
+            assertTrue(body, (c.toggle("n1", 0, true) as ApiResult.Fail).error is ServerResult.Transient)
+        }
 
         // "No todos": a hub without format=json answers text; a token without todos:read gets 403.
         t.answer = { _, _ -> HttpAnswer(200, "You have 2 notes:\n- Groceries (checklist)") }
