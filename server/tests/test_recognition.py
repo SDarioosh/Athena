@@ -366,6 +366,26 @@ def test_relabel_never_overwrites_a_name_a_person_set(pipeline):
     assert speakers == [["Me", "Dan"], ["Me", "Carol"], ["Eve", "Carol"]]
 
 
+def test_relabel_never_gives_two_voices_of_one_recording_the_same_name(pipeline):
+    """Naming one voice must not rename the other voice of the same recording, even if
+    their voiceprints are close (two people on one body-worn mic)."""
+    from conftest import ToneEmbedder
+    from test_mcp import call, process_two_speakers
+
+    from convo_server.mcp_server import build_mcp
+
+    store = pipeline.store
+    mcp = build_mcp(store, pipeline.settings)
+    process_two_speakers(pipeline)  # Me, Speaker 1
+    me_line = store.session_segments("s1")[0]
+    store.reassign_segment(me_line.id, "Speaker 2")  # the owner wasn't recognised
+    voice = ToneEmbedder().embed(tone(600, 2))
+    store.put_speaker_candidates("s1", {"Speaker 1": voice, "Speaker 2": voice})
+    conv = store.list_conversations()[0]["id"]
+    call(mcp, "name_speaker", conversation_id=conv, speaker_label="Speaker 1", name="Hayden")
+    assert [s.speaker for s in store.session_segments("s1")] == ["Speaker 2", "Hayden"]
+
+
 def test_rename_everywhere_refuses_an_unnamed_label_as_new_name(pipeline):
     from test_mcp import call, process_two_speakers
 
