@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 from pydantic import Field
 
 from .config import Settings
+from .dates import fact_valid_until
 from .diarize import load_voices
 from .links import local_time, transcript_link, written_label
 from .search import Embedder, search
@@ -96,7 +97,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.12.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.13.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -381,6 +382,13 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         fmt = (format or "text").strip().lower()
         if fmt not in ("text", "json"):
             return "format must be text or json"
+
+        def until(f: dict[str, Any]) -> str | None:
+            """The last day a fact about one occasion is worth keeping, or None."""
+            said_on = datetime.fromtimestamp(f["conversation_at"], tz).date()
+            end = fact_valid_until(f["fact"], said_on)
+            return end.isoformat() if end else None
+
         counted = confirmed or fmt == "json"
         # programs reconcile by id, so the JSON cap is high enough to hold every fact
         cap = 1000 if fmt == "json" else 200
@@ -408,7 +416,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                         "first_said": f["first_said"], "last_said": f["last_said"],
                         "confirmed": (f["times_said"] >= settings.fact_confirm_sources
                                       and f["days"] >= settings.fact_confirm_days),
-                        "link": fact_link(f),
+                        "valid_until": until(f), "link": fact_link(f),
                         **_written_json(written.get(f["conversation_id"]))}
 
             return json.dumps({"facts": [fact_json(f) for f in rows]}, ensure_ascii=False)
@@ -418,8 +426,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         written.update(store.written_notes_for(
             r["conversation_id"] for rs in (*sources.values(), *history.values()) for r in rs))
         for f in rows:
+            end = until(f)
             lines.append(f"- [{f['subject']}] {f['fact']} (learned "
-                         f"{when(f['conversation_at'], '%Y-%m-%d')}) " + fact_link(f)
+                         f"{when(f['conversation_at'], '%Y-%m-%d')}"
+                         + (f", until {end}" if end else "") + ") " + fact_link(f)
                          + written_label(written.get(f["conversation_id"])))
             for s in sources[f["id"]]:
                 lines.append(f"  said again {when(s['conversation_at'], '%Y-%m-%d')} "

@@ -91,6 +91,7 @@ def test_pipeline_stores_the_parts_as_lines_when_turned_on(pipeline):
     pipeline.store.put_speaker("Me", MixEmbedder().embed(tone(200, 2)), is_owner=True)
     pipeline.settings.speaker_split_lines = True
     pipeline.settings.whisper_pad_seconds = 0.0
+    pipeline.settings.join_lines = False  # the fake words end no sentence
     pipeline.transcriber = WordTranscriber()
     ingest(pipeline, 0, np.concatenate([tone(200, 4), tone(600, 8)]))
     pipeline.end_session("s1")

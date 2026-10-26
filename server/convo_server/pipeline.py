@@ -28,6 +28,7 @@ from .clips import plan_windows, tail_words
 from .config import Settings
 from .conversations import split_on_gaps
 from .diarize import Diarizer, PieceRef, load_voices
+from .lines import join_lines
 from .llm import Summarizer
 from .search import Embedder, index_conversation
 from .store import (
@@ -375,6 +376,9 @@ class Pipeline:
             if cfg.speaker_line_check:  # after splitting: each part is checked on its own
                 labels = self.diarizer.check_lines(runs, [p[3] for p in pieces], labels,
                                                    cfg.speaker_line_floor)
+        if cfg.join_lines:  # after the check: an Unknown fragment can take its name
+            pieces, labels = join_lines(pieces, labels, cfg.join_gap_seconds,
+                                        cfg.join_max_seconds)
         segments = []
         for i, (s, e, text, _) in enumerate(pieces):
             if note:

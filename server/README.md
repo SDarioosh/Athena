@@ -91,6 +91,16 @@ names a speaker. It never fired in the eval, but a wrist mic that turns away can
 someone else the loudest: if the log shows it naming the wrong person, set
 `CONVO_OWNER_HINT_MARGIN=0`.
 
+#### Sentence fragments become one line
+
+Whisper ends lines mid-sentence and the pyannote line split cuts at every turn change, so
+"I just" / "found this" could be two lines. After speakers are named, a line that doesn't
+end a sentence (`.`, `?`, `!`, `…`) joins the next one when the pause is at most
+`CONVO_JOIN_GAP_SECONDS` (1.0) and the joined line at most `CONVO_JOIN_MAX_SECONDS`
+(30): always for the same speaker; when one of them is `Unknown`, the line takes the
+other's name; two different named speakers stay apart (often a real interruption).
+`CONVO_JOIN_LINES=false` keeps whisper's lines. Only new recordings change.
+
 ### Speakers
 
 - Each person has several voice samples (enrollment is cut into ~9 s samples; every
@@ -434,7 +444,8 @@ both formats. `list_facts(format="json")` returns current facts in the text mode
             "conversation_id": "c-…", "quote": "Alice doesn't eat meat, remember?",
             "times_said": 3, "days": 2,
             "first_said": "2025-10-09", "last_said": "2025-10-10",
-            "confirmed": false, "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
+            "confirmed": false, "valid_until": null,
+            "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
 ```
 
 `about` is `owner` when the subject (trimmed, any case) is me, I, myself, owner, the
@@ -451,7 +462,18 @@ line erased), so a review page can show the words and group facts by conversatio
 `times_said` counts distinct conversations, `days` distinct local dates, and
 `first_said`/`last_said` are the first and last of those dates. `confirmed` is true when
 the fact meets the thresholds above, so a program can take every current fact with its
-counts without knowing them (`confirmed=true` as an argument still filters). `link` is
+counts without knowing them (`confirmed=true` as an argument still filters).
+`valid_until` (MCP 0.13.0, additive) is the last day a fact about one occasion is worth
+keeping, `YYYY-MM-DD`, else null. It is worked out when the facts are read
+(`fact_valid_until` in `dates.py`), from the fact's words and the local date
+(`CONVO_TIMEZONE`) of the conversation that first said it: a day or date it names
+("has a meeting with the Meshtastic team on Tuesday at 11 a.m." → that Tuesday; "is in
+Berlin until December 3" → December 3), "this/next week" or "the weekend" (that
+Sunday), "this/next month" or "in May" / "by the end of March" (the month's last day).
+None for a fact about something that repeats (birthday, anniversary, "every", "on
+Mondays"), that already happened ("was", "moved", "since", "last week"), or for a day
+more than a year ahead. The text format adds "until <date>". The hub ends the belief
+after that day. `link` is
 the same transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
 program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
 fact id that stops being returned (replaced, retired, or its conversation deleted).
