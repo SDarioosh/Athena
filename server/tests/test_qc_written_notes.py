@@ -6,8 +6,16 @@ from __future__ import annotations
 
 import json
 
-from test_written_notes import LINK
+import httpx
+import pytest
+from conftest import TOKEN
+from fastapi.testclient import TestClient
+from test_ingest_relay import MCP_TOKEN, mcp_client
+from test_written_notes import LINK, note_llm
 
+from convo_server.api import create_app
+from convo_server.llm import LLMClient, Summarizer
+from convo_server.pipeline import validate_link
 from convo_server.store import ERASED_TEXT
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
@@ -174,3 +182,69 @@ def test_a4_only_erased_facts_are_redacted_in_other_notes(pipeline):
     assert texts(s, c2) == ["Alice lives in Berlin."]
 
 
+# ------------------------------------------------------------------- A-5
+@pytest.mark.parametrize("link", [
+    "https://hub.local/#open=notes&note=1)[evil](https://evil.example/x)",
+    'https://hub.local/#open=notes&note=1"x',
+    "https://hub.local/#open=notes&note=<1>",
+    "https://hub.local/#open=notes&note=1'",
+    "https://hub.local/a`b",
+    "https://hub.local/#note=[1]",
+    "http:///#open=notes",
+    "http://user@evil.example@hub/",
+])
+def test_a5_links_that_break_the_label_are_refused(link):
+    with pytest.raises(ValueError):
+        validate_link(link)
+
+
+@pytest.mark.parametrize("link", [
+    LINK, "https://hub.example.ts.net/#open=notes&note=5f0c2a9e-1b7d",
+    "http://[fd7a:115c:a1e0::1]:7000/#open=notes&note=x%20y",
+])
+def test_a5_hub_links_are_accepted(link):
+    assert validate_link(link) == link
+
+
+# ------------------------------------------------------------------- A-6
+@pytest.fixture
+def api(pipeline):
+    pipeline.summarizer = Summarizer(
+        LLMClient("http://llm.test/v1", "test-model", transport=note_llm([])), "Me")
+    with TestClient(create_app(pipeline)) as c:
+        c.headers["Authorization"] = f"Bearer {TOKEN}"
+        yield c
+
+
+@pytest.mark.parametrize("source_id", ["hub-note:.", "hub-note:..", "hub-note:..."])
+def test_a6_dot_ids_can_be_deleted_over_http(api, pipeline, source_id):
+    body = {"source_id": source_id, "text": "Buy milk.", "written_at": str(T0),
+            "link": LINK}
+    assert api.post("/v1/ingest/text", json=body).json()["result"] == "created"
+    r = api.delete(f"/v1/ingest/text/{source_id}")
+    assert r.status_code == 200 and r.json()["result"] == "deleted"
+    relay = mcp_client(pipeline, httpx.ASGITransport(app=create_app(pipeline)))
+    q = f"?access_token={MCP_TOKEN}"
+    assert relay.post(f"/ingest/text{q}", json=body).json()["result"] == "created"
+    r = relay.delete(f"/ingest/text/{source_id}{q}")
+    assert r.status_code == 200 and r.json()["result"] == "deleted"
+
+
+@pytest.mark.parametrize("source_id", [".", "..", "hub-note:../x", "hub-note:a/b"])
+def test_a6_bare_dots_are_no_source_id(api, source_id):
+    body = {"source_id": source_id, "text": "Buy milk.", "written_at": str(T0),
+            "link": LINK}
+    assert api.post("/v1/ingest/text", json=body).status_code == 400
+
+
+# ------------------------------------------------------------------- A-7
+def test_a7_a_failed_note_is_retried_by_the_worker_after_an_unchanged_resend(api, pipeline):
+    from convo_server.pipeline import Worker
+
+    conv = put(pipeline, "hub-note:n1", ["Call the dentist on Monday."])
+    pipeline.store.mark_conversation_failed(conv, "LLMError: down")
+    assert pipeline.ingest_text(source_id="hub-note:n1", text="Call the dentist on Monday.",
+                                written_at=T0, link=LINK)["result"] == "unchanged"
+    pipeline.settings.summary_retry_seconds = 0
+    Worker(pipeline).tick()
+    assert pipeline.store.get_conversation(conv)["status"] == "summarized"

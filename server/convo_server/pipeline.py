@@ -100,13 +100,20 @@ def validate_source_id(source_id: str) -> str:
     return source_id
 
 
+# characters a link may not have: they would end "(written by hand: <link>)" in the MCP
+# text or quote it; brackets only around an IPv6 host
+_LINK_BAD = re.compile(r"[\s\x00-\x1f\x7f()<>\"'`{}|\\^]")
+_LINK = re.compile(r"^https?://(\[[0-9A-Fa-f:.]+\]|[^\s/?#\[\]@]+)(:\d+)?([/?#][^\[\]]*)?$")
+
+
 def validate_link(link: str) -> str:
-    """The hub URL of the note: http(s), no spaces or control characters."""
+    """The hub URL of the note: http(s), no spaces, control characters, quotes,
+    parentheses or angle brackets (it is shown in parentheses), square brackets only
+    around an IPv6 host."""
     link = (link or "").strip()
-    if (len(link) > MAX_LINK_CHARS or not re.match(r"^https?://[^\s/?#]+", link)
-            or re.search(r"[\s\x00-\x1f\x7f]", link)):
+    if len(link) > MAX_LINK_CHARS or not _LINK.match(link) or _LINK_BAD.search(link):
         raise ValueError(f"link must be an http(s) URL of at most {MAX_LINK_CHARS} "
-                         "characters")
+                         "characters, without spaces, quotes, ( ) < > [ ] { } | \\ ^ `")
     return link
 
 
