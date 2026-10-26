@@ -1,5 +1,6 @@
-"""A fake Odysseus: the calendar's token routes (/api/codex/calendar/events) over HTTP, with
-the shapes of docs/t5-pda-plan.md §6. Fictional data only."""
+"""A fake Odysseus: the calendar's token routes (/api/codex/calendar/events, plan §6), the
+todos (/api/codex/todos, §4.4), the Today insight (/api/codex/insight/today, §4.1) and its
+rule weights (/api/codex/insight/weights) over HTTP. Fictional data only."""
 
 from __future__ import annotations
 
@@ -12,6 +13,8 @@ from typing import Any
 ODY_TOKEN = "ody_fictional-calendar-token-7010"
 EVENTS = "/api/codex/calendar/events"
 TODOS = "/api/codex/todos"
+INSIGHT = "/api/codex/insight/today"
+WEIGHTS = "/api/codex/insight/weights"
 
 
 def demo_notes() -> list[dict[str, Any]]:
@@ -34,6 +37,21 @@ def demo_notes() -> list[dict[str, Any]]:
     ]
 
 
+def demo_insight() -> dict[str, Any]:
+    """A fictional Today insight whose refs point at `demo_notes` and the fake's events."""
+    return {
+        "date": "2026-10-20", "generated": "2026-10-20T05:30:00Z",
+        "headline": "A light day: the dentist in the morning, then the groceries.",
+        "focus": [{"ref": "todo:n-groceries:0", "why": "Needed for breakfast tomorrow",
+                   "title": "Milk"},
+                  {"ref": "event:u1", "why": "Bring the referral letter",
+                   "title": "Dentist follow-up"}],
+        "coming_up": [{"ref": "event:u2::20261022", "why": "Pack the running shoes",
+                       "title": "Run"}],
+        "also": [{"ref": "todo:n-trip:1", "why": "Before the trip", "title": "Charger"}],
+    }
+
+
 class FakeOdysseus:
     def __init__(self) -> None:
         self.events: dict[str, dict[str, Any]] = {
@@ -50,6 +68,14 @@ class FakeOdysseus:
         self.notes = demo_notes()
         self.todos_mode = "json"  # "json", "text" (an older hub) or "forbidden" (403)
         self.toggle_exit_code = 0
+        self.insight: Any = demo_insight()
+        # "json", "none" (404 no insight yet), "forbidden" (403), "missing" (a hub without
+        # the route: FastAPI's 404), "text" (200, not JSON) or "error" (503)
+        self.insight_mode = "json"
+        self.weights: Any = {"version": 1, "date": "2026-10-20",
+                             "weights": {"list:n-trip": 2, "list:n-groceries": -1}}
+        # like insight_mode; the default "missing" is a hub without the route (404)
+        self.weights_mode = "missing"
         self._n = 2
         ody = self
 
@@ -95,6 +121,20 @@ class FakeOdysseus:
         path = url.path
         if path == TODOS:
             return self._todos(method, dict(urllib.parse.parse_qsl(url.query)), body)
+        if method == "GET" and path == INSIGHT:
+            return {"json": (200, self.insight), "none": (404, {"error": "no insight yet"}),
+                    "forbidden": (403, {"detail": "API token missing required scope: "
+                                                  "insight:read"}),
+                    "missing": (404, {"detail": "Not Found"}),
+                    "text": (200, "Today you have a dentist appointment."),
+                    "error": (503, {"detail": "busy"})}[self.insight_mode]
+        if method == "GET" and path == WEIGHTS:
+            return {"json": (200, self.weights),
+                    "forbidden": (403, {"detail": "API token missing required scope: "
+                                                  "insight:read"}),
+                    "missing": (404, {"detail": "Not Found"}),
+                    "text": (200, "weights"),
+                    "error": (503, {"detail": "busy"})}[self.weights_mode]
         if method == "GET" and path == EVENTS:
             return 200, {"events": sorted(self.events.values(), key=lambda e: e["dtstart"])}
         if method == "POST" and path == EVENTS:

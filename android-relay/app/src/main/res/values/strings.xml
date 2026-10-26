@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Odysseus Sound Relay</string>
+    <string name="app_name">Athena Relay</string>
     <string name="settings_title">Relay settings</string>
     <string name="channel_name">Relay status</string>
     <string name="channel_description">Shows what the watch relay is doing</string>
@@ -41,7 +41,7 @@
     <string name="odysseus_url">Odysseus URL (calendar and checklists)</string>
     <string name="odysseus_url_hint">For example http://myserver.example-tailnet.ts.net:7000. Leave it empty to sync without a calendar and checklists.</string>
     <string name="odysseus_token">Odysseus API token</string>
-    <string name="odysseus_token_hint">No token saved. In Odysseus, create an API token with only the \"Calendar\", \"Calendar write\", \"Todos\" and \"Todos write\" permissions (ody_…).</string>
+    <string name="odysseus_token_hint">No token saved. In Odysseus, create an API token with only the \"Calendar\", \"Calendar write\", \"Todos\" and \"Todos write\" permissions, plus insight:read for the T5\'s Today insight (ody_…).</string>
     <string name="odysseus_token_saved">Odysseus token saved (hidden). Type a new one to replace it.</string>
     <string name="odysseus_token_shape">That doesn\'t look like an Odysseus API token (they start with ody_).</string>
     <string name="odysseus_calendar">Calendar id (optional)</string>
@@ -50,7 +50,7 @@
     <string name="pda_interval">Minutes between automatic syncs (5 to 240)</string>
     <string name="pda_auto">Sync the T5 automatically (turn off while the T5 is off or away)</string>
     <string name="pda_sync_now">Sync T5 now</string>
-    <string name="test_odysseus">Test Odysseus (calendar and checklists)</string>
+    <string name="test_odysseus">Test Odysseus (calendar, checklists and insight)</string>
     <string name="odysseus_not_set">Enter the Odysseus URL and token first.</string>
     <plurals name="odysseus_ok">
         <item quantity="one">Calendar: %1$d event in the next 7 days.</item>
@@ -63,7 +63,38 @@
         <item quantity="other">Checklists: %1$d found.</item>
     </plurals>
     <string name="odysseus_todos_unsupported">Checklists: not available, %1$s.</string>
-    <string name="odysseus_test_result">%1$s\n%2$s</string>
+    <string name="odysseus_test_result">%1$s\n%2$s\n%3$s</string>
     <string name="odysseus_todos_failed">Checklist check failed: %1$s</string>
-    <string name="privacy_note">Audio goes only from the watch to this server. The token is encrypted on this phone and never shown, logged or backed up.</string>
+    <string name="odysseus_insight_ok">Today insight: available.</string>
+    <string name="odysseus_insight_unsupported">Today insight: not available, %1$s.</string>
+    <string name="odysseus_insight_failed">Today insight check failed: %1$s</string>
+    <string name="crash_title">The app crashed last time</string>
+    <string name="crash_copy">Copy</string>
+    <string name="crash_close">Close</string>
+    <string name="two_lines">%1$s\n%2$s</string>
+    <string name="pair_heading">Pair with Odysseus</string>
+    <string name="pair_intro">In Odysseus open Conversations → Pair a phone and scan the code (here, or with the phone\'s camera app and open the link). The phone then uploads the watch\'s recordings and syncs the T5 through Odysseus: no server URLs or tokens to type.</string>
+    <string name="pair_scan">Scan pairing code</string>
+    <string name="pair_link">Or paste the pairing link</string>
+    <string name="pair_with_link">Pair with this link</string>
+    <string name="pair_working">Pairing with %1$s…</string>
+    <string name="pair_done">Paired with %1$s as \"%2$s\". Uploads and the T5 now go through Odysseus.</string>
+    <string name="pair_failed">Pairing failed: %1$s</string>
+    <string name="pair_state_paired">Paired with %1$s. Uploads and the T5 go through Odysseus. Pair again to replace this phone\'s token.</string>
+    <string name="pair_state_direct">Uploads go straight to the Athena server (below). Pair to send them through Odysseus instead.</string>
+    <string name="pair_scan_hint">Point the camera at the code on Odysseus\' Pair a phone page</string>
+    <string name="pair_camera_denied">No camera permission. Paste the pairing link instead.</string>
+    <string name="pair_scan_failed">The scanner couldn\'t start (%1$s). Scan the code with your phone\'s camera app and open the link, or paste it below.</string>
+    <string name="pair_confirm">Pairing link for %1$s. Check that this is your Odysseus, then tap \"Pair with this link\".</string>
+    <string name="pair_scan_unavailable">No camera app could open the scanner. Paste the link instead.</string>
+    <string name="through_odysseus">Send the watch\'s audio and the T5\'s data through Odysseus (paired). Off: straight to the Athena server below.</string>
+    <string name="through_odysseus_needs_pairing">Pair with Odysseus first, or enter its URL and token in the PDA section.</string>
+    <string name="direct_heading">Athena server (direct, fallback)</string>
+    <string name="direct_intro">Only needed when uploads don\'t go through Odysseus.</string>
+    <string name="choose_calendar">Choose calendar…</string>
+    <string name="choose_calendar_title">Calendar for the T5\'s events</string>
+    <string name="choose_calendar_default">Odysseus\' default calendar</string>
+    <string name="choose_calendar_failed">Couldn\'t list calendars: %1$s</string>
+    <string name="choose_calendar_none">No calendars in Odysseus yet.</string>
+    <string name="privacy_note">Audio goes only from the watch to your own servers (Odysseus or Athena). Tokens are encrypted on this phone and never shown, logged or backed up. The camera is used only to scan the pairing code, on the phone; nothing is saved.</string>
 </resources>

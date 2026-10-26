@@ -1,6 +1,6 @@
 # PDA firmware: LilyGO T5 E-Paper Pro
 
-The odysseus-sound pocket PDA ([docs/t5-pda-plan.md](../../docs/t5-pda-plan.md)). It shows
+The Athena pocket PDA ([docs/t5-pda-plan.md](../../docs/t5-pda-plan.md)). It shows
 the daily briefing, recent conversations, open action items and the week's calendar on
 the 4.7" e-paper and queues taps (done, dismiss, add an event, fetch a transcript) as
 actions. The phone (android-relay `PdaSync`) or the PC relay (`ble_relay.py pda`) brings
@@ -26,7 +26,9 @@ the feed in and takes the actions out over BLE: the glance protocol of plan §3.
 | `main/outbox.*`, `pda_actions.*` | persistent action queue, action JSON (pure) |
 | `main/feed_store.*` | atomic feed swap, 20-entry detail cache (pure) |
 | `main/pda_app.*` | state: feed, outbox, pending / failed lists, clock; the BLE store |
-| `main/ui_pda.*`, `gfx.*`, `fonts.*` | the screens of plan §5; text layout; Fira Sans 12/20 (OFL, `main/fonts/`) |
+| `main/ui_pda.*`, `ui_chrome.*`, `gfx.*`, `fonts.*` | the screens of plan §5; the header, tabs, headings and Asleep screen; text layout, round ticks, the battery icon; Fira Sans Regular 12/20 and SemiBold 12/20/32 (OFL, `main/fonts/`) |
+| `main/today_plan.*`, `ui_today.*`, `ui_layout.h` | the Today tab: the plan from the hub's insight or from rules (pure), its drawing (gfx only, rendered on the host), the screens' geometry |
+| `main/wake_log.*`, `wake_log_store.*` | the sleep/wake log in NVS: one entry per boot and per deep sleep, 128 kept, read with `wakelog` (text form pure, host-tested) |
 | `main/pda_console.*`, `pda_cmds.c` | USB console |
 | `test/` | host tests (no ESP-IDF needed) |
 | `tools/pda_serial.py` | console helper: run commands, load a blob, dump the screen as PNG |
@@ -68,12 +70,27 @@ Host tests:
 cmake -S firmware/pda/test -B build-pda-host && cmake --build build-pda-host && ctest --test-dir build-pda-host
 ```
 
+`test_ui_today` (needs zlib) renders the Today tab from the fictional fixtures through a
+host stand-in for epdiy (`test/host/`) and writes the pages to
+`build-pda-host/today_screens/*.png`: `today_insight_*` (with the hub's insight),
+`today_insight_ticked_p1` (a to-do ticked on the T5), `today_rules_*` and
+`today_rules_busy_*` (no insight: the rules), `today_rules_weights_*` and
+`today_rules_no_weights_*` (the fictional day of `test/fixtures/insight_eval_day.json`, shared
+with the hub's insight eval, with and without the hub's rule weights), `today_empty_p1`,
+`today_long_p1`.
+
 ## Use
 
 - **Portrait**, 540 × 960. Two orientations: 270 (default, the way LilyGO's factory firmware
   holds the board) and 90 (turned 180°): Status → "Turn 180°" or `rotate 90|270` on the
   console; kept in NVS.
 - **Tabs** at the bottom: Today, Brief, Cal, Tasks, Talks (conversations), Status. On a tab: swipe left/right for the next/previous tab, up/down (or ▲ ▼) to page. In a detail (conversation, transcript, event): swipe right = back to the list, left = next page, then the next transcript part or the next item, nothing at the end.
+- **Today:** the hub's "Today insight" when the feed has one for today (headline, then DO
+  FIRST, COMING UP, ALSO WORTH A LOOK, each item with the hub's reason), else the same
+  sections from rules over the checklists and the calendar (overdue, due today, today's
+  events; the next 7 days; pinned, then undated; shopping lists without a due date left
+  out), each group ordered by the hub's learned weight per checklist (feed `weights`) first. Tap a to-do to tick it (as on Tasks), an event for its details; "Digest ready on
+  Brief ›" opens the digest. Plan §5 "Today as built" has the rules.
 - **Tasks:** the owner's Odysseus checklists (feed `todos`, plan §4.4), a heading per note
   (★ pinned, due date on the right), done items struck through. Tap an item: done / not
   done (`todo_toggle`, shown at once in grey); tap it again before the phone has taken it to
@@ -85,10 +102,11 @@ cmake -S firmware/pda/test -B build-pda-host && cmake --build build-pda-host && 
   ±15 min, duration or all day → Add. Queued events show grey until the next feed.
 - **Talks:** tap a conversation for its summary; "Transcript" shows the cached page or
   queues a `fetch`; "Next part" follows the page's `next`.
-- **Status:** phone, bonds, outbox, feed version, clock, battery; "Pair a phone",
-  "Clean refresh", "Wipe cache (hold)".
+- **Status:** PHONE (connected or last seen, phones paired, changes waiting), BATTERY, and
+  DETAILS (feed version, clock, screen, firmware, BLE name, battery mV); "Pair a phone",
+  "Clean refresh", "Turn 180°", "Light", "Wipe cache (hold)".
 - **Buttons:** BOOT short = back / Today; BOOT held 1 s = sleep (deep sleep, an "Asleep"
-  screen stays on the panel; press BOOT to wake, which restarts the firmware and redraws
+  screen stays on the panel with the next event, its date and the battery at sleep; press BOOT to wake, which restarts the firmware and redraws
   Today with one clean refresh, a single flash); the button next to BOOT (LilyGO's S3, labelled IO48 on the board, read through
   the PCA9535 IO1_2; GPIO48 itself is the e-paper's CKV line) short = front light on/off,
   held 1 s = sync mode (the 2-minute pairing window with fast advertising, so a phone
@@ -127,6 +145,7 @@ cmd "<command>"` runs one from a script.
 | `ble [pair\|forget]` | BLE state, open the pairing window, delete all bonds |
 | `light [0-100]` | front light level (kept in NVS) |
 | `sleep [<min>\|off\|info]` | deep sleep as BOOT held (the USB console goes away); `<min>`: the first sync wake in that many minutes; `off`: no sync wakes; `info`: sync-wake counters since power-on |
+| `wakelog [clear]` | the sleep/wake log: every boot (reset reason, wake cause) and deep sleep (why, sync result, timer), with the battery; kept in flash, so it survives a power cut; flags a sync wake that never went back to sleep |
 | `rotate [90\|270]` | portrait orientation |
 | `wipe` | delete feed, details and outbox |
 | `i2c`, `batt`, `rtc [set <t>]`, `touch [trace <s>]`, `epd [bench\|clean]` | board bring-up and timing |
@@ -181,7 +200,15 @@ python tools/pda_serial.py -p COM36 fb today.png
   of partial updates is untested.
 - Grey doesn't show on the owner's panel (2026-10-20): grey text and lines were invisible
   on the PDA screens, so the UI draws only black and white (`GFX_FAINT` and `GFX_PENDING`
-  are black in `main/gfx.h`). Use layout, labels and marks, not grey, to set things apart.
+  are black in `main/gfx.h`). Use layout, labels, marks and font weight (SemiBold titles,
+  Regular details), not grey, to set things apart.
+- The 2026-10-21 look (SemiBold fonts, plain tabs, round ticks, the time column, the new
+  header, Status sections and Asleep screen) and the tap feedback (a black frame with a DU
+  update before a new screen): every tab read back from the T5's framebuffer and drawn
+  right; the DU tap frame and the Asleep screen not yet looked at on the panel.
+- Tab and menu changes are partial (GL16) updates since 2026-10-21, with no flash (the
+  owner's choice); ghosting left by them until the next clean refresh (at most 10 counted
+  updates) not yet judged on the panel. Turning the screen 180° stays a full update.
 - Pairing being refused outside the window, re-pairing, and `ERROR mtu_too_small` (host
   tests only; Windows always negotiates 517).
 - The Service Changed indication from an Android phone (the GATT client is compiled in for
@@ -189,6 +216,15 @@ python tools/pda_serial.py -p COM36 fb today.png
 - The sibling relays against this firmware: the PC relay's `pda` subcommand and the
   Android `PdaSync` (they were written against the same spec and a fake T5).
 - Battery life, flash encryption.
+- The Today tab with the insight (2026-10-21): built, host-tested and rendered on the host
+  (`test_ui_today`), **not on the board yet**. To check with the fixture, as in the example under
+  Console (`cmd "time 2026-10-20T07:05:00Z 120"`, `put test/fixtures/feed_insight_demo.json`,
+  `fb today.png`):
+  the headline on three lines, DO FIRST with the two to-dos then the stand-up, lunch and
+  the 1:1 (not the 08:00 call), page 2 with Aunt Rosa; tap the first to-do: the tick and
+  strike-through show at once and `ob` lists a `todo_toggle`; tap an event: its details;
+  "Digest ready on Brief ›" opens Brief. With `feed_demo.json` the rule-based sections and
+  "No insight for today yet".
 - Idle power (2026-10-20, `feature/t5-idle-power`): built, **not on the board yet**.
   Automatic light sleep (DFS 240/40 MHz), held off while the front light is lit, during a
   refresh and while USB power is in; touch on the GT911 INT line with a safety-net poll;

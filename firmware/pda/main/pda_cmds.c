@@ -18,6 +18,7 @@
 #include "pda_sleep.h"
 #include "t5_board.h"
 #include "ui_pda.h"
+#include "wake_log_store.h"
 
 static pda_put_t s_put; /* console task only */
 static uint8_t s_frame[PDA_PROTO_FRAME_MAX];
@@ -334,8 +335,25 @@ static int cmd_detail(int argc, char **argv)
     return 0;
 }
 
+static int cmd_wakelog(int argc, char **argv)
+{
+    if (argc >= 2 && strcmp(argv[1], "clear") == 0) {
+        wake_log_clear();
+        return 0;
+    }
+    if (argc >= 2) {
+        printf("usage: wakelog [clear]\n");
+        return 1;
+    }
+    wake_log_print();
+    return 0;
+}
+
 void pda_console_register_app(void)
 {
+    pda_console_register("wakelog",
+                         "wakelog [clear]: boots and deep sleeps, kept in flash through power loss",
+                         cmd_wakelog);
     pda_console_register("put", "Load a blob: put begin <kind> <bytes> <crc32 hex>, put data <b64>, put end",
                          cmd_put);
     pda_console_register("ob", "Outbox: ob | ob ack <id hex> [result]", cmd_ob);

@@ -1,4 +1,4 @@
-# odysseus-sound
+# Athena
 
 Private conversation memory, and the first module of
 [Odysseus](https://github.com/SDarioosh/Barvis) (our Odysseus fork), a personal, fully

@@ -1,7 +1,7 @@
 // Run: node --test tests/   (Node >= 22; the app modules are plain ES modules)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createTester, CHUNK_MS, chunkFileName } from '../shared/session.js'
+import { createTester, CHUNK_MS, chunkFileName, summarize } from '../shared/session.js'
 import { buildEnvelope, parseEnvelope, base64 } from '../shared/envelope.js'
 
 function harness({ failStart = false } = {}) {
@@ -152,4 +152,52 @@ test('envelope round trip and base64 match Node', () => {
   }
   assert.throws(() => buildEnvelope({ name: 'Zoë' }, audio), /ASCII/)
   assert.throws(() => parseEnvelope(new Uint8Array([200, 0, 0, 0, 1])), /header length/)
+})
+
+test('an upload answer for an older session does not mark the new session', () => {
+  const h = harness()
+  const tester = createTester(h.deps)
+  tester.start('screen-on')
+  const old = tester.state.sessionId
+  h.advance(CHUNK_MS)
+  tester.stop()
+  h.advance(1000)
+  tester.start('screen-off') // started while the old session's upload was still running
+  h.advance(CHUNK_MS)
+  tester.stop()
+  tester.markUploaded(0, true, old) // answer for the old session's chunk 0
+  assert.equal(tester.state.chunks[0].uploaded, false)
+  tester.markUploaded(0, true, tester.state.sessionId)
+  assert.equal(tester.state.chunks[0].uploaded, true)
+})
+
+test('the chunk timer stops when the page is destroyed', () => {
+  const h = harness()
+  const tester = createTester(h.deps)
+  tester.start('screen-off')
+  h.advance(10_000)
+  tester.pageDestroyed()
+  h.advance(CHUNK_MS * 3) // a JS VM that outlives the page must not rotate chunks
+  assert.equal(h.started.length, 1)
+  assert.equal(tester.state.chunks.length, 0)
+  assert.equal(tester.state.recording, true) // kept, so a relaunch sees the interruption
+})
+
+test('envelope accepts any ArrayBuffer view, with its offset', () => {
+  const bytes = new Uint8Array([0, 0, 5, 6, 7, 8, 9, 0])
+  const header = { device: 'trex3pro', sequence: 1 }
+  const view = new DataView(bytes.buffer, 2, 5)
+  const env = buildEnvelope(header, view)
+  assert.deepEqual(Array.from(parseEnvelope(env).audio), [5, 6, 7, 8, 9])
+  const back = parseEnvelope(new DataView(env))
+  assert.deepEqual(back.header, header)
+  assert.deepEqual(Array.from(back.audio), [5, 6, 7, 8, 9])
+})
+
+test('B/s stays finite when full chunks have no duration (clock jump)', () => {
+  const s = summarize({
+    recording: false, sessionStart: 1000, relaunches: 0,
+    chunks: [{ seq: 0, start: 5000, end: 5000, size: 900, note: 'ok', uploaded: false }],
+  }, 6000)
+  assert.equal(s.bytesPerSec, 0)
 })

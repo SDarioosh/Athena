@@ -32,7 +32,6 @@ import org.barvis.sound.relay.ble.GattClient
 import org.barvis.sound.relay.ble.GattStatusException
 import org.barvis.sound.relay.ble.Scanner
 import org.barvis.sound.relay.net.HttpUploader
-import org.barvis.sound.relay.net.ServerUrl
 import org.barvis.sound.relay.protocol.ChunkEntry
 import org.barvis.sound.relay.protocol.PdaGatt
 import org.barvis.sound.relay.protocol.ProtocolException
@@ -154,9 +153,10 @@ class RelayService : Service() {
         var linkFailures = 0
         log.log(Level.INFO, "relay started")
         while (scope.isActive) {
-            val url = ServerUrl.check(settings.serverUrl)
-            if (url !is ServerUrl.Check.Ok || !settings.hasToken) {
-                fail("Set the server URL and token in Settings")
+            val target = settings.target()
+            if (target == null) {
+                fail(if (settings.throughOdysseus) "Pair with Odysseus again in Settings"
+                    else "Set the server URL and token in Settings, or pair with Odysseus")
                 return
             }
             if (settings.tokenRejected) {
@@ -208,12 +208,12 @@ class RelayService : Service() {
                 null
             } ?: continue
             if (hit.service == PdaGatt.SERVICE) {
-                delay(pda.sync(hit.device, url.base))
+                delay(pda.sync(hit.device, target))
                 continue
             }
             val device = hit.device
 
-            val uploader = HttpUploader(url.base, { settings.token() }, log)
+            val uploader = HttpUploader(target.base, target.token, log, routes = target.routes)
             val outcome = connectAndDrain(device, uploader)
             val pause: Long = when (outcome) {
                 is DrainOutcome.Done -> {
@@ -279,7 +279,7 @@ class RelayService : Service() {
                     "its sync window, then try again", 0)
             }
             client.discoverServices()
-            if (!client.hasWatchService()) return DrainOutcome.WatchError("no odysseus-sound service", 0)
+            if (!client.hasWatchService()) return DrainOutcome.WatchError("no Athena service", 0)
             val mtu = client.requestMtu(WatchGatt.REQUESTED_MTU)
             if (mtu < WatchGatt.MIN_MTU) return DrainOutcome.WatchError("MTU $mtu is below ${WatchGatt.MIN_MTU}", 0)
             client.preferPhy2M()

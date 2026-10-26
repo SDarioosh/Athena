@@ -26,8 +26,11 @@ os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
 # huggingface_hub (model download) usage pings off too
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
+import logging  # noqa: E402
+import re  # noqa: E402
 from collections.abc import Callable  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
 
 import numpy as np  # noqa: E402
 
@@ -38,11 +41,14 @@ from .diarize import (  # noqa: E402
     PieceRef,
     SpeakerEmbedder,
     SpeakerLabel,
+    Word,
     _normalize,
     cluster,
     rms_db,
     window,
 )
+
+log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "pyannote-community/speaker-diarization-community-1"
 # Up to this much of a speaker's own speech is embedded for their voiceprint.
@@ -62,7 +68,10 @@ class PyannoteSegmenter:
     """Runs a local pyannote pipeline on 16 kHz mono audio; returns exclusive turns."""
 
     def __init__(self, model: str = DEFAULT_MODEL, cache_dir: Path | None = None,
-                 device: str = "auto", threads: int | None = None) -> None:
+                 device: str = "auto", threads: int | None = None, *,
+                 cluster_threshold: float | None = None, min_speakers: int | None = None,
+                 max_speakers: int | None = None, vbx_fa: float | None = None,
+                 vbx_fb: float | None = None) -> None:
         _refuse_cloud(model)
         try:
             import torch
@@ -80,16 +89,71 @@ class PyannoteSegmenter:
             model, cache_dir=str(cache_dir) if cache_dir else None)
         if self._pipeline is None:  # pragma: no cover
             raise RuntimeError(f"could not load pyannote pipeline {model!r}")
+        tune_clustering(self._pipeline, cluster_threshold, vbx_fa, vbx_fb)  # pragma: no cover
+        self._speakers = speaker_bounds(min_speakers, max_speakers)
         if device == "auto":  # pragma: no cover - depends on the machine
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self._pipeline.to(torch.device(device))  # pragma: no cover
 
     def __call__(self, audio: np.ndarray) -> list[Turn]:  # pragma: no cover - needs model
         wav = self._torch.from_numpy(np.ascontiguousarray(audio, dtype=np.float32))[None]
-        out = self._pipeline({"waveform": wav, "sample_rate": SAMPLE_RATE})
+        out = self._pipeline({"waveform": wav, "sample_rate": SAMPLE_RATE}, **self._speakers)
         ann = getattr(out, "exclusive_speaker_diarization", out)
         return [(float(seg.start), float(seg.end), str(label))
                 for seg, _, label in ann.itertracks(yield_label=True)]
+
+
+class PyannoteEmbedder:
+    """Speaker embeddings from the loaded pyannote pipeline's own model (WeSpeaker
+    ResNet34 for community-1, 256 values; ``CONVO_SPEAKER_EMBEDDER=pyannote``) instead of
+    ECAPA. Voices enrolled or named with ECAPA don't match it: enroll again after
+    switching (see ``EnrolledVoice.score``)."""
+
+    def __init__(self, segmenter: PyannoteSegmenter) -> None:  # pragma: no cover - model
+        self._torch = segmenter._torch
+        self._model = segmenter._pipeline._embedding
+        self._min = int(getattr(self._model, "min_num_samples", 400))
+
+    def embed(self, audio: np.ndarray) -> np.ndarray:  # pragma: no cover - needs model
+        x = np.ascontiguousarray(audio, dtype=np.float32)
+        if x.size < self._min:
+            x = np.pad(x, (0, self._min - x.size))
+        v = np.asarray(self._model(self._torch.from_numpy(x)[None, None]))[0]
+        return _normalize(np.nan_to_num(v))
+
+
+def tune_clustering(pipeline: Any, threshold: float | None, fa: float | None = None,
+                    fb: float | None = None) -> None:
+    """Set the pipeline's clustering parameters; None keeps the pipeline's own.
+
+    ``threshold`` (``CONVO_PYANNOTE_CLUSTER_THRESHOLD``, 0.6 in community-1) only seeds
+    VBx clustering; how many speakers come out is decided by VBx's ``Fa`` (0.07) and
+    ``Fb`` (0.8) (``CONVO_PYANNOTE_VBX_FA``/``_FB``): a lower Fb or a higher Fa keeps
+    more speakers apart.
+    """
+    wanted = {k: float(v) for k, v in (("threshold", threshold), ("Fa", fa), ("Fb", fb))
+              if v is not None}
+    if not wanted:
+        return
+    params = pipeline.parameters(instantiated=True)
+    missing = [k for k in wanted if k not in params.get("clustering", {})]
+    if missing:
+        raise ValueError(f"this pyannote pipeline has no clustering {', '.join(missing)}")
+    params["clustering"].update(wanted)
+    pipeline.instantiate(params)
+
+
+def speaker_bounds(min_speakers: int | None, max_speakers: int | None) -> dict[str, int]:
+    """Keyword arguments for the pipeline call: speaker count bounds, if set (> 0)."""
+    out = {}
+    if min_speakers:
+        out["min_speakers"] = int(min_speakers)
+    if max_speakers:
+        out["max_speakers"] = int(max_speakers)
+    if "min_speakers" in out and "max_speakers" in out and out["min_speakers"] > out[
+            "max_speakers"]:
+        raise ValueError("CONVO_PYANNOTE_MIN_SPEAKERS is above CONVO_PYANNOTE_MAX_SPEAKERS")
+    return out
 
 
 class PyannoteDiarizer(Diarizer):
@@ -112,6 +176,7 @@ class PyannoteDiarizer(Diarizer):
         keys: list[tuple[int, str]] = []
         embs: list[np.ndarray] = []
         loud: list[float] = []
+        secs: list[float] = []
         for ri, (audio, tt) in enumerate(zip(runs, turns, strict=True)):
             for spk in sorted({t[2] for t in tt}, key=lambda s: min(t[0] for t in tt
                                                                     if t[2] == s)):
@@ -123,15 +188,25 @@ class PyannoteDiarizer(Diarizer):
                 keys.append((ri, spk))
                 embs.append(self._embed_speech(speech))
                 loud.append(rms_db(speech))
+                secs.append(sum(b - a for a, b, s in tt if s == spk))
         if not keys:  # pyannote heard nobody long enough: per-piece fallback
             return super().diarize_runs(runs, pieces)
-        cids = cluster(np.stack(embs), self.cluster_threshold) if len(embs) > 1 else [0]
+        # pyannote already decided who is who inside a run, so its speakers of one run are
+        # never merged; only speakers of different runs are joined by voice. (Merging
+        # within a run collapsed two people on a body-worn mic into one name: their ECAPA
+        # voiceprints are often more similar than the cluster threshold.)
+        cids = (cluster(np.stack(embs), self.cluster_threshold,
+                        cannot_link=[ri for ri, _ in keys]) if len(embs) > 1 else [0])
+        log.info("pyannote: %s speaker(s) per run, %d after joining runs",
+                 [len({t[2] for t in tt}) for tt in turns], max(cids) + 1)
         n = max(cids) + 1
         members = [[j for j, c in enumerate(cids) if c == cid] for cid in range(n)]
         centroids = [_normalize(np.mean([embs[j] for j in m], axis=0)) for m in members]
         cl_loud = [float(np.mean([loud[j] for j in m])) for m in members]
-        names, unnamed = self.name_clusters(centroids, cl_loud)
+        cl_secs = [float(sum(secs[j] for j in m)) for m in members]
+        names, unnamed = self.name_clusters(centroids, cl_loud, cl_secs)
         by_key = {k: names[cids[j]] for j, k in enumerate(keys)}
+        self._last_turns, self._last_by_key = turns, by_key
 
         out: list[SpeakerLabel] = []
         for p in pieces:
@@ -153,11 +228,50 @@ class PyannoteDiarizer(Diarizer):
             # its "Speaker N" numbering starts again at 1: continue after ours instead
             renumber = {name: f"Speaker {len(unnamed) + k}"
                         for k, name in enumerate(extra, 1)}
+            for lab in labels:  # clips too short to embed: "Speaker 1" with no voice
+                if lab.name not in renumber and re.fullmatch(r"Speaker \d+", lab.name):
+                    renumber[lab.name] = f"Speaker {len(unnamed) + len(renumber) + 1}"
             for name, emb in extra.items():
                 unnamed[renumber[name]] = emb
             for i, lab in zip(rest, labels, strict=True):
                 out[i] = SpeakerLabel(renumber.get(lab.name, lab.name), lab.is_owner)
         return out, unnamed
+
+    def split_lines(self, runs: list[np.ndarray], pieces: list[PieceRef],
+                    words: list[list[Word]], labels: list[SpeakerLabel]
+                    ) -> list[list[tuple[int, int, SpeakerLabel]]]:
+        """Split lines at pyannote's turn changes: each word takes the speaker of the
+        turn it overlaps most; a part shorter than ``split_min_seconds`` joins the part
+        before it (or after it, at the start)."""
+        turns = getattr(self, "_last_turns", None)
+        by_key = getattr(self, "_last_by_key", {})
+        out = []
+        for p, ws, lab in zip(pieces, words, labels, strict=True):
+            if not turns or len(ws) < 2 or p.run >= len(turns):
+                out.append([(0, len(ws), lab)])
+                continue
+            who = []
+            for s, e, _ in ws:
+                t = _best_turn(turns[p.run], s, max(e, s + 1e-3))
+                who.append(by_key.get((p.run, t), lab) if t else lab)
+            parts: list[list] = []  # [first, end, label]
+            for k, w in enumerate(who):
+                if parts and parts[-1][2] == w:
+                    parts[-1][1] = k + 1
+                else:
+                    parts.append([k, k + 1, w])
+            merged: list[list] = []
+            for part in parts:
+                long = ws[part[1] - 1][1] - ws[part[0]][0] >= self.split_min_seconds
+                if merged and (not long or merged[-1][2] == part[2]):
+                    merged[-1][1] = part[1]
+                elif (merged and ws[merged[-1][1] - 1][1] - ws[merged[-1][0]][0]
+                      < self.split_min_seconds):
+                    merged[-1][1], merged[-1][2] = part[1], part[2]
+                else:
+                    merged.append(list(part))
+            out.append([(a, b, w) for a, b, w in merged])
+        return out
 
     def _embed_speech(self, speech: np.ndarray, win_seconds: float = 3.0) -> np.ndarray:
         win = int(win_seconds * SAMPLE_RATE)

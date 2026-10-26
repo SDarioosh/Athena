@@ -57,7 +57,7 @@ margin:.8rem 0}}
 @media (prefers-color-scheme:dark){{body{{background:#161616;color:#ddd}}
 section{{background:#202020;border-color:#333}} .line.hit{{background:#4a4000}}}}
 </style></head><body>
-<h1>{title}</h1><div class="meta">{when} · {people}</div>
+<h1>{title}</h1><div class="meta">{when} · {people}</div>{written}
 <section>{summary}{lists}</section>
 <section id="transcript">{lines}</section>
 <script>
@@ -92,16 +92,38 @@ def render_conversation(settings: Settings, conv: dict[str, Any], segments: list
             f'<span class="{cls}">{e(s.speaker)}:</span>{e(s.text)}</div>')
     return _PAGE.format(
         title=e(conv.get("title") or "Untitled conversation"),
+        written=_written(conv.get("written")),
         when=e(f"{local_time(settings, origin)} – {local_time(settings, conv['ended_at'], '%H:%M')}"
                f" ({settings.timezone})"),
         people=e(", ".join(conv.get("people", [])) or "—"),
         summary=f"<p>{e(conv.get('summary') or _no_summary(conv))}</p>",
         lists=lists,
-        lines="".join(lines) or "<p>No transcript.</p>",
+        lines="".join(lines) or (
+            f"<p>The transcript was removed on {e(local_time(settings, pruned, '%Y-%m-%d') or '')}"
+            " by the retention setting; the summary, facts and action items are kept.</p>"
+            if (pruned := conv.get("transcript_pruned_at")) else "<p>No transcript.</p>"),
     )
 
 
+def _written(written: dict[str, Any] | None) -> str:
+    """A written note: says so, and links back to the note (and its handwriting) in the
+    hub. The link was checked to be http(s) when the note came in."""
+    if not written:
+        return ""
+    e = html.escape
+    label = f"“{written['title']}” in Odysseus" if written.get("title") else "the note in Odysseus"
+    return (f'<div class="meta">Written by hand · <a href="{e(written["link"], quote=True)}"'
+            f' rel="noreferrer noopener">Open {e(label)}</a></div>')
+
+
+def written_label(written: dict[str, Any] | None) -> str:
+    """" (written by hand: <hub link>)" after a title or fact; "" for spoken ones."""
+    return f" (written by hand: {written['link']})" if written else ""
+
+
 def _no_summary(conv: dict) -> str:
+    if conv.get("forget_pending"):
+        return "Being rewritten after something here was forgotten."
     if conv.get("status") == "discarded":
         return (f"Not summarized: this looked like {conv.get('discard_reason') or 'junk'} "
                 "(TV, noise or no real conversation).")

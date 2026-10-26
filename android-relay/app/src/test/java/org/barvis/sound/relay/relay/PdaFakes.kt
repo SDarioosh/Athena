@@ -45,6 +45,10 @@ class FakePda(
     val statusScript = ArrayDeque<PdaStatus?>()
     /** Called each time [awaitStatus] runs, e.g. to queue a new outbox entry. */
     var onAwaitStatus: (() -> Unit)? = null
+    /** A buggy firmware: the `after_id` it really lists from, given the one asked for. */
+    var listFrom: (Long) -> Long = { it }
+    /** Fails the test instead of letting a relay loop forever. */
+    var maxLists = 100
 
     private val pending = ArrayDeque<ByteArray>()
     private var putKind = 0
@@ -102,7 +106,8 @@ class FakePda(
                 pending.addLast(PdaResponse.TimeOk.encode())
             }
             is PdaCommand.ObList -> {
-                val all = outbox.tailMap(c.afterId + 1).values.toList()
+                check(commands.count { it is PdaCommand.ObList } <= maxLists) { "relay sent more than $maxLists OB_LISTs" }
+                val all = outbox.tailMap(listFrom(c.afterId) + 1).values.toList()
                 val sent = all.take(c.max)
                 sent.forEach { pending.addLast(it.encode()) }
                 pending.addLast(PdaResponse.ObEnd(sent.size, (all.size - sent.size).toLong()).encode())
@@ -194,7 +199,7 @@ class FakePda(
     }
 }
 
-/** Fictional odysseus-sound data (like server/scripts/seed_demo.py), answers overridable. */
+/** Fictional Athena data (like server/scripts/seed_demo.py), answers overridable. */
 class FakeConvoApi(private val timeline: Timeline = Timeline()) : ConvoApi {
     var healthAnswer: ServerResult = ServerResult.Ok()
     var patchAnswer: (Long, String) -> ServerResult = { _, _ -> ServerResult.Ok() }
@@ -343,5 +348,39 @@ class FakeTodos(private val timeline: Timeline = Timeline()) : TodosApi {
         val k = notes.indexOfFirst { it.id == noteId }
         notes[k] = notes[k].copy(items = notes[k].items.toMutableList().also { it[index] = it[index].copy(done = done) })
         return ApiResult.Ok(true)
+    }
+}
+
+/** A fictional Today insight (plan §4.1) whose refs point at [FakeTodos] and [FakeCalendar]. */
+class FakeInsight : InsightApi {
+    var answer: ApiResult<Map<String, Any?>> = ApiResult.Ok(demo())
+    var reads = 0
+
+    /** The weights route (plan §5); by default a hub without it. */
+    var weightsAnswer: ApiResult<Map<String, Any?>> = ApiResult.Unsupported("this Odysseus has no weights route (update the hub)")
+    var weightReads = 0
+
+    override suspend fun today(): ApiResult<Map<String, Any?>> {
+        reads++
+        return answer
+    }
+
+    override suspend fun weights(): ApiResult<Map<String, Any?>> {
+        weightReads++
+        return weightsAnswer
+    }
+
+    companion object {
+        fun item(ref: Any?, why: Any?, title: String = "x") = linkedMapOf("ref" to ref, "why" to why, "title" to title)
+
+        fun demo(): MutableMap<String, Any?> = linkedMapOf(
+            "date" to "2026-10-20",
+            "generated" to "2026-10-20T05:30:00Z",
+            "headline" to "A light day: the dentist in the morning, then the groceries.",
+            "focus" to listOf(item("todo:n1:0", "Needed for breakfast tomorrow", "Milk"),
+                item("event:e1", "Bring the referral letter", "Dentist")),
+            "coming_up" to listOf(item("event:e2", "Book the train", "Holiday")),
+            "also" to listOf(item("todo:n2:0", "Before the weekend", "Call the plumber")),
+        )
     }
 }

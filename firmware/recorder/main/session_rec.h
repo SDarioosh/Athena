@@ -6,7 +6,7 @@
  * A session is a conversation recording or a voice note. A note is its own short session:
  * every chunk carries CHUNK_FLAG_NOTE and it ends by itself after SESSION_REC_NOTE_MAX_S of
  * audio. A session ends on session_rec_stop() (PWR, mute, console), when the card has less
- * than SESSION_REC_MIN_FREE_BYTES free, at the note limit, or on a mic/encoder/card error.
+ * than board_storage_reserve_bytes() free, at the note limit, or on a mic/encoder/card error.
  * Its last chunk always has the LAST flag, and a session that never produced audio leaves
  * no chunk. */
 #pragma once
@@ -21,7 +21,6 @@ extern "C" {
 #endif
 
 #define SESSION_REC_CHUNK_PACKETS 1500 /* 30 s of 20 ms packets */
-#define SESSION_REC_MIN_FREE_BYTES (8ull * 1024 * 1024)
 #define SESSION_REC_NOTE_MAX_S 300 /* a voice note stops itself after 5 min (10 chunks) */
 
 typedef enum {

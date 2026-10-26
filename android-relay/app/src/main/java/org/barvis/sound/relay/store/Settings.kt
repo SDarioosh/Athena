@@ -2,6 +2,8 @@ package org.barvis.sound.relay.store
 
 import android.content.Context
 import android.content.SharedPreferences
+import org.barvis.sound.relay.net.Routes
+import org.barvis.sound.relay.net.ServerUrl
 import org.barvis.sound.relay.relay.AnchorStore
 import org.barvis.sound.relay.relay.PdaMemory
 
@@ -21,6 +23,41 @@ class Settings(context: Context) {
 
     fun setToken(token: String) {
         prefs.edit().putString(KEY_TOKEN, TokenCipher.encrypt(token)).apply()
+    }
+
+    /**
+     * Where the watch's audio and the T5's module reads go: [MODE_ODYSSEUS] (after pairing,
+     * the Odysseus URL and token) or [MODE_DIRECT] (the server URL and ingest token, the
+     * fallback and the behaviour before pairing existed).
+     */
+    var uploadMode: String
+        get() = prefs.getString(KEY_MODE, MODE_DIRECT) ?: MODE_DIRECT
+        set(v) = prefs.edit().putString(KEY_MODE, if (v == MODE_ODYSSEUS) MODE_ODYSSEUS else MODE_DIRECT).apply()
+
+    val throughOdysseus: Boolean get() = uploadMode == MODE_ODYSSEUS
+
+    /** Base URL, token and routes for the module, or null with what is missing. Never log the token. */
+    class Target(val base: String, val token: () -> String, val routes: Routes)
+
+    fun target(): Target? {
+        val odysseus = throughOdysseus
+        val url = ServerUrl.check(if (odysseus) odysseusUrl else serverUrl)
+        if (url !is ServerUrl.Check.Ok) return null
+        return if (odysseus) {
+            if (!hasOdysseusToken) null else Target(url.base, ::odysseusToken, Routes.ODYSSEUS)
+        } else {
+            if (!hasToken) null else Target(url.base, ::token, Routes.DIRECT)
+        }
+    }
+
+    /** Stores what pairing returned and switches to [MODE_ODYSSEUS]. */
+    fun savePairing(base: String, token: String) {
+        setOdysseusToken(token)
+        prefs.edit()
+            .putString(KEY_ODY_URL, base)
+            .putString(KEY_MODE, MODE_ODYSSEUS)
+            .putBoolean(KEY_REJECTED, false)
+            .apply()
     }
 
     var relayEnabled: Boolean
@@ -57,7 +94,7 @@ class Settings(context: Context) {
 
     val hasOdysseusToken: Boolean get() = prefs.contains(KEY_ODY_TOKEN)
 
-    /** The decrypted Odysseus `ody_…` token (calendar scopes only), or "". Never log this. */
+    /** The decrypted Odysseus `ody_…` token (from pairing, or typed for the calendar), or "". Never log this. */
     fun odysseusToken(): String = prefs.getString(KEY_ODY_TOKEN, null)?.let { TokenCipher.decrypt(it) } ?: ""
 
     fun setOdysseusToken(token: String) {
@@ -126,6 +163,9 @@ class Settings(context: Context) {
         private const val KEY_PDA_INTERVAL = "pda_sync_minutes"
         private const val KEY_PDA_AUTO = "pda_auto_sync"
         private const val KEY_PDA_LAST = "pda_last_sync_ms"
+        private const val KEY_MODE = "upload_mode"
+        const val MODE_DIRECT = "direct"
+        const val MODE_ODYSSEUS = "odysseus"
         const val DEFAULT_TEMPLATES = "Call\nMeeting\nReminder\nFollow-up"
         const val MIN_PDA_MINUTES = 5
         const val MAX_PDA_MINUTES = 240

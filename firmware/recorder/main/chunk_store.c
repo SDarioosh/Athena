@@ -459,12 +459,32 @@ esp_err_t chunk_store_end(uint32_t duration_ms, bool last)
     return err;
 }
 
-esp_err_t chunk_store_abandon(bool last, uint32_t *kept_id)
+esp_err_t chunk_store_abandon_close(void)
 {
     lock();
-    const esp_err_t err = to_esp(cq_abandon(&s_q, last, kept_id));
+    const esp_err_t err = to_esp(cq_abandon_close(&s_q));
+    unlock();
+    return err;
+}
+
+esp_err_t chunk_store_abandon_recover(bool last, uint32_t *kept_id)
+{
+    lock();
+    const esp_err_t err = to_esp(cq_abandon_recover(&s_q, last, kept_id));
     unlock();
     notify();
+    return err;
+}
+
+esp_err_t chunk_store_media_reset(void)
+{
+    lock();
+    esp_err_t err = ESP_ERR_INVALID_STATE;
+    if (s_ready && s_media_users > 0 && !cq_current(&s_q, NULL)) {
+        cq_read_close(&s_q); /* no file may stay open over the power cycle */
+        err = board_storage_power_cycle();
+    }
+    unlock();
     return err;
 }
 

@@ -7,7 +7,7 @@
  * back to sleep; a BOOT press restarts into the UI. If a new feed came, only the "synced
  * HH:MM" line of the Asleep screen is redrawn, with a small partial update.
  *
- * The plan and the screen's lines live in RTC memory, which keeps them through deep sleep
+ * The plan and the screen (ui_asleep_t) live in RTC memory, which keeps them through deep sleep
  * and resets other than power-on. */
 #pragma once
 
@@ -15,18 +15,19 @@
 #include <stdint.h>
 
 #include "ble_pda.h"
+#include "ui_chrome.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define PDA_SLEEP_LINE_MAX 48
+#define PDA_SLEEP_LINE_MAX UI_ASLEEP_LINE
 
-/* From the UI, with the Asleep screen on the panel and its lines as drawn: plan the first
+/* From the UI, with the Asleep screen on the panel as drawn from `screen`: plan the first
  * sync wake and sleep. override_min 0 = the plan (sleep_plan_target), > 0 = the first wake
  * in that many minutes (then the plan again), < 0 = no sync wakes, BOOT only. Doesn't
  * return. */
-void pda_sleep_enter(const char *since, const char *synced, int override_min);
+void pda_sleep_enter(const ui_asleep_t *screen, int override_min);
 
 /* app_main on a T5_WAKE_TIMER boot, after nvs_flash_init() and t5_board_init(). Doesn't
  * return: back to deep sleep, or a restart into the UI. */

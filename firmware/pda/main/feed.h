@@ -25,6 +25,11 @@ extern "C" {
 #define FEED_MAX_TODO_NOTES 20 /* plan §4.4 */
 #define FEED_MAX_TODO_ITEMS 40
 #define FEED_TODO_TEXT_MAX 160 /* characters of an item text the relay sends (§4.4) */
+#define FEED_MAX_INSIGHT_ITEMS 5 /* per insight section (§4.1 `insight`) */
+#define FEED_MAX_WEIGHTS 32      /* entries of the hub's rule weights (§4.1 `weights`) */
+#define FEED_WEIGHT_ID_MAX 150   /* bytes of a note id in a weight key (an insight ref's room) */
+#define FEED_WEIGHT_MIN (-6)
+#define FEED_WEIGHT_MAX 6
 #define DETAIL_MAX_ACTIONS 16
 #define FEED_NO_DAY INT32_MIN
 #define DETAIL_MAX_SEGMENTS 200
@@ -76,6 +81,38 @@ typedef struct {
     int n_items;
 } feed_todo_t;
 
+/* The hub's "Today insight" (§4.1 `insight`): three sections of items, each a resolved
+ * reference into this feed's todos or calendar. */
+typedef enum {
+    FEED_INSIGHT_FOCUS = 0, /* "focus": do first */
+    FEED_INSIGHT_COMING_UP,
+    FEED_INSIGHT_ALSO,
+    FEED_INSIGHT_SECTIONS,
+} feed_insight_section_t;
+
+typedef enum {
+    FEED_REF_TODO = 1, /* f->todos[note].items[item] */
+    FEED_REF_EVENT,    /* f->events[event] */
+} feed_ref_kind_t;
+
+typedef struct {
+    uint8_t kind;       /* feed_ref_kind_t */
+    int16_t note, item; /* FEED_REF_TODO: array indexes (not the hub's `i`) */
+    int16_t event;      /* FEED_REF_EVENT: index into the sorted events */
+    const char *why;    /* the hub's reason; NULL if missing */
+} feed_insight_item_t;
+
+typedef struct {
+    feed_insight_item_t items[FEED_MAX_INSIGHT_ITEMS];
+    int n;
+} feed_insight_list_t;
+
+/* One of the hub's learned rule weights (§4.1 `weights`, §5): the key `list:<note id>`. */
+typedef struct {
+    const char *note_id;
+    int8_t w; /* FEED_WEIGHT_MIN..FEED_WEIGHT_MAX */
+} feed_weight_t;
+
 typedef struct {
     uint32_t version;
     int64_t generated;
@@ -95,6 +132,18 @@ typedef struct {
     bool has_todos;  /* the feed has a `todos` key (Odysseus is set up) */
     feed_todo_t todos[FEED_MAX_TODO_NOTES]; /* in the hub's order: pinned first */
     int n_todos;
+    /* `insight`: set when the key is an object with a valid "date". Items whose ref
+     * doesn't resolve to a todo item or an event of this feed are dropped. */
+    bool has_insight;
+    char insight_date[11];        /* "YYYY-MM-DD" */
+    int32_t insight_day;          /* the same as a day number */
+    const char *insight_headline; /* may be NULL */
+    feed_insight_list_t insight[FEED_INSIGHT_SECTIONS];
+    /* `weights.weights`: only `list:<note id>` keys (id 1..FEED_WEIGHT_ID_MAX bytes) with
+     * integer values, clamped; the first FEED_MAX_WEIGHTS in the hub's order, repeats once.
+     * Unknown key prefixes, non-integers, a `version` other than 1: ignored. */
+    feed_weight_t weights[FEED_MAX_WEIGHTS];
+    int n_weights;
     char *arena;
 } feed_t;
 
@@ -137,6 +186,9 @@ void detail_free(detail_t *d);
 
 /* The ref of a detail blob without parsing all of it (the detail cache's key). */
 bool detail_peek_ref(const char *json, size_t len, char *ref, size_t cap);
+
+/* The hub's weight for a note (§5), 0 if it has none. */
+int feed_note_weight(const feed_t *f, const char *note_id);
 
 /* Actions sorted for the Actions screen: due soonest first, undated last, then by id. */
 void feed_sort_actions(feed_t *f);

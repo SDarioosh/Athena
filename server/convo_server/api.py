@@ -3,6 +3,9 @@
 Device ingestion:
     POST /v1/ingest/chunk          multipart audio chunk -> {"ok", "stop", ...}
     POST /v1/sessions/{id}/end     device pressed Stop
+Written notes (the hub's handwritten notes, reviewed text):
+    POST   /v1/ingest/text         JSON {source_id, text, written_at, link, title?}
+    DELETE /v1/ingest/text/{source_id}
 Read API (used by the knowledge-layer/MCP integration and for debugging):
     GET  /v1/sessions, /v1/sessions/{id}
     GET  /v1/conversations, /v1/conversations/{id}, /v1/conversations/{id}/transcript
@@ -10,6 +13,8 @@ Read API (used by the knowledge-layer/MCP integration and for debugging):
     GET  /v1/action-items, PATCH /v1/action-items/{id}
     GET  /v1/digests/{date}, POST /v1/digests/{date}
     POST /v1/speakers/enroll
+Settings (the hub's settings page):
+    GET  /v1/settings/llm, PUT /v1/settings/llm {"model": name | null}
 Every /v1 route requires ``Authorization: Bearer <CONVO_INGEST_TOKEN>``.
 """
 
@@ -32,11 +37,18 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import audio as audio_mod
+from . import llm_settings
 from .config import Settings
 from .diarize import enroll_voice, load_voices
 from .links import render_conversation, transcript_link, verify
 from .llm import LLMError
-from .pipeline import Pipeline, Worker
+from .pipeline import (
+    MAX_LINK_CHARS,
+    MAX_TEXT_CHARS,
+    MAX_TITLE_CHARS,
+    Pipeline,
+    Worker,
+)
 from .search import search
 from .speakers import relabel_matches
 from .store import UNSET
@@ -83,6 +95,7 @@ def _conv_out(c: dict[str, Any], settings: Settings) -> dict[str, Any]:
     for item in out.get("action_items", []):
         item["created_at"] = iso(item.get("created_at"))
         item["time_unclear"] = bool(item.get("time_unclear"))
+        item["explicit"] = bool(item.get("explicit"))
     return out
 
 
@@ -97,6 +110,15 @@ class ChunkJson(BaseModel):
     audio_b64: str = Field(max_length=MAX_CHUNK_BYTES * 4 // 3 + 4)
 
 
+class TextNote(BaseModel):
+    """A note the owner wrote by hand in the hub, after they reviewed its text."""
+    source_id: str = Field(max_length=128)  # hub-note:<note id>
+    text: str = Field(max_length=MAX_TEXT_CHARS)
+    written_at: str = Field(max_length=64)  # ISO-8601 or epoch s/ms
+    link: str = Field(max_length=MAX_LINK_CHARS)  # <hub>/#open=notes&note=<id>
+    title: str | None = Field(default=None, max_length=MAX_TITLE_CHARS)
+
+
 # A guided voice-profile recording: about 60-90 s of Opus (~1.3 KB/s on the T-Rex 3 Pro);
 # 3 minutes of any codec the watch might send is plenty.
 MAX_ENROLL_BYTES = 4 * 1024 * 1024
@@ -109,13 +131,19 @@ class EnrollJson(BaseModel):
     audio_b64: str = Field(max_length=MAX_ENROLL_BYTES * 4 // 3 + 4)
 
 
+class LlmSettingsPut(BaseModel):
+    model: str | None = Field(default=None, max_length=llm_settings.MAX_NAME)
+
+
 class ActionItemPatch(BaseModel):
-    """Every field optional; ``null`` for due_date / due_time / list_name clears it."""
+    """Every field optional; ``null`` for due_date / due_time / list_name clears it
+    (``null`` for title gives it back from the text)."""
     status: str | None = None
     kind: str | None = None
     due_date: str | None = None
     due_time: str | None = None
     list_name: str | None = None
+    title: str | None = None
 
 
 REJECTED_KEEP = 20  # undecodable uploads kept for debugging, newest first
@@ -221,6 +249,31 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
                                   codec=body.codec, sample_rate=body.sample_rate,
                                   kind=body.kind)
 
+    @v1.post("/ingest/text")
+    def ingest_text(body: TextNote) -> dict[str, Any]:
+        """Store a written note, or replace the one with the same source_id. The text is
+        the owner's words, never instructions: it is stored and summarized like a voice
+        note."""
+        try:
+            out = pipeline.ingest_text(source_id=body.source_id, text=body.text,
+                                       written_at=parse_ts(body.written_at), link=body.link,
+                                       title=body.title)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, "source_id": body.source_id, **out,
+                "transcript_link": transcript_link(settings, out["conversation_id"])}
+
+    @v1.delete("/ingest/text/{source_id}")
+    def delete_text(source_id: str) -> dict[str, Any]:
+        """Remove a written note with its to-dos and facts. Idempotent."""
+        try:
+            out = pipeline.delete_text(source_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        if out is None:
+            return {"ok": True, "source_id": source_id, "result": "already"}
+        return {"ok": True, "source_id": source_id, "result": "deleted", **out}
+
     @v1.post("/sessions/{session_id}/end")
     def end_session(session_id: str) -> dict[str, Any]:
         if not pipeline.end_session(session_id, "client"):
@@ -298,12 +351,16 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
 
     # ---------------------------------------------------------- action items
     @v1.get("/action-items")
-    def action_items(status: str | None = "open") -> dict[str, Any]:
-        rows = store.list_action_items(None if status == "all" else status)
+    def action_items(status: str | None = "open",
+                     include_notes: bool = False) -> dict[str, Any]:
+        # notes ("create a note ...") are no to-dos: only on request
+        rows = store.list_action_items(None if status == "all" else status,
+                                       notes=include_notes)
         for r in rows:
             r["source_at"], r["conversation_at"] = iso(r["source_at"]), iso(r["conversation_at"])
             r["created_at"] = iso(r.get("created_at"))
             r["time_unclear"] = bool(r.get("time_unclear"))
+            r["explicit"] = bool(r.get("explicit"))
             r["timezone"] = settings.timezone
         return {"action_items": rows}
 
@@ -315,7 +372,8 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
                 item_id, status=body.status, kind=body.kind,
                 due_date=body.due_date if "due_date" in given else UNSET,
                 due_time=body.due_time if "due_time" in given else UNSET,
-                list_name=body.list_name if "list_name" in given else UNSET)
+                list_name=body.list_name if "list_name" in given else UNSET,
+                title=body.title if "title" in given else UNSET)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         if item is None:
@@ -396,6 +454,25 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     def speakers() -> dict[str, Any]:
         return {"speakers": [{"name": s["name"], "is_owner": s["is_owner"]}
                              for s in store.speakers()]}
+
+    # -------------------------------------------------------------- settings
+    def summary_llm() -> Any:
+        if pipeline.summarizer is None:
+            raise HTTPException(503, "summaries are off on this server")
+        return pipeline.summarizer.llm
+
+    @v1.get("/settings/llm")
+    def get_llm_settings() -> dict[str, Any]:
+        """The model that writes summaries, its default and what the LLM server lists."""
+        return llm_settings.describe(summary_llm(), store, settings)
+
+    @v1.put("/settings/llm")
+    def put_llm_settings(body: LlmSettingsPut) -> dict[str, Any]:
+        """Use another model for summaries from the next one on (null: the .env default)."""
+        try:
+            return llm_settings.set_model(summary_llm(), store, settings, body.model)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
 
     app.include_router(v1)
     return app

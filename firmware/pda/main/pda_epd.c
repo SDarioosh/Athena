@@ -107,12 +107,20 @@ void pda_epd_mark_shown(void)
     xSemaphoreGive(s_lock);
 }
 
-static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area, bool count)
+static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area, bool count, bool fast)
 {
     if (!s_ready) {
         return kind;
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (kind != PDA_EPD_CLEAN && !area &&
+        memcmp(s_hl.front_fb, s_hl.back_fb, PDA_EPD_W / 2 * PDA_EPD_H) == 0) {
+        /* nothing changed (a sync that brought the same content): no refresh, and it
+         * doesn't count towards the clean budget */
+        s_stats.skipped++;
+        xSemaphoreGive(s_lock);
+        return kind;
+    }
     if (count && kind != PDA_EPD_CLEAN && s_stats.since_clean >= PDA_EPD_PARTIAL_LIMIT) {
         kind = PDA_EPD_CLEAN; /* ghosting budget used up */
         area = NULL;
@@ -135,7 +143,7 @@ static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area, bool 
     } else if (kind == PDA_EPD_FULL) {
         e = epd_hl_update_screen(&s_hl, MODE_GC16, temp);
     } else if (area) {
-        e = epd_hl_update_area(&s_hl, MODE_GL16, temp, *area);
+        e = epd_hl_update_area(&s_hl, fast ? MODE_DU : MODE_GL16, temp, *area);
     } else {
         e = epd_hl_update_screen(&s_hl, MODE_GL16, temp);
     }
@@ -161,17 +169,22 @@ static pda_epd_kind_t run_update(pda_epd_kind_t kind, const EpdRect *area, bool 
 
 pda_epd_kind_t pda_epd_update(pda_epd_kind_t kind)
 {
-    return run_update(kind, NULL, true);
+    return run_update(kind, NULL, true, false);
 }
 
 pda_epd_kind_t pda_epd_update_area(EpdRect area)
 {
-    return run_update(PDA_EPD_PARTIAL, &area, true);
+    return run_update(PDA_EPD_PARTIAL, &area, true, false);
 }
 
 void pda_epd_update_light(EpdRect area)
 {
-    run_update(PDA_EPD_PARTIAL, &area, false);
+    run_update(PDA_EPD_PARTIAL, &area, false, false);
+}
+
+void pda_epd_update_fast(EpdRect area)
+{
+    run_update(PDA_EPD_PARTIAL, &area, false, true);
 }
 
 void pda_epd_get_stats(pda_epd_stats_t *out)

@@ -1,4 +1,4 @@
-// odysseus-sound Android relay: watch (BLE) -> owner's server (LAN / Tailscale).
+// Athena Android relay: watch (BLE) -> owner's server (LAN / Tailscale).
 // Kotlin is compiled by AGP 9's built-in Kotlin support (no separate Kotlin plugin).
 plugins {
     id("com.android.application")
@@ -12,8 +12,8 @@ android {
         applicationId = "org.barvis.sound.relay"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.2.1"
     }
 
     buildTypes {
@@ -54,9 +54,14 @@ android {
 }
 
 dependencies {
-    // Deliberately tiny: framework UI (no AppCompat/Material), coroutines, nothing else.
+    // Deliberately tiny: framework UI (no AppCompat/Material), coroutines, ZXing, nothing else.
     // No analytics, crash reporting, Firebase or Google Play services.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // QR scanning for "Pair with Odysseus": ZXing (Apache-2.0), decoded on the phone. No
+    // Google Play services, no ML Kit model downloads, no network. Its CaptureActivity uses the
+    // framework Camera API, so this pulls in no AndroidX.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("com.google.zxing:core:3.5.3")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")

@@ -1,4 +1,4 @@
-# odysseus-sound recorder firmware
+# Athena recorder firmware
 
 ESP-IDF firmware for the wearable recorders. One firmware, one board layer:
 `main/` is shared, `boards/<name>/board/` implements `main/board.h` for one board.
@@ -48,14 +48,16 @@ records everything between start and stop.
   and only then tells the watch to delete it (protocol §1, §6).
 - **Power**: the chip light-sleeps whenever it has nothing to do; BLE advertising and
   syncing keep working, and it stays awake while a USB host is attached (console,
-  flashing). After **2 minutes idle** (no session, nothing to sync and no relay connected,
-  screen off, card unmounted, no USB power) it goes into **standby**: deep sleep until
-  **PWR** is pressed or USB power is plugged in (`standby` on the console does it now).
+  flashing). Every button works on its first press. It never goes into standby by itself
+  (light sleep only, by choice: a press always acts at once). `standby` on the console puts
+  it into **standby**: deep sleep until **PWR** is pressed or USB power is plugged in.
   Waking is a reboot of about a second that shows the status screen (no buzz; mute is
   kept). The waking press does nothing else: it doesn't start a recording. The power log is
   written to the card before standby (its RAM ring doesn't survive deep sleep).
-  BOOT doesn't wake it: GPIO0 is a strapping pin. Holding PWR ~6 s is still the hardware
-  power-off.
+  BOOT doesn't wake it: GPIO0 is a strapping pin.
+- **Off**: hold PWR ~6 s; the AXP2101 cuts the power (a PWR press turns it back on, a
+  full boot). The hold passes the 1 s voice-note mark first, so a few seconds of note are
+  recorded, kept on the card and uploaded with the next sync.
 - **`rec [s]`** (console only): the milestone-1 test, N seconds (default 60) from the mic to
   `/sdcard/rec_<UTC time>.wav`. The log line `recorder: level at ...` gives the file's RMS,
   peak, DC offset, clipped samples and how often the limiter acted. `stop` or mute ends it
@@ -77,7 +79,8 @@ records everything between start and stop.
 - **Copy recordings off over USB** (no card reader): `ls` lists the card, `get <file>` sends
   one file as base64 with a CRC-32, and `tools/pull.py` does both and saves the files
   (~16 KB/s, so a 60 s recording takes about 2 minutes). Keep the output folder outside
-  the repository. A card reader is faster for many files.
+  the repository. A card reader is faster for many files. `ls`, `get` and `sd` leave the
+  card alone while a recording, session or voice note is running.
   ```bash
   python firmware/recorder/tools/pull.py --port COM35 --out ~/barvis-recordings
   ```
@@ -86,7 +89,113 @@ records everything between start and stop.
   `gain [dB]`, `eq [on|off]`, `ls [q]`, `get <file>`, `mute`, `screen`, `sd`, `reboot`.
   `status` also prints the free heap and the last reset reason.
   `sd failwrite <n>` makes the next n chunk writes fail (to test the recovery below).
-  `batt sim`, `coredump [get|erase]` and `crash yes|wdt`: see below.
+  `batt sim`, `coredump [get|erase]`, `crash yes|wdt` and `events [clear]`: see below.
+
+## What it does (T-Watch S3)
+
+The same firmware on the LilyGO T-Watch S3 (`-DBOARD=twatch_s3`, board layer
+`boards/twatch_s3/board/`). Everything above works the same, with these differences:
+
+- **One button**, the side key (the AXP2101's power key). Clicks are counted, and each count
+  does what a T-Watch Ultra button does:
+
+  | Action | Does |
+  |---|---|
+  | 1 click | Start or stop a recording session (the Ultra's PWR press) |
+  | 2 clicks | Mute / unmute (the Ultra's BOOT double-click) |
+  | 3 clicks | Status screen (the Ultra's BOOT press) |
+  | 4 clicks | BLE sync window for 2 minutes, to pair a phone (the Ultra's BOOT hold) |
+  | Hold ~1 s | Start a voice note, or end the recording (the Ultra's PWR hold) |
+  | Hold ~6 s | Hardware power-off |
+
+  Clicks count when they are less than 0.5 s apart; the action runs 0.5 s after the last
+  click. For 1 s after an action, clicks are ignored (the confirming buzz can shake the key);
+  wait for the buzz before the next action. A hold always counts. Five or more clicks do
+  nothing. Logic: `main/click_counter.c` (host-tested).
+- **No SD card**: the queue and recordings live in a FAT partition in the 16 MB flash
+  (`partitions_twatch_s3.csv`, ~11.8 MB, about an hour of Opus audio), mounted at `/flash`.
+  Recording stops when less than 1 MB is free. `ls`, `get`, `tools/pull.py` work the same.
+- **Screen**: 240x240 ST7789 LCD with a compact status layout; the backlight is on or off,
+  not dimmed.
+- **Power**: ALDO1 (RTC) stays on; screen (ALDO2 backlight, ALDO3 logic), haptics enable
+  (BLDO2), LoRa, GPS and speaker are off unless used. Charging 200 mA to 4.2 V with the
+  battery-temperature input disabled (the watch has no thermistor; LilyGO does the same).
+- **Mic**: Knowles SPM1423 PDM on GPIO44/47, no EQ yet (not measured on this watch).
+
+Build and flash (from `firmware/recorder`):
+
+```bash
+idf.py -B build-s3 -DBOARD=twatch_s3 -DSDKCONFIG=build-s3/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.twatch_s3" build
+idf.py -B build-s3 -p COM40 erase-flash flash
+```
+
+The first flash over the factory firmware: erase it (the old file system and settings
+would otherwise sit in the new partitions). If `esptool` can't open the port, power the
+watch off (hold the side key ~6 s), then press it again and retry; or open the back cover
+and use BOOT + RST (download mode) on versions that have them.
+
+## What it does (T4-S3 conference recorder)
+
+The same firmware on the LilyGO T4-S3 (2.41" AMOLED, `-DBOARD=t4_s3`, board layer
+`boards/t4_s3/board/`), as a table-top recorder with four INMP441 I2S mics. Sessions, voice
+notes, the flash queue, BLE sync and the console work as on the T-Watch S3. Differences:
+
+- **One button, BOOT** (RST only resets the chip). The slide switch is the power switch.
+  BOOT presses go through the same click counter as the T-Watch S3's side key
+  (`main/key_press.c` turns the GPIO level into presses, both host-tested):
+
+  | Action | Does |
+  |---|---|
+  | 1 press | Start or stop a recording session |
+  | Hold ~1 s | Start a voice note; a press or another hold ends it |
+  | 2 presses | Mute / unmute |
+  | 3 presses | Status screen |
+  | 4 presses | BLE sync window for 2 minutes, to pair a phone |
+  | Tap the screen | Status screen (one per touch, however long the finger rests) |
+
+  No haptics: every action shows on the screen instead. The tap comes from the CST226SE
+  touch chip's interrupt line (GPIO8); it also wakes the chip from light sleep.
+- **Mics: four INMP441** on the 30-pin header, two stereo pairs sharing one clock:
+
+  | INMP441 | L/R | SD (data) | SCK | WS |
+  |---|---|---|---|---|
+  | A-L | GND | GPIO41 | GPIO39 | GPIO40 |
+  | A-R | 3V3 | GPIO41 | GPIO39 | GPIO40 |
+  | B-L | GND | GPIO42 | GPIO39 | GPIO40 |
+  | B-R | 3V3 | GPIO42 | GPIO39 | GPIO40 |
+
+  Every mic: VDD to 3V3, GND to GND. I2S0 drives the clock and reads pair A; I2S1 reads
+  pair B as a slave on the same clock, so all four are sampled on the same edges (a mic
+  array; checked on the board: pair B stays in step). The firmware finds the mics that
+  answer each time the mic starts and mixes them to mono (average, `main/mic_mix.c`); a
+  missing mic is left out, so one to four mics all work. Console: `mics [s]` shows each
+  mic's level, `mics 0x<mask>` picks the mics mixed (bit 0 A-L ... bit 3 B-R), `mics auto`
+  goes back to every mic that answers. `level`, `gain` and `eq` work on the mix.
+- **No audio lost to flash writes**: the mic's reader task empties the I2S buffers into an
+  8 s ring in PSRAM, and the I2S interrupt keeps running while flash is written
+  (`CONFIG_I2S_ISR_IRAM_SAFE`). Measured: 74.9 s recorded in 74.9 s; the recorder fell up to
+  2.3 s behind while closing a chunk, the ring absorbed it. `status` shows lost buffers.
+- **Screen on while recording** (`board_screen_on_while_recording()`; the watches keep
+  their few-seconds screen): a red REC (or NOTE), the running time, the mics mixed ("NO
+  MICS" in amber when none answer), USB/battery and "PRESS BOOT TO STOP", for the whole
+  recording. A tap or a status screen shows for a few seconds, then it comes back. At 40 %
+  brightness, its lines move a few pixels every minute (AMOLED burn-in). Meant for a desk
+  on USB; on battery the screen costs runtime.
+- **Screen**: 450x600 RM690B0 AMOLED (QSPI, driven by `esp_lcd_co5300` with LilyGO's init
+  list). Lines too wide for a panel now shrink to fit (all boards). The UI draws in 16-row strips (a 14 KB buffer instead of 43 KB).
+- **Charger: SY6970** (I2C 0x6A): 512 mA charge current, watchdog off, ADC one-shot per read.
+  No fuel gauge: the percentage is estimated from the voltage. With the slide switch off the
+  battery is cut off and reads as absent.
+- **No RTC chip**: the time is the ESP32-S3's own clock (kept through sleep and resets, not
+  through the power switch). The phone sets it at every sync, or `time` on the console.
+- **Storage**: the flash partition, as on the T-Watch S3. The microSD slot isn't used yet.
+
+Build and flash (from `firmware/recorder`):
+
+```bash
+idf.py -B build-t4 -DBOARD=t4_s3 -DSDKCONFIG=build-t4/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.t4_s3" build
+idf.py -B build-t4 -p COM40 flash
+```
 
 ## Upload path (BLE)
 
@@ -117,6 +226,13 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 24 kbps VBR, complexity 1) -> 30 s Ogg
   session and BLE tasks are on the task watchdog: a 10 s hang restarts the watch, and a
   conversation that was recording starts again after the boot. `crash yes` / `crash wdt`
   test it.
+- **Event log**: `events` prints what started and ended recordings, kept in flash (NVS,
+  the last 128): boots with the reset reason, every button event (a PWR press with the PMU's
+  interrupt bits: "no key edges" means the PMU reported a press the key never made; presses
+  the 1 s guard ignored), recording starts and stop requests with what asked for them,
+  recording ends with the reason, mute, low battery and card power cycles, each with the UTC
+  time, uptime and battery. `events clear` empties it. When a recording stopped or started
+  by itself, read `events` before anything else.
 - **Power log**: `power` shows the battery, what the watch is doing, the CPU clock and the
   drain rate; every 5 min (`power log <min>|off`) a sample goes to `/sdcard/power.csv`
   (written hourly, never while recording or syncing). `power locks` shows what keeps the
@@ -125,7 +241,9 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 24 kbps VBR, complexity 1) -> 30 s Ogg
 - **Card errors**: a failed write (the card sometimes answers `0x108`) costs at most the
   open page (~1 s): the chunk is cut back to its last page and the session goes on with a
   new chunk after 100/300/1000 ms of skipped (but counted) mic frames; it ends only after 4
-  failures in a row. `status` and the end-of-session log count them.
+  failures in a row. After each failure the card is powered off and on (~0.3 s, the mic ring
+  keeps the audio) before the chunk is read back: a card that failed once could time out on
+  every later command until then (2026-10-23). `status` and the end-of-session log count them.
 - **Queue**: `queue` lists it (id, session, sequence, start, length, size, flags);
   `queue drop <id>` deletes one without uploading. `ls q` / `get q/<file>` and
   `tools/pull.py --queue` copy chunks over USB for debugging without BLE (they stay
@@ -194,7 +312,9 @@ export BARVIS_TZ=Europe/Berlin           # the feed's time zone and the T5 clock
   `--calendar-href <CalDAV calendar id>`. Without them, calendar actions stay queued on the
   T5 and the feed has no events.
 - The same Odysseus URL and token fill the T5's Tasks tab with the owner's checklists
-  (plan §4.4; the token also needs `todos:read` and `todos:write`).
+  (plan §4.4; the token also needs `todos:read` and `todos:write`), and the feed with the
+  hub's Today insight (plan §4.1; the token also needs `insight:read`, else the feed has no
+  `insight`).
 - `--templates "Call,Meeting,Reminder"`: event titles for the T5's "+" picker.
 - Exit codes: 0 ok, 1 some actions still waiting, 2 retry later, 3 token rejected,
   incompatible or bad settings, 4 T5 not found.

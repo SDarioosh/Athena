@@ -105,6 +105,158 @@ static void parse_todos(ctx_t *c, feed_t *f)
     }
 }
 
+/* "todo:<note id>:<item i>" or "event:<calendar id>" to array indexes; false if it names
+ * nothing in this feed. Note ids may contain ':', so the item index is after the last one. */
+static bool resolve_ref(const feed_t *f, const char *ref, feed_insight_item_t *it)
+{
+    if (strncmp(ref, "todo:", 5) == 0) {
+        const char *id = ref + 5;
+        const char *colon = strrchr(id, ':');
+        if (!colon || colon == id || !colon[1]) {
+            return false;
+        }
+        int64_t i = 0;
+        for (const char *p = colon + 1; *p; p++) {
+            if (*p < '0' || *p > '9' || i > INT32_MAX / 10) {
+                return false;
+            }
+            i = i * 10 + (*p - '0');
+        }
+        if (i > INT32_MAX) {
+            return false;
+        }
+        const size_t id_len = (size_t)(colon - id);
+        for (int n = 0; n < f->n_todos; n++) {
+            const feed_todo_t *note = &f->todos[n];
+            if (strlen(note->id) != id_len || strncmp(note->id, id, id_len) != 0) {
+                continue;
+            }
+            for (int k = 0; k < note->n_items; k++) {
+                if (note->items[k].i == (int32_t)i) {
+                    it->kind = FEED_REF_TODO;
+                    it->note = (int16_t)n;
+                    it->item = (int16_t)k;
+                    it->event = -1;
+                    return true;
+                }
+            }
+            return false;
+        }
+        return false;
+    }
+    if (strncmp(ref, "event:", 6) == 0 && ref[6]) {
+        for (int e = 0; e < f->n_events; e++) {
+            if (f->events[e].id && strcmp(f->events[e].id, ref + 6) == 0) {
+                it->kind = FEED_REF_EVENT;
+                it->note = it->item = -1;
+                it->event = (int16_t)e;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/* `insight` (§4.1). Runs after the events are sorted: event refs are indexes. */
+static void parse_insight(ctx_t *c, feed_t *f)
+{
+    static const char *const KEYS[FEED_INSIGHT_SECTIONS] = {"focus", "coming_up", "also"};
+    const int o = json_get(&c->d, 0, "insight");
+    if (o < 0 || c->d.t[o].type != JSON_OBJ) {
+        return;
+    }
+    char date[16];
+    int64_t t;
+    bool date_only = false;
+    const int di = json_get(&c->d, o, "date");
+    if (json_str_len(&c->d, di) != 10 || json_str(&c->d, di, date, sizeof(date)) != 10 ||
+        !pda_time_parse(date, &t, &date_only) || !date_only) {
+        return; /* without a valid date the T5 can't tell whether it is today's */
+    }
+    f->has_insight = true;
+    memcpy(f->insight_date, date, sizeof(f->insight_date));
+    f->insight_day = pda_local_day(t, 0);
+    f->insight_headline = get_str(c, o, "headline");
+    for (int s = 0; s < FEED_INSIGHT_SECTIONS; s++) {
+        feed_insight_list_t *l = &f->insight[s];
+        const int arr = json_get(&c->d, o, KEYS[s]);
+        if (arr < 0 || c->d.t[arr].type != JSON_ARR) {
+            continue;
+        }
+        for (int k = json_first(&c->d, arr); k >= 0 && l->n < FEED_MAX_INSIGHT_ITEMS;
+             k = json_next(&c->d, arr, k)) {
+            if (c->d.t[k].type != JSON_OBJ) {
+                continue;
+            }
+            char ref[160];
+            const int ri = json_get(&c->d, k, "ref");
+            const int rl = json_str_len(&c->d, ri);
+            if (rl <= 0 || rl >= (int)sizeof(ref)) {
+                continue;
+            }
+            json_str(&c->d, ri, ref, sizeof(ref));
+            feed_insight_item_t it = {0};
+            if (!resolve_ref(f, ref, &it)) {
+                continue;
+            }
+            it.why = get_str(c, k, "why");
+            l->items[l->n++] = it;
+        }
+    }
+}
+
+/* `weights` (§4.1, §5): the hub's learned rule weights, one per note. */
+static void parse_weights(ctx_t *c, feed_t *f)
+{
+    static const char PREFIX[] = "list:";
+    const size_t plen = sizeof(PREFIX) - 1;
+    const int o = json_get(&c->d, 0, "weights");
+    if (o < 0 || c->d.t[o].type != JSON_OBJ) {
+        return;
+    }
+    int64_t version = 1;
+    const int vi = json_get(&c->d, o, "version");
+    if (vi >= 0 && (!json_int(&c->d, vi, &version) || version != 1)) {
+        return; /* a table this firmware doesn't know */
+    }
+    const int w = json_get(&c->d, o, "weights");
+    if (w < 0 || c->d.t[w].type != JSON_OBJ) {
+        return;
+    }
+    for (int k = json_first(&c->d, w); k >= 0 && f->n_weights < FEED_MAX_WEIGHTS; k = json_next(&c->d, w, k)) {
+        const int len = json_str_len(&c->d, k);
+        if (len <= (int)plen || len > (int)(plen + FEED_WEIGHT_ID_MAX)) {
+            continue;
+        }
+        char key[sizeof(PREFIX) + FEED_WEIGHT_ID_MAX];
+        json_str(&c->d, k, key, sizeof(key));
+        int64_t v;
+        if (strncmp(key, PREFIX, plen) != 0 || !json_int(&c->d, k + 1, &v)) {
+            continue; /* another key (note_type:, event_type:, ...) or not an integer */
+        }
+        bool seen = false;
+        for (int j = 0; j < f->n_weights && !seen; j++) {
+            seen = strcmp(f->weights[j].note_id, key + plen) == 0;
+        }
+        const char *s = seen ? NULL : str(c, k);
+        if (!s) {
+            continue;
+        }
+        v = v < FEED_WEIGHT_MIN ? FEED_WEIGHT_MIN : v > FEED_WEIGHT_MAX ? FEED_WEIGHT_MAX : v;
+        f->weights[f->n_weights++] = (feed_weight_t){.note_id = s + plen, .w = (int8_t)v};
+    }
+}
+
+int feed_note_weight(const feed_t *f, const char *note_id)
+{
+    for (int i = 0; note_id && i < f->n_weights; i++) {
+        if (strcmp(f->weights[i].note_id, note_id) == 0) {
+            return f->weights[i].w;
+        }
+    }
+    return 0;
+}
+
 static int setup(ctx_t *c, const char *json, size_t len, json_tok_t **toks)
 {
     const int max = (int)(len / 2 + 16);
@@ -253,10 +405,12 @@ int feed_parse(const char *json, size_t len, feed_t *f)
     parse_calendar(&c, f);
     f->n_templates = str_list(&c, 0, "templates", f->templates, FEED_MAX_TEMPLATES);
     parse_todos(&c, f);
-    free(toks);
-    f->arena = c.arena;
     feed_sort_actions(f);
     feed_sort_events(f);
+    parse_insight(&c, f); /* after the sort: it refers to events by index */
+    parse_weights(&c, f);
+    free(toks);
+    f->arena = c.arena;
     return 0;
 }
 

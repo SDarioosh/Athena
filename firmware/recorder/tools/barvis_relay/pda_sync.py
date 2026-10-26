@@ -35,6 +35,7 @@ from .pda_feed import (
     encode_feed,
     resolve_tz,
     tz_offset_minutes,
+    weights_section,
 )
 from .uploader import AUTH, UploadError
 
@@ -88,18 +89,21 @@ class Transport(Protocol):
 
 class PdaState:
     """What the relay remembers per T5 across connections and runs (best effort, a small
-    JSON file like anchors.json): the last feed pushed (hash, version) and the calendar
-    events created for cal_add actions."""
+    JSON file like anchors.json): the last feed pushed (hash, version), the calendar
+    events created for cal_add actions and the hub's last good rule-weights table (the
+    feed's `weights`, kept when a later fetch fails)."""
 
     def __init__(self, path: Path | None) -> None:
         self.path = path
         self.feeds: dict[str, dict[str, Any]] = {}
         self.calendar = CalendarMemory(on_change=self.save)
+        self.weights: dict[str, Any] | None = None
         if path is not None:
             try:
                 raw = json.loads(path.read_text())
                 self.feeds = dict(raw.get("feeds") or {})
                 self.calendar.created = dict(raw.get("cal_created") or {})
+                self.weights = weights_section(raw.get("weights"))  # checked again
             except FileNotFoundError:
                 pass
             except (OSError, ValueError, AttributeError) as e:
@@ -112,7 +116,8 @@ class PdaState:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps({"feeds": self.feeds,
-                                       "cal_created": self.calendar.created}, indent=1))
+                                       "cal_created": self.calendar.created,
+                                       "weights": self.weights}, indent=1))
             tmp.replace(self.path)
         except OSError as e:
             log.warning("can't save %s (%s); keeping the state in memory", self.path, e)
@@ -145,7 +150,7 @@ class _Fetched:
 class PdaSync:
     def __init__(self, api: ServerApi, *, tz_name: str = "UTC",
                  calendar: Calendar | None = None, templates: list[str] | None = None,
-                 todos: Any = None,
+                 todos: Any = None, insight: Any = None,
                  state: PdaState | None = None,
                  device_key: str = "t5", stay: bool = False, list_only: bool = False,
                  clock: Callable[[], float] = time.time, timeout: float = 10.0,
@@ -158,6 +163,7 @@ class PdaSync:
         self.calendar = calendar
         self.templates = templates
         self.todos = todos
+        self.insight = insight
         self.state = state or PdaState(None)
         self.runner = ActionRunner(api, calendar, self.state.calendar, todos)
         self.device_key = device_key
@@ -351,7 +357,12 @@ class PdaSync:
         try:
             feed = await asyncio.to_thread(build_feed, self.api, now=now,
                                            tz_name=self.tz_name, calendar=self.calendar,
-                                           templates=self.templates, todos=self.todos)
+                                           templates=self.templates, todos=self.todos,
+                                           insight=self.insight,
+                                           last_weights=self.state.weights)
+            if feed.get("weights") != self.state.weights:
+                self.state.weights = feed.get("weights")
+                self.state.save()
             data = encode_feed(feed)
         except UploadError as e:
             report.outcome = AUTH_FAILED if e.kind == AUTH else SERVER_RETRY
@@ -368,6 +379,9 @@ class PdaSync:
             log.info("feed unchanged (v%d on the T5), not sent", held)
             return True
         version = max(feed["version"], int(last.get("version", 0)) + 1, (held or 0) + 1)
+        # A u32 on the wire: stop at the largest one rather than overflow (a T5 or state
+        # file holding 0xFFFFFFFF); 0 would mean "no feed".
+        version = min(version, 0xFFFFFFFF)
         if version != feed["version"]:  # versions only grow, even if clocks disagree
             feed["version"] = version
             data = encode_feed(feed)

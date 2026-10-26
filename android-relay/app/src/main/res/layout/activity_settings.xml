@@ -11,6 +11,66 @@
 
         <TextView
             style="@style/Heading"
+            android:text="@string/pair_heading" />
+
+        <TextView
+            android:id="@+id/pair_state"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/pair_intro" />
+
+        <Button
+            android:id="@+id/pair_scan"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/pair_scan" />
+
+        <TextView
+            style="@style/Heading"
+            android:labelFor="@id/pair_link"
+            android:text="@string/pair_link" />
+
+        <EditText
+            android:id="@+id/pair_link"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:importantForAutofill="no"
+            android:inputType="textUri|textNoSuggestions"
+            android:minHeight="48dp" />
+
+        <Button
+            android:id="@+id/pair_paste"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/pair_with_link" />
+
+        <TextView
+            android:id="@+id/pair_result"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textIsSelectable="true" />
+
+        <CheckBox
+            android:id="@+id/through_odysseus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/through_odysseus" />
+
+        <TextView
+            style="@style/Heading"
+            android:text="@string/direct_heading" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/direct_intro"
+            android:textAppearance="@android:style/TextAppearance.Material.Small" />
+
+        <TextView
+            style="@style/Heading"
             android:labelFor="@id/server_url"
             android:text="@string/server_url" />
 
@@ -159,6 +219,12 @@
             android:importantForAutofill="no"
             android:inputType="text"
             android:minHeight="48dp" />
+
+        <Button
+            android:id="@+id/choose_calendar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/choose_calendar" />
 
         <TextView
             android:layout_width="match_parent"

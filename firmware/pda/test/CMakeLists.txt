@@ -27,6 +27,8 @@ add_library(pda_pure STATIC
     ${FW}/main/touch_idle.c
     ${FW}/main/ui_nav.c
     ${FW}/main/sleep_plan.c
+    ${FW}/main/today_plan.c
+    ${FW}/main/wake_log.c
     ${REC}/main/crc32.c
     ${REC}/main/isotime.c
 )
@@ -34,10 +36,29 @@ target_include_directories(pda_pure PUBLIC ${FW}/main ${REC}/main ${REC}/test)
 
 enable_testing()
 foreach(t test_pda_proto test_json test_feed test_outbox test_feed_store test_gesture test_touch_idle
-        test_ui_nav test_sleep_plan)
+        test_ui_nav test_sleep_plan test_today_plan test_wake_log)
     add_executable(${t} ${t}.c)
     target_link_libraries(${t} pda_pure)
     add_test(NAME ${t} COMMAND ${t})
     set_tests_properties(${t} PROPERTIES ENVIRONMENT
         "FIXTURES=${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 endforeach()
+
+# The Today tab rendered to PNG through a host stand-in for epdiy (host/epdiy.h): needs zlib
+# for the fonts' compressed glyphs. Output: <build dir>/today_screens/*.png
+find_package(ZLIB)
+if(ZLIB_FOUND)
+    add_executable(test_ui_today test_ui_today.c host/epdiy_host.c
+        ${FW}/main/gfx.c ${FW}/main/fonts.c ${FW}/main/ui_today.c ${FW}/main/ui_chrome.c)
+    # host/ first: its epdiy.h stands in for the component's
+    target_include_directories(test_ui_today BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/host)
+    target_link_libraries(test_ui_today pda_pure ZLIB::ZLIB)
+    # -Wbidi-chars is GCC-only; clang rejects the unknown option under -Werror
+    set_source_files_properties(${FW}/main/fonts.c PROPERTIES COMPILE_OPTIONS
+        "$<$<C_COMPILER_ID:GNU>:-Wno-bidi-chars>")
+    add_test(NAME test_ui_today COMMAND test_ui_today)
+    set_tests_properties(test_ui_today PROPERTIES ENVIRONMENT
+        "FIXTURES=${CMAKE_CURRENT_SOURCE_DIR}/fixtures;OUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/today_screens")
+else()
+    message(WARNING "zlib not found: test_ui_today (Today tab rendering) is skipped")
+endif()

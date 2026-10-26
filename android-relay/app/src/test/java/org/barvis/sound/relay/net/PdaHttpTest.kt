@@ -48,6 +48,56 @@ class PdaHttpTest {
         }
     }
 
+    @Test fun convoApiThroughOdysseus() = runBlocking {
+        val t = FakeTransport { m, url ->
+            when {
+                url.endsWith("/api/codex/sound/health") -> HttpAnswer(200, """{"ok": true}""")
+                url.contains("/api/codex/sound/conversations?") -> HttpAnswer(200, """{"conversations": []}""")
+                url.contains("/api/codex/sound/action-items?") -> HttpAnswer(200, """{"action_items": []}""")
+                url.contains("/api/codex/sound/digests/") && m == "GET" -> HttpAnswer(200, """{"date": "2026-10-19"}""")
+                m == "PATCH" || m == "POST" -> HttpAnswer(200, """{"ok": true}""")
+                else -> HttpAnswer(404, """{"detail": "Not Found"}""")
+            }
+        }
+        val api = ConvoHttpApi("http://hub:7000", { token }, t, { _, msg -> logs += msg }, Routes.ODYSSEUS)
+        assertEquals(ServerResult.Ok(), api.health())
+        assertTrue(api.conversations(100, 5) is ApiResult.Ok)
+        assertTrue(api.openActionItems() is ApiResult.Ok)
+        assertTrue(api.digest("2026-10-19") is ApiResult.Ok)
+        assertTrue(api.conversation("c 1") is ApiResult.Fail)
+        assertEquals(ServerResult.Ok(), api.setActionItemStatus(4, "done"))
+        assertEquals(ServerResult.Ok(), api.makeDigest("2026-10-19"))
+        assertEquals(listOf(
+            "GET http://hub:7000/api/codex/sound/health",
+            "GET http://hub:7000/api/codex/sound/conversations?since=100&limit=5",
+            "GET http://hub:7000/api/codex/sound/action-items?status=open",
+            "GET http://hub:7000/api/codex/sound/digests/2026-10-19",
+            "GET http://hub:7000/api/codex/sound/conversations/c%201",
+            "PATCH http://hub:7000/api/codex/sound/action-items/4",
+            "POST http://hub:7000/api/codex/sound/digests/2026-10-19",
+        ), t.calls.map { "${it.first} ${it.second}" })
+        // Through Odysseus even health carries the token.
+        assertTrue(t.calls.all { it.third["Authorization"] == "Bearer $token" })
+        noLeak()
+    }
+
+    @Test fun calendarList() = runBlocking {
+        val t = FakeTransport { _, _ ->
+            HttpAnswer(200, """{"calendars": [{"name": "Personal", "href": "cal-1", "source": "caldav"},
+                {"name": "Local", "href": "cal-2", "source": "local"}, {"name": "no id"}]}""")
+        }
+        val r = OdysseusCalendarClient("http://hub:7000", { token }, transport = t).calendars()
+        assertEquals(ApiResult.Ok(listOf(CalendarChoice("cal-1", "Personal", "caldav"),
+            CalendarChoice("cal-2", "Local", "local"))), r)
+        assertEquals("Personal (CalDAV)", (r as ApiResult.Ok).value[0].label)
+        assertEquals("http://hub:7000/api/codex/calendars", t.calls.single().second)
+        t.answer = { _, _ -> HttpAnswer(404, """{"detail": "Not Found"}""") }
+        assertTrue(OdysseusCalendarClient("http://hub:7000", { token }, transport = t).calendars() is ApiResult.Unsupported)
+        t.answer = { _, _ -> HttpAnswer(403, """{"detail": "API token missing required scope"}""") }
+        val denied = OdysseusCalendarClient("http://hub:7000", { token }, transport = t).calendars()
+        assertTrue(denied is ApiResult.Fail && denied.error is ServerResult.AuthRejected)
+    }
+
     @Test fun convoApiPathsAndPatch() = runBlocking {
         val t = FakeTransport { m, url ->
             when {
@@ -107,8 +157,14 @@ class PdaHttpTest {
         assertEquals(mapOf("summary" to "Call Ben", "dtstart" to "2026-10-22", "all_day" to true,
             "description" to "Added on the T5 PDA", "calendar_href" to "cal-caldav-1"), body)
 
-        assertEquals(ApiResult.Ok(Unit), c.deleteEvent("u1::2026-10-21"))
-        assertTrue(t.calls.last().second.endsWith("/api/codex/calendar/events/u1%3A%3A2026-10-21"))
+        assertEquals(ApiResult.Ok(Unit), c.deleteEvent("u1"))
+        assertEquals("DELETE" to "http://hub.example.ts.net:7000/api/codex/calendar/events/u1", t.calls.last().first to t.calls.last().second)
+        // An occurrence of a recurring event: the hub would delete the whole series, so it is
+        // refused without a call (result 1), as by the PC relay.
+        val calls = t.calls.size
+        assertEquals(ApiResult.Fail(ServerResult.Rejected(400, "one occurrence of a recurring event can't be deleted")),
+            c.deleteEvent("u1::2026-10-21"))
+        assertEquals(calls, t.calls.size)
         assertEquals(ApiResult.Fail(ServerResult.Rejected(404, "Event not found")), c.deleteEvent("gone"))
 
         // An older hub without the codex routes, or without a calendar: "not supported", no guessing.
@@ -149,6 +205,15 @@ class PdaHttpTest {
             Json.parseObject(t.bodies.last()!!))
         t.answer = { _, _ -> HttpAnswer(200, """{"exit_code": 1, "error": "index out of range"}""") }
         assertEquals(ApiResult.Ok(false), c.toggle("n1", 9, true))
+        // Plan §4.4: any exit_code other than 0 is result 1; only a missing one is temporary.
+        t.answer = { _, _ -> HttpAnswer(200, """{"exit_code": 2, "error": "bad note"}""") }
+        assertEquals(ApiResult.Ok(false), c.toggle("n1", 0, true))
+        t.answer = { _, _ -> HttpAnswer(200, """{"exit_code": -1}""") }
+        assertEquals(ApiResult.Ok(false), c.toggle("n1", 0, true))
+        for (body in listOf("""{"output": "ok"}""", """{"exit_code": true}""", """{"exit_code": "0"}""")) {
+            t.answer = { _, _ -> HttpAnswer(200, body) }
+            assertTrue(body, (c.toggle("n1", 0, true) as ApiResult.Fail).error is ServerResult.Transient)
+        }
 
         // "No todos": a hub without format=json answers text; a token without todos:read gets 403.
         t.answer = { _, _ -> HttpAnswer(200, "You have 2 notes:\n- Groceries (checklist)") }
@@ -164,6 +229,68 @@ class PdaHttpTest {
         assertTrue((c.notes() as ApiResult.Fail).error is ServerResult.Transient)
         t.answer = { _, _ -> HttpAnswer(401, """{"error": "Invalid API token"}""") }
         assertEquals(ApiResult.Fail(ServerResult.AuthRejected(401)), c.notes())
+        noLeak()
+    }
+
+    @Test fun odysseusInsightClient() = runBlocking {
+        val t = FakeTransport { _, _ ->
+            HttpAnswer(200, """{"date": "2026-10-20", "generated": "2026-10-20T05:30:00Z", "headline": "A light day.",
+                "focus": [{"ref": "event:e1", "why": "Bring the letter", "title": "Dentist"}], "coming_up": [], "also": []}""")
+        }
+        val c = OdysseusInsightClient("http://hub.example.ts.net:7000/", { token }, t, log = { _, msg -> logs += msg })
+        val raw = (c.today() as ApiResult.Ok).value
+        assertEquals("A light day.", raw["headline"])
+        assertEquals("GET" to "http://hub.example.ts.net:7000/api/codex/insight/today", t.calls[0].first to t.calls[0].second)
+        assertEquals("Bearer $token", t.calls[0].third["Authorization"])
+
+        // "No insight": left out of the feed, with the PC relay's words.
+        val none = listOf(
+            HttpAnswer(404, """{"error": "no insight yet"}""") to OdysseusInsightClient.NOT_YET,
+            HttpAnswer(404, """{"detail": "Not Found"}""") to OdysseusInsightClient.OLD_HUB, // a hub without the route
+            HttpAnswer(405, """{"detail": "Method Not Allowed"}""") to OdysseusInsightClient.OLD_HUB,
+            HttpAnswer(403, """{"detail": "API token missing required scope: insight:read"}""") to "token lacks insight:read",
+            HttpAnswer(200, "Today you have a dentist appointment.") to OdysseusInsightClient.MALFORMED,
+            HttpAnswer(200, """["not", "an", "object"]""") to OdysseusInsightClient.MALFORMED,
+            HttpAnswer(400, """{"detail": "bad request"}""") to "Odysseus insight: HTTP 400",
+        )
+        for ((answer, why) in none) {
+            t.answer = { _, _ -> answer }
+            assertEquals(ApiResult.Unsupported(why), c.today())
+        }
+        // Failures fail the feed, like the calendar's.
+        t.answer = { _, _ -> HttpAnswer(503, "") }
+        assertTrue((c.today() as ApiResult.Fail).error is ServerResult.Transient)
+        t.answer = { _, _ -> throw IOException("connection refused") }
+        assertTrue((c.today() as ApiResult.Fail).error is ServerResult.Transient)
+        t.answer = { _, _ -> HttpAnswer(401, """{"error": "Invalid API token"}""") }
+        assertEquals(ApiResult.Fail(ServerResult.AuthRejected(401)), c.today())
+        noLeak()
+    }
+
+    @Test fun odysseusInsightWeights() = runBlocking {
+        val t = FakeTransport { _, _ ->
+            HttpAnswer(200, """{"version": 1, "date": "2026-10-20", "weights": {"list:n1": 2, "list:n7": -1}}""")
+        }
+        val c = OdysseusInsightClient("http://hub.example.ts.net:7000/", { token }, t, log = { _, msg -> logs += msg })
+        val raw = (c.weights() as ApiResult.Ok).value
+        assertEquals(mapOf("list:n1" to 2L, "list:n7" to -1L), raw["weights"])
+        assertEquals("GET" to "http://hub.example.ts.net:7000/api/codex/insight/weights", t.calls[0].first to t.calls[0].second)
+        assertEquals("Bearer $token", t.calls[0].third["Authorization"])
+        // Anything else keeps the last good table (the feed builder's job): never Ok.
+        val kept = listOf(
+            HttpAnswer(404, """{"detail": "Not Found"}""") to OdysseusInsightClient.WEIGHTS_OLD_HUB,
+            HttpAnswer(405, "") to OdysseusInsightClient.WEIGHTS_OLD_HUB,
+            HttpAnswer(403, """{"detail": "API token missing required scope: insight:read"}""") to OdysseusInsightClient.NO_SCOPE,
+            HttpAnswer(200, "weights") to OdysseusInsightClient.WEIGHTS_MALFORMED,
+        )
+        for ((answer, why) in kept) {
+            t.answer = { _, _ -> answer }
+            assertEquals(ApiResult.Unsupported(why), c.weights())
+        }
+        t.answer = { _, _ -> HttpAnswer(503, "") }
+        assertTrue(c.weights() is ApiResult.Fail)
+        t.answer = { _, _ -> throw IOException("connection refused") }
+        assertTrue(c.weights() is ApiResult.Fail)
         noLeak()
     }
 

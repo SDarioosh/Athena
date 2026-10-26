@@ -26,7 +26,10 @@ static i2c_dev_t s_dev;
 
 esp_err_t drv2605_init(uint8_t i2c_addr)
 {
-    ESP_RETURN_ON_ERROR(i2c_bus_add(i2c_addr, &s_dev), TAG, "add");
+    /* Called before every buzz (EN low drops the registers): add the device once. */
+    if (!s_dev.dev) {
+        ESP_RETURN_ON_ERROR(i2c_bus_add(i2c_addr, &s_dev), TAG, "add");
+    }
     uint8_t status;
     ESP_RETURN_ON_ERROR(i2c_reg_read8(&s_dev, REG_STATUS, &status), TAG, "status");
     ESP_LOGD(TAG, "chip id %d (3 = DRV2605, 7 = DRV2605L)", status >> 5);

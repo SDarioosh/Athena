@@ -106,10 +106,18 @@ esp_err_t chunk_store_sync(void);
 void chunk_store_fail_writes(int n);
 /* Close the open chunk; it becomes listable. last = the session ends with it. */
 esp_err_t chunk_store_end(uint32_t duration_ms, bool last);
-/* The open chunk can't be finished (write error): keep what the card holds up to the last
- * complete Ogg page, as a closed chunk with LAST; without audio, delete it and give LAST to
- * the session's previous chunk. *kept_id = 0 if it was deleted. */
-esp_err_t chunk_store_abandon(bool last, uint32_t *kept_id);
+/* The open chunk can't be finished (write error), in two steps so the card can be power
+ * cycled in between (chunk_store_media_reset()): close its file, then keep what the card
+ * holds up to the last complete Ogg page as a closed chunk (with LAST if `last`); without
+ * audio, delete it and give LAST to the session's previous chunk. *kept_id = 0 if it wasn't
+ * kept. A card that still can't be read leaves the chunk on it (ESP_FAIL), and the next
+ * boot recovers it. */
+esp_err_t chunk_store_abandon_close(void);
+esp_err_t chunk_store_abandon_recover(bool last, uint32_t *kept_id);
+/* Power the card off and on and mount it again (board_storage_power_cycle()), for a card
+ * that stopped answering. No chunk may be open. ESP_ERR_NOT_SUPPORTED for built-in storage,
+ * ESP_ERR_INVALID_STATE without chunk_store_media_open(). */
+esp_err_t chunk_store_media_reset(void);
 /* Give a closed chunk LAST (the session ended before its next chunk could start). */
 esp_err_t chunk_store_set_last(uint32_t chunk_id);
 /* Free space on the card. Needs chunk_store_media_open(). */

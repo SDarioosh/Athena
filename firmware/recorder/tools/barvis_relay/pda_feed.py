@@ -1,4 +1,4 @@
-"""The T5 PDA feed (docs/t5-pda-plan.md §4.1), built from the odysseus-sound HTTP API.
+"""The T5 PDA feed (docs/t5-pda-plan.md §4.1), built from the Athena HTTP API.
 
 - `ServerApi` is the small client the PDA needs: `health`, `get`, `patch`, `post`. `HttpApi`
   is the real one (urllib, the same rules as `Uploader`: bearer header only, no redirects,
@@ -9,9 +9,13 @@
 
 Sources: `GET /v1/digests/{today}` or `{yesterday}` (the first that exists),
 `GET /v1/conversations?since=<now - 48 h>&limit=20` (summarized ones only),
-`GET /v1/action-items?status=open`, and the calendar (today to +7 days) through the
-`Calendar` protocol of `pda_actions`. A source that fails for a reason other than "absent"
-(digest 404, calendar not configured) fails the build: the T5 keeps its last feed.
+`GET /v1/action-items?status=open`, the calendar (today to +7 days) through the
+`Calendar` protocol of `pda_actions`, the Odysseus checklists (`pda_todos`) and the hub's
+Today insight and its rule weights (`pda_insight`). A source that fails for a reason other
+than "absent"
+(digest 404, calendar not configured, no todos or no insight for this hub/token) fails the
+build: the T5 keeps its last feed. The weights never fail it: a failed fetch keeps the
+last good table (`last_weights`, kept by the caller).
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from typing import Any, Protocol
 
+from .pda_insight import MALFORMED
 from .uploader import SKIP, Uploader, UploadError
 
 log = logging.getLogger("barvis_relay.pda")
@@ -48,8 +53,17 @@ TODO_ITEMS_MAX = 40
 TODO_TEXT_MAX = 160
 TEMPLATES_MAX = 12  # event-title templates for the T5's "+" picker (§5)
 TEMPLATE_MAX = 40
+INSIGHT_HEADLINE_MAX = 200  # the hub's Today insight (§4.1)
+INSIGHT_WHY_MAX = 80
+INSIGHT_ITEMS_MAX = 5  # per section
+INSIGHT_SECTIONS = ("focus", "coming_up", "also")
+WEIGHTS_MAX = 32  # entries of the `weights` table (§4.1, §5)
+WEIGHT_MIN, WEIGHT_MAX = -6, 6
+WEIGHT_ID_MAX = 150  # bytes of a note id in a weight key (the T5's limit)
+WEIGHT_PREFIX = "list:"
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")  # fullmatch: ASCII digits only
 UTC = timezone.utc  # noqa: UP017 (Python 3.10 has no datetime.UTC)
 
 
@@ -232,9 +246,102 @@ def _todos(todos: Any) -> list[dict[str, Any]] | None:
     return out
 
 
+def _feed_refs(feed: dict[str, Any]) -> set[str]:
+    """The refs an insight item may point at: `todo:<note id>:<i>` for each item in the
+    feed's `todos` and `event:<id>` for each `calendar` entry."""
+    refs = {f"todo:{n['id']}:{it['i']}" for n in feed.get("todos") or [] for it in n["items"]}
+    refs.update(f"event:{e['id']}" for e in feed.get("calendar") or [])
+    return refs
+
+
+def insight_section(raw: dict[str, Any], feed: dict[str, Any]) -> dict[str, Any] | None:
+    """The `insight` section (§4.1) from the hub's answer, or None if the answer is
+    malformed (no `YYYY-MM-DD` date or no string headline). Keeps only `date`, `headline`
+    and each item's `ref` and `why`, and only refs that resolve in `feed`."""
+    day, headline = raw.get("date"), raw.get("headline")
+    if not isinstance(day, str) or not _ISO_DATE.fullmatch(day) or not isinstance(headline, str):
+        return None
+    refs = _feed_refs(feed)
+    out: dict[str, Any] = {"date": day, "headline": cut(headline, INSIGHT_HEADLINE_MAX)}
+    for key in INSIGHT_SECTIONS:
+        rows = raw.get(key)
+        items: list[dict[str, str]] = []
+        for it in rows if isinstance(rows, list) else []:
+            if not isinstance(it, dict) or not isinstance(it.get("ref"), str) \
+                    or it["ref"] not in refs:
+                continue
+            why = it.get("why")
+            items.append({"ref": it["ref"],
+                          "why": cut(why, INSIGHT_WHY_MAX) if isinstance(why, str) else ""})
+            if len(items) == INSIGHT_ITEMS_MAX:
+                break
+        out[key] = items
+    return out
+
+
+def _insight(insight: Any, feed: dict[str, Any]) -> dict[str, Any] | None:
+    """The `insight` section, or None to leave it out (no Odysseus, no insight yet, a token
+    without insight:read, or a malformed answer; `pda_insight` logs why)."""
+    if insight is None:
+        return None
+    raw = insight.today()
+    if raw is None:
+        return None
+    out = insight_section(raw, feed)
+    if out is None:
+        log.warning("Odysseus insight: %s; the feed has no insight", MALFORMED)
+    return out
+
+
+def weights_section(raw: Any) -> dict[str, Any] | None:
+    """The `weights` section (§4.1) from the hub's answer, or None if the answer is
+    malformed (not an object, `weights` not an object, a `version` other than 1). Keeps only
+    `list:<note id>` keys with integer values (not booleans), clamped to [-6, 6], at most 32
+    in the hub's order (largest first); everything else is dropped. A valid `date` is kept."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("weights"), dict) \
+            or raw.get("version", 1) != 1:
+        return None
+    table: dict[str, int] = {}
+    for key, value in raw["weights"].items():
+        if len(table) == WEIGHTS_MAX:
+            break
+        if not isinstance(key, str) or not key.startswith(WEIGHT_PREFIX) \
+                or not 0 < len(key[len(WEIGHT_PREFIX):].encode()) <= WEIGHT_ID_MAX:
+            continue
+        if not isinstance(value, int) or isinstance(value, bool):
+            continue
+        table[key] = max(WEIGHT_MIN, min(WEIGHT_MAX, value))
+    out: dict[str, Any] = {"version": 1}
+    day = raw.get("date")
+    if isinstance(day, str) and _ISO_DATE.fullmatch(day):
+        out["date"] = day
+    out["weights"] = table
+    return out
+
+
+def _weights(insight: Any, last: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The hub's weights table, or `last` (the last good one, or None: never fetched) when
+    it can't be had now. No Odysseus: None."""
+    if insight is None:
+        return None
+    fetch = getattr(insight, "weights", None)
+    raw = fetch() if fetch is not None else None
+    if raw is None:
+        return last
+    out = weights_section(raw)
+    if out is None:
+        log.warning("Odysseus weights: malformed answer; the feed keeps the last good table")
+        return last
+    return out
+
+
 def build_feed(api: ServerApi, *, now: float, tz_name: str, calendar: Any = None,
-               templates: list[str] | None = None, todos: Any = None) -> dict[str, Any]:
-    """The feed dict (§4.1), not yet trimmed (see `encode_feed`). Raises UploadError."""
+               templates: list[str] | None = None, todos: Any = None,
+               insight: Any = None,
+               last_weights: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The feed dict (§4.1), not yet trimmed (see `encode_feed`). Raises UploadError.
+    `last_weights`: the last good `weights` table (the relay's state); the feed's own
+    `weights` is the one to keep next."""
     tz = resolve_tz(tz_name)
     local_now = datetime.fromtimestamp(now, tz)
     today = local_now.date()
@@ -250,6 +357,12 @@ def build_feed(api: ServerApi, *, now: float, tz_name: str, calendar: Any = None
     checklists = _todos(todos)
     if checklists is not None:
         feed["todos"] = checklists
+    today_insight = _insight(insight, feed)
+    if today_insight is not None:
+        feed["insight"] = today_insight
+    weights = _weights(insight, last_weights)
+    if weights is not None:
+        feed["weights"] = weights
     if templates:
         feed["templates"] = _strings(templates, TEMPLATES_MAX, TEMPLATE_MAX)
     return feed
@@ -269,8 +382,9 @@ class FeedTooLarge(Exception):
 def encode_feed(feed: dict[str, Any], limit: int = FEED_MAX) -> bytes:
     """Compact JSON of at most `limit` bytes. Trims `feed` in place if it's too big (§4.1):
     summaries are cut first, then the oldest conversations go, then (rarely needed) done
-    checklist items, the last action items, the last unpinned checklists, the last
-    calendar entries and, last of all, the last pinned checklists."""
+    checklist items, the whole `insight`, the `weights`, the last action items, the last unpinned
+    checklists, the last calendar entries and, last of all, the last pinned checklists.
+    An `insight` that is kept loses the refs whose item was dropped."""
     raw = _dump(feed)
     if len(raw) <= limit:
         return raw
@@ -284,6 +398,10 @@ def encode_feed(feed: dict[str, Any], limit: int = FEED_MAX) -> bytes:
             convs.pop()  # newest first, so this is the oldest
         elif _drop_done_item(feed.get("todos") or []):
             pass
+        elif "insight" in feed:
+            del feed["insight"]
+        elif "weights" in feed:
+            del feed["weights"]
         elif feed.get("actions"):
             feed["actions"].pop()
         elif _drop_last(feed.get("todos") or [], lambda n: not n["pinned"]):
@@ -294,8 +412,17 @@ def encode_feed(feed: dict[str, Any], limit: int = FEED_MAX) -> bytes:
             feed["todos"].pop()
         else:
             raise FeedTooLarge(f"feed is {len(raw)} bytes with nothing left to drop")
+    if "insight" in feed:  # only done items went: drop the refs that pointed at them
+        _prune_insight(feed)
+        raw = _dump(feed)
     log.info("feed trimmed to %d bytes (summaries cut, %d entries dropped)", len(raw), steps)
     return raw
+
+
+def _prune_insight(feed: dict[str, Any]) -> None:
+    refs = _feed_refs(feed)
+    for key in INSIGHT_SECTIONS:
+        feed["insight"][key] = [it for it in feed["insight"][key] if it["ref"] in refs]
 
 
 def _drop_done_item(todos: list[dict[str, Any]]) -> bool:

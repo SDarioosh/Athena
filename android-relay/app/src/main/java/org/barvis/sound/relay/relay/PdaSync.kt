@@ -25,6 +25,8 @@ data class PdaStats(
     val calendarNote: String? = null,
     /** Why the T5 gets no checklists, or `todo_toggle` waits (plan §4.4); null if all is well. */
     val todosNote: String? = null,
+    /** Why the T5 shows no Today insight (plan §4.1), e.g. "token lacks insight:read"; null if it has one. */
+    val insightNote: String? = null,
 )
 
 /** How one PDA connection ended. */
@@ -33,10 +35,10 @@ sealed class PdaOutcome {
 
     data class Done(override val stats: PdaStats) : PdaOutcome()
 
-    /** odysseus-sound unreachable (or 5xx): the T5 keeps its feed; back off (§3.4 step 3). */
+    /** Athena unreachable (or 5xx): the T5 keeps its feed; back off (§3.4 step 3). */
     data class ServerUnavailable(val detail: String, override val stats: PdaStats) : PdaOutcome()
 
-    /** odysseus-sound rejected the token. */
+    /** Athena rejected the token. */
     data class AuthRejected(val code: Int, override val stats: PdaStats) : PdaOutcome()
 
     /** The T5 speaks another protocol, has a too small MTU, or answered something unusable. */
@@ -82,6 +84,8 @@ class PdaSync(
     private val keepaliveMs: Long = 20_000L,
     /** The owner's Odysseus checklists (plan §4.4). */
     private val todos: TodosApi = NoTodos,
+    /** The hub's Today insight (plan §4.1). */
+    private val insight: InsightApi = NoInsight,
 ) {
     private var done = 0
     private var rejected = 0
@@ -90,17 +94,18 @@ class PdaSync(
     private var details = 0
     private var calendarNote: String? = null
     private var todosNote: String? = null
+    private var insightNote: String? = null
     private var todoNotes: ApiResult<List<TodoNote>>? = null
     private var status: PdaStatus? = null
     private var t5FeedVersion = 0L
     private var lastCommandMs = 0L
-    private val feedBuilder = FeedBuilder(api, calendar, clock, zone, templates, log = log, todos = todos)
+    private val feedBuilder = FeedBuilder(api, calendar, clock, zone, templates, log = log, todos = todos, insight = insight, memory = memory)
     private val detailBuilder = DetailBuilder(api)
 
     private class DeviceProblem(message: String) : Exception(message)
     private class ServerStop(val outcome: (PdaStats) -> PdaOutcome) : Exception()
 
-    private fun stats() = PdaStats(done, rejected, waiting, feeds, details, calendarNote, todosNote)
+    private fun stats() = PdaStats(done, rejected, waiting, feeds, details, calendarNote, todosNote, insightNote)
 
     suspend fun run(): PdaOutcome = try {
         runSteps()
@@ -176,7 +181,9 @@ class PdaSync(
     private suspend fun stay() {
         val until = clock.nowMs() + maxStayMs
         var lastFeedMs = clock.nowMs()
-        var seenOutbox = status?.outboxWaiting ?: 0
+        // The actions the last sync left on the T5. Not the status read before that sync: its
+        // count also held the actions the sync drained, so as many new ones would go unseen.
+        var seenOutbox = waiting
         log.log(Level.INFO, "PDA in use: staying connected")
         while (clock.nowMs() < until) {
             val raw = link.awaitStatus(keepaliveMs)
@@ -193,7 +200,7 @@ class PdaSync(
                 syncOnce(forceFeed = false)
                 lastFeedMs = clock.nowMs()
                 readStatus()
-                seenOutbox = status?.outboxWaiting ?: 0
+                seenOutbox = waiting
             } else if (clock.nowMs() - lastFeedMs >= feedRefreshMs) {
                 pushFeed(force = false)
                 lastFeedMs = clock.nowMs()
@@ -212,10 +219,15 @@ class PdaSync(
             send(PdaCommand.ObList(afterId, PdaGatt.OB_LIST_MAX))
             val entries = ArrayList<OutboxEntry>()
             var remaining = 0L
+            var outOfOrder: Long? = null
             while (true) {
                 when (val r = PdaResponse.decode(link.receive(receiveTimeoutMs))) {
-                    is PdaResponse.Entry -> entries += r.entry
+                    // Plan §3.5: ids above after_id, ascending; anything else could loop forever.
+                    // Read up to OB_END first, so the BYE that follows isn't refused as busy.
+                    is PdaResponse.Entry -> if (r.entry.actionId > (entries.lastOrNull()?.actionId ?: afterId)) entries += r.entry
+                        else outOfOrder = outOfOrder ?: r.entry.actionId
                     is PdaResponse.ObEnd -> {
+                        outOfOrder?.let { throw DeviceProblem("OB_ENTRY $it out of order") }
                         remaining = r.remaining
                         break
                     }
@@ -268,7 +280,7 @@ class PdaSync(
         return false
     }
 
-    /** odysseus-sound's answer to an action: ack, or stop the sync (no ack) on a temporary failure. */
+    /** Athena's answer to an action: ack, or stop the sync (no ack) on a temporary failure. */
     private suspend fun convoAnswer(e: OutboxEntry, action: PdaAction, r: ServerResult) {
         when (r) {
             is ServerResult.Ok -> ack(e, AckResult.DONE, action.type)
@@ -310,7 +322,7 @@ class PdaSync(
     /**
      * Odysseus's answer. A temporary failure or a rejected Odysseus token stops the sync like
      * the server's (plan §3.5), but as "unavailable" with backoff: it must not mark the
-     * odysseus-sound token as rejected.
+     * Athena token as rejected.
      */
     private suspend fun calendarAnswer(e: OutboxEntry, action: PdaAction, r: ServerResult) {
         when (r) {
@@ -406,7 +418,7 @@ class PdaSync(
                 val err = b.error
                 log.log(Level.WARN, "feed not built (${b.what}), the T5 keeps its last one: ${FeedBuilder.describe(err)}")
                 throw when {
-                    // Only odysseus-sound's token stops the relay; Odysseus's is its own.
+                    // Only Athena's token stops the relay; Odysseus's is its own.
                     err is ServerResult.AuthRejected && !b.what.startsWith("Odysseus") -> ServerStop { PdaOutcome.AuthRejected(err.code, it) }
                     else -> ServerStop { PdaOutcome.ServerUnavailable("${b.what}: ${FeedBuilder.describe(err)}", it) }
                 }
@@ -414,6 +426,7 @@ class PdaSync(
         }
         feedBuilder.calendarNote?.let { calendarNote = calendarNote ?: it }
         feedBuilder.todosNote?.let { todosNote = todosNote ?: it }
+        insightNote = feedBuilder.insightNote
         val lastVersion = memory.lastFeedVersion(deviceKey)
         val unchanged = content.hash == memory.lastFeedHash(deviceKey) && t5FeedVersion == lastVersion && lastVersion != 0L
         if (unchanged && !force) {
@@ -421,7 +434,8 @@ class PdaSync(
             return
         }
         val now = clock.nowMs()
-        val version = maxOf(now / 1000, lastVersion + 1, t5FeedVersion + 1) and 0xFFFFFFFFL
+        // A u32 on the wire: stop at the largest one (0 would mean "no feed"), as the PC relay does.
+        val version = minOf(maxOf(now / 1000, lastVersion + 1, t5FeedVersion + 1), 0xFFFFFFFFL)
         val bytes = content.render(version, now)
         put(BlobKind.FEED, version, bytes) // a feed's blob id is its version (plan §3.5)
         memory.feedPushed(deviceKey, content.hash, version)

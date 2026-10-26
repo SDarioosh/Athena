@@ -27,9 +27,11 @@
 #include "esp_rom_crc.h"
 #include "esp_system.h"
 #include "isotime.h"
+#include "event_log_store.h"
 #include "power_log.h"
 #include "mic.h"
 #include "recorder.h"
+#include "session_rec.h"
 
 static const char *TAG = "console";
 
@@ -176,6 +178,84 @@ static int cmd_level(int argc, char **argv)
     return 0;
 }
 
+/* `mics [seconds]`: each mic of an I2S array on its own, once a second (the mix is what
+ * `level` shows). `mics auto` mixes every mic that answers; `mics <hex mask>` picks them
+ * (bit 0 = A-L, 1 = A-R, 2 = B-L, 3 = B-R). */
+static int cmd_mics(int argc, char **argv)
+{
+    const int nch = mic_array_channels();
+    if (nch == 0) {
+        printf("this board has one PDM mic; use `level`\n");
+        return 1;
+    }
+    int seconds = 3;
+    if (argc >= 2) {
+        const bool is_auto = strcmp(argv[1], "auto") == 0;
+        if (is_auto || strncmp(argv[1], "0x", 2) == 0) {
+            const long m = is_auto ? MIC_MASK_AUTO : strtol(argv[1], NULL, 16);
+            if (!is_auto && (m <= 0 || m >= (1L << nch))) {
+                printf("mask 0x1..0x%lx\n", (1L << nch) - 1);
+                return 1;
+            }
+            const esp_err_t err = mic_array_set_mask((uint8_t)m);
+            printf("%s\n", err == ESP_OK ? "saved; the next recording uses it" : esp_err_to_name(err));
+            return err == ESP_OK ? 0 : 1;
+        }
+        seconds = atoi(argv[1]);
+        if (seconds <= 0 || seconds > 60) {
+            printf("usage: mics [seconds 1..60] | mics auto | mics 0x<mask>\n");
+            return 1;
+        }
+    }
+    const esp_err_t err = mic_start();
+    if (err != ESP_OK) {
+        printf("mic busy or failed (%s); is a recording running?\n", esp_err_to_name(err));
+        return 1;
+    }
+    const uint8_t alive = mic_array_alive_mask();
+    const uint8_t mask = mic_array_mask();
+    printf("%d mic slots; mixing mask 0x%x (%s)\n", nch, mask,
+           mic_array_mask_setting() == MIC_MASK_AUTO ? "auto: the mics that answer" : "fixed");
+    static int16_t buf[1024];
+    mic_ch_stats_t st[MIC_MIX_MAX_CH];
+    for (int s = 1; s <= seconds; s++) {
+        mic_array_stats_enable(true);
+        size_t total = 0;
+        while (total < MIC_SAMPLE_RATE) {
+            size_t got = 0;
+            mic_read(buf, sizeof(buf) / sizeof(buf[0]), &got, 500);
+            if (got == 0) {
+                printf("no audio (no I2S clock?)\n");
+                s = seconds;
+                break;
+            }
+            total += got;
+        }
+        mic_array_stats(st);
+        printf("  %2d s:", s);
+        for (int ch = 0; ch < nch; ch++) {
+            const int32_t peak = st[ch].count ? (st[ch].max > -st[ch].min ? st[ch].max : -st[ch].min) : 0;
+            printf("  %s %6.1f dBFS pk %7ld%s", mic_array_channel_name(ch),
+                   (double)mic_mix_rms_dbfs(&st[ch]), (long)peak,
+                   mic_mix_alive(&st[ch]) ? "" : " (none)");
+        }
+        printf("\n");
+    }
+    mic_array_stats_enable(false);
+    const uint32_t short_reads = mic_array_pair_b_short_reads();
+    mic_stop();
+    if (nch == 4) {
+        printf("pair B: %s\n", short_reads ? "short reads: it isn't getting the shared clock"
+                                            : "in step with pair A (shared clock ok)");
+    }
+    printf("answered at start:");
+    for (int ch = 0; ch < nch; ch++) {
+        printf(" %s %s", mic_array_channel_name(ch), (alive >> ch) & 1 ? "ok" : "--");
+    }
+    printf("\n(24-bit levels: an INMP441 idles near -85 dBFS, speech at 1 m ~ -60 dBFS)\n");
+    return 0;
+}
+
 static int cmd_stop(int argc, char **argv)
 {
     (void)argc;
@@ -184,13 +264,24 @@ static int cmd_stop(int argc, char **argv)
     return 0;
 }
 
-/* Mount the card for a console command, unless a recording is using it. */
-static const char *console_mount(void)
+/* Whether a recording (`rec`, a session or a voice note) is using the card: console commands
+ * then leave it alone (their reads would hold up the writer, and a write error power-cycles
+ * the card under them). tools/pull.py waits for this exact message. */
+static bool card_busy(void)
 {
     recorder_state_t rs;
     recorder_get_state(&rs);
-    if (rs.running) {
+    if (rs.running || session_rec_running()) {
         printf("recording in progress; not touching the card\n");
+        return true;
+    }
+    return false;
+}
+
+/* Mount the card for a console command, unless a recording is using it. */
+static const char *console_mount(void)
+{
+    if (card_busy()) {
         return NULL;
     }
     const char *mount = NULL;
@@ -584,10 +675,7 @@ static int cmd_sd(int argc, char **argv)
         return 0;
     }
     printf("card detect: %s\n", board_storage_card_present() ? "card in" : "no card");
-    recorder_state_t rs;
-    recorder_get_state(&rs);
-    if (rs.running) {
-        printf("recording in progress; not touching the card\n");
+    if (card_busy()) {
         return 0;
     }
     const char *mount = NULL;
@@ -625,6 +713,20 @@ static int cmd_reboot(int argc, char **argv)
     return 0;
 }
 
+/* `events [clear]`: the flash event log (event_log.h): what started and ended recordings. */
+static int cmd_events(int argc, char **argv)
+{
+    if (argc >= 2 && strcmp(argv[1], "clear") == 0) {
+        event_log_clear();
+    } else if (argc >= 2) {
+        printf("usage: events [clear]\n");
+        return 1;
+    } else {
+        event_log_print();
+    }
+    return 0;
+}
+
 static const esp_console_cmd_t cmds[] = {
     {.command = "status", .help = "Recorder state, battery, time, card", .func = cmd_status},
     {.command = "batt", .help = "Battery voltage, percent, charging; `batt sim <percent> [mV]` / `batt sim off` fakes it (test)", .func = cmd_batt},
@@ -637,6 +739,7 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "ble", .help = "BLE state; `ble pair` opens the 2 min sync window; `ble forget` deletes bonds", .func = cmd_ble},
     {.command = "rec", .help = "Test: record N seconds (default 60) from the mic to the SD card as WAV", .func = cmd_rec},
     {.command = "level", .help = "Print mic level for N s (default 5): `level [s]`", .func = cmd_level},
+    {.command = "mics", .help = "Mic array: each mic's level for N s (default 3); `mics auto` / `mics 0x<mask>` picks the mics mixed, saved", .func = cmd_mics},
     {.command = "stop", .help = "Stop the test WAV recording early (keeps what was recorded)", .func = cmd_stop},
     {.command = "eq", .help = "Show or switch the mic EQ, saved: `eq [on|off]`", .func = cmd_eq},
     {.command = "gain",.help = "Show or set the mic gain in dB, saved: `gain [0..42]`", .func = cmd_gain},
@@ -648,6 +751,7 @@ static const esp_console_cmd_t cmds[] = {
     {.command = "sd", .help = "Power, mount and report the SD card, then power it off; `sd failwrite <n>` makes the next n chunk writes fail (test)", .func = cmd_sd},
     {.command = "standby", .help = "Deep sleep now; PWR or USB power wakes it", .func = cmd_standby},
     {.command = "reboot", .help = "Restart", .func = cmd_reboot},
+    {.command = "events", .help = "What started and ended recordings (buttons with their PMU bits, stops, ends, boots), kept in flash; `events clear`", .func = cmd_events},
     {.command = "power", .help = "Battery, state, drain rate and the power log; `power log <min>|off`, `power flush`, `power locks`", .func = cmd_power},
     {.command = "coredump", .help = "The last crash: summary; `coredump get` sends the ELF (tools/pull.py --coredump), `coredump erase`", .func = cmd_coredump},
     {.command = "crash", .help = "`crash yes` (abort) / `crash wdt` (hang a watched task): crash on purpose to test the core dump, watchdog and resume", .func = cmd_crash},

@@ -1,12 +1,12 @@
-# odysseus-sound progress
+# Athena progress
 
-odysseus-sound (formerly convo-ai / barvis-ai / barvis-sound) is the first module of
+Athena (formerly convo-ai / barvis-ai / barvis-sound / odysseus-sound) is the first module of
 [Odysseus](https://github.com/SDarioosh/Barvis), our Odysseus fork. Design: wearables
 (Amazfit T-Rex 3 Pro, T-Watch Ultra recorder planned, XIAO ESP32-S3 pendant after it, Omi later) → local
 Ubuntu server (Silero VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 Nothing in the data path leaves the network.
 
-_Last updated: 2026-10-21 (Docker step 1; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
+_Last updated: 2026-10-26 (Docker step 1 (PR #64) brought up to date with main; written notes from the hub's pen notes, stage H3: `POST /v1/ingest/text` and its relay route, replace on resend, delete, "written by hand" in `/view` and MCP results, MCP 0.12.0; fewer, better facts: thinking aloud and requests to someone else are not facts, a second model call scores each fact and keeps the best 3 per conversation, JSON facts gain `kind`, `conversation_id` and `quote`, MCP 0.11.0; line voice check: short lines in a quick exchange no longer become "Unknown": the voice window stops at other speakers' lines, and a line with under 1 s of its own audio keeps its name; owner: recognition eval in the PR; 2026-10-24: capture quality: pyannote line splitting, line voice check and VAD threshold 0.35 by default with pyannote, measured on the server GPU; voice-note bug hunt: ~100 fictional voice notes through the summarizer and the hub's filing; spoken to-do, list and note commands are caught with fillers and request words before them ("um", "can you", "let's"), "new to-do:", "note to self", "remind me on Friday to …", "add … to my to-do list", several commands in one sentence, named notes without the word "notes" ("make a note in voice recorder that …"), comma lists split into lines; a to-do asked for out loud in a voice note ("Make a to-do to figure out how ...") is always a to-do, even when the model lists none or rewords it; events are named as said ("Meeting with Meshtastic team", not "Meet the Meshtastic team"), and a fact that only repeats a dated event is left out; a voice note's appointment said as a fragment ("Meeting with the Meshtastic team Tuesday 11 a.m.") becomes an event even when the model lists no item for it; a re-summary keeps fact ids, so a reworded fact is no second belief in the hub; a sentence whisper repeats on the next lines is kept once; T-Watch event log in flash and card power cycle on write errors, after a call recorded in four pieces; facts name what they are about, passing curiosity is not a fact; "a to-do" transcribed as "a to do" or "it to do" still counts as a command; complete forget: `erase_fact`, MCP 0.10.0; opt-in transcript retention; "Create a note." takes the next sentence as the note, measurements are no times; "Create a to-do list." makes the voice note's later items explicit; quick errands are not action items, no "'s" on people's names; open loops: `with` on JSON action items, MCP 0.9.0; the T5 follows the hub's weights; summary model chosen in the hub's settings; pairing through Odysseus: uploads on the MCP HTTP server, relay pairs by QR; people ids and explicit action items for the hub's Phase 2; retire_fact for the hub's belief ledger; T5 interface polish: SemiBold fonts, plain tabs, round ticks, "All caught up!", a new Asleep screen; T4-S3 conference recorder firmware with a 4-mic I2S array, on the owner's board; Today insight on the T5, confirmed facts for the hub's memory; notes from voice notes: "create a note …", "add to my hardware notes …"; finished T5 lists archive after 10 minutes; round 17: to-do lists for voice-note items; T-Watch Ultra on the owner's watch, bug hunt; plain questions reach the module in Odysseus; T5 E-Paper Pro PDA firmware, milestones 0–3 on the owner's board; T5 PDA PC relay side built)_
 
 ## Status
 
@@ -27,16 +27,45 @@ _Last updated: 2026-10-21 (Docker step 1; round 17: to-do lists for voice-note i
 | 9 | T-Rex 3 Pro Zepp test app (screen-off recording check) | merged (PR #4), **waiting for owner's watch test**; test server is running | `zepp-app/` |
 | 9d | Watch voice profile (guided 60–90 s owner enrollment) | PR open, **needs the real watch** | `zepp-app/page/enroll.js`, `POST /v1/speakers/enroll.json` |
 | 9b | Lock down host services: Tailscale-only access | **deferred** until the system is close to ready; LAN + Tailscale open for testing | — |
-| 9c | Calendar/task integration for action items | module side built (kinds, times, JSON listing, edits, named to-do list: "add milk to my shopping list" → `list_name` `shopping`); hub files voice-note items into the Odysseus calendar and to-dos, items with a list onto that to-do list (coordinated hub PRs); **needs owner verification on real voice notes** | `server/convo_server/{llm,dates,store,mcp_server}.py` |
+| 9c | Calendar/task integration for action items | module side built (kinds, times, JSON listing, edits, named to-do list: "add milk to my shopping list" → `list_name` `shopping`; notes: "create a note …" → kind `note` with `note_title`, "add to my hardware notes …" → `list_name` `hardware`); hub files voice-note items into the Odysseus calendar, to-dos and notes, items with a list onto that to-do list, notes with a name onto those notes (coordinated hub PRs); **needs owner verification on real voice notes** | `server/convo_server/{llm,dates,store,mcp_server}.py` |
 | 11 | Own pendant: XIAO ESP32-S3 Sense (BLE → Android → server) | **after the T-Watch Ultra**, on the same firmware; plan written, some decisions still open | `docs/xiao-esp32s3-sense-plan.md` |
 | 11b | LilyGO T-Watch Ultra recorder (same firmware as the XIAO, board layer) | **main focus** with the T-Rex; milestone 1 firmware **running on the owner's watch** (2026-10-19): rails, battery, RTC, SD, screen, buttons, haptics and recording work (mic timeout fix; stop early with BOOT+PWR again, `stop` or mute). Mic: raw level was nearly inaudible and muffled; now high-pass + T-Watch EQ (+9 dB 1.6 kHz, -6 dB 3.6 kHz) + 30 dB gain + limiter, speech ~-24 dBFS, owner says it sounds best; `gain`/`eq` on the console. Recordings copy off over USB (`tools/pull.py`). SD_DET confirmed (P12 LOW with card, HIGH without; expander question §2.1 answered); RTC set, files get dated names. Still to check: one recording of fictional speech through `smoke_upload.py` on the server (owner). **Round 12: BLE upload path built, not yet on hardware**: BOOT+PWR records an Opus session (libopus, 16 kbps) as 30 s Ogg/Opus chunks into a queue on the SD card that survives reboots; NimBLE GATT service drains it (protocol `docs/twatch-ble-protocol.md`); `tools/ble_relay.py` is the PC relay; Wi-Fi still not linked. Needs the owner: flash, record, drain with the PC relay and the phone (PR Server verification). Then milestone 2 (power baseline), milestone 3 (gain/EQ/bitrate by transcription) | `firmware/recorder/`, `docs/t-watch-ultra-plan.md` §11, `docs/twatch-ble-protocol.md` |
+| 11d | LilyGO T-Watch S3 recorder (same firmware, `boards/twatch_s3/`) | **built 2026-10-20, flashing on the owner's watch**: one button (clicks: 1 rec, 2 mute, 3 status, 4 sync; hold note), queue in a FAT partition in flash (no SD card), ST7789 240x240 screen, PCF8563 RTC. Host tests pass; button timing, mic level and the screen still need the real watch | `firmware/recorder/boards/twatch_s3/` |
+| 11e | LilyGO T4-S3 conference recorder (same firmware, `boards/t4_s3/`, 4x INMP441) | **built and on the owner's board 2026-10-21, mics not yet wired**: BOOT button (1 press rec, hold note, 2 mute, 3 status, 4 sync) and tap-to-wake tested; AMOLED readable; SY6970 battery and charging read right; sessions and notes queue to flash with no audio lost; shared I2S clock for both mic pairs checked. Needs the mics: wiring per README, `mics` levels, a fictional conversation through `smoke_upload.py` | `firmware/recorder/boards/t4_s3/`, README "T4-S3" |
 | 11c | Android relay app (T-Watch → BLE → phone → server) | **built, unit-tested (67 tests), not yet on a phone**: foreground service, scan/bond/drain per the protocol, uploads with the bearer token over LAN/Tailscale, acks only after the server's ok, backoff; settings (URL, token in Keystore) and status screen; no Google services, no analytics. CI builds the APK | `android-relay/` |
 | 11d | T5 E-Paper Pro PDA (briefing, conversations, action items, calendar over BLE via the phone) | **phone side built, unit-tested, not on hardware**: Odysseus calendar REST verified (plan §6); `android-relay` syncs the T5 next to the watch (glance protocol, feed, outbox, `cal_add` to Odysseus). Firmware and PC relay `pda` in sibling branches | `docs/t5-pda-plan.md`, `android-relay/` |
 | 12 | One-command deploy: update, install, run `serve`, MCP over HTTP and whisper-server as systemd user services (start at boot, restart on crash), roll back if unhealthy; the hub's `fork_deploy.sh deploy` runs it first, and it then updates Odysseus itself (`BARVIS_SOUND_ODYSSEUS_DIR`, found from the running container by default), so either command updates both | built, tested in the sandbox (background mode, and systemd with a stand-in `systemctl`), **needs the owner's server run** (PR Server verification) | `server/scripts/deploy.sh`, hub `docs/fork/deploy.md` |
 | 12b | Everything in Docker, step 1: module image (`serve` + MCP), whisper-server in Docker (CUDA for the RTX 3060, or CPU), `server/compose.yml`, `deploy.sh` `docker` runner (stops the native services, rolls back); llama-server and Proton Bridge stay on the host | built, run in the sandbox (CPU whisper, host llama-server, MCP on 172.17.0.1, whisper on the host), CUDA image compiled without a GPU; **needs the owner's server run** (PR Server verification). Next: hub `install.sh` (step 2), settings API + UI (step 3) | `server/compose.yml`, `server/Dockerfile`, `server/docker/`, `server/README.md#docker` |
 | 13 | Speaker recognition (PR #24) and focused summaries (PR #25): measured in the sandbox, bugs fixed, two improvements | PRs open, **owner: Server verification** | SDarioosh/barvis-sound#31 (recognition), SDarioosh/barvis-sound#38 (insights) |
 | 14 | T5 E-Paper Pro PDA firmware (feed and outbox over BLE through the phone) | **milestones 0–3 built, on the owner's T5**: bring-up and refresh times, all screens from a fictional feed, touch and buttons by hand, BLE pairing, TIME, outbox drain/ack and feed PUT from a Windows PC; host tests in CI. Front light, BOOT-hold sleep, sync mode, automatic light sleep and timed sync wakes from deep sleep built and flashed; currents not measured yet. Still open: the PC relay and the Android `PdaSync` against the real T5, the server `PATCH` end to end, light sleep and power (milestone 5) | `firmware/pda/`, `docs/t5-pda-plan.md` |
+| 15 | Today insight: confirmed facts (`list_facts confirmed=true format=json`, MCP 0.4.0) for the hub's memory; relays put the hub's Today insight in the T5 feed; T5 Today tab shows it with a rule-based fallback (`today_plan.c`) | **built, tested, not on hardware** (PDA host tests, `idf.py build`, Android tests); hub side on the same branch in SDarioosh/Barvis; **owner: Server verification** (confirmed-fact counts, insight time on `qwen3.5-35b`, phone and T5 steps) | `server/convo_server/{store,mcp_server}.py`, `firmware/recorder/tools/barvis_relay/pda_insight.py`, `android-relay/`, `firmware/pda/main/{today_plan,ui_today}.c`, `docs/t5-pda-plan.md` §4.1, §5 |
+| 16 | Forget propagates (hub personal context, Phase 1): `retire_fact` write tool (destructive), retired facts hidden in every listing and kept hidden when said again or the conversation is re-summarized; `confirmed` per JSON fact row; MCP 0.5.0, 14 tools | **built, tested** (364 server tests); hub side (belief ledger, review page, notes source) on the same branch in SDarioosh/Barvis; **owner: Server verification** | `server/convo_server/{store,mcp_server}.py`, `server/tests/test_retire_fact.py` |
+| 17 | Personal context Phase 2 (module side): `people` with a stable id that survives renames and merges, `list_people format=json`, `person_id` on JSON facts (MCP 0.6.0); action items get `title` and `explicit`, and intentions/principles in voice notes become facts (decisions) instead of tasks (MCP 0.7.0) | **built, tested**; hub side on the hub's local `p2` branch; PR after Phase 1 merges; **owner: Server verification** | `server/convo_server/{store,mcp_server,llm}.py`, `server/tests/test_people.py` |
+| 18 | One-step pairing through Odysseus: the MCP HTTP server forwards uploads (`/ingest/chunk`, `/sessions/{id}/end`) and the T5's API reads to the ingest API (MCP 0.8.0), so the hub's call recorder and paired phones need only the `convo` MCP server; the Android relay pairs by scanning Odysseus's QR code (ZXing, on-device), stores the Odysseus URL and token, uploads and syncs the T5 through Odysseus (`/api/codex/sound/*`), picks the calendar from a list; direct mode stays as a fallback | **built and tested in the sandbox**, merged (PR #73); fix: the first APK crashed when opening the scanner (ZXing's `CaptureActivity` needs AndroidX), now our own `ScanActivity`; still failed on the owner's Galaxy Z Fold (Android 17) with no permission prompt, cause unknown (no Android 17 test target here): 0.2.1 asks for the camera first, reports scanner errors instead of crashing, opens `odysseus-pair:` links from the camera app (confirm before pairing) and shows the last crash to copy; server tests, relay `assembleDebug test lint` (159 tests), the relay's Kotlin pairing/upload/T5 clients against a real hub and module; **needs a real phone** (scan, pair over Tailscale, watch drain and T5 sync through Odysseus) and the owner's Server verification | `server/convo_server/ingest_relay.py`, `android-relay/` (`net/Pairing.kt`, `net/Routes.kt`), hub `src/call_recorder.py`, `src/phone_pairing.py` |
+| 19 | Open loops for the hub's Today insight (Phase 3, module side): `list_action_items` JSON rows gain `with` (the other people in the item's conversation, person ids, those the item names first; MCP 0.9.0, additive) | ✅ built and tested (`tests/test_item_with.py`); no open question for the owner | `server/convo_server/mcp_server.py`, `server/convo_server/store.py` (`conversation_participants`) |
+| 20 | Complete forget and retention (hub personal context 4.2, module side): `erase_fact` write tool (destructive; MCP 0.10.0, additive, 15 tools) redacts the line that said a fact in every conversation that said it, hides and rewrites (local model) the notes and digests, redoes search and embeddings, deletes kept audio, erases later repeats; opt-in `CONVO_TRANSCRIPT_RETENTION_DAYS` (default 0 = keep forever) prunes old transcripts and kept audio, keeping summaries, facts and action items | **built, tested** (`tests/test_erase_fact.py`, `tests/test_retention.py`); sandbox bakeoff questions 1, 9, 16 through Odysseus: 2/3 (`main` 1/3 the same day), end-to-end forget checked in the sandbox; hub side in SDarioosh/odysseus-expanded; **owner: Server verification** | `server/convo_server/{store,pipeline,llm,mcp_server,links,config}.py` |
+| 21 | Capture quality (hub personal context 4.3): pyannote attribution fixes, all opt-in: line splitting at pyannote turn changes (`CONVO_SPEAKER_SPLIT_LINES`, `_SPLIT_MIN_SECONDS`), line voice check (`CONVO_SPEAKER_LINE_CHECK`), pyannote VBx/clustering settings (`CONVO_PYANNOTE_VBX_FA`/`_FB`, `_CLUSTER_THRESHOLD`, `_MIN/MAX_SPEAKERS`), owner-hint log line; recognition eval: late joiners, arm movement, owner precision/recall, `unenrolled_named`, pyannote cache | **built, measured in the sandbox and on the server GPU** (2026-10-24, split + line check: named wrong 5.8 → 1.6 % on the table mic, 30–70 % less elsewhere, names right within 1.4 points, WER unchanged); no MCP contract change; **default with `CONVO_DIARIZER=pyannote` since 2026-10-24** (owner's call: split 0.3 s + line check + `CONVO_VAD_THRESHOLD=0.35`, any of them overridable in `.env`); **owner: one real recording** (PR Server verification step 2) | `server/convo_server/{diarize,diarize_pyannote,pipeline,config,cli}.py`, `server/eval/recognition.py`, `docs/omi-audio-quality.md` §8 |
+| 22 | Written notes (hub handwritten notes, stage H3): `POST /v1/ingest/text` / `DELETE /v1/ingest/text/{source_id}` and their relay routes on the MCP HTTP app (MCP 0.12.0, additive); one owner line per written line, voice-note prompts, replace on resend (ids kept where matched), erased lines stay erased, delete removes facts and to-dos | **built, tested** (`tests/test_written_notes.py`); hub side is H4 (Send to Athena, module doc update in SDarioosh/odysseus-expanded); **owner: Server verification** and plan question Q2 (one note per hub note or per page) | `server/convo_server/{api,pipeline,store,ingest_relay,links,mcp_server}.py` |
 | 10 | End-to-end with real devices | not started | — |
+
+## Done on 2026-10-24: capture quality, diarization (hub personal context 4.3)
+
+- Measured first (`docs/omi-audio-quality.md` §8): with pyannote, wrong names come from
+  whisper lines over short turns and from turns pyannote files under the wrong speaker,
+  never from naming a whole speaker after the wrong person.
+- Built, all opt-in: line splitting at pyannote turn changes with a shorter minimum part,
+  a per-line voice check that unnames a line in another enrolled voice, pyannote's VBx
+  settings (`Fb` decides how many speakers it keeps apart; its clustering threshold
+  doesn't), naming rules and a WeSpeaker option that measured no better, and a log line
+  when the owner loudness hint names someone.
+- Eval: `--late-joiners`, `--owner-dips`, owner precision/recall, `unenrolled_named`,
+  pyannote turns cached; `--cache` keeps word times now.
+- Server GPU eval confirmed it (2026-10-24); on the owner's request split 0.3 s + line
+  check + `CONVO_VAD_THRESHOLD=0.35` are now the defaults with `CONVO_DIARIZER=pyannote`
+  (ECAPA unchanged). `Fb` 0.2 stays opt-in: it keeps newcomers out of existing names but
+  leaves more lines as "Speaker N".
+- No MCP contract change, no hub PR. Still open from the 4.3 plan: enrollment without the
+  Zepp watch and a "speaker unsure" flag for the hub (proposal posted, not decided).
 
 ## Done in this round
 
@@ -94,7 +123,11 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Silence stop: **5 min** trailing silence (`CONVO_SILENCE_STOP_SECONDS=300`), 4 h max
   session. These are already the defaults.
 - Timezone: **UTC** (`CONVO_TIMEZONE`, already the default).
-- Retention: **keep full transcripts forever**. No pruning job.
+- Retention: **keep full transcripts forever**. No pruning job by default; an opt-in
+  `CONVO_TRANSCRIPT_RETENTION_DAYS` exists (2026-10-23, off unless set).
+- Forget (2026-10-23): one Forget in the hub that always erases, with a confirmation, and
+  no restore; later repeats linked "same" are erased too; beliefs forgotten before this
+  get an "Erase" button in the hub, nothing is erased automatically.
 - Calendar/tasks: action items stay in SQLite for now; a real calendar/task integration
   comes **later** and is wanted.
 - Security: **as tight as possible; reachable only over Tailscale.** Services bind to
@@ -112,6 +145,536 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Pendant: the eventual plan is our own **XIAO ESP32-S3 Sense** pendant
   (`docs/xiao-esp32s3-sense-plan.md`). It sends audio over BLE to the Android app,
   has Wi-Fi off, and is tuned for battery life.
+
+## Done on 2026-10-26: written notes (hub handwritten notes, stage H3)
+
+- Plan: hub `docs/fork/handwritten-notes.md` ("5. Into Athena"). The hub (H4, later) sends
+  a handwritten note's reviewed text; this is the receiving end only.
+- `POST /v1/ingest/text` (JSON `source_id` `hub-note:<id>`, `text`, `written_at`, `link`,
+  optional `title`) and `DELETE /v1/ingest/text/{source_id}`; the same routes on the MCP
+  HTTP app (`/ingest/text`), forwarded with the ingest token, not MCP tools.
+- Stored as one `note` conversation on device `handwriting`, one owner line per written
+  line one second apart, in a `written_notes` table (source id, hub link, text hash,
+  fingerprints of erased lines); summarized by the worker with the voice-note prompts.
+- Resend replaces the lines and re-summarizes; the existing re-summary carry-over keeps
+  ids of facts and to-dos said again and drops the rest. Same text: no-op. A line erased
+  by `erase_fact` stays `[forgotten]` when the hub sends the words again. Digests that
+  covered the note are written again.
+- A summary saved after its conversation changed meanwhile (resend, late chunk, rename) is
+  dropped and the next pass summarizes again (`save_summary(expect_updated_at=)`); before,
+  a resend during a summary would have been lost.
+- `/view` and MCP results say "written by hand" with the hub link; JSON fact and to-do
+  rows gain `written_by_hand` and `note_link` (MCP 0.12.0, additive).
+- Open for the owner: plan Q2, one Athena note per hub note (all pages joined, built
+  that way: the hub chooses what to send) or one per page. A deleted note's erased facts
+  leave their sentence behind (`erased_facts`), so a new note that writes one again keeps
+  that line `[forgotten]`; a recording that says it again makes it a fact again.
+- Tests: `server/tests/test_written_notes.py`. **Server verification:** see the PR.
+- QC bug hunt of the same day (A-1 to A-8, X-1): `docs/qc-report-2026-10-26.md`, 7 fixed
+  (two partly), 2 not reproduced; a line over 4,000 characters is wrapped, not refused.
+  Tests: `server/tests/test_qc_written_notes.py`.
+
+## Done on 2026-10-26: fewer, better facts (hub belief review)
+
+- The owner's belief review showed five tentative beliefs from one technical chat, most of
+  them noise: a request to someone else filed as a "preference", thinking aloud, which
+  tool was used, an unnamed device, a guessed pronoun.
+- Facts prompt: leaves out thinking aloud, requests to someone else, which tool was used
+  and passing details of the work at hand; never "he"/"she"; asks for a `kind`; asks for
+  at most `CONVO_MAX_FACTS_PER_CONVERSATION` facts.
+- Code drops thinking aloud ("is considering", "might", "maybe") unless decided, and
+  requests to someone else ("wants Bo to …").
+- Review call (`REVIEW_SYSTEM`, schema `FactReview`): scores each fact 1–5 with its
+  transcript line; under `CONVO_FACT_MIN_SCORE` (4) is left out; best
+  `CONVO_MAX_FACTS_PER_CONVERSATION` (3) kept. A failed call keeps the facts. One extra
+  local-model call per summarized conversation that has facts.
+- `list_facts` JSON: `kind`, `conversation_id`, `quote` (MCP 0.11.0, additive; schema v14
+  adds `facts.kind`). Hub side (labels by kind, review page grouped by conversation with
+  the quote) on the same branch in SDarioosh/odysseus-expanded.
+- Facts already stored are unchanged; the owner dismisses them on the hub, or re-summarizes.
+- Tests: `server/tests/test_fact_quality.py`. **Server verification:** see the PR.
+- QC report on this PR (16 findings, 10 on this side, all reproduced and fixed): negated
+  "decided" no longer cancels a hedge; hedges count in the main clause only; requests
+  told apart from needs and plans; the review no longer rejects facts about things; the
+  prompt asks for twice the cap; voice notes drop event facts before the review and keep
+  decisions out of it; the quote and the review's line are the cited line (also in a
+  shared second); facts that repeat or update stored ones are never capped; a repeat
+  gives its kind to an older fact; quotes fall back to a later conversation when a
+  transcript was pruned, one query per conversation.
+
+## Done on 2026-10-25: action-item and belief fixes from a QC report
+
+- Verdicts and fixes: `docs/qc-report-2026-10-25.md` (11 of 15 fixed, 3 not reproduced,
+  1 left for the owner). Tests: `server/tests/test_qc_action_items_beliefs.py`.
+- Fixed: a re-summary with a new item before a kept one no longer fails on a duplicate id;
+  fact chains linked out of order resolve to the current fact; fact search and fact
+  linking are no longer crowded out by matching transcripts; `erase_fact` redacts the line
+  that says the fact when the model cites the next one; edited and cleared note titles
+  keep `note_title` in step; bad dates and odd-case statuses are answers, not tool errors;
+  `list_action_items(person=...)` also finds items of a conversation with that person;
+  "in 3 days" / "in a week" are dated; "Please add milk to my shopping list" names its list.
+- **Open question for the owner:** should forgetting a fact also take action items that
+  repeat its words out of search and digests? (QC 12; needs the hub side too.)
+- **Server verification:** see the PR (MCP calls on the test instance, a few eval questions).
+
+## Done on 2026-10-24: recorder fixes from a QC report (R1-R14)
+
+- **Host-tested** (`test_chunk_queue`, `test_audio_stats`, `test_isotime`): a card read
+  error at boot no longer deletes a chunk; a chunk left open while its session went on gets
+  no LAST at boot; a failed TIME record write is retried; chunk id 0 and id wrap refused;
+  RMS with a fractional DC offset; strict `time <ISO-8601>` parsing.
+- **Device-only, not built here (no ESP-IDF):** no reused sequence after a failed chunk
+  close; `mic_stop()` keeps the mic busy until I2S is off; T-Watch S3 gets
+  `CONFIG_I2S_ISR_IRAM_SAFE` and counts PDM DMA drops; BYE counts only chunks the relay was
+  offered; 6 job-queue slots kept for link events; `ls`/`get`/`sd` wait for a session;
+  T4-S3 polls a resting finger every 50 ms; Ultra status screen fits 502 rows; display off
+  when the band buffer can't be allocated.
+- **Needs real-device testing:** `idf.py build` for twatch_ultra, twatch_s3 (delete
+  `build-s3/sdkconfig` first, or the IRAM-safe option stays off) and t4_s3. T-Watch S3: a
+  long session into flash, then `mic_stop`'s "audio lost" line (PDM has only ~384 ms of DMA
+  slack; if it loses audio, route PDM through the reader task and PSRAM ring as on the
+  T4-S3). Ultra: BOOT press, the button hint shows at the bottom. T4-S3: finger resting on
+  the glass, `power locks`/current. `sd failwrite` during a session: the next chunk's
+  sequence follows. A voice note finished during a phone sync is advertised right after.
+
+## Done on 2026-10-24: T5 firmware QC fixes (QC report P1-P8)
+
+- **Host tests build under clang** (P1, P2): one concatenated literal in parentheses, and
+  `-Wno-bidi-chars` for `fonts.c` only with GCC. `ctest` passes under GCC and clang.
+- **Feed times** (P3, P4): `pda_time_parse` rejects NULL, `"12:00:00.Z"`, `"+02:"` and offsets
+  beyond ±14:00 or with minutes over 59; `floor_div` no longer overflows at INT64_MIN (no caller
+  gets near it). **JSON strings** (P5): broken UTF-8 in the input becomes U+FFFD. Tests in
+  `test/test_feed.c` and `test/test_json.c` (fail before, pass now).
+- **Touch** (P7, P8): `touch_sleep()` no longer gives a NULL semaphore when `touch_init()`
+  failed after adding the GT911 (a panic on BOOT-hold sleep); a sample whose point read fails
+  is dropped instead of starting a touch at (0,0) (a phantom swipe).
+- Not changed: P6 (the front light on a sync wake): on a timer wake `t5_board_init()` keeps
+  the pin held low and never sets up the PWM, so `t5_backlight_set()` does nothing.
+- **Needs real-device testing:** `idf.py build` (not run here), then normal touch use (taps,
+  swipes, long press) and BOOT-hold sleep and wake. The touch error paths can't be triggered
+  by hand; `touch` on the console shows the error count.
+
+## Done on 2026-10-24: a spoken to-do command always gives a to-do
+
+- Seen on the owner's server: a voice note like "Make a to-do to figure out how renewing a
+  fishing permit works" / "for Bruno." (made-up example) gave no action item, so the hub
+  neither filed it nor suggested it. The prompts call "figure out how ..." a vague wish (no item unless a
+  command word is said), and the model dropped it despite "to-do".
+- Now each voice-note sentence that asks for a to-do ("make/create/add a to-do ...",
+  "add a task ...", "to-do: ...", "remind me to ...") gives a task when no item covers it,
+  with the words the transcriber put on the next line. An item the model reworded for it
+  stays a to-do (not a "plans to" fact) and is explicit, so the hub files it.
+- Open: only voice notes. In an ordinary conversation recording a one-person command can
+  still be discarded by triage, and command words in a conversation don't make an item
+  explicit. Notes already summarized are not redone; re-summarize one to get its to-do.
+
+## Done on 2026-10-23: a sentence whisper repeats is kept once
+
+- Seen on the owner's server: one sentence ("I think it's a good thing.") on four lines a
+  second apart, the last three under another speaker. whisper fell into a repetition
+  loop and wrote the sentence again over the next pause or turn; the loop filter let a
+  run of identical lines stand up to `CONVO_WHISPER_MAX_REPEATS` (4) times.
+- Now a sentence (4 or more different words) repeated right after itself, as the next
+  lines or within one line, is kept once. Short replies ("Yeah.", "No, no.") still keep
+  up to 4 in a row (`transcribe.repeat_limit`).
+- Open: the speech under the dropped repeats (someone else's turn) is still lost; whisper
+  never transcribed it. Transcripts already stored keep their repeats.
+
+## Done on 2026-10-23: T-Watch event log, card power cycle on write errors (branch `feature/twatch-event-log`)
+
+- **Bug:** during a phone call (2026-10-23, 13:40–13:47 UTC) one PWR press started a
+  recording, and the server got four short sessions (6, 8.5, 6.3 and 20.5 s, each one chunk
+  with LAST) with gaps of 17 s, ~2 min and ~3 min. Nothing was pressed on purpose after the
+  start.
+- **What the watch showed (USB, after the owner had reset it):** no core dump; the power log
+  (`power.csv`) counts uptime straight through the call (62333 → 62634 → 62938 s), so no
+  reboot; battery 73 %, USB unplugged, BLE advertising (not connected) at 13:41 and 13:46.
+  That rules out a crash or watchdog restart, low battery, USB and the relay. Only a PWR short
+  press can start a conversation again after it stopped (besides the console and a crash
+  resume), so the three restarts were PWR events the watch saw. Whether the key was pressed
+  (wrist bent with the phone at the ear) or the PMU reported presses without one is open.
+- **Reproduction (phone held to the ear with the watch arm, relay off, no real speech):**
+  test 1 (34 s) ended with the card dead: one write `0x108`, then every read `0x107` until
+  the session gave up (REC ERROR, 3 buzzes, which the owner didn't notice); the open chunk's
+  24 s were deleted as "nothing to keep" because the card couldn't be read. Test 2 (84 s):
+  clean, no extra PWR event. So card errors may explain the stops (a session ended by a card
+  error closes with LAST, like a normal stop), not the restarts. Not reproduced yet.
+- **What:** `main/event_log.*` (pure, `test/test_event_log.c`) and `main/event_log_store.*`
+  (NVS, 16 blobs of 8 entries, 128 kept). One entry per boot (reset reason, standby wake,
+  resume), button event (PWR short with the PMU interrupt bits, so a press without key edges
+  shows as "no key edges"; PWR short ignored by the 1 s guard, with the gap; PWR held; BOOT
+  short/double/held), recording start and stop request (with what asked: PWR, PWR held,
+  console, resume, after a note, a note, mute, low battery), recording end (stopped, card
+  full, error, length limit; seconds), mute, low battery and card power cycle, with the UTC
+  time, uptime and battery. Console `events [clear]`.
+- **Card power cycle:** after a write error the session closes the chunk file, powers the
+  card off and on (`board_storage_power_cycle()`, ~0.3 s; the mic ring holds the audio) and
+  only then recovers the chunk, so a card that stopped answering gives back what was
+  written. A chunk that couldn't start powers the card off and on before the retry. A card
+  read error during recovery no longer deletes the chunk (only a missing file does); it
+  stays on the card for the next boot. The T-Watch S3 and T4-S3 (flash) skip it.
+- **Checks:** host tests in WSL (all pass, new `test_event_log`, two-step abandon in
+  `test_chunk_queue`); `idf.py build` for twatch_ultra, twatch_s3, t4_s3.
+- **Checked on the owner's T-Watch Ultra (flashed after review):** `events` after the flash
+  shows "boot: USB reset". `session start` + `sd failwrite 1`: the card went off and on in
+  416 ms, the chunk was kept, the session went on into a second chunk and ended normally; the
+  log shows "card powered off and on after write error 0x108: mounted again". Two deliberate
+  PWR presses: both "button PWR short (PMU 0x000b00: key edges + -)", then "started by PWR"
+  and "stop asked by PWR". Test 1's lost chunk (22 s) turned up in the queue: the dead card
+  couldn't delete it either, and a boot recovered it. All test chunks were dropped.
+- **Next (owner):** wear it on calls. If a recording stops or starts by itself again, run
+  `events` over USB before anything else (don't reset): "no key edges" on a PWR press means
+  a phantom from the PMU; key edges mean the key really moved. Not seen yet: a real card
+  failure in use, a phantom press.
+- **Also seen:** `tools/wcon.py --listen` doesn't work on Windows (it takes `COM35` for a
+  file path, thinks the port is gone and reopens it in a loop).
+
+## Done on 2026-10-23: a voice note that is one note becomes that note
+
+Owner report: a voice note "Make a note that the Odysseus system has a bug where a ..."
+made a note that read only "The Odysseus system has a bug where a", titled the same.
+The owner asked for the note to hold the voice note's summary instead.
+
+- A voice note whose only item is one note: the note's text is the voice note's summary
+  (written from the whole recording, so a cut sentence loses nothing) and an untitled
+  note takes the voice note's title ("Odysseus system diarization bug"). A line for named
+  notes ("add to my hardware notes ...") and voice notes with several notes or other
+  items keep the note's own words.
+- Those words are complete now too: the transcriber broke the sentence over two lines and
+  the note command was read one line at a time. A line that doesn't end a sentence now
+  goes on into the next (up to 400 characters). A task the model wrote for the same words
+  that has more of them keeps its text when it becomes the note.
+- Notes already filed are unchanged. Tests: `server/tests/test_note_items.py`. No MCP
+  change (`note_title` and `title` already exist).
+- **Owner: Server verification** (PR): a fictional voice note with one note command.
+
+## Done on 2026-10-23: the T5 keeps a sleep/wake log in flash (branch `feature/pda-wake-log`)
+
+- **Why:** the T5 was found frozen in the morning after a night asleep on battery: in ROM
+  download mode, after a power-on reset with BOOT (GPIO0) low. The battery was full (94% at
+  sleep, 97% the next morning) and the PCF8563 kept time, so only the ESP32's supply was cut. Per
+  the schematic (V1.0 24-12-24) the BQ25896 QON is the PWR button (S4), and its default
+  long-press (about 10-15 s) power-cycles the system; BOOT isn't on QON. Holding PWR with BOOT
+  down gives exactly this. Why BOOT hadn't woken it first is unknown: the RTC-memory sleep
+  counters died with the power-on. PWR long-press is left as it is (owner's choice).
+- **What:** `main/wake_log.*` (pure, `test/test_wake_log.c`) and `main/wake_log_store.*` (NVS,
+  one key per entry, 128 kept, about 16 h of sync wakes). An entry per boot (reset reason, wake
+  cause) and per deep sleep (from the UI, synced, new feed, no sync, early, after a crash,
+  stuck/backstop, storage or BLE failure; the timer), with the time, seconds since boot and the
+  battery. The backstop's entry does no I2C. Console `wakelog [clear]` prints it oldest first and
+  flags a sync wake followed by another boot with no sleep between (it hung or reset).
+- **Checked on the owner's T5:** flashed; `sleep 1`, then BOOT: the log shows the USB-reset boot,
+  "asleep from the UI; timer 0 min 49 s", the sync-timer boot, "no sync; timer 14 min 33 s" after
+  54 s awake, and the BOOT wake, each with the battery. Not seen yet: a sync with the phone, the
+  backstop, a crash, a power cut.
+- **Next:** if the T5 freezes again, press RST (not BOOT), then `wakelog` before anything else.
+
+## Done on 2026-10-23: facts name what they are about
+
+Owner report: the Beliefs page offered "<person> is interested in hearing how the voice
+compression technology sounds." It was said, but read alone it doesn't say which
+technology, and wanting to hear something once is not worth remembering for months.
+
+- Facts prompt: never passing curiosity about something that came up; a fact read months
+  later without the conversation must say what it is about, so name the thing instead of
+  "the technology", "the project", "this app"; if it can't be named, leave it out.
+- Code drops what small models still return: curiosity about how or what something is
+  ("is interested in / curious to / wants to hear, see, watch, know, find out how, what,
+  whether, if"). "Is interested in learning Portuguese" and "wants to see Japan" stay.
+  Vague references ("the technology") are left to the prompt: no rule tells them apart
+  from "the Lisbon flat" safely. Stored facts are unchanged (the owner dismisses or
+  forgets them on the hub). Tests: `server/tests/test_passing_facts.py`. No MCP change.
+- **Owner: Server verification** (PR): a fictional conversation with a curious, vague line.
+
+## Done on 2026-10-23: one-day facts are not facts
+
+Owner report: the hub's Beliefs page offered "was very focused and locked in today",
+"did not drink enough water today", "plans to get a snack" and "plans to wire the device
+up on a breadboard to test it". The owner dismissed them, but they shouldn't have been
+facts at all.
+
+- Facts prompt: never how someone felt, slept, ate, drank or worked on one day, never a
+  plan for the next minutes or hours or the next step of the current task; a plan with no
+  time is a fact only when it will still matter in a month. It used to say "A plan with no
+  time is a fact too", which let the snack through.
+- Code drops what small models still return: a fact that says it is about one day
+  ("today", "tonight", "yesterday", "this morning/afternoon/evening", "right now", "just
+  now", "at the moment"). Facts already stored are unchanged (the owner dismisses them
+  on the hub). Tests: `server/tests/test_passing_facts.py`. No MCP change.
+- **Owner: Server verification** (PR): a fictional conversation with one-day lines.
+
+## Done on 2026-10-22: "Create a note." takes the next sentence as the note
+
+- Same gap as the to-do list sentence below, for notes: "Create a note. Battery is 13 mm
+  wide." or "Add to my hardware notes. The screen is 1.4 inch." made a note of the command
+  alone ("Add to my hardware notes") and left the content as a task or a suggestion. A
+  note command with nothing to note now takes the next sentence as its note; a task the
+  model wrote for that sentence becomes the note.
+- Found on the way: "13 mm by 14 mm" read as a deadline ("by 14" -> 14:00), so a
+  measurement became a dated to-do. A number followed by a unit (mm, cm, kg, inch, V,
+  mAh, ...) is no time now. Tests: `server/tests/test_note_items.py`, `test_dates.py`.
+
+## Done on 2026-10-22: "Create a to-do list." covers the items after it
+
+- Owner report: a voice note "Create a to-do list and get Kite Lab ready for the meeting
+  with the Harbor Radio team" stayed under "Not filed yet" in the hub. The command word only
+  counted when it was in the same sentence as the item; when the transcriber ends the
+  sentence after "Create a to do list.", the next item was a suggestion, not explicit.
+- Now a sentence that starts a to-do list ("create/make/start a to-do list", "to-do list:")
+  makes every item said in or after it in the same voice note explicit, and keeps those
+  items from being turned into intention facts. Items said before it are unchanged; "a lot
+  to do" is no list sentence. Tests: `server/tests/test_item_titles.py`.
+- Already stored items keep their flag; file such an item with "Add to to-dos" on the hub's
+  page. No MCP change.
+- Hub side of the same report: the hub's "Module Action Items" task, which files explicit
+  items, failed every run until hub PR #65 (re-seal built-in task authority). Items it
+  missed are still unseen and are filed on its first good run after that is deployed.
+- Open: needs a real voice note on the server (Server verification in the PR).
+
+## Done on 2026-10-22: occasional "REC ERROR" while recording on the T-Watch
+
+- Owner report: "REC ERROR" now and then while actively recording. Card write errors were
+  recovered (2026-10-19) and a session was meant to end only after 4 failures **in a row**,
+  but the count was reset only when a chunk closed (every 30 s). The relay reads and ACKs
+  chunks during a recording, and the card glitches after ACK deletes, so 4 separate,
+  recovered errors within one chunk ended the session. Now any audio page that reaches the
+  card resets the count (`session_rec.c`, `ogg_write`).
+- Also: an error while closing the last chunk at Stop:
+  the chunk was kept up to its last page with LAST, yet the watch buzzed 3x and showed
+  REC ERROR. Now that counts as a recovered write error (`write_retries`); REC ERROR only
+  when nothing was saved, the mic fails, or the card fails 4 times in a row.
+- `cq_end()`: when writing the closed chunk's record failed, the chunk stayed out of the
+  queue until the next boot and the next chunk reused its sequence number (the server could
+  drop one as a duplicate). It is now recovered at once, like a power cut.
+- **Checks:** `idf.py build` (twatch_s3, twatch_ultra); flashed on the owner's T-Watch
+  Ultra, which boots and reports `status` normally. Host tests not run on this PC (no
+  C compiler); CI runs them.
+- **Needs real-device testing:** record ~2 min with the phone relay connected and draining;
+  `status` shows `write_retries` > 0 when glitches happened, and no REC ERROR. `sd
+  failwrite 4` must still end the session (4 in a row). `sd failwrite 1`, then Stop within
+  ~1 s (before the next page is written), should end with the
+  normal stop screen, not REC ERROR; the session uploads with LAST. If REC ERROR still shows
+  up, run `status` over USB and note the session error it prints.
+
+## Done on 2026-10-22: quick errands are not action items
+
+"I'll move my truck" said in passing became the suggested to-do "Walk truck to Marisol's
+house", shown in the hub's Today insight "with Marisol's".
+
+- Prompts: something done during the conversation or right after it that nobody needs
+  reminding of ("I'll move my truck", "let me grab my keys") is not an action item; the
+  conversation prompt no longer says "small ones too" (small promises for later still
+  count) and keeps the speaker's verb.
+- Code drops what small models still list: an undated task with no list or command word
+  whose clause says it happens now ("right now", "real quick", "in a minute"); found by
+  the item's words, or by the one-clause line it cites when the model reworded it.
+- People's names lose a possessive ("Marisol's" -> "Marisol") in new summaries; schema
+  v12 fixes the names already stored once (the person keeps their id, the old spelling
+  is an alias; an existing person of that name absorbs it).
+- Hub side: a "Not a task" button on Today's open loops dismisses the item here
+  (`update_action_item`), so it doesn't come back.
+- **Owner: Server verification** (PR): the possessive count before and after, and a
+  fictional "I'll move my truck right now" conversation.
+
+## Done on 2026-10-22: the T5's minute clock redraws only the digits that changed
+
+- Owner report: every minute the whole clock in the T5's header refreshed. epdiy already
+  drives only changed pixels, but the clock was right-aligned text in a proportional font,
+  so a digit of another width ("09:41" -> "09:42") moved every glyph.
+- `ui_chrome.c` now draws the clock in fixed slots (each digit centred in a slot as wide
+  as the widest digit, the colon in its own), so unchanged digits keep their pixels.
+- **Checks:** new host test `test_clock_digits_stay` (fails on the old layout, passes now),
+  the rest of `test_ui_today`; `idf.py build`.
+- **Needs real-device testing:** flash the T5 and watch a minute change (and 09:59 ->
+  10:00): only the changed digits should redraw.
+
+## Done on 2026-10-22: the T5's offline Today plan follows the hub's weights (Phase 3, stream C)
+
+The hub learns a weight per checklist from the owner's outcomes on its Today page
+(hub `docs/fork/today-insight.md#weights`); the T5's rule-based Today plan (no insight for
+today) now orders each group by it.
+
+- **Relays (PC and Android, the same rules).** `GET /api/codex/insight/weights` (same
+  Odysseus token, scope `insight:read`) → feed key `weights` (`{"version": 1, "date",
+  "weights": {"list:<note id>": int}}`): only `list:` keys (id ≤ 150 bytes) with integer
+  values, clamped to [-6, 6], at most 32. Any failure (an older hub's 404, 403, network,
+  5xx, malformed) keeps the last good table: the PC relay in its `pda.json` (survives
+  restarts), the Android relay in its private preferences. Never fetched (or no Odysseus):
+  no key. Trimmed right after the `insight`.
+- **T5 firmware.** `feed.c` parses `weights` (unknown key prefixes, non-integers and other
+  versions ignored, clamped, ≤ 32, repeats once). `today_plan.c` applies them in the
+  rule-based plan only, integers only: DO FIRST to-dos by (-w, due date, feed order) then
+  today's events; COMING UP by (-w, date, time) with events at 0; ALSO pinned then undated,
+  each by (-w, feed order). A weight never moves an item to another group; with an insight
+  for today nothing changes. The rule order and the weight table are published in
+  `docs/t5-pda-plan.md` §5; §4.1 has the `weights` key.
+- **A fictional day** for both repos: `firmware/pda/test/fixtures/insight_eval_day.json`
+  (overdue, due today, coming up, pinned, undated, later and a shopping list, with known
+  weights and the expected order with and without them; the hub's insight eval uses the
+  same to-dos). Rendered: `build-pda-host/today_screens/today_rules_weights_*.png`.
+- **Checks:** PDA host tests 11/11 (ctest); PC relay 213 tests + ruff; `idf.py build`
+  (ESP-IDF 5.5.2) passes; Android `assembleDebug test lint` passes (167 tests).
+- **Needs real-device testing:** the T5 shows the reordered rule-based plan from a real
+  feed (a day without an insight, with the hub's weights); the PC relay and the phone carry
+  `weights` from the hub's test instance (and keep the last table when the route fails or
+  the hub is old); the phone keeps the table across an app restart.
+
+## Done on 2026-10-22: summary model chosen in the hub's settings
+
+- `GET`/`PUT /v1/settings/llm` (and the same paths on the MCP HTTP app, for the hub):
+  the model that writes summaries, `CONVO_LLM_MODEL` as the default, and the models the
+  LLM server lists. A chosen model is stored in `convo.db` (`module_settings`) and used
+  from the next summary on, also after a restart. Only the name changes; the LLM server's
+  URL stays in `.env`, so nothing can move summaries to another host. A name the server
+  doesn't list is refused.
+- Hub side: Settings → AI Defaults → "Background & summaries" (SDarioosh/odysseus-expanded).
+- Needs owner verification: pick the 35B model in the hub, check that the next summary's
+  request goes to it (llama-server log).
+
+## Done on 2026-10-22: shopping lists stay out of the daily digest
+
+- The daily digest no longer lists action items on a shopping-type list ("add milk to my
+  shopping list"). Lists in `CONVO_DIGEST_SKIP_LISTS` (default
+  `Shopping,Groceries,Grocery`, the same default as the hub's Today insight) are left out
+  before the digest model sees the items. They stay in `list_action_items` and on the T5.
+- Next: the owner rebuilds a digest on the server to check (Server verification in the PR).
+
+## Done on 2026-10-21: T5 interface polish (branch `feature/t5-ui-polish`)
+
+- **Owner request:** "All caught up!" instead of "No insight for today yet: by date and
+  time", then a more professional look. Done in firmware only; feed, relays and the server
+  are unchanged.
+- **Fonts:** Fira Sans SemiBold 12/20/32 pt added (OFL, epdiy's `fontconvert.py`); titles,
+  labels, buttons and the active tab are SemiBold, details Regular. `gfx.c` draws what a
+  SemiBold font lacks (arrows, ✓, ★, ▲) from the Regular font of the nearest size.
+- **Frame (`ui_chrome.c`, new):** header with title and clock, the date, a battery icon,
+  ↑n and a note only when worth a look ("synced 3 h ago" after an hour, "no feed"); plain tabs with a bar under the active one; one section heading for all screens.
+- **Today:** a time column for events (weekday under it when not today), round tick boxes,
+  hairlines between items; "All caught up!" with a small tick in INSIGHT; with nothing at
+  all, a big tick and "All caught up!" in the middle. The demo feed still fits one page.
+- **Other screens:** round ticks on Tasks and suggested action items, SemiBold titles on
+  Cal, Talks and conversation details, Status in PHONE / BATTERY / DETAILS sections with
+  plain wording, the pairing code in 32 pt.
+- **Asleep screen:** "Asleep", since when, NEXT UP (the next event with its full date, so
+  nothing goes stale overnight), the battery at sleep and "synced HH:MM" (still the only
+  line a sync wake redraws; a host test checks no other pixel changes). RTC layout bumped
+  to "PSL2".
+- **Tap feedback:** a tap that opens another screen frames what was tapped with a fast DU
+  update before the new screen's update.
+- **No flash on tab and menu changes** (owner's choice): a new screen is a partial update
+  like any other change; the clean refresh after 10 counted updates clears ghosting.
+  Turning the screen 180° stays a full update. On the T5: three tab changes, three
+  partial updates, no full one (still ~0.9 s each: no faster, just no flash).
+- **Fewer refreshes on their own** (owner: "the screen refreshes on its own a lot"): every
+  15-minute sync redrew the screen 3-4 times (link up, the feed with a flashing full
+  update even when it drew the same, link down), and those counted towards the clean
+  flash after 10 updates. Now an update whose drawing matches the panel is skipped and
+  not counted (`epd` shows how many), a new feed is a partial update, the link only
+  redraws Status, and the header has no "syncing" note. On the T5: a redraw with nothing
+  changed was skipped. Still left: the minute clock's small header update.
+- **Not taken:** grey for secondary text (idea from the same request): grey didn't show on
+  the owner's panel on 2026-10-20 (README), so weight does that job instead.
+- **Checks:** PDA host 11/11 (also under AddressSanitizer), Today and Asleep rendered to
+  PNG; `idf.py build` passes (app 1.25 MB, 70 % of the partition free).
+- **Open for the owner (real T5):** flash and look at every tab, the Asleep screen and a
+  sync wake's synced line; whether the DU tap frame shows and clears cleanly; whether the
+  SemiBold text and the hairlines read well on the panel.
+
+## Done on 2026-10-21: pyannote no longer merges two people into one
+
+- Bug: with `CONVO_DIARIZER=pyannote`, a two-person talk came out almost all under one
+  name. pyannote split the speakers, then their ECAPA voiceprints were clustered again
+  at `CONVO_SPEAKER_CLUSTER_THRESHOLD` (0.45); two voices on one body-worn mic often
+  score above that, so they merged and the merged voice matched one enrolled person.
+- Fix: speakers pyannote found in the same run are never merged
+  (`cluster(..., cannot_link=...)`); only speakers of different runs are joined by
+  voice. The log now says how many speakers pyannote heard per run.
+- Needs the owner: rerun a two-person recording on the server and check both names.
+  Conversations already processed keep their labels (audio is deleted after
+  transcription unless `CONVO_KEEP_AUDIO=true`); fix those with `reassign_line`.
+
+## Done on 2026-10-21: people ids and explicit action items (hub: Phase 2 of personal context)
+
+- **People (2.1).** `people(id, name, speaker_id, is_owner, merged_into)` + `people_aliases`
+  (schema v10), backfilled from `speakers` and `conversation_people`. `ensure_person` runs
+  wherever a name appears. `rename_speaker_everywhere` keeps the id (the old name becomes an
+  alias) or merges into an existing person, whose id survives. `list_people(format="json")`:
+  `{"people": [{"id", "name", "aliases", "is_owner", "has_voice", "conversations",
+  "first_seen", "last_seen"}]}`; `list_facts` JSON rows gain `person_id`. MCP 0.6.0. The hub
+  maps a person id to a subject and lets the owner link it to an Odysseus contact.
+- **Explicit action items** (owner's request after four musings became four to-dos). The
+  summarizer treats statements of intent, priority or decision as durable facts about the
+  speaker, not action items; a code guard moves undated voice-note "should / need to / stop /
+  focus on …" items without a command word to facts. Items get `title` (≤ 60 chars) and
+  `explicit` (date/time, list, reminder/event, or a command word) in the JSON. MCP 0.7.0 (schema v11). The hub files only explicit voice-note items by default and puts
+  undated ones on one "Voice notes" list.
+- Checks: 415 server tests + ruff (people 376, then the action-item change).
+
+## Done on 2026-10-21: forget propagates (hub: belief ledger, Phase 1 of personal context)
+
+Module side of Phase 1 (hub `docs/fork/personal-context.md`, `docs/fork/beliefs.md`). The hub
+now keeps a belief ledger between sources and its memory: every current fact goes in as
+evidence, only confirmed beliefs reach memory, and the owner can confirm, correct or forget a
+belief on a review page. Forgetting must not come back on the next hourly reconcile, so:
+
+- **`retire_fact(fact_id, reason="")`** (write, `destructiveHint: true`, idempotent):
+  `status='retired'` with `retired_at` and `retired_reason` (schema v9). Retired facts leave
+  `list_facts` (both formats), search (FTS row and embedding removed), `get_conversation`
+  and the read API. A later "same" link to a retired fact keeps it hidden (the repeat becomes
+  another source of the retired fact; the linker is now offered retired facts as candidates
+  so that link can happen). An "updates" link to a retired fact shows the newer fact and
+  leaves the old one retired. Re-summarizing the conversation re-applies the retirement by
+  matching the fact text. Facts a retired fact had replaced stay hidden.
+- **`confirmed` per JSON row** of `list_facts format=json` (the module's thresholds), so the
+  hub can take all current facts and promote them itself.
+- MCP version 0.5.0, 14 tools; `AGENTS.md` and `server/README.md` tables updated.
+- Fact ids change when a conversation is re-summarized; the hub treats "No fact #N." from
+  `retire_fact` as done and reconciles by the facts returned, not by old ids. (Since
+  2026-10-23 a re-summary keeps the id of a fact it says again.)
+- Checks: 364 server tests + ruff.
+
+## Done on 2026-10-21: Today insight and confirmed facts (hub: same branch in SDarioosh/Barvis)
+
+Phase 0 of the hub's personal-context plan (hub `docs/fork/personal-context.md`). Built by
+parallel agents, one per stream, reviewed and merged by the orchestrator.
+
+- **Confirmed facts (server).** A fact is confirmed when it is current, was said in
+  ≥ `CONVO_FACT_CONFIRM_SOURCES` (3) distinct conversations spanning ≥
+  `CONVO_FACT_CONFIRM_DAYS` (2) local dates. `list_facts` gains `confirmed` and
+  `format="json"` (`id`, `subject`, `about` owner/person/other, `fact`, `times_said`,
+  `days`, `first_said`, `last_said`, `link`; `limit` up to 1000 in JSON mode so the hub can
+  reconcile by id). Text output unchanged (snapshot test). MCP version 0.4.0. The hub's
+  hourly "Module Facts" task copies them into Odysseus memory and retires ids that stop
+  being returned; there is no `changed_since` (decided: a full reconcile is simpler and
+  self-healing).
+- **Relays (PC and Android, identical).** `GET /api/codex/insight/today` on the hub
+  (scope `insight:read`, same Odysseus token) → feed section `insight` (`date`,
+  `headline`, three sections of `ref`/`why`, caps 200/80/5). Refs are kept only when they
+  resolve in the feed's `todos` (note id + `i`) or `calendar` (event uid, occurrence form
+  for series); 403, 404, no hub or a malformed answer leaves `insight` out and never
+  fails the feed; it is trimmed after done items and before action items. The
+  `type == "checklist"` filter is right against a current hub (the JSON notes route
+  reports `todo` and `goal` as `checklist`); a test per relay documents it.
+- **T5 firmware.** `feed.c` parses `insight` (unknown keys ignored, unresolvable refs
+  dropped, 11 host tests incl. a fixture with a missing note, a missing `why`, a section
+  that is not a list). `today_plan.c` (pure C) builds the three sections from the insight,
+  or from rules when there is none for today: overdue → due today (by time) → next days →
+  pinned → undated; shopping-type lists left out unless dated. New Today tab (`ui_today.c`):
+  INSIGHT, DO FIRST, COMING UP, ALSO WORTH A LOOK, each item with its why, to-dos tickable
+  through `todo_toggle` with the tick shown at once, today's remaining timed events in
+  order, "Digest ready on Brief ›". Screens render on the host from fictional fixtures
+  (`build-pda-host/today_screens/*.png`, see `firmware/pda/README.md`). `idf.py build`
+  (ESP-IDF 5.5.2) passes.
+- **Checks:** server 329 tests + ruff; relay 196 tests + ruff; PDA host 11/11; Android
+  build, 147 tests, lint. Sandbox stack (Qwen3-4B on CPU, both PRs): MCP 0.4.0 connected;
+  bakeoff `--only 1 4 16 21` **4/4** at the default thresholds (2/3 on 1, 4, 16 before);
+  the hub's insight placed 8/8 fictional candidates in 82 s. With every seed fact forced
+  into the hub's memory the model answered two questions from memory without a tool
+  call (2/4): a scoring question for the owner (hub PR).
+- **Follow-ups noticed:** Android feed trimming never drops pinned checklists or an
+  emptied checklist, unlike the PC relay (pre-existing); a timed series stored in UTC
+  gets a UTC date in its occurrence uid, so a near-midnight occurrence can open the
+  calendar on the neighbouring day (hub).
 
 ## Done in round 2 (PR #3, stacked on #2)
 
@@ -217,17 +780,17 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
   now wraps such uploads in Ogg Opus before ffmpeg (`convo_server/opus_packets.py`,
   `tests/test_opus_packets.py`). An incomplete last packet is dropped.
 
-## Done in round 9: "Speaker 2 was Jenn" renames the speaker
+## Done in round 9: "Speaker 2 was Kath" renames the speaker
 
-- The owner said "/sound … Speaker 1 and Speaker 3 were both Shahyah and Speaker 2 was
-  Jenn" and the model only repeated what they said; nothing was renamed. Reproduced in
+- The owner said "/sound … Speaker 1 and Speaker 3 were both Marisol and Speaker 2 was
+  Kath" and the model only repeated what they said; nothing was renamed. Reproduced in
   the sandbox: Odysseus offered `name_speaker` on the `/sound` turn, but the model read the
   sentence as a claim to check and never called it.
 - `INSTRUCTIONS` now has a "Naming speakers" paragraph (a statement of who a speaker was
   is a request to save it; call `name_speaker` once per label), and the tool description
   says the same. Sandbox, same message: before, only `search_conversations`; after,
   `search_conversations`, `get_conversation`, `name_speaker` (approved) and Speaker 1
-  became Shahyah. The next model call hit the sandbox CPU's read timeout (HTTP 504), so
+  became Marisol. The next model call hit the sandbox CPU's read timeout (HTTP 504), so
   Speakers 2 and 3 still need the server run.
 - Needs the owner: paste the new `INSTRUCTIONS` into the Custom preset and rerun
   `modules_setup.py` (was `barvis_setup.py`) so `/sound` picks it up.
@@ -259,8 +822,23 @@ and facts (~8 s each) → FTS search found them → raw audio deleted.
 - Host services: the owner's llama-server listens on 0.0.0.0:8082, reachable at
   `host.docker.internal`; Proton Bridge (127.0.0.1 only) is reached through the owner's
   socat forwarders on 172.17.0.1, which move into the hub stack in step 2.
+- 2026-10-26, merged with main: `sound-mcp` gets `CONVO_HOST=sound-api`, `CONVO_PORT=8000`,
+  because the MCP server's relay routes (uploads, written notes, T5 reads, `/settings/llm`,
+  added since) forward to the ingest API at that address, not to its own container.
 - Open for the owner: the PR's Server verification (CUDA image on the RTX 3060, cutover
   from the systemd services, compare a transcription with the host whisper).
+
+## Done on 2026-10-21: finished T5 lists go away (hub: same branch in SDarioosh/Barvis)
+
+- Owner report: a checklist ticked off on the T5 stayed on its Tasks tab for good, fully
+  done, taking room from new lists.
+- Hub: an unpinned checklist with every item done and no change for 10 minutes is
+  archived (`src/checklist_auto_archive.py`, setting `FORK_CHECKLIST_ARCHIVE_MINUTES`,
+  `0`/`off` = off). It leaves the T5 at the next sync; no firmware or relay change. Pinned
+  lists stay, even finished or empty. An unarchived finished list is archived again after
+  10 minutes unless it has an open item (owner's choice). Plan: `docs/t5-pda-plan.md` §4.4.
+- Open for the owner: the hub PR's Server verification (tick off a test list on the T5,
+  see it leave after 10 minutes and the next sync).
 
 ## Done on 2026-10-20: faster transcript requests (hub: same branch in SDarioosh/Barvis)
 
@@ -425,6 +1003,66 @@ right after its sizes, flags and timings were read; none was uploaded.
   12 pm", "get the proposal done on Wednesday", "remind me at 5 to call Mom" on the
   watch, then check `list_action_items format=json` shows event / task / reminder with
   the right date and time (qwen3.5-35b; only fake-LLM tests ran in the sandbox).
+
+## Done on 2026-10-21: T4-S3 conference recorder (4 INMP441 mics, one button)
+
+- The recorder firmware builds for the LilyGO T4-S3 (`-DBOARD=t4_s3`): sessions, voice
+  notes, the flash queue, BLE sync and the console as on the T-Watch S3. Built on the
+  T-Watch S3 branch's work (click counter, `boards/common/`), carried over from its
+  uncommitted working tree as the first commit of this branch.
+- One button, BOOT (GPIO0): `main/key_press.c` (host-tested) turns the level into presses
+  for the click counter. On the owner's board: 1 press started and stopped a session, a
+  hold started a note, a press ended it, 3 presses showed the status. No haptics: every
+  action shows on the screen. The slide switch is the power switch; RST resets.
+- Mics: `board.h` gains an I2S mic kind; `main/mic.c` reads two stereo pairs (I2S0 master,
+  I2S1 slave on the same BCLK/WS, GPIO39/40, data GPIO41/42) and mixes the mics that answer
+  to mono (`main/mic_mix.c`, host-tested). Console `mics` per-mic levels and mask. With no
+  mics wired: all four read "none", the mix is silence, pair B stays in step with pair A
+  (so the shared clock reaches I2S1).
+- Audio loss found and fixed: recording into flash lost ~5 % silently (the I2S interrupt
+  couldn't run during flash writes) plus ~1 s at session start (the recorder blocked in
+  flash writes longer than the DMA buffers last). Now `CONFIG_I2S_ISR_IRAM_SAFE` (T4-S3)
+  and a reader task with an 8 s PSRAM ring (I2S path only): 74.9 s recorded in 74.9 s,
+  worst recorder lag 2.3 s (closing a chunk). **The T-Watch S3 records into flash the same
+  way (PDM path) and likely loses audio too: worth measuring there.**
+- Screen: RM690B0 450x600 AMOLED through `esp_lcd_co5300` with LilyGO's init list. The UI
+  now draws in 16-row strips (all boards): the 43 KB band didn't fit next to the mic DMA
+  buffers while recording.
+- Screen on for the whole recording (owner: the T4-S3 sits on a desk on USB, switched off
+  when unused): red REC/NOTE, running time, mics mixed, USB/battery, how to stop; dimmed and
+  shifted a few pixels a minute against burn-in. On the owner's board: on for a 2.5 min
+  recording, readable, BOOT stopped it and the screen went dark. The watches are unchanged
+  (`board_screen_on_while_recording()` false). Lines too wide for a panel now shrink.
+- Tap-to-wake (owner's request): a tap on the touchscreen (CST226SE, INT on GPIO8) shows the
+  status screen, once per touch. On the owner's board: tap, resting finger, tap = three
+  status screens. Its idle current isn't measured yet.
+- Charger: SY6970 driver (watchdog off, 512 mA, one-shot ADC; codec host-tested). With the
+  slide switch off the battery reads as absent (BAT_FAULT, swinging voltage); on: 4044 mV,
+  charging 500 mA. No RTC chip: the clock is the ESP32-S3's own, set by the phone or `time`.
+- Host tests not run on this PC (no host compiler); CI runs them. All three boards build.
+- Still to check with the mics: wiring, each mic's level (`mics`), gain (30 dB default
+  assumed for ~1 m talkers), a fictional conversation through `smoke_upload.py`; overnight
+  idle drain on the battery; the microSD slot (unused).
+
+## Done on 2026-10-20: T-Watch S3 board (one button, flash storage)
+
+- The recorder firmware now builds for the LilyGO T-Watch S3 (`-DBOARD=twatch_s3`): same
+  recording, Opus queue, BLE sync, standby and console as the Ultra.
+- Its only button is the AXP2101 side key, so clicks are counted (`main/click_counter.c`,
+  host-tested): 1 click recording on/off, 2 mute, 3 status screen, 4 BLE sync window, hold
+  ~1 s voice note, hold ~6 s power-off. Clicks within 1 s after an action are ignored
+  (buzz shake, as on the Ultra's PWR key).
+- No SD card: a ~11.8 MB FAT partition in flash at `/flash` (`partitions_twatch_s3.csv`),
+  about an hour of audio; recording stops at 1 MB free (the Ultra keeps 8 MB, now
+  `board_storage_reserve_bytes()`).
+- New drivers: PCF8563 RTC (codec host-tested), ST7789 screen via esp_lcd. AXP2101,
+  DRV2605 and I2C helpers moved to `boards/common/` and are shared with the Ultra.
+  AXP2101: TS pin disabled (no thermistor on the S3), battery detection on.
+- Status screen has a compact layout for 240x240; the Ultra's layout is unchanged.
+- Fixed in passing: the DRV2605 driver added a new I2C device on every buzz (both watches).
+- Still to check on the watch: AXP2101 click timing (can it report a quick double-click?),
+  the PMU IRQ line level (it is pulled up to 1.8 V on the schematic), screen orientation
+  and colors, mic level (no EQ yet), flash write load while recording, standby current.
 
 ## Done on 2026-10-20: "my latest voice notes" finds voice notes
 
@@ -632,6 +1270,26 @@ couldn't get past the MTU exchange. Two bugs, both in the firmware:
   connection, MTU 517, 6 chunks (324 KB, 670 frames) uploaded and acked, 0 links lost.
 - Diagnosis tools: `adb logcat -b all` shows the stack's GATT state; the `dumpsys
   bluetooth_manager` BTSNOOP summary has HCI events only, not ATT.
+
+## Done on 2026-10-21: standby no longer wakes itself every few minutes
+
+- Idle with an empty queue, the T-Watch Ultra lit its screen every ~2 min. The power log
+  showed a fresh boot (uptime 6 s) every ~2 min 8 s since 2026-10-20 14:49: standby woke
+  0 s to a few minutes after it started, then waited the 2 min idle time again.
+- Cause: wake cause was the timer (4), not the PMU line. Automatic light sleep arms a
+  timer wake before each light sleep (`esp_pm` `pm_impl.c`) and leaves it armed; deep
+  sleep inherited it. `enter_standby()` now disables the timer wake source before
+  `esp_deep_sleep_start()` (shared code: both watches). The boot log names the wake cause.
+- On the owner's watch: before, forced `standby` woke after ~2 s (3 of 3); after, it stayed
+  asleep 5 min. Both board builds pass; host tests not run on this PC (no host compiler).
+- PWR still wakes it (owner's press, 2026-10-21).
+- Then, at the owner's choice, **light sleep only**: the watch no longer goes into standby
+  by itself (the 2 min idle check is gone), so every button works on its first press.
+  Console `standby` still does deep sleep. Off = hold PWR ~6 s (AXP2101 reg 0x27 on the
+  owner's watch: power-off hold 6000 ms); the hold starts a voice note at 1 s first.
+- Needs the owner: on battery, overnight idle drain in light sleep only (compare with the
+  ~35-40 mA before light sleep); after a PWR-6 s power-off, check the cut note is recovered
+  and queued at the next boot.
 
 ## Done on 2026-10-20: T-Watch Ultra idle power (light sleep and standby)
 
@@ -925,6 +1583,19 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 ## Next
 
+- **Owner: capture quality** (4.3 PR, Server verification step 2): the GPU eval is done
+  (2026-10-24); still one real recording with a third person joining, and the owner-hint
+  log lines.
+- **Owner: voice-note commands on real speech** (this branch's PR, Server verification): record a
+  few of the PR's sample voice notes on the watch ("um, make a todo to get eggs", "make a note in
+  voice recorder that the case needs to be 3 mm bigger", "add eggs, milk and bread to my shopping
+  list") and check where each lands in the hub.
+- **Owner: forget propagates** (this branch's PR, Server verification): forget one belief on the
+  hub's `/beliefs` page on the test instance and confirm the fact is gone from `/sound what facts
+  do you know about …` and stays gone after the next hourly run.
+- **Owner: Today insight end to end** (this branch's PR, Server verification): confirmed-fact
+  counts at the default thresholds, one insight on `qwen3.5-35b` (time), the phone relay with
+  a token that has `insight:read`, the T5 Today tab (look, tick, taps) on the real panel.
 - **Owner: transcription quality** (PRs #39 and #42, Server verification): the AMI eval on
   the GPU before/after, switch whisper to large-v3-turbo-q5_0, then the 24 kbps firmware on
   the watch (encode time per frame, drain time, a fictional-speech recording).
@@ -978,12 +1649,26 @@ Nothing here has run on hardware yet; everything is built and tested off-device.
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
-- Recognition: if pyannote on the server GPU names people right without more wrong names
-  than ECAPA (step 3 of SDarioosh/barvis-sound#31's Server verification), should it become the default there?
+- Voice-note commands: "add eggs, milk and bread to my shopping list" is now three lines; "salt
+  and pepper" (no comma) stays one. Should "eggs and milk" (no comma) be two lines too?
+- Today insight: the T5's rule-based fallback puts today's all-day events in DO FIRST
+  ("today, all day") before the timed ones. Keep, or leave all-day events out?
+- Confirmed facts: are 3 conversations over 2 days the right bar once real counts are in,
+  or should a fact the owner confirms by hand (Phase 1 review page) be the main path?
+- Recognition: answered 2026-10-23: the owner runs pyannote. The sandbox found pyannote
+  names more right but with more wrong names than ECAPA (5.3 vs 1.3 % on the table mic);
+  split + line check bring it to 1.6 %. Default diarizer stays `ecapa` in code until the
+  server run of the 4.3 PR.
+- Diarization (4.3 PR): split + line check are the pyannote defaults now. Use
+  `CONVO_PYANNOTE_VBX_FB=0.2` against newcomers getting an existing name (more
+  "Speaker N" in exchange)? Decide after a real recording.
+- Enrollment without the Zepp watch (quality checks, enrolling from T-Watch voice notes)
+  and a "speaker unsure" flag for the hub: proposed in the 4.3 session, not decided.
 - Insights: should doctor's instructions like "avoid hard food until the follow-up" be
   action items? The model lists them; they're not things to do by a date.
-- Owner loudness hint: it never fired in the eval. Keep it until a real-device recording
-  shows whether it helps, or remove it?
+- Owner loudness hint: it never fired in the eval (also not with simulated arm movement).
+  It now logs `owner hint: speaker N of M named …`; check the log on real wrist
+  recordings, and set `CONVO_OWNER_HINT_MARGIN=0` if it names someone else. Remove it then?
 - Voice notes: is ending the conversation session and resuming it after a note right, or
   should a note be refused while a conversation records? Should notes get their own place
   in the daily digest?
@@ -996,6 +1681,8 @@ Still open:
   Wi-Fi at home, transcript QR, auto-blank, languages). New: should the phone send a POSIX
   time zone (`tz_posix`) in the feed, so times after a DST change are right? And how does
   the real panel look to you (contrast, VCOM 1560 mV, ghosting after a day)?
+- Android app: `docs/android-app-plan.md` (Odysseus WebView shell + the relay in one app).
+  Owner decisions in its §10: repo layout, app ID/label, how native, tokens, distribution.
 - Odysseus fork: enable GitHub Actions on `SDarioosh/Barvis` (Actions tab) so CI runs on PRs.
 - The remaining XIAO pendant decisions in `docs/xiao-esp32s3-sense-plan.md` §10
 (battery/form factor, fallback board, extra parts, microSD). They wait until XIAO work

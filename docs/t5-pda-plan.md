@@ -1,4 +1,4 @@
-# Plan: LilyGO T5 E-Paper Pro as an odysseus-sound PDA
+# Plan: LilyGO T5 E-Paper Pro as an Athena PDA
 
 Status: **firmware milestones 0–3 built** in `firmware/pda/` (2026-10-20; what is verified on
 the board is in `firmware/pda/README.md`). The PC relay (§3.5, `ble_relay.py pda`) and the
@@ -26,7 +26,7 @@ the real T5. Owner decisions are open (§11).
   over IP. A later LAN-only Wi-Fi mode for home use is possible (§11 Q3), but it isn't
   needed: at home the phone is in range anyway.
 - **No Tailscale Funnel or other public exposure**, ever (AGENTS.md privacy rules).
-- **The phone builds the feed.** It calls the odysseus-sound HTTP API and the Odysseus
+- **The phone builds the feed.** It calls the Athena HTTP API and the Odysseus
   calendar REST API, then sends a compact feed to the T5 (§4). Neither server needs a
   new endpoint for v1.
 - **The MCP contract doesn't change.** The PDA uses the HTTP API (`/v1/…`), not MCP.
@@ -34,7 +34,7 @@ the real T5. Owner decisions are open (§11).
 ## TL;DR
 
 ```
-odysseus-sound  /v1/digests, /v1/conversations, /v1/action-items ─┐
+Athena  /v1/digests, /v1/conversations, /v1/action-items ─┐
                                                                    ├─ Tailscale ─ phone (android-relay)
 Odysseus        calendar REST (scoped token)  ─────────────────────┘        │
                                                                        BLE (§3)
@@ -125,9 +125,11 @@ against LilyGO's `docs/pinmap.md` and examples (github.com/Xinyuan-LilyGO/T5S3-4
   ("Cache disabled but cached memory region accessed", seen on the board).
   `CONFIG_SPIRAM_XIP_FROM_PSRAM` runs code and rodata from PSRAM, so flash writes don't
   disable the cache.
-- **Fonts:** Fira Sans 12 and 20 pt (SIL OFL), epdiy's pre-converted headers: ASCII,
-  Latin-1, general punctuation, arrows. The euro sign isn't in them and is drawn as "EUR";
-  other missing characters as "?".
+- **Fonts:** Fira Sans (SIL OFL): Regular 12 and 20 pt, epdiy's pre-converted headers
+  (ASCII, Latin-1, general punctuation, arrows); SemiBold 12, 20 and 32 pt, converted with
+  epdiy's `fontconvert.py` (Latin-1 and punctuation; 32 pt ASCII only). Characters a
+  SemiBold font lacks (arrows, ✓, ★, ▲) come from the Regular font of the nearest size.
+  The euro sign isn't in them and is drawn as "EUR"; other missing characters as "?".
 - **Sleep:** between events the T5 is in automatic light sleep (ESP-IDF PM, DFS 240/40 MHz;
   the BLE controller keeps the main crystal as its sleep clock). It stays awake during a
   refresh, while the front light is lit and while USB power is in (the USB console). Touch
@@ -377,6 +379,8 @@ The phone builds it from these sources:
 | `actions` | `GET /v1/action-items?status=open`: id, text, owner, `due_date`, conversation id |
 | `calendar` | Odysseus calendar REST, today to +7 days: id, title, start, end, location, all-day |
 | `todos` | Odysseus notes (§4.4): the owner's checklists, pinned first, with their items |
+| `insight` | Odysseus `GET /api/codex/insight/today` (scope `insight:read`): the hub's Today insight, a headline and the to-dos and events to look at today (404 → leave out) |
+| `weights` | Odysseus `GET /api/codex/insight/weights` (same scope): the hub's learned rule weights per checklist for the T5's rule-based Today plan (§5); a failure keeps the last good table, never fetched → leave out |
 
 ```json
 {"v": 1, "version": 1729411200, "generated": "2026-10-20T07:00:00Z", "tz": "Europe/Berlin",
@@ -387,6 +391,10 @@ The phone builds it from these sources:
  "calendar": [{"id": "…", "title": "…", "start": "…", "end": "…", "where": "…", "all_day": false}],
  "todos": [{"id": "3f2c…", "title": "Groceries", "pinned": true, "due": null,
             "items": [{"i": 0, "text": "Milk", "done": false}, {"i": 2, "text": "Eggs", "done": false}]}],
+ "insight": {"date": "2026-10-20", "headline": "…",
+             "focus": [{"ref": "todo:3f2c…:0", "why": "…"}, {"ref": "event:…", "why": "…"}],
+             "coming_up": [{"ref": "event:…", "why": "…"}], "also": []},
+ "weights": {"version": 1, "date": "2026-10-20", "weights": {"list:3f2c…": 2, "list:9a1e…": -1}},
  "templates": ["Call", "Meeting", "Reminder"]}
 ```
 
@@ -408,6 +416,47 @@ The phone builds it from these sources:
     `null`.
   - `calendar`: sorted by `start`.
   - `todos`: see §4.4.
+  - `insight` (added 2026-10-21): the hub's Today insight, from
+    `GET /api/codex/insight/today` with the calendar's URL and token (scope
+    `insight:read`). The hub answers `{"date", "generated", "headline", "focus",
+    "coming_up", "also"}`, each section a list of `{"ref", "why", "title"}`, or 404
+    `{"error": "no insight yet"}`.
+    - Only `date`, `headline`, and `ref` and `why` per item are copied (no `title`, no
+      `generated`); other keys are ignored. The keys come after `todos`.
+    - Caps: `headline` ≤ 200 characters and `why` ≤ 80 (cut like the other fields), at
+      most 5 items per section, the first that resolve. A `why` that is missing or not a
+      string is `""`. A section that is missing or not a list is `[]`.
+    - **Refs must resolve in this feed:** `todo:<note id>:<i>` only when `todos` has that
+      note with an item whose `i` is that number (written as the feed writes it, so `01`
+      or `x` never match), `event:<id>` only when `calendar` has an entry with that `id`
+      (the hub's event `uid`, an occurrence's `<uid>::<occurrence>` included). Anything
+      else is dropped silently. Without Odysseus todos or calendar, no ref of that kind
+      resolves.
+    - **Left out** (no `insight` key; the build doesn't fail): no Odysseus configured, no
+      insight yet (404), a hub without the route (FastAPI's 404 "Not Found", or 405), a
+      token without `insight:read` (403), any other final 4xx, and an answer that isn't a
+      JSON object or has no `YYYY-MM-DD` `date` or no string `headline`. The relay logs
+      why, and the phone's status line says it (for example "insight: token lacks
+      insight:read"). Network errors, 5xx, 408/429 and 401 fail the build, like a failing
+      calendar.
+  - `weights` (added 2026-10-22): the hub's learned rule weights (§5 "Rule order and
+    weights"), from `GET /api/codex/insight/weights` with the insight's URL and token
+    (scope `insight:read`). The hub answers `{"version": 1, "date": "YYYY-MM-DD",
+    "weights": {"list:<note id>": <int>}}`, `"weights": {}` when it has none.
+    - The feed's key is `{"version": 1, "date", "weights": {…}}`, after `insight`. Only
+      `list:<note id>` keys (the id 1 to 150 UTF-8 bytes) with integer values (not
+      booleans, not `1.0`) are kept, clamped to [-6, 6], at most 32 in the hub's order
+      (largest first); everything else is dropped. An answer with a `version` other than 1,
+      or whose `weights` isn't an object, is malformed. A `date` that isn't `YYYY-MM-DD` is
+      left out.
+    - **Last good table:** any failure (an older hub's 404, 405, 403, network errors, 5xx,
+      a malformed answer) keeps the last good table, so a weights failure never fails the
+      build. The PC relay keeps it in its state file (`pda.json`, so it survives restarts);
+      the Android relay in its private preferences. A table that was never fetched leaves
+      the key out; so does a relay without Odysseus. An empty table (`{}`) replaces the
+      last one: the hub has no weights any more.
+    - The T5 matches the keys to `todos` by note id; a key for a note not in the feed is
+      ignored there.
   - `templates` (optional): the owner's event titles for the "+" picker (§5), e.g.
     `["Call", "Meeting", "Reminder"]`. At most 12 of up to 40 characters. The phone takes
     them from its settings, the PC relay from `--templates "Call,Meeting,Reminder"`. The key
@@ -415,11 +464,15 @@ The phone builds it from these sources:
   - Field caps in characters: title 120, summary 600, 5 points of 160, action text 200.
   - The size limit is 32,768 bytes of compact UTF-8 JSON. Over it, each summary is cut to
     240 characters, then the oldest conversations are dropped. If it is still too big
-    (hundreds of open items), done checklist items go, then the last action items, then the
-  last unpinned checklists, then the last calendar entries.
+    (hundreds of open items), done checklist items go, then the whole `insight`, then the
+    `weights`, then the last action items, then the last unpinned checklists, then the last calendar entries. An
+    `insight` that is kept loses the refs to done items that were dropped, so every ref
+    still resolves.
   - A source that fails fails the whole build, so nothing is pushed and the T5 keeps its
     feed. These don't count as failures: a digest 404, no Odysseus configured (no `calendar`
-  entries, no `todos`), and a hub that can't list notes for this token (§4.4).
+    entries, no `todos`, no `insight`, no `weights`), a hub that can't list notes for this
+    token (§4.4), an insight the hub can't give (see `insight` above), and any weights
+    failure (see `weights`).
   - **Push rule:** the content hash is SHA-256 over the feed without `version` and
     `generated`. The relay pushes when this hash differs from the last one it pushed to
     this T5, or when `status.feed_version` isn't the version it pushed (the T5 was wiped,
@@ -481,7 +534,8 @@ same ones the Odysseus website shows. The action items the server suggests from
 conversations (`actions`) move into the conversation's detail screen (§5).
 
 - **Token:** the same Odysseus token as the calendar, with **Todos** (`todos:read`) and
-  **Todos write** (`todos:write`) added.
+  **Todos write** (`todos:write`) added. The Today insight (§4.1) needs `insight:read` on
+  the same token; without it the feed has no `insight`, and the rest syncs.
 - **Reading (hub change, SDarioosh/Barvis):** `GET /api/codex/todos?format=json` (scope
   `todos:read`). Without `format=json` the route keeps answering with the chat-model text it
   has today. Answer:
@@ -497,7 +551,8 @@ conversations (`actions`) move into the conversation's detail screen (§5).
   at most 20 notes and 40 items per note. Each item keeps its index `i` in the note's item
   list (the hub toggles by index). `title` ≤ 120 characters (an empty title is `null`), item
   `text` ≤ 160, `due` = `due_date` as `YYYY-MM-DD` or `null`. Done items are kept (shown
-  struck through) unless the feed is too big (§4.1).
+  struck through) unless the feed is too big (§4.1). The `type: checklist` filter is right
+  for `todo` and `goal` notes too: the hub reports them as `checklist` (both relays test it).
 - **`todo_toggle`:** `{"t":"todo_toggle","note":"<note id>","i":<index>,"text":"<the item's
   first 80 characters>","done":true|false}`. The relay:
   1. reads the note's current items (`GET /api/codex/todos?format=json`, once per sync);
@@ -545,24 +600,120 @@ conversations (`actions`) move into the conversation's detail screen (§5).
   shows it at once (struck through, or not); a second tap before the relay has listed the
   action deletes it, after that it queues the reverse. Nothing else is editable on the T5
   (no adding or renaming items, no plain notes).
+- **Finished lists leave on their own (hub, added 2026-10-21):** Odysseus archives an
+  unpinned checklist once every item is done and it hasn't changed for 10 minutes
+  (`FORK_CHECKLIST_ARCHIVE_MINUTES`, hub `src/checklist_auto_archive.py`). Archived notes
+  aren't in `GET /api/codex/todos`, so the list leaves the Tasks tab at the next sync; the
+  T5 and relays need no change. Untick an item within the 10 minutes to keep the list;
+  later, unarchive it on the website (it is archived again 10 minutes after that unless
+  it has an open item). Pinned lists stay, finished or empty.
 
 ## 5. Screens
 
-Portrait, 540 × 960 (§1): a two-line header (title and clock; date, battery, sync and the
-outbox count), the content, a bottom row for the screen's buttons and the pager (▲ n/m ▼),
-and a tab bar of six (Today, Brief, Cal, Tasks, Talks, Status). Lists use the full width
+Portrait, 540 × 960 (§1): a two-line header (title and clock in SemiBold 20 pt; the date
+on the left, a battery icon with its percentage on the right, ↑n for actions waiting, and a
+note only when worth a look: "synced 3 h ago" after an hour without a sync, "no feed"), the content, a bottom row for the screen's buttons and the pager (▲ n/m ▼), and a
+tab bar of six plain labels (Today, Brief, Cal, Tasks, Talks, Status; the active one
+SemiBold with a bar under the top rule). Titles of items are SemiBold, their details
+Regular: weight, not grey, sets them apart (grey doesn't show on the panel). Tick boxes are
+round: a ring, filled black with a white tick when done. A tap that opens another screen
+draws a black frame around what was tapped with a fast black-and-white (DU) update first,
+so the tap shows before the slower full refresh. Lists use the full width
 with rows of two or three lines; the new-event form stacks the date, the time with ±15 min,
 a 3 × 4 grid of hour slots and the durations.
 
 | Screen | Content | Interactions |
 |---|---|---|
-| **Today** (home) | clock and date, battery, sync age; the next 3 events; the briefing's first lines; the count of open checklist items | tap a section to open it |
+| **Today** (home) | the header (clock, date, battery, sync age); INSIGHT, DO FIRST, COMING UP, ALSO WORTH A LOOK (below); "Digest ready on Brief ›" in the bottom row | tap a to-do: done / not done (`todo_toggle`, as on Tasks); tap an event: its details; "+n more ›": Tasks or Cal; the digest line: Brief |
 | **Briefing** | yesterday's digest, highlights | `digest_refresh` |
 | **Calendar** | agenda, today to +7 days | tap an event for details; "+" opens the template picker |
 | **Tasks** | the owner's Odysseus checklists (§4.4): a heading per note (pinned first, with its due date), its items below | tap an item: done / not done (`todo_toggle`); without Odysseus: "No checklists. Set up Odysseus in the phone app" |
 | **Conversations** | the last 48 h, title, people, time | tap: summary and key points, then that conversation's suggested action items (`actions` with this `conv`); on those: tap done, long press dismiss, "→ calendar" when `due` is set; "transcript" → `fetch` |
-| **Status** | bond, phone last seen, outbox, feed version, battery, pairing window button | |
+| **Status** | PHONE (connected or last seen, phones paired, changes waiting), BATTERY (icon, %, charging), DETAILS (feed version and build time, clock and zone, screen rotation, firmware, BLE name, battery mV); the buttons | |
 
+- **Today as built (2026-10-21):**
+  - **Sections:** INSIGHT (the hub's headline, wrapped, at most 3 lines), DO FIRST, COMING
+    UP, ALSO WORTH A LOOK. Each item takes two lines: the to-do text or event title
+    (SemiBold, cut to fit), then why it is there, with a hairline between items. A left
+    column holds a to-do's round tick box, or an event's start time ("all day") with its
+    weekday under it when it isn't today; events end in "›" and their second line is the
+    hub's `why` and the place ("until 15:30" when there is neither).
+    Empty sections are left out. The sections flow over pages (the pager, swipe up/down); a
+    section that goes on to the next page repeats its heading with "(cont.)".
+  - **With the hub's insight** (feed `insight`, §4.1, dated today): its items in the hub's
+    order, under the hub's `why`; events also show their time. Items whose ref names nothing
+    in the feed, done items, events that are over and repeats are dropped. Today's timed
+    events still to come all end DO FIRST in time order, wherever the hub put them (with
+    its `why` when it named them). DO FIRST is for today only: an event on a later day, or
+    an item of a checklist due on a later day, that the hub put there moves to the end of
+    COMING UP (with its time or "due Wed 28 Oct").
+  - **A to-do or event shows once:** the hub's `why` is left out when it only restates the
+    to-do or the event's title (it starts with the same word, or holds at least 60 % of the
+    title's words of 3+ letters); an event's second line is then its place or "until 16:00";
+    for a to-do the second line then falls back to the list's title, but only for a list of more than
+    one item (a one-item note's title is the to-do again, often reworded), and never when
+    the title is the same text (any case, or the start of it cut with "…").
+    An item with nothing under its title is one line high, so the next item moves up (an
+    event on another day keeps two lines for its weekday).
+  - **Without one** (no key, or `date` isn't today), the same sections from rules, and
+    INSIGHT says "All caught up!" (with a small filled tick). The hub's weights (feed
+    `weights`, below) reorder items within each group, never across groups; without
+    weights every w is 0 and the order is the one the T5 had before them:
+    - DO FIRST: open items of overdue checklists ("overdue since 2026-10-19") and of those
+      due today ("due today") by (-w, due date, feed order), then today's events that
+      aren't over (all-day first, "today, all day"; then "today 14:00");
+    - COMING UP: events and items of checklists due within the next 7 days, by (-w, date,
+      time) with events at w 0 ("Wed 21 Oct 09:00", "due Fri 23 Oct");
+    - ALSO WORTH A LOOK: items of pinned checklists not listed above ("pinned") by (-w,
+      feed order), then of undated ones ("no date") by (-w, feed order); unpinned
+      checklists due later than that aren't on Today.
+  - **Rule order and weights (published 2026-10-22; the hub's candidate order for its
+    insight follows the same rules):**
+
+    | tier | items | within the tier | on the T5 |
+    |---|---|---|---|
+    | 0 | overdue and due today | higher weight first, then date, time, input order | DO FIRST (to-dos, then today's events) |
+    | 1 | due in the next 7 days | higher weight first, then date, time | COMING UP |
+    | 2 | items of pinned notes (undated or later) | higher weight first, then input order | ALSO WORTH A LOOK, first |
+    | 3 | undated | higher weight first, then input order | ALSO WORTH A LOOK, then |
+    | 4 | due later than a week | higher weight first, then date, time | not on Today |
+
+    A weight never moves an item to another tier, so overdue and due-today items always
+    come first. The weight table (feed `weights`, §4.1):
+
+    | key | applies to | range |
+    |---|---|---|
+    | `list:<note id>` | the to-do items of that checklist | integer, -6 to 6 (0 when absent) |
+
+    At most 32 entries; the T5 has only this key (the hub folds its per-note-type weights
+    into it, since every T5 to-do is a checklist item), events always weigh 0. The hub
+    learns each weight from the owner's outcomes on its Today page over the last 28 days
+    (done, "↑ first", "not today", moved, ignored), and keeps it at 0 until a list has been
+    shown often enough ([how the hub learns them](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/today-insight.md#weights)).
+    The T5 uses the weights only in the rule-based plan: with an insight for today, the
+    hub's order stands. Integers only, no floats on the T5. A fictional day with known
+    weights and its expected order is `firmware/pda/test/fixtures/insight_eval_day.json`,
+    shared with the hub's insight eval.
+  - **Left out:** done items, events that are over, and shopping lists: a checklist titled
+    Shopping, Groceries or Grocery (any case, with or without " list") unless it has a due
+    date. The hub's insight may still name one of their items.
+  - **Caps:** 5 items per section from the rules, the rest as "+n more ›" on the heading
+    (to Cal when most of the rest are events, else Tasks). With the insight, DO FIRST holds
+    the hub's 5 plus today's events, up to 8.
+  - **Nothing at all** (no item in any section): a big filled tick and "All caught up!"
+    (SemiBold 32 pt) in the middle of the page, "Nothing due and nothing on the calendar
+    for the next 7 days." under it; INSIGHT is left out unless the hub sent a headline.
+  - **The digest** is on Brief only; the bottom row of Today says "Digest ready on Brief ›"
+    when the feed has a briefing.
+  - Code: `main/today_plan.c` (the plan, pure, `test/test_today_plan.c`; the weights are
+    parsed by `main/feed.c`, `test/test_feed.c`), `main/ui_today.c`
+    (the drawing), `main/ui_chrome.c` (header, tabs, headings, the Asleep screen); both
+    rendered on the host by `test/test_ui_today.c`.
+- **Asleep screen** (BOOT held 1 s, §2 "Sleep"): "Asleep" (SemiBold 32 pt), "since Tue 20
+  Oct 21:40", "Press BOOT to wake"; NEXT UP: the next event that hasn't ended, its title
+  and its full date and time (every line names its date, so nothing on it goes stale
+  overnight), or "Nothing on the calendar this week"; at the foot the battery at sleep and
+  "synced HH:MM", the only line a sync wake redraws (`ui_chrome_asleep_synced_area()`).
 - **Adding an event without a keyboard:**
   - From a suggested action item (in its conversation): "→ calendar" fills in the title from the item and the date from
     `due_date`. The user picks a time from a grid (morning slots, then +/− 15 min) and a
@@ -583,10 +734,14 @@ a 3 × 4 grid of hour slots and the durations.
 - **Swipes as built:** on a tab screen left/right = next/previous tab, up/down = page; in a
   detail screen right = back to the list, left = next page, then the next transcript part or
   the next item, nothing at the end (`ui_nav.c`, host-tested).
-- **Refresh policy as built:** a new screen is a full (GC16) update; a change on the same
-  screen (a pending mark, a page) a partial (GL16) one; the minute clock a partial that
+- **Refresh policy as built:** a new screen (tab, menu, detail) and a change on the same
+  screen (a pending mark, a page) are partial (GL16, no flash) updates (owner's choice,
+  2026-10-21: no flash on every tab change; ghosting is left to the clean refresh);
+  turning the screen 180° is a full (GC16) one; the minute clock a partial that
   doesn't count; after 10 counted updates, and on the side button or "Clean refresh", a
-  clean refresh.
+  clean refresh. A new feed is a partial update; the phone's link only redraws Status; an
+  update whose drawing matches the panel is skipped and not counted, so a sync that brings
+  the same content leaves the screen alone.
 
 ## 6. Phone app and servers
 
@@ -596,8 +751,8 @@ a 3 × 4 grid of hour slots and the durations.
   - a feed builder
   - an Odysseus REST client with its own encrypted token (`TokenCipher`)
   - a settings section: Odysseus URL and token, event templates, sync interval
-- **odysseus-sound server:** no change in v1. Optional later: `GET /v1/glance` that returns
-  the four odysseus-sound sections in one call, so the phone makes 1 request instead of 4.
+- **Athena server:** no change in v1. Optional later: `GET /v1/glance` that returns
+  the four Athena sections in one call, so the phone makes 1 request instead of 4.
 - **Odysseus (hub repo):** checked in `SDarioosh/Barvis` on 2026-10-20 (branch `barvis`,
   commit `5cc32c5`; read only, no code run). File:line references are to that commit.
   1. **Endpoints.** Use the token-aware `/api/codex/calendar/…` routes. They wrap the UI's
@@ -652,7 +807,7 @@ a 3 × 4 grid of hour slots and the durations.
      `app.py:1439-1442`). Production is port 7000 with `APP_BIND=0.0.0.0`
      ([hub deploy.md:203](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/deploy.md)),
      so the phone uses `http://<server's Tailscale name or 100.x address>:7000`, the same
-     host as odysseus-sound on another port. If the owner turned auth off
+     host as Athena on another port. If the owner turned auth off
      (`AUTH_ENABLED=false`), the middleware isn't installed (`app.py:266`), and the routes
      run as `ODYSSEUS_FALLBACK_OWNER` whatever token is sent.
 

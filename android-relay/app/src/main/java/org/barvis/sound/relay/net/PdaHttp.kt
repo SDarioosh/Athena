@@ -7,6 +7,7 @@ import org.barvis.sound.relay.relay.CalEvent
 import org.barvis.sound.relay.relay.CalendarApi
 import org.barvis.sound.relay.relay.ConvoApi
 import org.barvis.sound.relay.relay.FeedBuilder
+import org.barvis.sound.relay.relay.InsightApi
 import org.barvis.sound.relay.relay.Level
 import org.barvis.sound.relay.relay.NewEvent
 import org.barvis.sound.relay.relay.RelayLog
@@ -138,51 +139,57 @@ internal class JsonClient(
     }
 }
 
-/** The odysseus-sound HTTP API (server/convo_server/api.py). The token is never logged. */
+/**
+ * The Athena HTTP API (server/convo_server/api.py), directly or through Odysseus
+ * ([routes]: the same paths under `/api/codex/sound` and the same JSON). The token is never
+ * logged.
+ */
 class ConvoHttpApi(
     baseUrl: String,
     token: () -> String,
     transport: HttpTransport = UrlConnectionTransport(),
     log: RelayLog = RelayLog.NONE,
+    private val routes: Routes = Routes.DIRECT,
 ) : ConvoApi {
-    private val c = JsonClient(baseUrl, token, transport, log, "odysseus-sound")
+    private val c = JsonClient(baseUrl, token, transport, log, routes.name)
+    private val p = routes.prefix
 
     override suspend fun health(): ServerResult {
-        val a = c.call("GET", "/health", auth = false) ?: return c.networkError()
+        val a = c.call("GET", routes.health, auth = routes.healthNeedsToken) ?: return c.networkError()
         return HttpUploader.classify(a.code, a.body)
     }
 
     override suspend fun digest(date: String): ApiResult<Map<String, Any?>> {
         require(DATE.matches(date)) { "bad date" }
-        return c.obj("/v1/digests/$date")
+        return c.obj("$p/digests/$date")
     }
 
     override suspend fun conversations(sinceEpochS: Long, limit: Int): ApiResult<List<Map<String, Any?>>> =
-        list(c.obj("/v1/conversations?since=$sinceEpochS&limit=$limit"), "conversations")
+        list(c.obj("$p/conversations?since=$sinceEpochS&limit=$limit"), "conversations")
 
     override suspend fun openActionItems(): ApiResult<List<Map<String, Any?>>> =
-        list(c.obj("/v1/action-items?status=open"), "action_items")
+        list(c.obj("$p/action-items?status=open"), "action_items")
 
     override suspend fun conversation(id: String): ApiResult<Map<String, Any?>> =
-        c.obj("/v1/conversations/${JsonClient.enc(id)}")
+        c.obj("$p/conversations/${JsonClient.enc(id)}")
 
     override suspend fun transcript(id: String): ApiResult<Map<String, Any?>> =
-        c.obj("/v1/conversations/${JsonClient.enc(id)}/transcript")
+        c.obj("$p/conversations/${JsonClient.enc(id)}/transcript")
 
     override suspend fun setActionItemStatus(id: Long, status: String): ServerResult {
-        val a = c.call("PATCH", "/v1/action-items/$id", json = mapOf("status" to status)) ?: return c.networkError()
+        val a = c.call("PATCH", "$p/action-items/$id", json = mapOf("status" to status)) ?: return c.networkError()
         return HttpUploader.classify(a.code, a.body)
     }
 
     override suspend fun makeDigest(date: String): ServerResult {
         require(DATE.matches(date)) { "bad date" }
-        val a = c.call("POST", "/v1/digests/$date", json = emptyMap<String, Any?>()) ?: return c.networkError()
+        val a = c.call("POST", "$p/digests/$date", json = emptyMap<String, Any?>()) ?: return c.networkError()
         return HttpUploader.classify(a.code, a.body, needOkField = false)
     }
 
     private fun list(r: ApiResult<Map<String, Any?>>, key: String): ApiResult<List<Map<String, Any?>>> = when (r) {
         is ApiResult.Ok -> if (r.value[key] is List<*>) ApiResult.Ok(r.value.objects(key))
-            else ApiResult.Fail(ServerResult.Transient("odysseus-sound answer has no \"$key\""))
+            else ApiResult.Fail(ServerResult.Transient("${routes.name} answer has no \"$key\""))
         is ApiResult.Fail -> r
         is ApiResult.Unsupported -> r
     }
@@ -232,10 +239,11 @@ class OdysseusTodosClient(
         val a = c.call("POST", TODOS, json = body) ?: return ApiResult.Fail(c.networkError())
         noTodos(a)?.let { return it }
         return when (val r = c.objOf(a)) {
+            // Plan §4.4: an exit_code other than 0 is result 1; only a missing one is temporary.
             is ApiResult.Ok -> when (r.value.long("exit_code")) {
+                null -> ApiResult.Fail(ServerResult.Transient("Odysseus todos answer has no exit_code"))
                 0L -> ApiResult.Ok(true)
-                1L -> ApiResult.Ok(false)
-                else -> ApiResult.Fail(ServerResult.Transient("Odysseus todos answer has no exit_code"))
+                else -> ApiResult.Ok(false)
             }
             is ApiResult.Fail -> r
             is ApiResult.Unsupported -> r
@@ -253,6 +261,65 @@ class OdysseusTodosClient(
         const val TODOS = "/api/codex/todos"
         const val NO_SCOPE = "add the Todos and Todos write permissions to the Odysseus token"
         const val OLD_HUB = "this Odysseus can't list checklists (update the hub)"
+    }
+}
+
+/**
+ * The hub's Today insight through `/api/codex/insight/today` (plan §4.1), and its rule weights
+ * through `/api/codex/insight/weights` (plan §5), with the same URL and token as the calendar
+ * (scope `insight:read`). The reasons are the PC relay's words.
+ */
+class OdysseusInsightClient(
+    baseUrl: String,
+    token: () -> String,
+    transport: HttpTransport = UrlConnectionTransport(),
+    log: RelayLog = RelayLog.NONE,
+) : InsightApi {
+    private val c = JsonClient(baseUrl, token, transport, log, "Odysseus")
+
+    override suspend fun today(): ApiResult<Map<String, Any?>> {
+        val a = c.call("GET", INSIGHT) ?: return ApiResult.Fail(c.networkError())
+        when {
+            a.code == 403 -> return ApiResult.Unsupported(NO_SCOPE)
+            // FastAPI's 404 for a missing route says "Not Found"; no insight yet says {"error": …}.
+            a.code == 405 || a.code == 404 && JsonClient.detail(a.body) == "Not Found" -> return ApiResult.Unsupported(OLD_HUB)
+            a.code == 404 -> return ApiResult.Unsupported(NOT_YET)
+            a.code == 200 -> return try {
+                ApiResult.Ok(Json.parseObject(a.body))
+            } catch (e: Json.ParseException) {
+                ApiResult.Unsupported(MALFORMED)
+            }
+        }
+        return when (val r = HttpUploader.classify(a.code, a.body, needOkField = false)) {
+            is ServerResult.Rejected -> ApiResult.Unsupported("Odysseus insight: HTTP ${a.code}") // another final 4xx
+            is ServerResult.Ok -> ApiResult.Fail(ServerResult.Transient("Odysseus insight: HTTP ${a.code}")) // an odd 2xx
+            else -> ApiResult.Fail(r) // network, 5xx, 408/429, 3xx, 401: like the calendar
+        }
+    }
+
+    override suspend fun weights(): ApiResult<Map<String, Any?>> {
+        val a = c.call("GET", WEIGHTS) ?: return ApiResult.Fail(c.networkError())
+        return when (a.code) {
+            200 -> try {
+                ApiResult.Ok(Json.parseObject(a.body))
+            } catch (e: Json.ParseException) {
+                ApiResult.Unsupported(WEIGHTS_MALFORMED)
+            }
+            404, 405 -> ApiResult.Unsupported(WEIGHTS_OLD_HUB)
+            403 -> ApiResult.Unsupported(NO_SCOPE)
+            else -> ApiResult.Fail(HttpUploader.classify(a.code, a.body, needOkField = false))
+        }
+    }
+
+    companion object {
+        const val INSIGHT = "/api/codex/insight/today"
+        const val WEIGHTS = "/api/codex/insight/weights"
+        const val WEIGHTS_OLD_HUB = "this Odysseus has no weights route (update the hub)"
+        const val WEIGHTS_MALFORMED = FeedBuilder.WEIGHTS_MALFORMED
+        const val NOT_YET = FeedBuilder.INSIGHT_NOT_YET
+        const val NO_SCOPE = "token lacks insight:read"
+        const val OLD_HUB = "this Odysseus has no insight route (update the hub)"
+        const val MALFORMED = FeedBuilder.INSIGHT_MALFORMED
     }
 }
 
@@ -305,6 +372,9 @@ class OdysseusCalendarClient(
     }
 
     override suspend fun deleteEvent(uid: String): ApiResult<Unit> {
+        // An occurrence id (`<uid>::<occurrence>`): the hub would delete the whole series.
+        // Refused without a call, as by the PC relay (pda_calendar.py), so the T5 gets result 1.
+        if ("::" in uid) return ApiResult.Fail(ServerResult.Rejected(400, "one occurrence of a recurring event can't be deleted"))
         val a = c.call("DELETE", "$EVENTS/${JsonClient.enc(uid)}", logPath = "$EVENTS/…")
             ?: return ApiResult.Fail(c.networkError())
         // FastAPI's 404 for a missing route says "Not Found"; a missing event says "Event not found".
@@ -312,6 +382,23 @@ class OdysseusCalendarClient(
         if (a.code == 503) unsupported(a)?.let { return it }
         return if (a.code in 200..299) ApiResult.Ok(Unit)
             else ApiResult.Fail(HttpUploader.classify(a.code, a.body, needOkField = false))
+    }
+
+    /**
+     * The token owner's calendars (`GET /api/codex/calendars`, scope `calendar:read`), for
+     * Settings' "Choose calendar". Unsupported on a hub without the route.
+     */
+    suspend fun calendars(): ApiResult<List<CalendarChoice>> {
+        val a = c.call("GET", CALENDARS) ?: return ApiResult.Fail(c.networkError())
+        if (a.code == 404 || a.code == 405) return ApiResult.Unsupported("this Odysseus can't list calendars (update the hub)")
+        return when (val r = c.objOf(a)) {
+            is ApiResult.Ok -> ApiResult.Ok(r.value.objects("calendars").mapNotNull { cal ->
+                val href = cal.str("href") ?: return@mapNotNull null
+                CalendarChoice(href, cal.str("name") ?: href, cal.str("source") ?: "")
+            })
+            is ApiResult.Fail -> r
+            is ApiResult.Unsupported -> r
+        }
     }
 
     /** "Not supported" rather than a guess: the route is missing, or the hub has no calendar. */
@@ -327,5 +414,11 @@ class OdysseusCalendarClient(
 
     private companion object {
         const val EVENTS = "/api/codex/calendar/events"
+        const val CALENDARS = "/api/codex/calendars"
     }
+}
+
+/** One of the owner's Odysseus calendars; [id] is what `calendar_href` takes. */
+data class CalendarChoice(val id: String, val name: String, val source: String) {
+    val label: String get() = if (source == "caldav") "$name (CalDAV)" else name
 }

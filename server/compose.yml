@@ -61,6 +61,10 @@ services:
       CONVO_DATA_DIR: /data
       CONVO_MCP_HOST: 0.0.0.0
       CONVO_MCP_PORT: "8001"
+      # The relay routes (ingest_relay.py: uploads, notes, T5 reads, /settings/llm)
+      # forward to the ingest API at CONVO_HOST:CONVO_PORT: here the sound-api container.
+      CONVO_HOST: sound-api
+      CONVO_PORT: "8000"
       CONVO_MCP_TOKEN: ${CONVO_MCP_TOKEN:?set CONVO_MCP_TOKEN in server/.env (16+ characters)}
       CONVO_PUBLIC_URL: ${CONVO_PUBLIC_URL:-http://127.0.0.1:${CONVO_PORT:-8000}}
     ports:

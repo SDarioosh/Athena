@@ -33,7 +33,7 @@ sealed class ApiResult<out T> {
     data class Unsupported(val reason: String) : ApiResult<Nothing>()
 }
 
-/** The odysseus-sound HTTP API calls the PDA needs (server/convo_server/api.py, §4). */
+/** The Athena HTTP API calls the PDA needs (server/convo_server/api.py, §4). */
 interface ConvoApi {
     /** `GET /health` (no token). */
     suspend fun health(): ServerResult
@@ -135,6 +135,35 @@ object NoTodos : TodosApi {
 }
 
 /**
+ * The hub's Today insight (`GET /api/codex/insight/today`, scope `insight:read`, plan §4.1),
+ * with the calendar's URL and token.
+ */
+interface InsightApi {
+    /**
+     * The hub's answer, a JSON object (the feed builder checks its shape). [ApiResult.Unsupported]
+     * for "no insight", with the reason: no insight yet (404), a hub without the route, a token
+     * without `insight:read` (403), another final 4xx, or an answer that isn't a JSON object.
+     * [ApiResult.Fail] for network errors, 5xx, 408/429 and 401, which fail the feed like the
+     * calendar's.
+     */
+    suspend fun today(): ApiResult<Map<String, Any?>>
+
+    /**
+     * The hub's rule weights for the T5's rule-based Today plan (`GET /api/codex/insight/weights`,
+     * same scope, plan §5): `{"version": 1, "date", "weights": {"list:<note id>": int}}`. Anything
+     * but [ApiResult.Ok] (an older hub's 404, 403, network errors, 5xx, a non-object answer) keeps
+     * the last good table; a weights failure never fails the feed.
+     */
+    suspend fun weights(): ApiResult<Map<String, Any?>> = ApiResult.Unsupported("no weights route")
+}
+
+/** Used when no Odysseus URL and token are set: the feed has no `insight` and no `weights`. */
+object NoInsight : InsightApi {
+    override suspend fun today() = ApiResult.Unsupported("Odysseus isn't set up in the relay settings")
+    override suspend fun weights() = ApiResult.Unsupported("Odysseus isn't set up in the relay settings")
+}
+
+/**
  * What the relay remembers per PDA between connections. The app persists it in
  * SharedPreferences; tests use [MemoryPdaMemory].
  */
@@ -151,6 +180,11 @@ interface PdaMemory {
     fun createdEvent(actionKey: String): String?
 
     fun eventCreated(actionKey: String, uid: String, nowMs: Long)
+
+    /** The hub's last good `weights` table (plan §5) as compact JSON, or null: never fetched. */
+    fun lastWeights(): String?
+
+    fun weightsFetched(json: String)
 }
 
 class MemoryPdaMemory : PdaMemory {
@@ -165,5 +199,10 @@ class MemoryPdaMemory : PdaMemory {
     @Synchronized override fun createdEvent(actionKey: String) = created[actionKey]
     @Synchronized override fun eventCreated(actionKey: String, uid: String, nowMs: Long) {
         created[actionKey] = uid
+    }
+    var weights: String? = null
+    @Synchronized override fun lastWeights() = weights
+    @Synchronized override fun weightsFetched(json: String) {
+        weights = json
     }
 }

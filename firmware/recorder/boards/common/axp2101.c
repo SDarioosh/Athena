@@ -15,11 +15,13 @@ static i2c_dev_t s_dev;
 #define REG_CHARGE_GAUGE_WDT_CTRL 0x18 /* bit2 backup (button) battery charge enable */
 #define REG_IRQ_OFF_ON_LEVEL 0x27 /* bits[5:4] PKEY_LONG IRQ time, [3:2] power-off, [1:0] power-on */
 #define REG_ADC_CHANNEL_CTRL 0x30
+#define REG_TS_PIN_CTRL 0x50    /* bits[3:0]; 0x10 = TS is an external input, not a thermistor */
 #define REG_ADC_VBAT_H 0x34
 #define REG_INTEN1 0x40
 #define REG_INTSTS1 0x48
 #define REG_ICC_CHG_SET 0x62    /* bits[4:0] constant charge current */
 #define REG_CV_CHG_VOL_SET 0x64 /* bits[2:0] charge target voltage */
+#define REG_BAT_DET_CTRL 0x68   /* bit0 battery detection */
 #define REG_CHGLED_SET_CTRL 0x69
 #define REG_BTN_BAT_CHG_VOL_SET 0x6A /* bits[2:0]: 2.6 V + n * 0.1 V */
 #define REG_DC_ONOFF 0x80       /* bit0 DC1 .. bit4 DC5 */
@@ -164,6 +166,21 @@ esp_err_t axp2101_adc_enable(uint8_t channel_mask)
     return i2c_reg_write8(&s_dev, REG_ADC_CHANNEL_CTRL, channel_mask);
 }
 
+esp_err_t axp2101_ts_pin_disable(void)
+{
+    /* Same writes as XPowersLib: low nibble cleared, bit 4 set; then the TS ADC channel off. */
+    uint8_t v = 0;
+    ESP_RETURN_ON_ERROR(i2c_reg_read8(&s_dev, REG_TS_PIN_CTRL, &v), TAG, "ts read");
+    ESP_RETURN_ON_ERROR(i2c_reg_write8(&s_dev, REG_TS_PIN_CTRL, (uint8_t)((v & 0xF0) | 0x10)), TAG,
+                        "ts write");
+    return i2c_reg_update(&s_dev, REG_ADC_CHANNEL_CTRL, 0x02, 0x00);
+}
+
+esp_err_t axp2101_battery_detect_enable(void)
+{
+    return i2c_reg_update(&s_dev, REG_BAT_DET_CTRL, 0x01, 0x01);
+}
+
 esp_err_t axp2101_read_battery(axp_battery_t *out)
 {
     uint8_t st1, st2, vb[2], pct;
@@ -183,6 +200,12 @@ esp_err_t axp2101_set_pkey_long_ms(int ms)
 {
     ESP_RETURN_ON_FALSE(ms >= 1000 && ms <= 2500 && ms % 500 == 0, ESP_ERR_INVALID_ARG, TAG, "ms");
     return i2c_reg_update(&s_dev, REG_IRQ_OFF_ON_LEVEL, 0x30, (uint8_t)(((ms - 1000) / 500) << 4));
+}
+
+esp_err_t axp2101_set_pkey_off_ms(int ms)
+{
+    ESP_RETURN_ON_FALSE(ms >= 4000 && ms <= 10000 && ms % 2000 == 0, ESP_ERR_INVALID_ARG, TAG, "ms");
+    return i2c_reg_update(&s_dev, REG_IRQ_OFF_ON_LEVEL, 0x0C, (uint8_t)(((ms - 4000) / 2000) << 2));
 }
 
 static void pkey_times(uint8_t v, int *long_irq_ms, int *off_ms, int *on_ms)

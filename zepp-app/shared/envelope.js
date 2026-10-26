@@ -14,6 +14,14 @@ function asciiBytes(str) {
   return out
 }
 
+// Bytes of an ArrayBuffer or of any view on one (Uint8Array, DataView, ...), keeping the
+// view's offset and length: new Uint8Array(dataView) would be empty.
+function toBytes(data) {
+  if (data instanceof Uint8Array) return data
+  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  return new Uint8Array(data)
+}
+
 function asciiString(bytes) {
   let s = ''
   for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i])
@@ -23,7 +31,7 @@ function asciiString(bytes) {
 /** @returns {ArrayBuffer} */
 export function buildEnvelope(header, audio) {
   const head = asciiBytes(JSON.stringify(header))
-  const body = audio instanceof Uint8Array ? audio : new Uint8Array(audio)
+  const body = toBytes(audio)
   const out = new Uint8Array(4 + head.length + body.length)
   const n = head.length
   out[0] = n & 0xff
@@ -37,7 +45,7 @@ export function buildEnvelope(header, audio) {
 
 /** @returns {{header: object, audio: Uint8Array}} */
 export function parseEnvelope(buf) {
-  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
+  const bytes = toBytes(buf)
   if (bytes.length < 4) throw new Error('envelope too short')
   const n = bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24)
   if (n <= 0 || 4 + n > bytes.length) throw new Error('bad envelope header length')

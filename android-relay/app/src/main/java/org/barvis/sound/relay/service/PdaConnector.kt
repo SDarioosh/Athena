@@ -9,6 +9,7 @@ import org.barvis.sound.relay.ble.GattClient
 import org.barvis.sound.relay.ble.GattStatusException
 import org.barvis.sound.relay.net.ConvoHttpApi
 import org.barvis.sound.relay.net.OdysseusCalendarClient
+import org.barvis.sound.relay.net.OdysseusInsightClient
 import org.barvis.sound.relay.net.OdysseusTodosClient
 import org.barvis.sound.relay.net.ServerUrl
 import org.barvis.sound.relay.protocol.PdaGatt
@@ -16,9 +17,11 @@ import org.barvis.sound.relay.protocol.PdaStatus
 import org.barvis.sound.relay.protocol.ProtocolException
 import org.barvis.sound.relay.protocol.WatchInfo
 import org.barvis.sound.relay.relay.CalendarApi
+import org.barvis.sound.relay.relay.InsightApi
 import org.barvis.sound.relay.relay.Level
 import org.barvis.sound.relay.relay.LinkException
 import org.barvis.sound.relay.relay.NoCalendar
+import org.barvis.sound.relay.relay.NoInsight
 import org.barvis.sound.relay.relay.NoTodos
 import org.barvis.sound.relay.relay.PdaListener
 import org.barvis.sound.relay.relay.PdaOutcome
@@ -41,9 +44,9 @@ class PdaConnector(private val context: Context, private val settings: Settings)
     val schedule = PdaSchedule({ settings.pdaSyncMinutes * 60_000L }, { settings.pdaAutoSync })
 
     /** One sync with [device]; returns how long the relay loop should pause afterwards. */
-    suspend fun sync(device: BluetoothDevice, serverBase: String): Long {
+    suspend fun sync(device: BluetoothDevice, server: Settings.Target): Long {
         RelayState.update { it.copy(phase = Phase.PDA_SYNC, detail = "", pdaLine = "Syncing…") }
-        val outcome = connectAndSync(device, serverBase)
+        val outcome = connectAndSync(device, server)
         val now = System.currentTimeMillis()
         val next = schedule.after(outcome, now)
         fun retry(text: String) = if (schedule.isAuto) ". Retry in $text" else ". Tap Sync T5 now to try again"
@@ -73,6 +76,7 @@ class PdaConnector(private val context: Context, private val settings: Settings)
         if (s.feedsPushed > 0) parts += "feed sent" else parts += "feed unchanged"
         s.calendarNote?.let { parts += "calendar: $it" }
         s.todosNote?.let { parts += "todos: $it" }
+        s.insightNote?.let { parts += "insight: $it" }
         return " · " + parts.joinToString(" · ")
     }
 
@@ -82,6 +86,12 @@ class PdaConnector(private val context: Context, private val settings: Settings)
         return OdysseusTodosClient(url.base, { settings.odysseusToken() }, log = log)
     }
 
+    private fun insight(): InsightApi {
+        val url = ServerUrl.check(settings.odysseusUrl)
+        if (url !is ServerUrl.Check.Ok || !settings.hasOdysseusToken) return NoInsight
+        return OdysseusInsightClient(url.base, { settings.odysseusToken() }, log = log)
+    }
+
     private fun calendar(): CalendarApi {
         val url = ServerUrl.check(settings.odysseusUrl)
         if (url !is ServerUrl.Check.Ok || !settings.hasOdysseusToken) return NoCalendar
@@ -89,7 +99,7 @@ class PdaConnector(private val context: Context, private val settings: Settings)
             settings.odysseusCalendarId.ifBlank { null }, log = log)
     }
 
-    private suspend fun connectAndSync(device: BluetoothDevice, serverBase: String): PdaOutcome {
+    private suspend fun connectAndSync(device: BluetoothDevice, server: Settings.Target): PdaOutcome {
         val client = GattClient(context, device, log, PdaGatt.PROFILE)
         try {
             client.connect()
@@ -107,7 +117,7 @@ class PdaConnector(private val context: Context, private val settings: Settings)
             log.log(Level.INFO, "PDA connected, MTU $mtu")
             val sync = PdaSync(
                 link = link,
-                api = ConvoHttpApi(serverBase, { settings.token() }, log = log),
+                api = ConvoHttpApi(server.base, server.token, log = log, routes = server.routes),
                 calendar = calendar(),
                 memory = settings.pdaMemory,
                 deviceKey = device.address,
@@ -117,6 +127,7 @@ class PdaConnector(private val context: Context, private val settings: Settings)
                 // Manual sync: one pass and BYE, so the watch gets the BLE stack back at once.
                 maxStayMs = if (settings.pdaAutoSync) 10 * 60_000L else 0L,
                 todos = todos(),
+                insight = insight(),
             )
             return sync.run().also { client.highPriority(false) }
         } catch (e: GattStatusException) {
