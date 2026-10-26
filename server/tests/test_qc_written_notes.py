@@ -11,10 +11,12 @@ import pytest
 from conftest import TOKEN
 from fastapi.testclient import TestClient
 from test_ingest_relay import MCP_TOKEN, mcp_client
+from test_mcp import call
 from test_written_notes import LINK, note_llm
 
 from convo_server.api import create_app
 from convo_server.llm import LLMClient, Summarizer
+from convo_server.mcp_server import build_mcp
 from convo_server.pipeline import MAX_LINE_CHARS, validate_link, written_lines
 from convo_server.store import ERASED_TEXT
 
@@ -248,6 +250,37 @@ def test_a7_a_failed_note_is_retried_by_the_worker_after_an_unchanged_resend(api
     pipeline.settings.summary_retry_seconds = 0
     Worker(pipeline).tick()
     assert pipeline.store.get_conversation(conv)["status"] == "summarized"
+
+
+# ------------------------------------------------------------------- A-8
+def test_a8_digest_calls_a_written_note_a_written_note(pipeline):
+    log: list = []
+    pipeline.summarizer = Summarizer(
+        LLMClient("http://llm.test/v1", "test-model", transport=note_llm(log)), "Me")
+    conv = put(pipeline, "hub-note:n1", ["Call the dentist on Monday."])
+    summarize(pipeline.store, conv)
+    pipeline.summarizer.digest("2025-10-09", [pipeline.store.get_conversation(conv)])
+    (sent,) = json.loads(log[-1]["messages"][-1]["content"])
+    assert sent.get("written_note") is True and "voice_note" not in sent
+
+
+def test_a8_list_facts_marks_repeats_and_history_from_written_notes(pipeline):
+    s = pipeline.store
+    c1 = put(pipeline, "hub-note:a", ["Alice lives in Lisbon."])
+    (f1,) = summarize(s, c1, [("Alice", "Alice lives in Lisbon", T0)])
+    c2 = pipeline.ingest_text(source_id="hub-note:b", text="Alice lives in Porto now.",
+                              written_at=T0 + DAY, link=f"{LINK}-2")["conversation_id"]
+    (f2,) = summarize(s, c2, [("Alice", "Alice lives in Porto", T0 + DAY)])
+    s.link_fact(f2, "updates", f1)
+    c3 = pipeline.ingest_text(source_id="hub-note:c", text="Alice lives in Porto.",
+                              written_at=T0 + 2 * DAY, link=f"{LINK}-3")["conversation_id"]
+    (f3,) = summarize(s, c3, [("Alice", "Alice lives in Porto", T0 + 2 * DAY)])
+    s.link_fact(f3, "same", f2)
+    text = call(build_mcp(s, pipeline.settings), "list_facts")
+    said_again = next(ln for ln in text.splitlines() if "said again" in ln)
+    replaces = next(ln for ln in text.splitlines() if "replaces" in ln)
+    assert said_again.endswith(f"(written by hand: {LINK}-3)")
+    assert replaces.endswith(f"(written by hand: {LINK})")
 
 
 # ------------------------------------------------------------------- X-1
