@@ -1482,10 +1482,12 @@ class Store:
             return _segment(dict(row))
 
     def delete_empty_conversations(self) -> int:
+        # A conversation whose transcript retention removed keeps its summary, facts and
+        # action items: it has no lines on purpose.
         with self.tx() as c:
             ids = [r["id"] for r in c.execute(
-                "SELECT id FROM conversations WHERE id NOT IN"
-                " (SELECT DISTINCT conversation_id FROM segments"
+                "SELECT id FROM conversations WHERE transcript_pruned_at IS NULL"
+                " AND id NOT IN (SELECT DISTINCT conversation_id FROM segments"
                 "  WHERE conversation_id IS NOT NULL)")]
             for conv_id in ids:
                 _delete_conversation(c, conv_id)
