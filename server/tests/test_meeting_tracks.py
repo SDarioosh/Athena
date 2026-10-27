@@ -493,3 +493,51 @@ def test_true_bleed_is_still_dropped_and_never_joined_back(pipeline):
     segs = _with_script(words, lambda: meeting(pipeline, [alice, bo]))
     assert rows(segs) == [("Alice Example", False, "so I think"),
                           ("Bo Example", False, "Let's ship the release on Friday.")]
+
+
+# ------------------------------------- QA: rooms by any of a track's names (BUG-15)
+
+
+def _two_chunk_track(pipeline, names, owners=""):
+    pipeline.transcriber = ScriptedWhisper()
+    pipeline.settings.zoom_owner_names = owners
+    calls = []
+    real = pipeline.diarizer.diarize_runs
+    pipeline.diarizer.diarize_runs = lambda *a: calls.append(1) or real(*a)
+    for seq, name in enumerate(names):
+        _upload(pipeline, "m1", seq, T0 + 30 * seq,
+                track_audio((1, tone(900, 4)), (9, tone(1100, 4))), "t1", name)
+    _finish(pipeline, "m1")
+    return calls, {s.speaker for s in pipeline.store.session_segments("m1")}
+
+
+@pytest.mark.parametrize("names", [
+    ("Conference Room 2", "Alice Example"),   # the room renamed to a person later
+    ("Conference Room 2", "\N{THUMBS UP SIGN}"),
+    ("Alice Example", "Conference Room 2"),
+])
+def test_a_track_that_was_ever_a_room_is_diarized(pipeline, names):
+    """QA BUG-15: a track that showed a room name at any point can hold several people;
+    a person's name on it too is most likely someone in that room, so the diarizer
+    decides (it still names enrolled voices), not the latest display name."""
+    calls, speakers = _two_chunk_track(pipeline, names)
+    assert calls == [1]
+    assert speakers == {"Speaker 1", "Speaker 2"}
+
+
+def test_owner_names_that_look_like_devices_stay_the_owner(pipeline):
+    # "Cleo (phone)" is a device word, but it is one of the owner's own names
+    calls, speakers = _two_chunk_track(pipeline, ["Cleo (phone)", "Cleo (phone)"],
+                                       owners="Cleo Example, Cleo (phone)")
+    assert calls == [] and speakers == {"Me"}
+
+
+# ------------------------------- QA: hardware and room names are rooms (BUG-01, 2A)
+
+
+@pytest.mark.parametrize("name", ["Polycom", "Logitech Rally", "Huddle 4", "Conf Rm A",
+                                  "ZoomRoom-3F", "SM-G991B", "Lobby", "Speakerphone"])
+def test_qa_room_and_hardware_names_are_diarized(pipeline, name):
+    assert is_shared_room(name)
+    calls, speakers = _two_chunk_track(pipeline, [name])
+    assert calls == [1] and speakers == {"Speaker 1", "Speaker 2"}

@@ -10,9 +10,9 @@ participant's: no diarizer, no speaker embedder. Then:
 * **Bleed**: two participants in one room hear each other, so one voice can reach two
   microphones. A line whose words nearly match a line on another track at about the
   same time is dropped, keeping the louder track's line (``find_bleed``).
-* **Shared rooms and devices**: a track whose display name is a room or a device
-  ("Conference Room", "iPhone", "Zoom user", ``is_shared_room``) can hold several
-  people. The configured diarizer runs on that track only; its unnamed voices become
+* **Shared rooms and devices**: a track whose display name is, or ever was, a room or
+  a device ("Conference Room", "iPhone", "Zoom user", ``is_shared_room``) can hold
+  several people. The configured diarizer runs on that track only; its unnamed voices become
   "Speaker N" (numbered across the meeting) with stored voices, so ``name_speaker`` and
   ``list_unnamed_speakers`` work on them as on any recording.
 * **Owner**: a track named in ``CONVO_ZOOM_OWNER_NAMES`` is the owner's
@@ -113,6 +113,21 @@ def track_speaker(store: Store, track_info: dict[str, Any],
     name = " ".join((track_info.get("name") or "").split())
     owner = bool(name) and any(_same_name(name, o) for o in owner_names if o.strip())
     return name, owner
+
+
+def _room_track(info: dict[str, Any], owner_names: Sequence[str]) -> bool:
+    """True when any display name the track ever had (raw) is a room or a device, other
+    than one of the owner's own names ("Cleo (phone)"). A track that showed "Conference
+    Room 2" and later "Alice Example" stays a room: most likely someone in that room set
+    a name, and others may still be speaking there. Diarizing is the safe side: the
+    diarizer still names enrolled voices, while a wrongly named track would put a whole
+    room's words on one person."""
+    names = list(info.get("names") or [])
+    if info.get("name") and info["name"] not in names:
+        names.append(info["name"])
+    return any(is_shared_room(n) and not any(_same_name(n, o) for o in owner_names
+                                             if o.strip())
+               for n in names)
 
 
 @dataclass
@@ -243,7 +258,7 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
         idx = sorted(range(len(pieces)), key=lambda i: pieces[i][0])
         pieces, words = [pieces[i] for i in idx], [words[i] for i in idx]
         name, owner = who.get(track, ("", False))
-        shared = not track or (not owner and is_shared_room(name))
+        shared = not track or _room_track(infos.get(track, {}), owner_names)
         if shared and pipeline.diarizer is not None:
             if not voices_loaded:
                 pipeline.diarizer.voices = load_voices(store)
