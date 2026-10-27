@@ -99,6 +99,42 @@ def test_join_errors_pass_through_with_their_fields(pipeline, status, body):
     assert r.status_code == status and r.json() == body
 
 
+PYDANTIC_422 = {"detail": [
+    {"type": "missing", "loc": ["body", "url"], "msg": "Field required", "input": {}},
+    {"type": "string_too_long", "loc": ["body", "title"],
+     "msg": "String should have at most 200 characters", "input": "x"},
+]}
+
+
+def test_error_list_detail_becomes_a_readable_string(pipeline):
+    """QA BUG-23: FastAPI's 422 list ``detail`` reaches the hub as one string."""
+    c, _ = fake(pipeline, 422, PYDANTIC_422)
+    r = c.post(f"/meetings{Q}", json={"title": "x"})
+    assert r.status_code == 422
+    body = r.json()
+    assert isinstance(body["detail"], str)
+    assert body["detail"] == ("body.url: Field required; "
+                              "body.title: String should have at most 200 characters")
+    assert body["errors"] == PYDANTIC_422["detail"]
+
+
+@pytest.mark.parametrize("raw", [["boom", "bang"], "plain words", 42, None,
+                                 {"detail": {"why": "nested"}}, {"message": "no detail"}])
+def test_error_json_without_a_string_detail_gets_one(pipeline, raw):
+    """QA BUG-23: a non-object JSON error, or an object without a string detail."""
+    c, _ = fake(pipeline, 500, raw)
+    for r in (c.post(f"/meetings{Q}", json={"meeting_id": "123456789"}),
+              c.get(f"/meetings/{MID}{Q}"), c.delete(f"/meetings/{MID}{Q}")):
+        assert r.status_code == 500
+        assert isinstance(r.json()["detail"], str) and r.json()["detail"]
+
+
+def test_successful_non_object_answers_are_untouched(pipeline):
+    c, _ = fake(pipeline, 200, ["a", "b"])
+    r = c.get(f"/meetings{Q}")
+    assert r.status_code == 200 and r.json() == ["a", "b"]
+
+
 def test_unknown_meeting_passes_through(pipeline):
     c, _ = fake(pipeline, 404, {"detail": "meeting not found"})
     for method in ("GET", "DELETE"):

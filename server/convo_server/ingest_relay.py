@@ -32,6 +32,7 @@ leaves the module.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
@@ -94,14 +95,49 @@ def _json(status: int, detail: str) -> Any:
     return JSONResponse({"detail": detail}, status_code=status)
 
 
+def _readable(value: Any) -> str:
+    """One line for an error ``detail`` that isn't a string (FastAPI's 422 list...)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, dict) and "msg" in item:
+                loc = ".".join(str(p) for p in item.get("loc") or ())
+                parts.append(f"{loc}: {item['msg']}" if loc else str(item["msg"]))
+            else:
+                parts.append(_readable(item))
+        return "; ".join(p for p in parts if p)
+    if value is None:
+        return ""
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
 def _passthrough(resp: httpx.Response) -> Any:
-    """The API's status and JSON body as they are; a non-JSON body becomes ``detail``."""
+    """The API's status and JSON body as they are; a non-JSON body becomes ``detail``.
+
+    An error answer (4xx/5xx) always has a string ``detail``, which is what the hub
+    reads: a list ``detail`` (FastAPI's 422 validation errors) is joined into one line
+    and kept as ``errors``; a non-object JSON error is wrapped (QA BUG-23).
+    """
     from starlette.responses import JSONResponse
 
     try:
         body = resp.json()
     except ValueError:
         body = {"detail": (resp.text or resp.reason_phrase or "")[:500]}
+    if resp.status_code >= 400:
+        if not isinstance(body, dict):
+            body = {"detail": _readable(body)[:500]}
+        elif not isinstance(body.get("detail"), str):
+            raw = body.get("detail")
+            body = dict(body)
+            if isinstance(raw, list):
+                body.setdefault("errors", raw)
+            msg = body.get("message")
+            body["detail"] = (_readable(raw) or (msg if isinstance(msg, str) else ""))[:500]
+        if not body["detail"]:
+            body["detail"] = resp.reason_phrase or f"HTTP {resp.status_code}"
     return JSONResponse(body, status_code=resp.status_code)
 
 
