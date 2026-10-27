@@ -70,7 +70,6 @@ SELF_TRACK = "16778240"  # the stub's Athena (its own audio must never be upload
 _MEMORY = re.compile(r"^(\d+(?:\.\d+)?)([KMGT]?)(?:i?B)?$", re.IGNORECASE)
 _SOCKET = re.compile(r"^socket:\[(\d+)\]$")
 CLK_TCK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
-PAGE = os.sysconf("SC_PAGE_SIZE") if hasattr(os, "sysconf") else 4096
 
 
 # ------------------------------------------------------------------ sizes
