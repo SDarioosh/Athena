@@ -68,9 +68,11 @@ RUN if [ "$WITH_PYTHON" = 1 ]; then \
       && cp -a /opt/zoomsdk/. /tmp/pyzoom/src/zoomsdk/ \
       && pip3 install --break-system-packages /tmp/pyzoom \
       && rm -rf /tmp/pyzoom; fi
-# Fail the build if the SDK needs a library this image lacks.
-RUN missing="$(LD_LIBRARY_PATH=/opt/zoomsdk:/opt/zoomsdk/qt_libs:/opt/zoomsdk/qt_libs/Qt/lib \
-      ldd /opt/spike/cpp/build/athena-meeting-spike | grep 'not found' || true)"; \
+# Where the SDK and its bundled Qt are found at run time (the Python binding loads the SDK
+# itself, so the binary's RPATH alone isn't enough).
+ENV LD_LIBRARY_PATH=/opt/zoomsdk:/src/cpp/build/sdklib:/opt/zoomsdk/qt_libs:/opt/zoomsdk/qt_libs/Qt/lib
+# Fail the build if the SDK needs a library this image lacks, seen exactly as a run sees it.
+RUN missing="$(ldd /opt/spike/cpp/build/athena-meeting-spike | grep 'not found' || true)"; \
     if [ -n "$missing" ]; then echo "missing libraries:"; echo "$missing"; exit 1; fi
 USER athena
 WORKDIR /home/athena
