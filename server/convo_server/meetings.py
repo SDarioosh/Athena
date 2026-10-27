@@ -21,7 +21,9 @@ Bot contract (lane 1A codes against it; also in ``server/README.md``)::
     env:  ATHENA_MEETING_JWT       Meeting SDK join token (signed here, HS256)
           ATHENA_UPLOAD_TOKEN      bearer token for this meeting's session only
           ATHENA_MEETING_PASSCODE  passcode or the link's pwd value (absent if none)
-          ATHENA_ZOOM_JOIN_TOKEN   reserved (owner sign-in, see join_token_provider)
+          ATHENA_ZOOM_JOIN_TOKEN   ZAK or OBF token from Athena's Zoom sign-in (absent
+                                   in mode none), see join_token_provider
+          ATHENA_ZOOM_JOIN_TOKEN_KIND  zak | obf (absent with no join token)
     stdout: one status line per change: ``STATE <state> [<reason>]``
     stderr: free-form logs (go to the server's log)
 
@@ -207,16 +209,28 @@ def sign_sdk_jwt(key: str, secret: str, meeting_id: str, *, now: float | None = 
     return head + "." + base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
 
 
-def join_token_provider(settings: Settings, meeting: ZoomMeeting) -> str | None:
-    """A join token from the owner's Zoom account, for meetings that need one.
+async def join_token_provider(settings: Settings, meeting: ZoomMeeting, *,
+                              transport: Any = None) -> tuple[str, str | None]:
+    """``(kind, token)`` for this join: ``("zak"|"obf", token)`` from Athena's Zoom
+    sign-in (convo_server/zoom_signin.py, imported only here), or ``("none", None)``.
+    Called on a join request only. Raises MeetingError 503 ``zoom_signin_needed`` when the
+    mode needs a sign-in that is missing or expired, 502 ``zoom_unavailable`` when Zoom
+    can't be reached."""
+    if settings.zoom_join_token == "none":
+        return "none", None
+    from . import zoom_signin
 
-    Hook for the plan's lane 1B item "a one-time Zoom sign-in for the owner (OAuth; the
-    refresh token stays in the data dir) and a fresh join token fetched per meeting",
-    which waits on Phase 0 finding that Zoom requires it for meetings in other accounts.
-    Returns None today. When it returns a token, the bot gets it as
-    ``ATHENA_ZOOM_JOIN_TOKEN``.
-    """
-    return None
+    kind = zoom_signin.join_mode(settings)
+    if kind == "none":
+        return "none", None
+    try:
+        token = await zoom_signin.join_token(settings, kind, meeting.meeting_id,
+                                             transport=transport)
+    except zoom_signin.SigninNeeded as e:
+        raise MeetingError(503, "zoom_signin_needed", message=str(e)) from None
+    except zoom_signin.ZoomUnavailable as e:
+        raise MeetingError(502, "zoom_unavailable", message=str(e)) from None
+    return kind, token
 
 
 # --------------------------------------------------------------- bot command
@@ -278,6 +292,8 @@ def check_settings(settings: Settings) -> Path:
         raise MeetingError(501, str(e)) from e
     if settings.meeting_track_codec not in ("opus", "wav"):
         raise MeetingError(501, "CONVO_MEETING_TRACK_CODEC must be opus or wav")
+    if settings.zoom_join_token not in ("auto", "zak", "obf", "none"):
+        raise MeetingError(501, "CONVO_ZOOM_JOIN_TOKEN must be auto, zak, obf or none")
     return bot
 
 
@@ -306,7 +322,8 @@ def out(row: dict[str, Any]) -> dict[str, Any]:
     return {"id": row["id"], "state": row["state"], "reason": row["reason"],
             "active": row["state"] in MEETING_ACTIVE, "session_id": row["session_id"],
             "meeting_id": row["meeting_id"], "title": row["title"],
-            "created_at": iso(row["created_at"]), "started_at": iso(row["started_at"]),
+            "join_token_kind": row["join_token_kind"], "created_at": iso(row["created_at"]),
+            "started_at": iso(row["started_at"]),
             "ended_at": iso(row["ended_at"])}
 
 
@@ -354,11 +371,18 @@ class Launcher:
         self.store: Store = pipeline.store
         self.running: dict[str, _Running] = {}
         self.stop_grace = STOP_GRACE_SECONDS
+        self.zoom_transport: Any = None  # tests: a fake Zoom API (httpx transport)
         self._runner: str | None = None
+        self._join_lock = asyncio.Lock()  # one join at a time: busy check + token fetch
 
     # ------------------------------------------------------------- requests
     async def join(self, url: str | None, meeting_id: str | int | None,
                    passcode: str | None, title: str | None) -> dict[str, Any]:
+        async with self._join_lock:
+            return await self._join(url, meeting_id, passcode, title)
+
+    async def _join(self, url: str | None, meeting_id: str | int | None,
+                    passcode: str | None, title: str | None) -> dict[str, Any]:
         bot = check_settings(self.settings)
         try:
             meeting = parse_join_request(url, meeting_id, passcode)
@@ -375,6 +399,9 @@ class Launcher:
                                message=f"Athena is already in a meeting ({len(active)} of "
                                        f"{n} bot{'s' if n != 1 else ''}). Stop it first "
                                        "(DELETE /v1/meetings/<id>) or wait until it ends.")
+        # the only network call: Zoom's API, for the join token (before anything starts)
+        join_kind, join_token = await join_token_provider(
+            self.settings, meeting, transport=self.zoom_transport)
         runner = await self._pick_runner()
         mid = uuid.uuid4().hex
         session_id = f"zoom-{mid}"
@@ -385,6 +412,7 @@ class Launcher:
         self.store.add_meeting({
             "id": mid, "state": "starting", "session_id": session_id,
             "meeting_id": meeting.meeting_id, "title": title, "runner": runner,
+            "join_token_kind": join_kind,
             "unit": unit if runner == "systemd" else None,
             "upload_token_hash": hashlib.sha256(token.encode()).hexdigest(),
             "created_at": now})
@@ -396,7 +424,8 @@ class Launcher:
                 lifetime=self.settings.max_session_seconds + 3600),
             "ATHENA_UPLOAD_TOKEN": token,
             "ATHENA_MEETING_PASSCODE": meeting.passcode or "",
-            "ATHENA_ZOOM_JOIN_TOKEN": join_token_provider(self.settings, meeting) or "",
+            "ATHENA_ZOOM_JOIN_TOKEN": join_token or "",
+            "ATHENA_ZOOM_JOIN_TOKEN_KIND": join_kind if join_token else "",
         })
         argv = build_command(self.settings, runner, bot,
                              bot_args(self.settings, meeting, session_id, work_dir), unit)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -121,6 +122,44 @@ def build_pipeline(settings: Settings) -> Pipeline:
                     embedder)
 
 
+def zoom_login(settings: Settings, *, status_only: bool = False,
+               ask: Callable[[str], str] = input, transport: object = None) -> int:
+    """``convo-server zoom-login``: print the Zoom authorize URL, take the redirect URL (or
+    its code) pasted back, save the refresh token. Nothing listens for the redirect: the
+    server may be headless. Tokens are never printed."""
+    import asyncio
+
+    from . import zoom_signin
+
+    path = zoom_signin.token_file(settings)
+    if status_only:
+        print(f"signed in ({path})" if zoom_signin.signed_in(settings) else "not signed in")
+        print(f"join token for the next meeting: {zoom_signin.join_mode(settings)}")
+        return 0
+    try:
+        login = zoom_signin.start_login(settings)
+    except zoom_signin.SigninNeeded as e:
+        print(f"error: {e}")
+        return 2
+    print("1. Open this URL in a browser and sign in as Athena's own Zoom account:\n")
+    print(f"   {login.url}\n")
+    print("2. Allow the app. The browser then goes to the redirect URL (the page itself may")
+    print("   fail to load; that's fine). Copy the whole address from the address bar.\n")
+    try:
+        code = zoom_signin.code_from_paste(ask("3. Paste it here: "), login.state)
+        scope = asyncio.run(zoom_signin.finish_login(settings, login, code,
+                                                     transport=transport))  # type: ignore[arg-type]
+    except (ValueError, zoom_signin.SigninNeeded, zoom_signin.ZoomUnavailable) as e:
+        print(f"error: {e}")
+        return 1
+    print(f"\nSigned in. Refresh token saved to {path} (mode 0600).")
+    if scope:
+        print(f"Scopes: {scope}")
+    if "user:read:token" not in scope.split():
+        print("warning: the app lacks the user:read:token scope; Zoom will refuse join tokens")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="convo-server")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -132,6 +171,9 @@ def main(argv: list[str] | None = None) -> None:
     m = sub.add_parser("mcp", help="MCP server for knowledge frontends (stdio by default)")
     m.add_argument("--http", action="store_true",
                    help="serve Streamable HTTP on CONVO_MCP_HOST:CONVO_MCP_PORT/mcp")
+    z = sub.add_parser("zoom-login", help="sign Athena in to its Zoom account once "
+                       "(for meetings in other Zoom accounts)")
+    z.add_argument("--status", action="store_true", help="only say whether it is signed in")
     args = parser.parse_args(argv)
 
     settings = get_settings()
@@ -146,6 +188,9 @@ def main(argv: list[str] | None = None) -> None:
                     if settings.embed_base_url else None)
         run(settings, store, embedder, http=args.http)
         return
+
+    if args.cmd == "zoom-login":
+        raise SystemExit(zoom_login(settings, status_only=args.status))
 
     pipeline = build_pipeline(settings)
 
