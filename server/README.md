@@ -155,9 +155,11 @@ other's name; two different named speakers stay apart (often a real interruption
   "Polycom", "Logitech Rally", "SM-G991B") makes no person ("Jordan Hall" and a bare
   "Hall", "Mac" or "Dell" are names; "Mac Pro" and "Dell XPS 13" are not): the track gets an unnamed
   label ("Speaker N"), which `name_speaker` can rename. A cleaned name that matches
-  `CONVO_ZOOM_OWNER_NAMES` is the owner; with no owner voice enrolled, that person's
-  name is then the owner's name on every owner line (meetings and voice notes alike)
-  instead of `CONVO_OWNER_NAME`, so lines and `list_people` agree. Otherwise it is matched exactly (any case) against
+  `CONVO_ZOOM_OWNER_NAMES` is the owner. The owner keeps their own name on every owner
+  line (meetings, voice notes, written notes) and in `list_people`: the enrolled owner
+  voice's name, else `CONVO_OWNER_NAME`, never the Zoom name. The track's Zoom names
+  become aliases of the owner, so the next meeting finds them again; an owner person
+  named by a Zoom name before this rule is renamed (same id, the old name an alias). Otherwise it is matched exactly (any case) against
   people names and aliases; an unknown name becomes a new person. There is no first-name
   guessing ("Kath Dlamini" is not merged into "Kath"): a wrong merge mixes two people,
   while `rename_speaker_everywhere("Kath Dlamini", "Kath")` merges them for good. Every
