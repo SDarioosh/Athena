@@ -389,6 +389,12 @@ class Pipeline:
                                               only_if="processing")
                 return
             self.store.replace_segments(session_id, sess["device"], segments, ranges)
+            if (self.settings.learn_meeting_voices and not note and segments
+                    and self.store.has_tracks(session_id)):
+                # Lane 2C: voice samples from named meeting tracks, while audio is here
+                from .meeting_voices import learn_from_meeting
+
+                learn_from_meeting(self, session_id, done)
             if not self.settings.keep_audio:
                 # Only the chunks transcribed here: one uploaded meanwhile waits for the
                 # next pass (add_chunk set the session back to 'ended').
