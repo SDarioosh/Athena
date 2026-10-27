@@ -417,7 +417,14 @@ after `/end`:
 The summary prompt gets "This is a Zoom meeting with the topic …", the participants, and
 chat lines as `[21] Dana Example (chat): …` (links and file names kept as written).
 `GET /v1/conversations/{id}` has `meeting` (`topic`, `participants`) for a meeting, and
-each transcript segment has `kind` (`speech` or `chat`). `convo_server/meeting_chat.py`
+each transcript segment has `kind` (`speech` or `chat`). `participants` (`name`,
+`person_id`, `is_owner`, `zoom_name`, `joined_at`, `left_at`): the list the bot sent, one
+entry per `zoom_user_id` (two people with one name stay two; entries without an id are
+told apart by join time), each by their person's current name, then everyone else heard
+or seen in the chat, in order of first line. A participant Zoom shows only as a device or
+room ("iPhone", "Zoom user") whose lines are named "Speaker N" (no person) is listed by
+those speakers instead of twice; with one such participant they take its `zoom_name` and
+times. `convo_server/meeting_chat.py`
 is imported on the first chat call (or when a meeting is summarized), never at startup.
 
 ### Written notes

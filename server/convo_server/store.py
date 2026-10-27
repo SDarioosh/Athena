@@ -918,7 +918,9 @@ class Store:
                 m["participants"] += json.loads(r["participants"] or "[]")
         for conv_id, m in out.items():
             people: list[dict[str, Any]] = []
-            seen: set[str] = set()
+            keys: set[tuple[Any, ...]] = set()  # one entry per zoom_user_id (QA BUG-13)
+            seen: set[str] = set()  # names listed, so heard speakers aren't listed twice
+            devices: list[dict[str, Any]] = []  # shown only as a device or room
             for p in m["participants"]:
                 name, owner = p.get("name") or p.get("zoom_name") or "", False
                 pid = p.get("person_id")
@@ -926,22 +928,41 @@ class Store:
                     live = _live_person(c, pid)
                     if live is not None:
                         pid, name, owner = live["id"], live["name"], bool(live["is_owner"])
-                if not name or name.casefold() in seen:
+                zid = p.get("zoom_user_id")
+                # two people with one name ("Alex", "iPhone") are two entries
+                key = ("id", zid) if zid else ("name", name.casefold(), p.get("joined_at"))
+                if not name or key in keys:
                     continue
+                keys.add(key)
                 seen.add(name.casefold())
-                people.append({"name": name, "person_id": pid, "is_owner": owner,
-                               "zoom_name": p.get("zoom_name"),
-                               "joined_at": p.get("joined_at"), "left_at": p.get("left_at")})
+                entry = {"name": name, "person_id": pid, "is_owner": owner,
+                         "zoom_name": p.get("zoom_name"),
+                         "joined_at": p.get("joined_at"), "left_at": p.get("left_at")}
+                people.append(entry)
+                if pid is None and not owner and _device_name(p.get("zoom_name") or name):
+                    devices.append(entry)
+            heard, unnamed = [], []  # unnamed: "Speaker 1", a room: no person
             for r in c.execute("SELECT speaker, MAX(is_owner) AS is_owner, MIN(started_at)"
                                " AS first FROM segments WHERE conversation_id = ?"
                                " GROUP BY speaker COLLATE NOCASE ORDER BY first",
                                (conv_id,)).fetchall():
                 if r["speaker"].casefold() not in seen:
                     seen.add(r["speaker"].casefold())
-                    people.append({"name": r["speaker"], "person_id": None,
-                                   "is_owner": bool(r["is_owner"]), "zoom_name": None,
-                                   "joined_at": None, "left_at": None})
-            m["participants"] = people
+                    heard.append({"name": r["speaker"], "person_id": None,
+                                  "is_owner": bool(r["is_owner"]), "zoom_name": None,
+                                  "joined_at": None, "left_at": None})
+                    if not r["is_owner"] and _person_id(c, r["speaker"]) is None:
+                        unnamed.append(heard[-1])
+            if unnamed and devices:
+                # A participant Zoom shows only as a device or room ("iPhone") whose lines
+                # are named "Speaker 1" (no person) is listed by those speakers, not
+                # twice; with one such participant they keep its Zoom name and times.
+                people = [p for p in people if p not in devices]
+                if len(devices) == 1:
+                    for h in unnamed:
+                        h.update({k: devices[0][k] for k in ("zoom_name", "joined_at",
+                                                             "left_at")})
+            m["participants"] = people + heard
         return out
 
     def clear_chunk_audio(self, session_id: str,
@@ -2710,6 +2731,14 @@ def _move_knowledge(c: sqlite3.Connection, src: str, dst: str) -> None:
               " FROM conversation_people WHERE conversation_id = ?", (dst, src))
     c.execute("UPDATE search_fts SET conversation_id = ? WHERE conversation_id = ?"
               " AND kind IN ('fact', 'action_item')", (dst, src))
+
+
+def _device_name(name: str) -> bool:
+    """A Zoom display name with no person in it: a device, a room or conference hardware
+    ("iPhone", "Zoom user", "Conference Room 2"). Only meetings get here."""
+    from .meeting_names import clean_display_name, is_room_or_hardware
+
+    return is_room_or_hardware(name) or not clean_display_name(name)
 
 
 def _segment(r: dict[str, Any]) -> Segment:

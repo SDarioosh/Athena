@@ -95,3 +95,52 @@ def test_bug12_one_zoom_user_is_one_person(pipeline, client):
         process(pipeline)[0].conversation_id)["meeting"]["participants"]
     dana = [p for p in parts if p["name"].startswith("Dana")]
     assert len(dana) == 1 and dana[0]["name"] == segs[0].speaker
+
+
+# ------------------------------------------------------------------ BUG-13
+
+
+def test_bug13_two_people_with_one_name_are_both_listed(pipeline, client):
+    upload(pipeline, tracks=(ALICE,))
+    body = {"participants": [
+        {"name": "Alex", "zoom_user_id": "16790000", "joined_at": T0},
+        {"name": "Alex", "zoom_user_id": "16790001", "joined_at": T0 + 600}]}
+    chat(client, body)
+    conv_id = process(pipeline)[0].conversation_id
+    parts = pipeline.store.get_conversation(conv_id)["meeting"]["participants"]
+    assert [p["joined_at"] for p in parts if p["name"] == "Alex"] == [T0, T0 + 600]
+
+
+def test_bug13_track_speaker_and_participant_with_one_zoom_id_listed_once(pipeline, client):
+    """Zoom shows a device name ("iPhone"): the track's lines are "Speaker 1", the
+    participant list says "iPhone" for the same zoom_user_id."""
+    pipeline.transcriber = ScriptedWhisper()
+    pipeline.ingest_chunk(device="zoom", session_id="m1", sequence=0, started_at=T0,
+                          codec="wav", data=ALICE[2], track=ALICE[0], track_name="iPhone")
+    chat(client, {"participants": [{"name": "iPhone", "zoom_user_id": ALICE[0]}]})
+    segs = process(pipeline)
+    speakers = {s.speaker for s in segs}
+    parts = pipeline.store.get_conversation(segs[0].conversation_id)["meeting"]["participants"]
+    # the device name is not listed beside the speakers heard on its track; they keep it
+    # as their Zoom name
+    assert sorted(p["name"] for p in parts) == sorted(speakers), parts
+    assert {p["zoom_name"] for p in parts} == {"iPhone"}
+
+
+def test_bug13_device_participant_never_heard_stays_listed(pipeline, client):
+    upload(pipeline, tracks=(ALICE,))
+    chat(client, {"participants": [{"name": ALICE[1], "zoom_user_id": ALICE[0]},
+                                   {"name": "iPhone", "zoom_user_id": "16790002"}]})
+    conv_id = process(pipeline)[0].conversation_id
+    parts = pipeline.store.get_conversation(conv_id)["meeting"]["participants"]
+    assert [p["name"] for p in parts] == [ALICE[1], "iPhone"]
+
+
+def test_bug13_resent_participant_listed_once(pipeline, client):
+    upload(pipeline, tracks=(ALICE,))
+    body = {"participants": [{"name": "Rafael Example", "zoom_user_id": "16790003"},
+                             {"name": "Rafael Example (mobile)", "zoom_user_id": "16790003"}]}
+    chat(client, body)
+    conv_id = process(pipeline)[0].conversation_id
+    parts = pipeline.store.get_conversation(conv_id)["meeting"]["participants"]
+    assert [p["name"] for p in parts].count("Rafael Example") == 1
