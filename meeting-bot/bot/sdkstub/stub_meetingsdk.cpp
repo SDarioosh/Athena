@@ -182,7 +182,7 @@ gboolean in_meeting_cb(gpointer) {
   set_status(MEETING_STATUS_INMEETING, 0);
   if (s != "alone") {
     later(1000, chat_cb);
-    later(2500, lee_leaves_cb);
+    later(1500, lee_leaves_cb);  // >= one 1 s participant poll before any end at 3 s
   }
   if (s == "ended") later(3000, end_cb, GINT_TO_POINTER(EndMeetingReason_EndByHost));
   if (s == "removed") later(3000, end_cb, GINT_TO_POINTER(EndMeetingReason_KickByHost));
