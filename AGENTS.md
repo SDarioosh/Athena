@@ -125,7 +125,7 @@ server. **Nothing in the data path touches the cloud.**
    exceeds `CONVO_MAX_SESSION_SECONDS`. Retries of the same
    (session, sequence) are idempotent. Optional `track` / `track_name` keep one
    participant's audio apart (a meeting): sequences then count per track, retries are
-   idempotent per (session, track, sequence), and silence counts across all tracks.
+   idempotent per (session, track, sequence), and such a session never stops on silence.
    `POST /v1/sessions/{id}/end` = Stop.
 2. **Finalize** — a session ends on Stop, server stop, or
    `CONVO_SESSION_IDLE_SECONDS` without uploads; the worker then processes it.

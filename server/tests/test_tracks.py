@@ -208,20 +208,64 @@ def test_reassembly_breaks_on_a_missing_sequence_per_track(client, pipeline):
 
 
 def test_one_quiet_participant_never_stops_a_meeting(client):
-    # silence stop is 60 s in the test settings, chunks are 30 s
     for seq in range(4):
         a = upload(client, seq, wav(tone(300, 30)), track="talker")
         b = upload(client, seq, wav(silence(30)), track="quiet")
         assert a.json()["stop"] is False and b.json()["stop"] is False
         assert b.json()["trailing_silence_seconds"] < 1
-    # everyone silent for 60 s: the meeting session stops, for every track
-    assert upload(client, 4, wav(silence(30)), track="talker").json()["stop"] is False
-    assert upload(client, 4, wav(silence(30)), track="quiet").json()["stop"] is False
-    r = upload(client, 5, wav(silence(30)), track="talker").json()
+
+
+def test_tracked_session_never_stops_on_silence(client, settings):
+    # silence stop is 60 s in the test settings; 10 minutes of silence on every track
+    settings.max_session_seconds = 3600
+    upload(client, 0, wav(tone(300, 30)), track="a")
+    upload(client, 0, wav(tone(500, 30)), track="b")
+    for seq in range(1, 21):
+        for track in ("a", "b"):
+            r = upload(client, seq, wav(silence(30)), track=track).json()
+            assert r["stop"] is False, (seq, track, r)
+    assert r["trailing_silence_seconds"] == pytest.approx(600)
+    assert client.get("/v1/sessions/m1").json()["status"] == "recording"
+    # an untracked chunk in a tracked session doesn't bring the silence rule back
+    r = upload(client, 21, wav(silence(30)), track="").json()
+    assert r["stop"] is False
+
+
+def test_tracked_session_stops_at_max_duration(client, settings):
+    settings.max_session_seconds = 120
+    for seq in range(3):
+        assert upload(client, seq, wav(silence(30)), track="a").json()["stop"] is False
+    r = upload(client, 3, wav(silence(30)), track="a").json()
+    assert r["stop"] is True and r["reason"] == "max_duration"
+    # every track is told to stop once the session ended
+    r = upload(client, 0, wav(silence(30)), track="b").json()
+    assert r["stop"] is True and r["reason"] == "max_duration"
+
+
+def test_tracked_session_stops_on_end(client):
+    upload(client, 0, wav(silence(30)), track="a")
+    assert client.post("/v1/sessions/m1/end").json() == {"ok": True, "stop": True}
+    r = upload(client, 1, wav(silence(30)), track="a").json()
+    assert r["stop"] is True and r["reason"] == "client"
+
+
+def test_untracked_session_still_stops_on_silence(client):
+    upload(client, 0, wav(tone(200, 5), silence(25)), session="s1", device="trex3pro")
+    assert upload(client, 1, wav(silence(30)), session="s1",
+                  device="trex3pro").json()["stop"] is False
+    r = upload(client, 2, wav(silence(30)), session="s1", device="trex3pro").json()
     assert r["stop"] is True and r["reason"] == "silence"
-    r = upload(client, 5, wav(silence(30)), track="quiet").json()
-    assert r["stop"] is True and r["reason"] == "silence"
-    assert client.get("/v1/sessions/m1").json()["status"] == "ended"
+
+
+def test_idle_finalize_ends_a_tracked_session(pipeline, settings):
+    # the bot died: no uploads for CONVO_SESSION_IDLE_SECONDS (120 s in the test settings)
+    now = T0 + 1000
+    pipeline.ingest_chunk(device="zoom", session_id="m1", sequence=0, started_at=T0,
+                          codec="wav", data=wav(silence(30)), now=now, track="a")
+    assert pipeline.finalize_idle(now + 60) == []
+    assert pipeline.finalize_idle(now + 121) == ["m1"]
+    sess = pipeline.store.get_session("m1")
+    assert sess["status"] == "ended" and sess["stop_reason"] == "idle"
 
 
 def test_late_track_joins_the_running_session(client):

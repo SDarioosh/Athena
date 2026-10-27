@@ -201,9 +201,10 @@ class Pipeline:
                      ) -> IngestResult:
         """Store one chunk. ``track`` (optional) keeps one participant's audio apart
         in a session with several; sequences count per track. Without it the session
-        works as before tracks. The stop answer is for the whole session: trailing
-        silence counts from the latest speech on any track, so one quiet participant
-        never ends a meeting."""
+        works as before tracks. A session with any tracked chunk (a meeting) never
+        stops on trailing silence, so a quiet break doesn't end it: it stops at
+        ``CONVO_MAX_SESSION_SECONDS``, on ``end_session`` or, if its uploader dies,
+        after ``CONVO_SESSION_IDLE_SECONDS`` without uploads (``finalize_idle``)."""
         from .store import DuplicateChunk
 
         validate_id(device, "device")
@@ -265,7 +266,8 @@ class Pipeline:
         reason = None
         if sess["status"] != "recording":
             reason = sess["stop_reason"] or "ended"
-        elif trailing >= self.settings.silence_stop_seconds:
+        elif (trailing >= self.settings.silence_stop_seconds
+              and not (track or self.store.has_tracks(session_id))):
             reason = "silence"
         elif length >= self.settings.max_session_seconds:
             reason = "max_duration"

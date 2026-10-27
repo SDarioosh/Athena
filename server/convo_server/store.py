@@ -711,6 +711,11 @@ class Store:
             r["speech"] = [tuple(s) for s in json.loads(r["speech"])]
         return rows
 
+    def has_tracks(self, session_id: str) -> bool:
+        """Whether the session has any chunk with a track (a meeting)."""
+        return self._one("SELECT 1 AS x FROM chunks WHERE session_id = ? AND track != ''"
+                         " LIMIT 1", (session_id,)) is not None
+
     def tracks(self, session_id: str) -> list[dict[str, Any]]:
         """The session's tracks (chunks without a track are not one), ordered by first
         chunk time: ``{"track", "name", "names", "chunks", "started_at", "ended_at"}``.
