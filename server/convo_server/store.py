@@ -277,6 +277,7 @@ CREATE TABLE IF NOT EXISTS meetings (
     pid INTEGER,                        -- the bot's process id while it runs
     runner TEXT,                        -- systemd|plain
     unit TEXT,                          -- systemd scope name (systemd runner)
+    join_token_kind TEXT,               -- zak|obf|none: how the bot joined
     upload_token_hash TEXT,             -- SHA-256 of the bot's upload token, while active
     stop_requested_at REAL,
     created_at REAL NOT NULL,

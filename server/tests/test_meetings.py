@@ -180,8 +180,12 @@ def test_upload_url_is_loopback_when_bound_to_all(settings) -> None:
     assert args[args.index("--upload-url") + 1] == "http://127.0.0.1:8123"
 
 
-def test_join_token_hook_returns_none_today(settings) -> None:
-    assert meetings.join_token_provider(settings, ZoomMeeting("123456789")) is None
+def test_join_token_hook_none_without_signin(settings) -> None:
+    """Mode auto without a sign-in, and mode none: no join token, no network."""
+    for mode in ("auto", "none"):
+        settings.zoom_join_token = mode
+        assert asyncio.run(meetings.join_token_provider(
+            settings, ZoomMeeting("123456789"))) == ("none", None)
 
 
 # ------------------------------------------------------------------ routes
@@ -506,6 +510,7 @@ def test_api_import_starts_nothing_and_skips_meeting_code(tmp_path) -> None:
         assert c.get("/health").json() == {{"ok": True}}
         assert c.post("/v1/ingest/chunk").status_code == 401
         assert "convo_server.meetings" not in sys.modules, "meetings imported"
+        assert "convo_server.zoom_signin" not in sys.modules, "zoom sign-in imported"
         # TestClient's own portal thread may take a moment to finish
         for t in threading.enumerate():
             if t is not threading.main_thread():
