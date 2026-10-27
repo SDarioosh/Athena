@@ -393,7 +393,9 @@ app join a meeting hosted by another Zoom account only on behalf of a signed-in 
    in `server/.env`.
 3. Run `convo-server zoom-login` on the server. It prints a Zoom URL. Open it anywhere,
    sign in with your own Zoom account and allow the app, then paste the address the
-   browser went to (or just its `code`). It uses PKCE and checks `state`.
+   browser went to (or just its `code`). It uses PKCE and checks `state`: a pasted address
+   (or query) must carry this sign-in's `state`, and one with `error=` is refused; a bare
+   code has no state to check (PKCE ties it to this sign-in).
 4. The refresh token is saved to `<data dir>/zoom/refresh_token.json` (mode 0600,
    replaced atomically). `convo-server zoom-login --status` says whether Athena is signed
    in and which join token the next meeting gets. Delete the file to sign out.

@@ -131,7 +131,7 @@ def test_login_needs_settings(settings) -> None:
 
 def test_code_from_paste() -> None:
     assert zoom_signin.code_from_paste(f"{REDIRECT}?code=abc&state=s1", "s1") == "abc"
-    assert zoom_signin.code_from_paste(f"  {REDIRECT}?code=abc  ", "s1") == "abc"
+    assert zoom_signin.code_from_paste(f"  {REDIRECT}?code=abc&state=s1  ", "s1") == "abc"
     assert zoom_signin.code_from_paste("abc", "s1") == "abc"
     assert zoom_signin.code_from_paste("code=abc&state=s1", "s1") == "abc"
     with pytest.raises(ValueError, match="another sign-in"):
@@ -142,6 +142,28 @@ def test_code_from_paste() -> None:
         zoom_signin.code_from_paste(f"{REDIRECT}?state=s1", "s1")
     with pytest.raises(ValueError):
         zoom_signin.code_from_paste("  ", "s1")
+
+
+@pytest.mark.parametrize("pasted, message", [
+    (f"{REDIRECT}?code=abc", "state"),  # state missing
+    (f"{REDIRECT}?code=abc&state=", "state"),  # state empty
+    ("code=abc", "state"),
+    ("?code=abc&state=", "state"),
+    ("?error=access_denied", "access_denied"),
+    ("?error=access_denied&state=s1", "access_denied"),
+    ("error=access_denied&state=s1", "access_denied"),
+    (f"{REDIRECT}?error=access_denied", "access_denied"),
+    (f"{REDIRECT}?state=s1&code=", "no code"),
+])
+def test_qa21_pasted_url_needs_matching_state_and_no_error(pasted: str,
+                                                           message: str) -> None:
+    """BUG-21: a pasted URL or query must carry the expected state; error= is an error.
+    A bare code (no URL, no query) is still taken: PKCE ties it to this sign-in."""
+    with pytest.raises(ValueError, match=message):
+        zoom_signin.code_from_paste(pasted, "s1")
+    assert zoom_signin.code_from_paste(f"{REDIRECT}?state=s1&code=abc", "s1") == "abc"
+    assert zoom_signin.code_from_paste("?code=abc&state=s1", "s1") == "abc"
+    assert zoom_signin.code_from_paste("  abc.DEF-1_2  ", "s1") == "abc.DEF-1_2"
 
 
 def test_login_stores_refresh_token_0600(zsettings, zoom) -> None:
