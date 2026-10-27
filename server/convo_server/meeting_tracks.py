@@ -102,17 +102,15 @@ def track_speaker(store: Store, track_info: dict[str, Any],
                   owner_names: Sequence[str]) -> tuple[str, bool]:
     """Who a track's lines belong to: (speaker name for its segments, is_owner).
 
-    The one place a track becomes a speaker. This version: the track's latest display
-    name, stripped, and the owner when it matches one of ``owner_names`` (any case).
-    An empty name means the track has none; the caller numbers it "Speaker N".
-
-    Seam for lane 2B: ``meeting_names.speaker_for_track`` has the same signature and
-    adds name cleaning and matching to people; this function is wired to call it once
-    both lanes are merged.
+    The one place a track becomes a speaker. Lane 2B's ``meeting_names.speaker_for_track``
+    cleans the display name ("Anna (she/her) | Acme" -> "Anna"), matches it against people
+    and their aliases (creating a person when it is new) and keeps every display name as
+    an alias. An empty name means the track has no person's name (a device, a room or
+    nothing); the caller numbers it "Speaker N" or diarizes it as a shared room.
     """
-    name = " ".join((track_info.get("name") or "").split())
-    owner = bool(name) and any(_same_name(name, o) for o in owner_names if o.strip())
-    return name, owner
+    from .meeting_names import speaker_for_track
+
+    return speaker_for_track(store, {**track_info, "placeholder": ""}, owner_names)
 
 
 @dataclass
@@ -243,7 +241,10 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
         idx = sorted(range(len(pieces)), key=lambda i: pieces[i][0])
         pieces, words = [pieces[i] for i in idx], [words[i] for i in idx]
         name, owner = who.get(track, ("", False))
-        shared = not track or (not owner and is_shared_room(name))
+        # a shared room: no person's name in it, and its raw Zoom name is a room or device
+        # ("Conference Room 2", "iPhone", "Zoom user"); "Anna's iPhone" is Anna
+        raw = infos.get(track, {}).get("name")
+        shared = not track or (not owner and not name and is_shared_room(raw))
         if shared and pipeline.diarizer is not None:
             if not voices_loaded:
                 pipeline.diarizer.voices = load_voices(store)
@@ -261,6 +262,8 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
         else:
             if owner:
                 name = owner_display or name
+            elif shared and raw:  # a room with diarization off keeps the room's name
+                name = " ".join(raw.split())
             elif not name:
                 unnamed += 1
                 name = f"Speaker {unnamed}"

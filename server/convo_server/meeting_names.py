@@ -139,7 +139,7 @@ def speaker_for_track(store: Store, track_info: Mapping[str, Any],
     usable = [(r, c) for r, c in ((r, clean_display_name(r)) for r in _track_names(track_info))
               if c]
     if not usable:
-        return str(track_info.get("placeholder") or PLACEHOLDER), False
+        return str(track_info.get("placeholder", PLACEHOLDER)), False
     aliases = list(dict.fromkeys(x for r, c in usable for x in (" ".join(r.split()), c)))
     owner_keys = {k for o in owner_names for k in (clean_display_name(o).lower(),
                                                    " ".join(o.split()).lower()) if k}
@@ -153,7 +153,7 @@ def speaker_for_track(store: Store, track_info: Mapping[str, Any],
     got = store.link_person([*(c for _, c in latest_first),
                              *(" ".join(r.split()) for r, _ in latest_first)], aliases)
     if got is None:
-        return str(track_info.get("placeholder") or PLACEHOLDER), False
+        return str(track_info.get("placeholder", PLACEHOLDER)), False
     owner = store.owner_person_id(owner_names)
     return got[1], owner is not None and got[0] == owner
 

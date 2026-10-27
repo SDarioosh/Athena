@@ -258,13 +258,17 @@ def test_people_are_not_rooms(name):
     assert not is_shared_room(name)
 
 
-def test_track_speaker():
-    owners = ["Cleo Example", "Cleo (phone)"]
-    assert track_speaker(None, {"name": "  Bo   Example "}, owners) == ("Bo Example", False)
-    assert track_speaker(None, {"name": "CLEO EXAMPLE"}, owners) == ("CLEO EXAMPLE", True)
-    assert track_speaker(None, {"name": "Cleo"}, owners) == ("Cleo", False)
-    assert track_speaker(None, {"name": None}, owners) == ("", False)
-    assert track_speaker(None, {"name": "Bo"}, ["", " "]) == ("Bo", False)
+def test_track_speaker(pipeline):
+    """Wired to lane 2B: names are cleaned and matched to people; no person -> ""."""
+    store, owners = pipeline.store, ["Cleo Example", "Cleo (phone)"]
+    assert track_speaker(store, {"name": "  Bo   Example "}, owners) == ("Bo Example", False)
+    assert track_speaker(store, {"name": "CLEO EXAMPLE"}, owners)[1] is True
+    # "Cleo (phone)" cleans to "Cleo", so a track called "Cleo" is the owner too
+    assert track_speaker(store, {"name": "Cleo"}, owners)[1] is True
+    assert track_speaker(store, {"name": "Dana"}, owners) == ("Dana", False)
+    assert track_speaker(store, {"name": None}, owners) == ("", False)
+    assert track_speaker(store, {"name": "Conference Room 2"}, owners) == ("", False)
+    assert track_speaker(store, {"name": "Bo (he/him)"}, ["", " "]) == ("Bo", False)
 
 
 def _line(track, start, end, text):
