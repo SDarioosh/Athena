@@ -17,7 +17,12 @@ Read API (used by the knowledge-layer/MCP integration and for debugging):
     POST /v1/speakers/enroll
 Settings (the hub's settings page):
     GET  /v1/settings/llm, PUT /v1/settings/llm {"model": name | null}
-Every /v1 route requires ``Authorization: Bearer <CONVO_INGEST_TOKEN>``.
+Meeting bot (convo_server/meetings.py, imported on the first meeting request):
+    POST   /v1/meetings            JSON {url} or {meeting_id, passcode}, title? -> {id, state}
+    GET    /v1/meetings, /v1/meetings/{id}
+    DELETE /v1/meetings/{id}       the bot leaves
+Every /v1 route requires ``Authorization: Bearer <CONVO_INGEST_TOKEN>``. A running meeting
+bot's own upload token is accepted only for its session's chunk uploads, end and chat.
 """
 
 from __future__ import annotations
@@ -45,8 +50,8 @@ from fastapi import (
     Request,
 )
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field, ValidationError
 
 from . import audio as audio_mod
 from . import llm_settings
@@ -153,6 +158,23 @@ class LlmSettingsPut(BaseModel):
     model: str | None = Field(default=None, max_length=llm_settings.MAX_NAME)
 
 
+class MeetingJoin(BaseModel):
+    """``POST /v1/meetings``: a Zoom link, or its number and passcode. The launcher checks
+    the title (200 characters once stripped) and passcode (128) itself, with a 400 and a
+    message; the body as a whole is capped at MAX_MEETING_BODY."""
+    url: str | None = Field(default=None, max_length=2048)
+    meeting_id: str | int | None = None
+    passcode: str | None = None
+    title: str | None = None
+
+
+MAX_MEETING_BODY = 16 * 1024  # POST /v1/meetings: far above any real link and title
+
+
+# What a meeting bot's upload token may call (its own session only).
+_BOT_SESSION_ROUTE = re.compile(r"^/v1/sessions/([^/]+)/(end|chat)$")
+
+
 class ActionItemPatch(BaseModel):
     """Every field optional; ``null`` for due_date / due_time / list_name clears it
     (``null`` for title gives it back from the text)."""
@@ -191,11 +213,24 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     store = pipeline.store
     token = settings.ingest_token.encode()
 
-    def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
+    def require_token(request: Request,
+                      authorization: Annotated[str | None, Header()] = None) -> None:
         scheme, _, value = (authorization or "").partition(" ")
-        if scheme.lower() != "bearer" or not hmac.compare_digest(value.encode(), token):
-            raise HTTPException(401, "invalid or missing bearer token",
-                                headers={"WWW-Authenticate": "Bearer"})
+        if scheme.lower() == "bearer" and hmac.compare_digest(value.encode(), token):
+            return
+        # A running meeting bot's own token: only its session's uploads, end and chat
+        # (convo_server/meetings.py). Looked up only when the ingest token didn't match.
+        grant = store.meeting_upload_session(value) if scheme.lower() == "bearer" and value \
+            else None
+        if grant is not None and request.method == "POST":
+            path = request.url.path
+            m = _BOT_SESSION_ROUTE.match(path)
+            if path == "/v1/ingest/chunk" or (m and m.group(1) == grant):
+                request.state.meeting_session = grant  # ingest_chunk checks the form
+                return
+            raise HTTPException(403, "a meeting bot's token can only upload to its session")
+        raise HTTPException(401, "invalid or missing bearer token",
+                            headers={"WWW-Authenticate": "Bearer"})
 
     run_worker = settings.run_worker if start_worker is None else start_worker
 
@@ -205,6 +240,9 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         if worker:
             worker.start()
         yield
+        meetings = getattr(app.state, "meetings", None)  # only after a meeting request
+        if meetings is not None:
+            await meetings.shutdown()
         if worker:
             worker.stop()
 
@@ -229,6 +267,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     # ---------------------------------------------------------------- ingest
     @v1.post("/ingest/chunk")
     async def ingest_chunk(
+        request: Request,
         audio: Annotated[bytes, File()],
         device: Annotated[str, Form()],
         session_id: Annotated[str, Form()],
@@ -243,6 +282,11 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         """One chunk. ``track`` (optional, ``[A-Za-z0-9._:-]{1,64}``) keeps one
         participant's audio apart, sequences counting per track; ``track_name``
         (optional, at most 200 characters, needs ``track``) is their display name."""
+        grant = getattr(request.state, "meeting_session", None)
+        if grant is not None and (session_id != grant or device != "zoom"):
+            raise HTTPException(403, "a meeting bot's token can only upload to its session")
+        if grant is not None and kind != "conversation":  # a meeting is never a voice note
+            raise HTTPException(403, "a meeting bot's token can only upload kind=conversation")
         if len(audio) > MAX_CHUNK_BYTES:
             raise HTTPException(413, "chunk too large")
         started = parse_ts(timestamp)
@@ -264,15 +308,16 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         return out
 
     @v1.post("/ingest/chunk.json")
-    async def ingest_chunk_json(body: ChunkJson) -> dict[str, Any]:
+    async def ingest_chunk_json(request: Request, body: ChunkJson) -> dict[str, Any]:
         """Same as /ingest/chunk with base64 audio in JSON, for clients that can only send
         string bodies (the Zepp OS Side Service's fetch)."""
         try:
             audio = base64.b64decode(body.audio_b64, validate=True)
         except (binascii.Error, ValueError) as e:
             raise HTTPException(400, "audio_b64 is not valid base64") from e
-        return await ingest_chunk(audio=audio, device=body.device, session_id=body.session_id,
-                                  sequence=body.sequence, timestamp=body.timestamp,
+        return await ingest_chunk(request, audio=audio, device=body.device,
+                                  session_id=body.session_id, sequence=body.sequence,
+                                  timestamp=body.timestamp,
                                   codec=body.codec, sample_rate=body.sample_rate,
                                   kind=body.kind, track=body.track,
                                   track_name=body.track_name)
@@ -546,6 +591,74 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
             return llm_settings.set_model(summary_llm(), store, settings, body.model)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
+
+    # --------------------------------------------------------------- meetings
+    def launcher() -> Any:
+        """The meeting launcher, made (and its module imported) on first use."""
+        from . import meetings
+
+        if getattr(app.state, "meetings", None) is None:
+            app.state.meetings = meetings.Launcher(pipeline)
+        return app.state.meetings
+
+    def meeting_error(e: Any) -> JSONResponse:
+        return JSONResponse({"detail": e.detail, **e.extra}, status_code=e.status)
+
+    async def meeting_body(request: Request) -> MeetingJoin | JSONResponse:
+        """The join body, or the documented 400 with a string ``detail`` (never a 422
+        list of validation errors); 413 past MAX_MEETING_BODY."""
+        raw = b""
+        async for part in request.stream():
+            raw += part
+            if len(raw) > MAX_MEETING_BODY:
+                return JSONResponse({"detail": "request body too large"}, status_code=413)
+        try:
+            return MeetingJoin.model_validate_json(raw or b"{}")
+        except ValidationError as e:
+            err = e.errors()[0]
+            where = ".".join(str(x) for x in err.get("loc", ()))
+            return JSONResponse({"detail": f"{where}: {err['msg']}" if where else err["msg"]},
+                                status_code=400)
+
+    @v1.post("/meetings", status_code=202)
+    async def join_meeting(request: Request) -> Any:
+        """Send Athena to a Zoom meeting (JSON body: MeetingJoin): 202 {id, state,
+        session_id}; 400 bad link or body, 409 busy, 413 body too large, 501 meetings
+        off."""
+        from .meetings import MeetingError
+
+        body = await meeting_body(request)
+        if isinstance(body, JSONResponse):
+            return body
+        try:
+            return await launcher().join(body.url, body.meeting_id, body.passcode,
+                                         body.title)
+        except MeetingError as e:
+            return meeting_error(e)
+
+    @v1.get("/meetings")
+    async def list_meetings(limit: int = 20) -> dict[str, Any]:
+        return {"meetings": launcher().recent(limit)}
+
+    @v1.get("/meetings/{meeting_id}")
+    async def get_meeting(meeting_id: str) -> Any:
+        from .meetings import MeetingError
+
+        try:
+            return launcher().get(meeting_id)
+        except MeetingError as e:
+            return meeting_error(e)
+
+    @v1.delete("/meetings/{meeting_id}")
+    async def leave_meeting(meeting_id: str) -> Any:
+        """The bot leaves (it flushes its last chunks and ends the session); answers
+        with the meeting's state once it exited."""
+        from .meetings import MeetingError
+
+        try:
+            return await launcher().leave(meeting_id)
+        except MeetingError as e:
+            return meeting_error(e)
 
     app.include_router(v1)
     return app

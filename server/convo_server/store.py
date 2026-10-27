@@ -286,6 +286,30 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
 """
 
 
+# Meeting bots (POST /v1/meetings, convo_server/meetings.py), created by migration 16.
+MEETINGS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS meetings (
+    id TEXT PRIMARY KEY,
+    state TEXT NOT NULL,  -- starting|waiting_room|waiting_permission|recording|ended|failed
+    reason TEXT,                        -- why it ended or failed; no_audio while recording
+    session_id TEXT NOT NULL,           -- the Athena session the bot uploads to
+    meeting_id TEXT NOT NULL,           -- Zoom meeting number (never the passcode)
+    title TEXT,
+    pid INTEGER,                        -- the bot's process id while it runs
+    runner TEXT,                        -- systemd|plain
+    unit TEXT,                          -- systemd scope name (systemd runner)
+    join_token_kind TEXT,               -- zak|obf|none: how the bot joined
+    upload_token_hash TEXT,             -- SHA-256 of the bot's upload token, while active
+    stop_requested_at REAL,
+    created_at REAL NOT NULL,
+    started_at REAL,                    -- first time it recorded
+    ended_at REAL
+);
+CREATE INDEX IF NOT EXISTS meetings_token ON meetings(upload_token_hash);
+"""
+MEETING_ACTIVE = ("starting", "waiting_room", "waiting_permission", "recording")
+_ACTIVE_IN = ", ".join("?" * len(MEETING_ACTIVE))
+
 _PLACEHOLDER_SPEAKER = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
 
 # What an erased transcript line says instead (erase_fact)
@@ -551,6 +575,12 @@ class Store:
             # key, so the table is rebuilt. Older chunks have no track ('').
             self._rebuild_chunks_with_track()
             self._conn.execute("PRAGMA user_version = 15")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 16:
+            # meeting bots (POST /v1/meetings): one row per join request. The Zoom
+            # passcode is never stored; the bot's upload token only as a SHA-256 hash,
+            # cleared when the bot exits.
+            self._conn.executescript(MEETINGS_SCHEMA)
+            self._conn.execute("PRAGMA user_version = 16")
         # Not a numbered step on purpose (Zoom bot lane 3B): lane 1B takes version 16, and
         # this only adds a column with a default, which _add_column does at most once.
         # Meeting chat lines are segments of kind 'chat'; every older line is speech.
@@ -753,6 +783,36 @@ class Store:
     def sessions_with_status(self, status: str) -> list[str]:
         return [r["id"] for r in self._q(
             "SELECT id FROM sessions WHERE status = ? ORDER BY started_at", (status,))]
+
+    # ---------------------------------------------------------------- meetings
+    def add_meeting(self, row: dict[str, Any]) -> None:
+        cols = ", ".join(row)
+        with self.tx() as c:
+            c.execute(f"INSERT INTO meetings ({cols}) VALUES ({', '.join('?' * len(row))})",
+                      tuple(row.values()))
+
+    def update_meeting(self, meeting_id: str, **fields: Any) -> None:
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        with self.tx() as c:
+            c.execute(f"UPDATE meetings SET {sets} WHERE id = ?", (*fields.values(), meeting_id))
+
+    def get_meeting(self, meeting_id: str) -> dict[str, Any] | None:
+        return self._one("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+
+    def list_meetings(self, limit: int = 20) -> list[dict[str, Any]]:
+        return self._q("SELECT * FROM meetings ORDER BY created_at DESC LIMIT ?", (limit,))
+
+    def active_meetings(self) -> list[dict[str, Any]]:
+        return self._q(f"SELECT * FROM meetings WHERE state IN ({_ACTIVE_IN})"
+                       " ORDER BY created_at", MEETING_ACTIVE)
+
+    def meeting_upload_session(self, token: str) -> str | None:
+        """The session a running meeting bot may upload to with ``token``, else None.
+        Only bots that are still active hold a token (its hash; cleared on exit)."""
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        row = self._one("SELECT session_id FROM meetings WHERE upload_token_hash = ?"
+                        f" AND state IN ({_ACTIVE_IN})", (digest, *MEETING_ACTIVE))
+        return row["session_id"] if row else None
 
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
         return self._q(
