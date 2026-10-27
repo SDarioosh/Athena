@@ -157,6 +157,33 @@ other's name; two different named speakers stay apart (often a real interruption
   while `rename_speaker_everywhere("Kath Dlamini", "Kath")` merges them for good. Every
   display name a track used, raw and cleaned, is kept as an alias, so a participant who
   renames mid-meeting stays one person and the next meeting finds them again.
+- Learning voices from meetings (`convo_server/meeting_voices.py`,
+  `CONVO_LEARN_MEETING_VOICES`, default true; `false` turns it off; imported only after a
+  meeting's lines are stored, and only with the setting on). A named participant's own
+  track is one known voice, so a few seconds of it become that person's voice samples and
+  the diarizer recognizes them in later in-person recordings:
+  - Tracks: each named participant's own track. Not a room or device track ("Conference
+    Room", "iPhone": several voices), not an unnamed "Speaker N" track, not a track with
+    under 10 s of VAD speech. The owner's track (`CONVO_ZOOM_OWNER_NAMES`) adds samples to
+    the enrolled owner voice (`is_owner`) only; without an enrolled owner it is skipped, so
+    a meeting never makes a second owner.
+  - Windows: 3 s of the track's own VAD speech, never while another track has VAD speech
+    (±0.5 s): no crosstalk, no bleed of someone else's voice. Up to 12 windows spread over
+    the meeting are decoded and the 3 loudest are embedded.
+  - Storage: `voice_samples` rows in `convo.db` with `source='meeting'` and the meeting's
+    session id; voiceprints never leave the server. A person keeps at most 3 meeting
+    samples (the oldest are replaced first; processing a meeting again replaces its own);
+    enrolled and named samples are never replaced. Matching uses them like every other
+    sample (the mean of the closest few). `rename_speaker_everywhere` moves them with the
+    rest of the voice when two people merge.
+  - Then unnamed speakers ("Speaker N") of other recordings whose stored voice clearly
+    matches a learned person are renamed, exactly as after `name_speaker`
+    (`CONVO_SPEAKER_RELABEL_THRESHOLD`, margin 0.05, never in a recording that already has
+    lines by that person); those conversations are re-summarized. The log lists the counts.
+  - Cost: only the speaker embedder the worker already holds for diarization (ECAPA), on
+    at most 3 windows per person, after the meeting; never clustering and never pyannote.
+    With `CONVO_DIARIZATION=false` (no embedder) or `CONVO_SPEAKER_EMBEDDER=pyannote` it is
+    skipped with one log line per meeting.
 - Decoding settings go with every whisper request (whisper-server form fields, the same
   flags for whisper-cli): `CONVO_WHISPER_BEAM_SIZE`, `_BEST_OF`, `_SUPPRESS_NON_SPEECH`,
   `_NO_SPEECH_THOLD`, `_LOGPROB_THOLD`, `_ENTROPY_THOLD`, `_CARRY_INITIAL_PROMPT`,
@@ -331,7 +358,9 @@ spelling), and every line from a track is that participant's:
   `CONVO_ZOOM_OWNER_NAMES` (comma-separated, any case) is the owner's: `is_owner=true`,
   named like the owner everywhere else (the enrolled owner voice's name, else
   `CONVO_OWNER_NAME`). A track without a name is an unnamed "Speaker N".
-- No diarizer or speaker model runs for these tracks. A track whose name is a room or
+- No diarizer runs for these tracks (with `CONVO_LEARN_MEETING_VOICES` on, the speaker
+  embedder alone runs on at most 3 windows per person afterwards, see "Learning voices from
+  meetings" under Speakers). A track whose name is a room or
   a device ("Conference Room", "Meeting Room 2", "Zoom Rooms", "Anna's iPhone", "Galaxy
   S23", "Zoom user", "Polycom", a dial-in number) can hold several people: the configured
   diarizer runs on that track only, and its voices are named from enrolled voices or
