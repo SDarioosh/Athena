@@ -1,0 +1,30 @@
+#!/bin/sh
+# Starts athena-meeting-bot with the Zoom Meeting SDK's libraries found. This script is
+# what CONVO_MEETING_BOT_PATH points at (README "Meeting bot in Docker"); it sits next to
+# the bot binary, with the SDK next to it as zoomsdk/ (a folder in the image, a link to
+# BARVIS_SOUND_ZOOM_SDK_DIR in a native build):
+#
+#   <dir>/athena-meeting-bot-run   this script
+#   <dir>/athena-meeting-bot       the bot (meeting-bot/, built against <dir>/zoomsdk)
+#   <dir>/sdklib/                  libmeetingsdk.so.1 link of a native build (optional)
+#   <dir>/zoomsdk/                 the unpacked SDK: libmeetingsdk.so, qt_libs/
+#
+# The launcher builds the bot's environment from scratch (no LD_LIBRARY_PATH), and
+# libmeetingsdk.so loads its bundled Qt itself. The bot's own RPATH should cover that;
+# this path is the spike's proven way and also covers an SDK library with a RUNPATH of
+# its own. `exec` keeps the launcher's pid, signals and limits on the bot itself.
+#
+#   athena-meeting-bot-run --ldd   lists the bot's libraries as a run sees them
+set -eu
+here=$(dirname "$(readlink -f "$0")")
+sdk=$here/zoomsdk
+LD_LIBRARY_PATH=$sdk:$here/sdklib:$sdk/qt_libs:$sdk/qt_libs/Qt/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export LD_LIBRARY_PATH
+# The plain runner caps the bot with RLIMIT_AS (address space, not memory in use); glibc
+# reserves 64 MB of address space per malloc arena, up to 8 per core, so keep them few.
+MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+export MALLOC_ARENA_MAX
+if [ "${1:-}" = --ldd ]; then
+  exec ldd "$here/athena-meeting-bot"
+fi
+exec "$here/athena-meeting-bot" "$@"
