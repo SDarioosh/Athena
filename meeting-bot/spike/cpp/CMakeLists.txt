@@ -37,3 +37,6 @@ target_link_libraries(athena-meeting-spike PRIVATE meetingsdk PkgConfig::GLIB pt
 # Find the SDK and its bundled Qt at run time without LD_LIBRARY_PATH.
 set_target_properties(athena-meeting-spike PROPERTIES
   BUILD_RPATH "${ZOOM_SDK_DIR};${SDK_LINK_DIR};${ZOOM_SDK_DIR}/qt_libs;${ZOOM_SDK_DIR}/qt_libs/Qt/lib")
+# An old-style RPATH, not RUNPATH: libmeetingsdk.so loads the bundled Qt libraries itself,
+# and a RUNPATH would only apply to this binary's direct dependencies.
+target_link_options(athena-meeting-spike PRIVATE "-Wl,--disable-new-dtags")
