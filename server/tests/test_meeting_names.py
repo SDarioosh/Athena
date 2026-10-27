@@ -380,3 +380,13 @@ def test_bare_name_like_brand_words(raw, clean):
 ])
 def test_first_segment_with_a_name(raw, clean):
     assert clean_display_name(raw) == clean
+
+
+# BUG-11: uncased letters (CJK, Arabic, Hebrew) don't stop the case fix
+@pytest.mark.parametrize("raw, clean", [
+    ("王 DANA", "王 Dana"), ("王 dana", "王 Dana"), ("DANA 王", "Dana 王"),
+    ("سارة LEE", "سارة Lee"), ("דנה cohen", "דנה Cohen"),
+    ("王芳", "王芳"), ("王 Dana", "王 Dana"),
+])
+def test_case_fix_ignores_uncased_letters(raw, clean):
+    assert clean_display_name(raw) == clean

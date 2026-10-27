@@ -280,7 +280,8 @@ def _drop_brackets(s: str) -> str:
 
 def _fix_case(name: str) -> str:
     """Title-case a name typed in ALL CAPS or all lowercase; leave mixed case alone."""
-    letters = [ch for ch in name if ch.isalpha()]
+    # cased letters only: CJK, Arabic and Hebrew have no case ("王 DANA" -> "王 Dana")
+    letters = [ch for ch in name if ch.isupper() or ch.islower()]
     if len(letters) < 2 or not (all(c.isupper() for c in letters)
                                 or all(c.islower() for c in letters)):
         return name
