@@ -395,3 +395,19 @@ def test_meeting_chat_is_imported_only_on_a_chat_call(tmp_path):
                        text=True, timeout=120)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "['MainThread']"  # no thread or timer left behind
+
+
+def test_seed_demo_budget_meeting_has_chat_and_participants(pipeline):
+    sys.path.insert(0, str(SERVER / "scripts"))
+    from seed_demo import MEETINGS, insert_meeting
+
+    key, start, lines = next(m for m in MEETINGS if m[0] == "zoom-budget")
+    (conv,) = insert_meeting(pipeline.store, pipeline, key, start, lines)
+    segs = pipeline.store.conversation_segments(conv)
+    chats = [(s.speaker, s.text) for s in segs if s.kind == CHAT]
+    assert chats[0][0] == "Dana Example" and "garden-budget-v3.xlsx" in chats[0][1]
+    assert len(segs) == len(lines) + 2 and segs == sorted(segs, key=lambda s: s.started_at)
+    meeting = pipeline.store.meetings_for([conv])[conv]
+    assert meeting["topic"] == "Q4 budget review: community garden"
+    assert "Rafael Example" in [p["name"] for p in meeting["participants"]]
+    assert pipeline.summarize_conversation(conv)
