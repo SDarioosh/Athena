@@ -37,7 +37,15 @@ PLACEHOLDER = "Unknown"
 _DEVICE = (r"iphone|ipad|ipod|android|galaxy|pixel|macbook|imac|mac|chromebook|laptop|"
            r"desktop|pc|tablet|phone|mobile|cell|computer|surface|windows|linux|ubuntu|"
            r"huawei|xiaomi|oneplus|motorola|moto|nokia|samsung|apple|google|lenovo|dell|hp")
-_MODEL = r"pro|air|max|mini|plus|ultra|fold|flip|note|lite|se|[a-z]?\d+[a-z]*"
+_MODEL = (r"pro|air|max|mini|plus|ultra|fold|flip|note|lite|se|xps|latitude|inspiron|"
+          r"optiplex|precision|vostro|thinkpad|ideapad|elitebook|zenbook|[a-z]?\d+[a-z]*")
+# Device words that are also names (QA BUG-09): "Mac" is a common short name and "Dell" a
+# given name and surname, so alone they are a person; "Mac Pro", "Dell XPS 13", "Kath's
+# Mac" are devices. "Apple" and "Google" stay devices: a Zoom name that is only the
+# company is a shared or test account far more often than a person called that. iPhone,
+# iPad, Galaxy, Pixel, Android, MacBook, Chromebook, laptop, desktop have no use as a
+# name at all.
+_NAME_LIKE_DEVICE = {"mac", "dell"}
 _PRONOUN = r"(?:he|him|his|she|her|hers|they|them|theirs|ze|zir|hir|xe|xem|any|all)"
 
 _PRONOUNS_RE = re.compile(rf"\b{_PRONOUN}(?:\s*/\s*{_PRONOUN})+\b", re.IGNORECASE)
@@ -60,6 +68,33 @@ _HOSTNAME_RE = re.compile(r"(?:desktop|laptop|pc|win|macbook(?:-pro|-air)?|ipad|
 _ROOM_RE = re.compile(r"\b(?:conference|meeting|board|huddle|zoom|focus|team)\s*rooms?\b|"
                       r"^rooms?\b|\brooms?\s*[a-z]?\d|\b(?:boardroom|auditorium)\b",
                       re.IGNORECASE)
+# Rooms and conference hardware (QA BUG-01): a track that can hold several people, never
+# one person. Agrees with lane 2A's ``meeting_tracks.is_shared_room`` on the clear cases.
+# Product words with no use as a name match anywhere in the name ("Polycom Trio 8800").
+_HARDWARE_RE = re.compile(r"\b(?:polycom|crestron|logitech|yealink|webex|speakerphone|meetup|"
+                          r"zoom\s*rooms?|dial-?in)\b", re.IGNORECASE)
+# Words that are also names, or surnames ("Hall", "Cisco", "Jabra", "Rally"), only as the
+# whole name: alone when no one is called that, else with a room or product word or a
+# number. "Main Hall", "Hall 2", "Neat Bar", "Meeting Owl 3" are rooms; "Jordan Hall",
+# "Cisco Ramirez", "Neat", "Owl" are names.
+_NUM = r"(?:[a-z]?\d+[a-z0-9]*|[a-z])"  # "4", "4b", "a20", "b"
+_ROOM_ONLY_RE = re.compile(
+    rf"(?:(?:main|front)\s+)?lobby(?:\s+{_NUM})?|"
+    rf"(?:main|conference|town|lecture|great|dining|assembly|event|meeting|concert|sports|"
+    rf"exhibition|banquet|function|study|music|community|church|village|entrance)\s+hall"
+    rf"(?:\s+{_NUM})?|hall\s+{_NUM}|"
+    rf"huddle(?:\s+(?:room|space|area|pod))?(?:\s+{_NUM})?|"
+    rf"conf(?:erence)?\.?(?:\s*(?:rm|room|call|line|bridge|phone)\.?)?(?:\s+{_NUM})?|"
+    rf"rm\.?\s*{_NUM}|"
+    rf"cisco(?:\s+(?:webex|room|kit|desk|board|codec|bar|pro|plus|mini|navigator|touch|"
+    rf"{_NUM}))*|"
+    rf"jabra(?:\s+(?:speak|panacast|evolve|link|{_NUM}))*|"
+    rf"(?:logitech\s+)?rally(?:\s+(?:bar|plus|mini|camera|board|{_NUM}))*|"
+    rf"neat\s+(?:bar|board|pad|frame|center)(?:\s+(?:pro|{_NUM}))*|"
+    rf"(?:meeting\s+owl|owl\s+(?:pro|labs|bar))(?:\s+(?:pro|{_NUM}))*|"
+    rf"poly\s+(?:studio|trio|sync|voyager|g\d+|x\d+)(?:\s+{_NUM})*|"
+    rf"surface\s+hub(?:\s+{_NUM})*|"
+    rf"(?:(?:samsung|galaxy)\s+)*sm-[a-z]?\d+[a-z0-9]*")  # Samsung model "SM-G991B"
 _GENERIC = {"zoom user", "zoom", "user", "guest", "host", "co-host", "cohost", "participant",
             "attendee", "panelist", "anonymous", "unknown", "admin", "test", "me", "owner",
             "speaker", "audio", "phone user", "call-in user", "dial-in user"}
@@ -86,8 +121,18 @@ def looks_like_device(name: str) -> bool:
     n = re.sub(r"\s+", " ", _strip_symbols(name)).strip(_EDGE_PUNCT).lower()
     if not n:
         return True
-    return bool(n in _GENERIC or _PLACEHOLDER_RE.fullmatch(n) or _ONLY_DEVICE_RE.fullmatch(n)
-                or _HOSTNAME_RE.fullmatch(n) or _ROOM_RE.search(n))
+    return bool(n in _GENERIC or _PLACEHOLDER_RE.fullmatch(n)
+                or (_ONLY_DEVICE_RE.fullmatch(n) and n not in _NAME_LIKE_DEVICE)
+                or _HOSTNAME_RE.fullmatch(n) or _ROOM_RE.search(n) or looks_like_room(n))
+
+
+def looks_like_room(name: str) -> bool:
+    """Whether a display name is a room or conference hardware ("Huddle 4", "Conf Rm A",
+    "Polycom", "Logitech Rally", "Lobby", "SM-G991B"): a track several people can share.
+    """
+    n = re.sub(r"\s+", " ", _strip_symbols(name)).strip(_EDGE_PUNCT).lower()
+    return bool(n and (_ROOM_RE.search(n) or _HARDWARE_RE.search(n)
+                       or _ROOM_ONLY_RE.fullmatch(n)))
 
 
 def clean_display_name(raw: str) -> str:
@@ -101,8 +146,15 @@ def clean_display_name(raw: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     if _EMAIL_RE.fullmatch(s):  # "kath.dlamini@acme.example" -> "kath dlamini"
         s = re.sub(r"[._]+", " ", s.split("@", 1)[0].split("+", 1)[0])
-    s = _drop_brackets(s)
-    s = next((p for p in _SEPARATOR_RE.split(s) if p.strip(_EDGE_PUNCT)), "")
+    parts = [p for p in _SEPARATOR_RE.split(_drop_brackets(s)) if p.strip(_EDGE_PUNCT)]
+    if any(looks_like_room(p) for p in parts):  # "Boardroom | Acme": a room, no one
+        return ""
+    # the first part that is a name: "she/her | Kath", "iPhone | Kath" -> "Kath" (QA BUG-10)
+    return next((c for c in map(_clean_part, parts) if c), "")
+
+
+def _clean_part(s: str) -> str:
+    """One part of a display name between separators, as a person's name, or ""."""
     s = _PRONOUNS_RE.sub(" ", s)
     if looks_like_device(s):  # "My iPhone": not "My" once the device is cut off
         return ""
@@ -129,26 +181,26 @@ def speaker_for_track(store: Store, track_info: Mapping[str, Any],
 
     ``track_info`` is one entry of ``Store.tracks``: ``name`` (latest display name) and
     ``names`` (every display name the track used, in first-use order). The track is the
-    owner when any of its cleaned names matches a cleaned name in ``owner_names``; else
+    owner when any of its names, raw or cleaned, matches a name in ``owner_names`` (even
+    one that cleans to nothing, such as "Me"); else
     the first of its names (latest first, cleaned before raw) that is a person's name or
     alias picks that person; else a new person is made from the latest cleaned name. All
     display names of the track, raw and cleaned, become aliases of that person. A track
     with no usable name gets ``track_info["placeholder"]`` (default "Unknown") and makes
     no person. Lane 2A calls this through ``meeting_tracks.track_speaker``.
     """
-    usable = [(r, c) for r, c in ((r, clean_display_name(r)) for r in _track_names(track_info))
-              if c]
+    raws = _track_names(track_info)
+    usable = [(r, c) for r, c in ((r, clean_display_name(r)) for r in raws) if c]
+    aliases = list(dict.fromkeys(x for r, c in usable for x in (" ".join(r.split()), c)))
+    if _is_owner_track(raws, owner_names):
+        # raw names too: an owner Zoom name that cleans to nothing ("Me", "iPhone")
+        # still names the owner (QA BUG-08); such a name makes no person or alias
+        candidates = [store.owner_name() or "", *(clean_display_name(o) for o in owner_names),
+                      *(c for _, c in usable[-1:])]
+        got = store.link_person(candidates, aliases, is_owner=True)
+        return (got[1] if got else " ".join(raws[-1].split())), True
     if not usable:
         return str(track_info.get("placeholder", PLACEHOLDER)), False
-    aliases = list(dict.fromkeys(x for r, c in usable for x in (" ".join(r.split()), c)))
-    owner_keys = {k for o in owner_names for k in (clean_display_name(o).lower(),
-                                                   " ".join(o.split()).lower()) if k}
-    if any(c.lower() in owner_keys or " ".join(r.split()).lower() in owner_keys
-           for r, c in usable):
-        candidates = [store.owner_name() or "",
-                      *(clean_display_name(o) for o in owner_names), usable[-1][1]]
-        got = store.link_person(candidates, aliases, is_owner=True)
-        return (got[1] if got else usable[-1][1]), True
     latest_first = usable[::-1]
     got = store.link_person([*(c for _, c in latest_first),
                              *(" ".join(r.split()) for r, _ in latest_first)], aliases)
@@ -166,12 +218,23 @@ def speakers_for_tracks(store: Store, tracks: Iterable[Mapping[str, Any]],
     out: dict[str, tuple[str, bool]] = {}
     unnamed = 0
     for t in tracks:
-        if not any(clean_display_name(n) for n in _track_names(t)):
+        names = _track_names(t)
+        if not any(clean_display_name(n) for n in names) and not _is_owner_track(
+                names, owner_names):
             unnamed += 1
             out[t["track"]] = (f"Speaker {unnamed}", False)
         else:
             out[t["track"]] = speaker_for_track(store, t, owner_names)
     return out
+
+
+def _is_owner_track(raws: Sequence[str], owner_names: Sequence[str]) -> bool:
+    """Whether any display name of a track, raw or cleaned, is one of ``owner_names``
+    (raw or cleaned, any case)."""
+    keys = {k for o in owner_names for k in (clean_display_name(o).lower(),
+                                             " ".join(o.split()).lower()) if k}
+    return any(k in keys for r in raws for k in (clean_display_name(r).lower(),
+                                                 " ".join(r.split()).lower()) if k)
 
 
 def _track_names(track_info: Mapping[str, Any]) -> list[str]:
@@ -217,7 +280,8 @@ def _drop_brackets(s: str) -> str:
 
 def _fix_case(name: str) -> str:
     """Title-case a name typed in ALL CAPS or all lowercase; leave mixed case alone."""
-    letters = [ch for ch in name if ch.isalpha()]
+    # cased letters only: CJK, Arabic and Hebrew have no case ("王 DANA" -> "王 Dana")
+    letters = [ch for ch in name if ch.isupper() or ch.islower()]
     if len(letters) < 2 or not (all(c.isupper() for c in letters)
                                 or all(c.islower() for c in letters)):
         return name
