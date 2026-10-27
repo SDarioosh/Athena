@@ -18,11 +18,19 @@
 # --build-arg WITH_PYTHON=1).
 
 ARG UBUNTU=ubuntu:24.04
+# Libraries the SDK and its bundled Qt load (from Zoom's Linux samples, without their build
+# tools, OpenCV and debugger). The build stage needs them too: the linker resolves the
+# SDK's own dependencies. The ldd check at the end names anything still missing.
+ARG SDK_LIBS="libglib2.0-0t64 libdbus-1-3 libgbm1 libdrm2 libgl1 libegl1 \
+  libx11-6 libx11-xcb1 libxcb1 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+  libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-xtest0 libxfixes3 libxkbcommon0 \
+  libfontconfig1 libfreetype6 libssl3t64 libasound2t64"
 
 FROM ${UBUNTU} AS build
 ARG DEBIAN_FRONTEND=noninteractive
+ARG SDK_LIBS
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential cmake pkg-config libglib2.0-dev ca-certificates \
+      build-essential cmake pkg-config libglib2.0-dev ca-certificates $SDK_LIBS \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=zoomsdk . /opt/zoomsdk
 COPY cpp /src/cpp
@@ -35,13 +43,9 @@ FROM ${UBUNTU} AS run
 ARG DEBIAN_FRONTEND=noninteractive
 ARG WITH_PULSE=1
 ARG WITH_PYTHON=0
-# Runtime libraries the SDK and its bundled Qt load (from Zoom's Linux samples, without
-# their build tools, OpenCV and debugger). The ldd check below names anything missing.
+ARG SDK_LIBS
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates python3 libglib2.0-0t64 libdbus-1-3 libgbm1 libgl1 libegl1 \
-      libx11-6 libx11-xcb1 libxcb1 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
-      libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-xtest0 libxfixes3 libxkbcommon0 \
-      libssl3t64 libasound2t64 \
+      ca-certificates python3 $SDK_LIBS \
     && if [ "$WITH_PULSE" = 1 ]; then \
          apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils; fi \
     && if [ "$WITH_PYTHON" = 1 ]; then \
