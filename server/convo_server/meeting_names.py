@@ -165,26 +165,26 @@ def speaker_for_track(store: Store, track_info: Mapping[str, Any],
 
     ``track_info`` is one entry of ``Store.tracks``: ``name`` (latest display name) and
     ``names`` (every display name the track used, in first-use order). The track is the
-    owner when any of its cleaned names matches a cleaned name in ``owner_names``; else
+    owner when any of its names, raw or cleaned, matches a name in ``owner_names`` (even
+    one that cleans to nothing, such as "Me"); else
     the first of its names (latest first, cleaned before raw) that is a person's name or
     alias picks that person; else a new person is made from the latest cleaned name. All
     display names of the track, raw and cleaned, become aliases of that person. A track
     with no usable name gets ``track_info["placeholder"]`` (default "Unknown") and makes
     no person. Lane 2A calls this through ``meeting_tracks.track_speaker``.
     """
-    usable = [(r, c) for r, c in ((r, clean_display_name(r)) for r in _track_names(track_info))
-              if c]
+    raws = _track_names(track_info)
+    usable = [(r, c) for r, c in ((r, clean_display_name(r)) for r in raws) if c]
+    aliases = list(dict.fromkeys(x for r, c in usable for x in (" ".join(r.split()), c)))
+    if _is_owner_track(raws, owner_names):
+        # raw names too: an owner Zoom name that cleans to nothing ("Me", "iPhone")
+        # still names the owner (QA BUG-08); such a name makes no person or alias
+        candidates = [store.owner_name() or "", *(clean_display_name(o) for o in owner_names),
+                      *(c for _, c in usable[-1:])]
+        got = store.link_person(candidates, aliases, is_owner=True)
+        return (got[1] if got else " ".join(raws[-1].split())), True
     if not usable:
         return str(track_info.get("placeholder") or PLACEHOLDER), False
-    aliases = list(dict.fromkeys(x for r, c in usable for x in (" ".join(r.split()), c)))
-    owner_keys = {k for o in owner_names for k in (clean_display_name(o).lower(),
-                                                   " ".join(o.split()).lower()) if k}
-    if any(c.lower() in owner_keys or " ".join(r.split()).lower() in owner_keys
-           for r, c in usable):
-        candidates = [store.owner_name() or "",
-                      *(clean_display_name(o) for o in owner_names), usable[-1][1]]
-        got = store.link_person(candidates, aliases, is_owner=True)
-        return (got[1] if got else usable[-1][1]), True
     latest_first = usable[::-1]
     got = store.link_person([*(c for _, c in latest_first),
                              *(" ".join(r.split()) for r, _ in latest_first)], aliases)
@@ -202,12 +202,23 @@ def speakers_for_tracks(store: Store, tracks: Iterable[Mapping[str, Any]],
     out: dict[str, tuple[str, bool]] = {}
     unnamed = 0
     for t in tracks:
-        if not any(clean_display_name(n) for n in _track_names(t)):
+        names = _track_names(t)
+        if not any(clean_display_name(n) for n in names) and not _is_owner_track(
+                names, owner_names):
             unnamed += 1
             out[t["track"]] = (f"Speaker {unnamed}", False)
         else:
             out[t["track"]] = speaker_for_track(store, t, owner_names)
     return out
+
+
+def _is_owner_track(raws: Sequence[str], owner_names: Sequence[str]) -> bool:
+    """Whether any display name of a track, raw or cleaned, is one of ``owner_names``
+    (raw or cleaned, any case)."""
+    keys = {k for o in owner_names for k in (clean_display_name(o).lower(),
+                                             " ".join(o.split()).lower()) if k}
+    return any(k in keys for r in raws for k in (clean_display_name(r).lower(),
+                                                 " ".join(r.split()).lower()) if k)
 
 
 def _track_names(track_info: Mapping[str, Any]) -> list[str]:

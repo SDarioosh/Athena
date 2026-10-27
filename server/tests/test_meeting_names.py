@@ -335,3 +335,21 @@ def test_owner_name_prefers_the_enrolled_owner_voice(store):
     assert store.owner_name() == "Cleo Example"
     store.put_speaker("Cleo", np.ones(4, np.float32), is_owner=True)
     assert store.owner_name() == "Cleo"
+
+
+# BUG-08: owner Zoom names that clean to nothing ("Me", "iPhone") still find the owner
+def test_owner_named_by_a_raw_name_that_cleans_to_nothing(store):
+    owners = ("Me", "iPhone")
+    assert speaker_for_track(store, track("Me"), owners)[1] is True
+    assert speaker_for_track(store, track("iPhone", track_id="2"), owners)[1] is True
+    tracks = [track("Me", track_id="1"), track("Zoom user", track_id="2")]
+    got = speakers_for_tracks(store, tracks, owners)
+    assert got["1"][1] is True and got["2"] == ("Speaker 1", False)
+    assert people_count(store) == 0  # no person called "Me" or "iPhone"
+
+
+def test_owner_by_raw_name_keeps_the_enrolled_owner_name(store):
+    import numpy as np
+    store.put_speaker("Sam", np.ones(4, np.float32), is_owner=True)
+    assert speaker_for_track(store, track("Sam's iPhone"), ("Sam's iPhone",)) == (
+        "Sam", True)
