@@ -75,7 +75,7 @@ def test_migration_to_v7(tmp_path):
     path = tmp_path / "old.db"
     old_v5_db(path)
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 14
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 15
     assert store.list_action_items()[0]["list_name"] is None
     store.close()
     cols = {r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(action_items)")}

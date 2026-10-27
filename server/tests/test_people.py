@@ -41,7 +41,7 @@ def test_migration_backfills_people_from_names_and_speakers(tmp_path):
     store.close()
 
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 14
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 15
     rows = {r["name"]: dict(r) for r in store._conn.execute("SELECT * FROM people")}
     # one row per distinct name, any case; enrolled spellings first, then the first mention
     assert set(rows) == {"Sam", "Dana", "alice", "Bob"}

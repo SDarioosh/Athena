@@ -123,7 +123,10 @@ server. **Nothing in the data path touches the cloud.**
    speech spans, and returns `{"ok": true, "stop": bool, "reason": ...}`.
    Stop when trailing silence ≥ `CONVO_SILENCE_STOP_SECONDS` or the session
    exceeds `CONVO_MAX_SESSION_SECONDS`. Retries of the same
-   (session, sequence) are idempotent. `POST /v1/sessions/{id}/end` = Stop.
+   (session, sequence) are idempotent. Optional `track` / `track_name` keep one
+   participant's audio apart (a meeting): sequences then count per track, retries are
+   idempotent per (session, track, sequence), and such a session never stops on silence.
+   `POST /v1/sessions/{id}/end` = Stop.
 2. **Finalize** — a session ends on Stop, server stop, or
    `CONVO_SESSION_IDLE_SECONDS` without uploads; the worker then processes it.
 3. **Transcribe** — contiguous chunks are reassembled by sequence; only VAD
