@@ -408,6 +408,9 @@ class Store:
         with _init_lock(self.path):
             self._conn.executescript(SCHEMA)
             self._migrate()
+            # voices learned from meetings (meeting_voices.py): which meeting a sample
+            # came from, so processing it again replaces its own samples
+            self._add_column("voice_samples", "session_id", "TEXT")
 
     def _migrate(self) -> None:
         if self._conn.execute("PRAGMA user_version").fetchone()[0] < 2:
@@ -2047,6 +2050,47 @@ class Store:
                 " WHERE speaker_id = ? AND source != 'enrolled' ORDER BY created_at DESC,"
                 " id DESC LIMIT -1 OFFSET ?)", (sid, MAX_LEARNED_SAMPLES))
             _refresh_voiceprint(c, sid)
+
+    def put_meeting_voice_samples(self, name: str, session_id: str,
+                                  samples: list[np.ndarray], cap: int) -> int:
+        """Voice samples of ``name`` learned from a meeting (``source='meeting'``).
+
+        The speaker is created if new (never as the owner, and an existing speaker's
+        ``is_owner`` is left alone). Earlier samples of the same meeting are replaced;
+        then only the newest ``cap`` meeting samples are kept. Enrolled and named samples
+        are never touched. Returns how many meeting samples the speaker has now.
+        """
+        with self.tx() as c:
+            row = c.execute("SELECT id FROM speakers WHERE name = ?", (name,)).fetchone()
+            if row is None:
+                sid = c.execute(
+                    "INSERT INTO speakers (name, is_owner, embedding, created_at)"
+                    " VALUES (?, 0, ?, ?)",
+                    (name, _unit(np.mean(samples, axis=0)).tobytes(), time.time())).lastrowid
+            else:
+                sid = row["id"]
+            _ensure_person(c, name, sid)
+            c.execute("DELETE FROM voice_samples WHERE speaker_id = ? AND source = 'meeting'"
+                      " AND session_id = ?", (sid, session_id))
+            now = time.time()
+            c.executemany(
+                "INSERT INTO voice_samples (speaker_id, embedding, source, created_at,"
+                " session_id) VALUES (?, ?, 'meeting', ?, ?)",
+                [(sid, _unit(v).tobytes(), now, session_id) for v in samples])
+            c.execute(
+                "DELETE FROM voice_samples WHERE id IN (SELECT id FROM voice_samples"
+                " WHERE speaker_id = ? AND source = 'meeting' ORDER BY created_at DESC,"
+                " id DESC LIMIT -1 OFFSET ?)", (sid, cap))
+            _refresh_voiceprint(c, sid)
+            return c.execute("SELECT COUNT(*) FROM voice_samples WHERE speaker_id = ?"
+                             " AND source = 'meeting'", (sid,)).fetchone()[0]
+
+    def voice_samples(self, name: str) -> list[dict[str, Any]]:
+        """A speaker's voice samples, oldest first: source, session_id, created_at."""
+        return self._q(
+            "SELECT v.source, v.session_id, v.created_at FROM voice_samples v"
+            " JOIN speakers s ON s.id = v.speaker_id WHERE s.name = ? ORDER BY v.id",
+            (name,))
 
     def put_speaker(self, name: str, embedding: np.ndarray, is_owner: bool,
                     samples: list[np.ndarray] | None = None, source: str = "enrolled") -> None:
