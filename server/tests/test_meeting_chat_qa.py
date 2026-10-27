@@ -181,7 +181,7 @@ def test_bug27_meeting_without_chat_call_has_a_meeting_block(pipeline, client, m
     m = conv_json(client, conv_id)["meeting"]
     assert m["topic"] is None
     assert [p["name"] for p in m["participants"]] == [ALICE[1], BO[1]]
-    assert "(Zoom meeting)" in call(mcp, "get_conversation", conversation_id=conv_id)
+    assert "(Online meeting)" in call(mcp, "get_conversation", conversation_id=conv_id)
 
 
 def test_bug27_untracked_zoom_session_without_chat_call(pipeline, client, mcp):
@@ -191,7 +191,7 @@ def test_bug27_untracked_zoom_session_without_chat_call(pipeline, client, mcp):
     conv_id = process(pipeline, "z1")[0].conversation_id
     m = conv_json(client, conv_id).get("meeting")
     assert m is not None and m["topic"] is None and m["participants"]
-    assert "(Zoom meeting)" in call(mcp, "get_conversation", conversation_id=conv_id)
+    assert "(Online meeting)" in call(mcp, "get_conversation", conversation_id=conv_id)
     facts = json.loads(call(mcp, "list_facts", format="json"))["facts"]
     assert {f["source"] for f in facts if f["conversation_id"] == conv_id} <= {"meeting"}
 
