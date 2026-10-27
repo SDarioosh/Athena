@@ -37,7 +37,15 @@ PLACEHOLDER = "Unknown"
 _DEVICE = (r"iphone|ipad|ipod|android|galaxy|pixel|macbook|imac|mac|chromebook|laptop|"
            r"desktop|pc|tablet|phone|mobile|cell|computer|surface|windows|linux|ubuntu|"
            r"huawei|xiaomi|oneplus|motorola|moto|nokia|samsung|apple|google|lenovo|dell|hp")
-_MODEL = r"pro|air|max|mini|plus|ultra|fold|flip|note|lite|se|[a-z]?\d+[a-z]*"
+_MODEL = (r"pro|air|max|mini|plus|ultra|fold|flip|note|lite|se|xps|latitude|inspiron|"
+          r"optiplex|precision|vostro|thinkpad|ideapad|elitebook|zenbook|[a-z]?\d+[a-z]*")
+# Device words that are also names (QA BUG-09): "Mac" is a common short name and "Dell" a
+# given name and surname, so alone they are a person; "Mac Pro", "Dell XPS 13", "Kath's
+# Mac" are devices. "Apple" and "Google" stay devices: a Zoom name that is only the
+# company is a shared or test account far more often than a person called that. iPhone,
+# iPad, Galaxy, Pixel, Android, MacBook, Chromebook, laptop, desktop have no use as a
+# name at all.
+_NAME_LIKE_DEVICE = {"mac", "dell"}
 _PRONOUN = r"(?:he|him|his|she|her|hers|they|them|theirs|ze|zir|hir|xe|xem|any|all)"
 
 _PRONOUNS_RE = re.compile(rf"\b{_PRONOUN}(?:\s*/\s*{_PRONOUN})+\b", re.IGNORECASE)
@@ -113,7 +121,8 @@ def looks_like_device(name: str) -> bool:
     n = re.sub(r"\s+", " ", _strip_symbols(name)).strip(_EDGE_PUNCT).lower()
     if not n:
         return True
-    return bool(n in _GENERIC or _PLACEHOLDER_RE.fullmatch(n) or _ONLY_DEVICE_RE.fullmatch(n)
+    return bool(n in _GENERIC or _PLACEHOLDER_RE.fullmatch(n)
+                or (_ONLY_DEVICE_RE.fullmatch(n) and n not in _NAME_LIKE_DEVICE)
                 or _HOSTNAME_RE.fullmatch(n) or _ROOM_RE.search(n) or looks_like_room(n))
 
 

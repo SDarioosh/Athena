@@ -353,3 +353,15 @@ def test_owner_by_raw_name_keeps_the_enrolled_owner_name(store):
     store.put_speaker("Sam", np.ones(4, np.float32), is_owner=True)
     assert speaker_for_track(store, track("Sam's iPhone"), ("Sam's iPhone",)) == (
         "Sam", True)
+
+
+# BUG-09: bare words that are also names stay names; product words stay devices
+@pytest.mark.parametrize("raw, clean", [
+    ("Mac", "Mac"), ("Mac (he/him)", "Mac"), ("Dell", "Dell"), ("MAC", "Mac"),
+    ("Mac Okafor", "Mac Okafor"),
+    ("Mac Pro", ""), ("Mac mini", ""), ("Dell XPS 13", ""), ("Dell Latitude 7420", ""),
+    ("Kath's Mac", "Kath"), ("Apple", ""), ("Google", ""), ("iPhone", ""), ("Galaxy", ""),
+    ("Pixel", ""), ("MacBook", ""), ("Chromebook", ""), ("Laptop", ""), ("Desktop", ""),
+])
+def test_bare_name_like_brand_words(raw, clean):
+    assert clean_display_name(raw) == clean

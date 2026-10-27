@@ -151,7 +151,7 @@ other's name; two different named speakers stay apart (often a real interruption
   is kept ("van der Berg", "O'Neil"). A name that is only a device, a room, conference
   hardware or a label ("iPhone", "Zoom user", "Conference Room 2", "Huddle 4", "Lobby",
   "Polycom", "Logitech Rally", "SM-G991B") makes no person ("Jordan Hall" and a bare
-  "Hall" are names): the track gets an unnamed
+  "Hall", "Mac" or "Dell" are names; "Mac Pro" and "Dell XPS 13" are not): the track gets an unnamed
   label ("Speaker N"), which `name_speaker` can rename. A cleaned name that matches
   `CONVO_ZOOM_OWNER_NAMES` is the owner; with no owner voice enrolled, that person's
   name is then the owner's name on every owner line (meetings and voice notes alike)
