@@ -328,6 +328,57 @@ By hand: `docker compose -f compose.yml -f compose.gpu.yml up -d --build --wait`
 Check: `docker compose exec sound-api python -c "import torch; print(torch.cuda.is_available())"`
 prints `True`.
 
+### Meeting bot in Docker
+
+The Zoom meeting bot ([Meeting bot](#meeting-bot), source in `meeting-bot/`) is built
+only when `server/.env` names the unpacked Zoom Meeting SDK for Linux (the folder with
+`h/`, `libmeetingsdk.so` and `qt_libs/`; proprietary, so it stays outside the repo):
+
+```bash
+BARVIS_SOUND_ZOOM_SDK_DIR=/home/you/zoom-sdk   # ~ and $HOME work too
+CONVO_ZOOM_SDK_KEY=...                         # the Meeting SDK app's credentials
+CONVO_ZOOM_SDK_SECRET=...
+```
+
+`deploy.sh` then adds `compose.meeting.yml` (after `compose.gpu.yml` if that is on). It
+builds the Dockerfile's `meeting` target for `sound-api` only: `meeting-bot/` compiled
+against the SDK, the SDK's system libraries, and `CONVO_MEETING_BOT_PATH` set to
+`/opt/athena-meeting-bot/athena-meeting-bot-run` in the container (it wins over a path in
+`.env`). The SDK and `meeting-bot/` come in as BuildKit build contexts (`zoomsdk`,
+`meetingbot`), never through git or `server/`. The image is
+`odysseus-sound-meeting:current` and **holds the SDK: keep it on this machine, never push
+it to a registry.** `sound-mcp` keeps the plain image. The build fails if the bot misses a
+library, checked with only the environment the launcher gives the bot.
+
+There is no new service or container: the launcher starts the bot as a child process of
+`convo-server serve` in `sound-api` when a meeting is requested. `systemd-run` isn't
+there, so the `auto` runner picks `plain` (`nice 10`, `RLIMIT_AS` =
+`CONVO_MEETING_BOT_MEMORY`). The launcher builds the bot's environment from scratch (no
+`LD_LIBRARY_PATH`), so `CONVO_MEETING_BOT_PATH` points at a start script,
+`docker/athena-meeting-bot-run`, next to the binary and the SDK (`zoomsdk/`): it puts the
+SDK and its bundled Qt on the library path, keeps glibc's malloc arenas few (two, so
+`RLIMIT_AS` measures what the bot uses) and `exec`s the bot, so the launcher's pid,
+signals and limits are the bot's own. `--ldd` lists the bot's libraries as a run sees
+them. Without `BARVIS_SOUND_ZOOM_SDK_DIR` the image is exactly as before (no SDK, no extra
+libraries) and meetings answer 501.
+
+```bash
+server/scripts/deploy.sh deploy   # BARVIS_SOUND_RUNNER=docker
+# by hand, from server/:
+BARVIS_SOUND_ZOOM_SDK_DIR=$HOME/zoom-sdk docker compose -f compose.yml \
+  -f compose.gpu.yml -f compose.meeting.yml up -d --build --wait   # leave out gpu if off
+docker compose exec sound-api /opt/athena-meeting-bot/athena-meeting-bot-run --ldd
+```
+
+Native runners (`systemd`, `background`): with `BARVIS_SOUND_ZOOM_SDK_DIR` set, `deploy.sh`
+builds the bot in `$CONVO_DATA_DIR/meeting-bot/build` (outside git; log in
+`data/logs/meeting-bot-build.log`), puts the same start script there with a `zoomsdk`
+link to the SDK, and adds `CONVO_MEETING_BOT_PATH=<that dir>/athena-meeting-bot-run` to
+`server/.env` if it has none. It needs `sudo apt install build-essential cmake pkg-config
+libglib2.0-dev libcurl4-openssl-dev libopus-dev libopusenc-dev libogg-dev` plus the SDK's
+libraries (`SDK_LIBS` in the Dockerfile; Ubuntu 24.04 has the same names). A missing
+tool or a failed build is a warning: Athena is deployed anyway, without a new bot.
+
 ## Run by hand
 
 ```bash
