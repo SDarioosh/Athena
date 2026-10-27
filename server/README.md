@@ -875,6 +875,18 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 | `GET /action-items`, `PATCH /action-items/{id}` | the `/v1` routes |
 | `GET /digests/{date}`, `POST /digests/{date}` | the `/v1` routes |
 | `GET /settings/llm`, `PUT /settings/llm` | the `/v1` routes (the hub's settings page: the summary model) |
+| `POST /meetings` | `POST /v1/meetings` (same JSON `{url}` or `{meeting_id, passcode}`, `title?`; same answer: 202, 400, 409 busy with `message` and `active`, 501 meetings off, 500) |
+| `GET /meetings` | `GET /v1/meetings` (only `limit`, bounded to 1–100) |
+| `GET /meetings/{id}`, `DELETE /meetings/{id}` | the `/v1` routes (state; leave, answering once the bot exited) |
+
+The meeting routes are for the hub's "Send Athena to a meeting" box (lane 4B of
+`docs/zoom-meeting-bot-plan.md`). An `{id}` that isn't a meeting id (32 lowercase hex
+characters) gets the API's own 404 `{"detail": "meeting not found"}` without being
+forwarded; `POST /meetings` takes `application/json` only (415 otherwise) and caps its
+body at 16 KB (413). `GET` and `POST` wait up to 15 s for the API, `DELETE` up to 30 s
+(the bot gets SIGTERM, SIGKILL after 10 s, and the answer waits for it to exit); a timeout
+or an API that isn't running is a 502 with a readable `detail`. The relay only forwards
+HTTP: it never imports the meeting code, so `mcp --http` loads and starts nothing new.
 
 The read routes are for the phone relay's T5 sync when it is paired through Odysseus
 (Odysseus forwards them for a token with `sound:read` / `sound:write`); the MCP token can
