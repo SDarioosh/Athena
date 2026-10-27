@@ -31,6 +31,11 @@
 #                             works without sudo, else "sudo docker")
 #   CONVO_DOCKER_API_GPU      true: the docker runner adds compose.gpu.yml (CUDA PyTorch,
 #                             sound-api on the GPU, for pyannote)
+#   BARVIS_SOUND_ZOOM_SDK_DIR the unpacked Zoom Meeting SDK for Linux: builds the meeting bot
+#                             (meeting-bot/). Docker: adds compose.meeting.yml (the bot in the
+#                             sound-api image). Native: builds it in $CONVO_DATA_DIR/meeting-bot
+#                             and sets CONVO_MEETING_BOT_PATH in server/.env if unset. No new
+#                             service either way (README "Meeting bot in Docker")
 #   BARVIS_SOUND_ODYSSEUS_DIR the Odysseus checkout whose scripts/fork_deploy.sh runs after a
 #                             deploy, or off (default: found from the running Odysseus container)
 set -euo pipefail
@@ -80,16 +85,34 @@ load_config() {
     if systemctl --user show-environment >/dev/null 2>&1; then RUNNER=systemd; else RUNNER=background; fi
   fi
   case $RUNNER in systemd|background|docker) ;; *) die "BARVIS_SOUND_RUNNER must be systemd, background, docker or auto" ;; esac
+  ZOOM_SDK_DIR=$(env_value BARVIS_SOUND_ZOOM_SDK_DIR "")
+  # shellcheck disable=SC2088,SC2016  # matches a literal ~ or $HOME written in .env
+  case $ZOOM_SDK_DIR in
+    "~"|"~/"*) ZOOM_SDK_DIR=$HOME${ZOOM_SDK_DIR#"~"} ;;
+    '$HOME'|'$HOME/'*) ZOOM_SDK_DIR=$HOME${ZOOM_SDK_DIR#'$HOME'} ;;
+    '${HOME}'|'${HOME}/'*) ZOOM_SDK_DIR=$HOME${ZOOM_SDK_DIR#'${HOME}'} ;;
+  esac
+  [ -z "$ZOOM_SDK_DIR" ] || ZOOM_SDK_DIR=${ZOOM_SDK_DIR%/}
   if [ "$RUNNER" = docker ]; then
     DOCKER=$(env_value DOCKER "")
     if [ -z "$DOCKER" ]; then
       if docker info >/dev/null 2>&1; then DOCKER=docker; else DOCKER="sudo docker"; fi
     fi
-    COMPOSE_FILES=(-f "$SERVER_DIR/compose.yml")
-    local gpu; gpu=$(env_value CONVO_DOCKER_API_GPU false)
-    case ${gpu,,} in
-      true|1|yes|on) COMPOSE_FILES+=(-f "$SERVER_DIR/compose.gpu.yml") ;;
-    esac
+    set_compose_files
+  fi
+}
+
+set_compose_files() {  # the compose files of the docker runner, for this checkout
+  COMPOSE_FILES=(-f "$SERVER_DIR/compose.yml")
+  local gpu; gpu=$(env_value CONVO_DOCKER_API_GPU false)
+  case ${gpu,,} in
+    true|1|yes|on) COMPOSE_FILES+=(-f "$SERVER_DIR/compose.gpu.yml") ;;
+  esac
+  # The meeting bot (an older checkout, e.g. after a rollback, has no compose.meeting.yml).
+  # Exported, so compose.meeting.yml reads the expanded path rather than .env's line.
+  if [ -n "$ZOOM_SDK_DIR" ] && [ -f "$SERVER_DIR/compose.meeting.yml" ]; then
+    export BARVIS_SOUND_ZOOM_SDK_DIR=$ZOOM_SDK_DIR
+    COMPOSE_FILES+=(-f "$SERVER_DIR/compose.meeting.yml")
   fi
 }
 
@@ -229,6 +252,9 @@ dc() {
 
 docker_preflight() {  # settings the containers would crash on, said before building
   local extras
+  if [ -n "$ZOOM_SDK_DIR" ] && [ ! -f "$ZOOM_SDK_DIR/h/zoom_sdk.h" ]; then
+    die "BARVIS_SOUND_ZOOM_SDK_DIR=$ZOOM_SDK_DIR is not the unpacked Zoom Meeting SDK for Linux (no h/zoom_sdk.h); fix it, or remove the line to deploy without the meeting bot"
+  fi
   extras=$(env_value CONVO_DOCKER_EXTRAS vad,diarization)
   if [ "$(env_value CONVO_DIARIZER ecapa)" = pyannote ] && [[ ,$extras, != *,pyannote,* ]]; then
     die "CONVO_DIARIZER=pyannote needs pyannote in the image: add CONVO_DOCKER_EXTRAS=$extras,pyannote to server/.env (and CONVO_DOCKER_API_GPU=true to run it on the GPU)"
@@ -252,6 +278,7 @@ retire_native() {  # stop what a native deploy started; its unit files stay for 
 
 docker_up() {  # build, (re)create what changed, wait until every container is healthy
   local s active
+  set_compose_files  # the checkout may have changed (rollback)
   docker_preflight
   retire_native
   # A whisper container of a profile that is no longer selected would keep the
@@ -397,6 +424,58 @@ install_deps() {
   fi
 }
 
+# --- meeting bot (native runners) -----------------------------------------------------
+
+# Builds meeting-bot/ against BARVIS_SOUND_ZOOM_SDK_DIR in $CONVO_DATA_DIR/meeting-bot/build
+# (outside git) and points CONVO_MEETING_BOT_PATH at its start script if .env has none.
+# Nothing here stops the deploy: without a toolchain or with a failed build, Athena is
+# deployed as before and meetings stay as they were (off without a bot: 501).
+MEETING_BOT_BUILD_DEPS="build-essential cmake pkg-config libglib2.0-dev libcurl4-openssl-dev libopus-dev libopusenc-dev libogg-dev"
+
+build_meeting_bot() {
+  local sdk=$ZOOM_SDK_DIR src=$REPO_DIR/meeting-bot dir run tool missing=() blog current lost
+  [ -n "$sdk" ] || return 0
+  [ -f "$src/CMakeLists.txt" ] || { log "meeting bot not built: this checkout has no meeting-bot/CMakeLists.txt"; return 0; }
+  if [ ! -f "$sdk/h/zoom_sdk.h" ]; then
+    log "warning: meeting bot not built: BARVIS_SOUND_ZOOM_SDK_DIR=$sdk is not the unpacked Zoom Meeting SDK for Linux (no h/zoom_sdk.h)"
+    return 0
+  fi
+  for tool in cmake c++ pkg-config; do command -v "$tool" >/dev/null || missing+=("$tool"); done
+  if [ ${#missing[@]} -gt 0 ]; then
+    log "warning: meeting bot not built: ${missing[*]} not found. Install once: sudo apt install $MEETING_BOT_BUILD_DEPS"
+    return 0
+  fi
+  dir=$DATA_DIR/meeting-bot/build
+  run=$dir/athena-meeting-bot-run
+  blog=$DATA_DIR/logs/meeting-bot-build.log
+  mkdir -p "$dir" "$DATA_DIR/logs"
+  log "building the meeting bot against $sdk (log: $blog)"
+  if ! { cmake -S "$src" -B "$dir" -DZOOM_SDK_DIR="$sdk" -DCMAKE_BUILD_TYPE=Release \
+         && cmake --build "$dir" -j"$(nproc 2>/dev/null || echo 2)"; } > "$blog" 2>&1 \
+     || [ ! -x "$dir/athena-meeting-bot" ]; then
+    tail -n 20 "$blog" >&2 || true
+    log "warning: meeting bot build failed (above; missing headers usually mean: sudo apt install $MEETING_BOT_BUILD_DEPS); Athena is deployed without a new bot"
+    return 0
+  fi
+  # The start script finds the SDK as zoomsdk/ next to it (docker/athena-meeting-bot-run).
+  cp "$SERVER_DIR/docker/athena-meeting-bot-run" "$run.tmp" && chmod 0755 "$run.tmp" && mv -f "$run.tmp" "$run"
+  ln -sfn "$sdk" "$dir/zoomsdk"
+  lost=$("$run" --ldd 2>&1 | grep 'not found' || true)
+  if [ -n "$lost" ]; then
+    log "warning: the meeting bot misses libraries (install them, e.g. the SDK_LIBS list in server/Dockerfile):"
+    printf '%s\n' "$lost" >&2
+  fi
+  current=$(env_value CONVO_MEETING_BOT_PATH "")
+  if [ -z "$current" ]; then
+    printf '\n# Added by server/scripts/deploy.sh (BARVIS_SOUND_ZOOM_SDK_DIR): the meeting bot it builds\nCONVO_MEETING_BOT_PATH=%s\n' "$run" >> .env
+    log "meeting bot built; added CONVO_MEETING_BOT_PATH=$run to server/.env"
+  elif [ "$current" != "$run" ]; then
+    log "meeting bot built at $run; server/.env keeps CONVO_MEETING_BOT_PATH=$current"
+  else
+    log "meeting bot built ($run)"
+  fi
+}
+
 remote() {
   if [ -n "$REMOTE_NAME" ]; then echo "$REMOTE_NAME"; return; fi
   git -C "$REPO_DIR" remote -v \
@@ -436,6 +515,7 @@ cmd_deploy() {
   local short; short=$(git -C "$REPO_DIR" rev-parse --short HEAD)
   if [ "$PREV" = "$NEW" ]; then log "already at $short"; else log "updated $(git -C "$REPO_DIR" rev-parse --short "$PREV") -> $short"; fi
   install_deps
+  build_meeting_bot
   apply_services
   if check_services; then
     log "deployed $short ($RUNNER)"
