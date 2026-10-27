@@ -2146,6 +2146,13 @@ class Store:
                             else np.zeros((0, r["embedding"].size), np.float32))
         return rows
 
+    def owner_voice_name(self) -> str | None:
+        """The enrolled owner voice's name (``speakers.is_owner``), None without one. Unlike
+        ``owner_name`` it never falls back to the owner's person: voice samples need a
+        voice to go to."""
+        row = self._one("SELECT name FROM speakers WHERE is_owner = 1")
+        return row["name"] if row else None
+
     def owner_name(self) -> str | None:
         """The name owner lines are written under: the enrolled owner voice's name; without
         one, the owner's person (a Zoom track matched by CONVO_ZOOM_OWNER_NAMES makes one),

@@ -209,7 +209,7 @@ def learn_from_meeting(pipeline: Pipeline, session_id: str,
     for c in chunks:
         if c.get("audio_path") and c.get("track"):
             by_track.setdefault(c["track"], []).append(c)
-    owner_voice = store.owner_name()
+    owner_voice = store.owner_voice_name()
     plan: list[tuple[str, str]] = []  # (track, speaker name)
     for info in store.tracks(session_id):
         track = info["track"]
