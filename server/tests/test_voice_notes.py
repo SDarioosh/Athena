@@ -219,11 +219,14 @@ def test_mcp_filters_voice_notes(pipeline):
     note = conv_of(pipeline, "n1")
 
     notes = call(mcp, "search_conversations", kind="note", limit=1)
-    assert notes.startswith("1 voice notes")
+    assert notes.startswith("1 notes")
     assert f"(voice note) id {note['id']}" in notes
-    # small models paraphrase the value
-    assert call(mcp, "search_conversations", kind="voice_note") == call(
-        mcp, "search_conversations", kind="note")
+    voice = call(mcp, "search_conversations", kind="voice")
+    assert voice.startswith("1 voice notes") and f"id {note['id']}" in voice
+    # small models paraphrase the value (MCP 0.14.0: "voice_note" is voice notes only)
+    assert call(mcp, "search_conversations", kind="voice_note") == voice
+    assert call(mcp, "search_conversations", kind="memo") == voice
+    assert call(mcp, "search_conversations", kind="written").startswith("No written notes")
     others = call(mcp, "search_conversations", kind="conversation")
     assert others.startswith("2 conversations") and "(voice note)" not in others
     assert call(mcp, "search_conversations").startswith("3 conversations")

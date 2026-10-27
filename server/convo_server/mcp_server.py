@@ -26,7 +26,7 @@ from .diarize import load_voices
 from .links import local_time, transcript_link, written_label
 from .search import Embedder, search
 from .speakers import relabel_matches, suggestion
-from .store import CONVERSATION, ITEM_KINDS, NOTE, UNSET, Store, short_title
+from .store import CONVERSATION, ITEM_KINDS, NOTE, UNSET, VOICE, WRITTEN, Store, short_title
 
 INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
 with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
@@ -59,7 +59,8 @@ Voice notes: recordings the user made for themselves (an idea, a reminder) are v
 notes, marked "(voice note)" after the title. When the user asks about their voice notes, \
 notes or memos, call search_conversations with kind="note" (no query needed for the \
 latest ones). Notes the user wrote by hand are notes too, marked "(written by hand: \
-<link>)" instead; that link opens the handwritten page.
+<link>)" instead; that link opens the handwritten page. kind="voice" keeps only voice \
+notes, kind="written" only handwritten ones.
 
 Showing a transcript: when the user asks to see or read a transcript, answer with its link \
 and a short summary of who said what; don't copy the transcript lines into your answer \
@@ -70,8 +71,10 @@ Person = Annotated[str, Field(description="Person's name as it appears in transc
 Since = Annotated[str, Field(description="Start date YYYY-MM-DD (inclusive) or ISO time")]
 Until = Annotated[str, Field(description="End date YYYY-MM-DD (inclusive) or ISO time")]
 RecKind = Annotated[str, Field(description=(
-    "'note' = only voice notes (memos the user recorded for themselves); "
-    "'conversation' = only conversations with other people; empty = both"))]
+    "'note' = all the user's notes (voice notes and notes written by hand); "
+    "'voice' = only voice notes (memos the user recorded for themselves); "
+    "'written' = only notes the user wrote by hand; "
+    "'conversation' = only conversations with other people; empty = everything"))]
 ConvId = Annotated[str, Field(description="conversation id from a previous result")]
 
 
@@ -97,7 +100,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.13.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.14.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -176,7 +179,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             convs = store.list_conversations(since=a, until=b, person=person or None,
                                              kind=k, limit=limit)
         convs = [c for c in convs if c]
-        lines = [header(len(convs), "voice notes" if k == NOTE else "conversations")]
+        lines = [header(len(convs), _KIND_HEADER.get(k, "conversations"))]
         for c in convs:
             lines.append(
                 f"- {when(c['started_at'])}–{when(c['ended_at'], '%H:%M')} "
@@ -725,17 +728,25 @@ def _title(c: dict[str, Any]) -> str:
     return c.get("title") or "untitled (summary pending)"
 
 
+_KIND_HEADER = {NOTE: "notes", VOICE: "voice notes", WRITTEN: "written notes"}
+
+
 def _kind(value: str) -> str | None:
     """search_conversations' ``kind``, read loosely: small models write "voice_note",
-    "memo" or "notes"."""
+    "memo", "handwritten" or "notes"."""
     v = (value or "").strip().lower()
     if not v or v in ("all", "any", "both"):
         return None
-    if "note" in v or "memo" in v:
+    if "writ" in v or "hand" in v:
+        return WRITTEN
+    if "voice" in v or "memo" in v or "spoken" in v:
+        return VOICE
+    if "note" in v:
         return NOTE
     if "conv" in v:
         return CONVERSATION
-    raise ValueError(f"bad kind {value!r}; use 'note', 'conversation' or ''")
+    raise ValueError(f"bad kind {value!r}; use 'note', 'voice', 'written', 'conversation' "
+                     "or ''")
 
 
 def _note(kind: str | None, written: dict[str, Any] | None = None) -> str:
