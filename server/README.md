@@ -146,7 +146,9 @@ other's name; two different named speakers stay apart (often a real interruption
   pipeline, never at startup). Each track's display names are cleaned first: pronouns
   ("(she/her)"), bracketed tags, "| Company", " - Company" (spaced dash only, so
   "Smith-Jones" stays), "@ Company", device suffixes ("Kath's iPhone", "(iPad)"), titles
-  and credentials ("Dr.", ", PhD"), emoji and stray punctuation go; ALL-CAPS and
+  and credentials ("Dr.", ", PhD"), emoji and stray punctuation go (of the parts between separators the first that is a
+  name is kept, so "she/her | Kath Dlamini" and "iPhone | Kath Dlamini" are Kath Dlamini; a
+  room part makes the whole name a room); ALL-CAPS and
   all-lowercase names are title-cased ("MARCUS MCDONALD" → "Marcus McDonald"), mixed case
   is kept ("van der Berg", "O'Neil"). A name that is only a device, a room, conference
   hardware or a label ("iPhone", "Zoom user", "Conference Room 2", "Huddle 4", "Lobby",

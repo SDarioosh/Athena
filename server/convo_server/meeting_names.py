@@ -146,8 +146,15 @@ def clean_display_name(raw: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     if _EMAIL_RE.fullmatch(s):  # "kath.dlamini@acme.example" -> "kath dlamini"
         s = re.sub(r"[._]+", " ", s.split("@", 1)[0].split("+", 1)[0])
-    s = _drop_brackets(s)
-    s = next((p for p in _SEPARATOR_RE.split(s) if p.strip(_EDGE_PUNCT)), "")
+    parts = [p for p in _SEPARATOR_RE.split(_drop_brackets(s)) if p.strip(_EDGE_PUNCT)]
+    if any(looks_like_room(p) for p in parts):  # "Boardroom | Acme": a room, no one
+        return ""
+    # the first part that is a name: "she/her | Kath", "iPhone | Kath" -> "Kath" (QA BUG-10)
+    return next((c for c in map(_clean_part, parts) if c), "")
+
+
+def _clean_part(s: str) -> str:
+    """One part of a display name between separators, as a person's name, or ""."""
     s = _PRONOUNS_RE.sub(" ", s)
     if looks_like_device(s):  # "My iPhone": not "My" once the device is cut off
         return ""

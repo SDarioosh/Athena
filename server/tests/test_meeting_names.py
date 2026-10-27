@@ -365,3 +365,18 @@ def test_owner_by_raw_name_keeps_the_enrolled_owner_name(store):
 ])
 def test_bare_name_like_brand_words(raw, clean):
     assert clean_display_name(raw) == clean
+
+
+# BUG-10: a pronoun or device before the separator does not hide the name
+@pytest.mark.parametrize("raw, clean", [
+    ("she/her | Kath Dlamini", "Kath Dlamini"),
+    ("he/him - Bo Example", "Bo Example"),
+    ("iPhone | Kath Dlamini", "Kath Dlamini"),
+    ("Guest | Kath Dlamini", "Kath Dlamini"),
+    ("they/them • Rui Tanaka | Acme", "Rui Tanaka"),
+    ("Kath Dlamini | Acme", "Kath Dlamini"),  # unchanged: the first name-like segment
+    ("Conference Room 2 | Acme", ""),  # a room segment: the track is a room
+    ("Kath Dlamini | Boardroom", ""),
+])
+def test_first_segment_with_a_name(raw, clean):
+    assert clean_display_name(raw) == clean
