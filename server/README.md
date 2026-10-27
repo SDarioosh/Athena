@@ -282,6 +282,8 @@ curl -H "Authorization: Bearer $CONVO_INGEST_TOKEN" -F name=Me -F is_owner=true 
 | `codec`       | `opus` (default), `ogg`, `wav`, `pcm16`, `mp3`, `m4a`, `aac`, `webm` |
 | `sample_rate` | only for `pcm16` (default 16000)                                   |
 | `kind`        | `conversation` (default) or `note` (voice note); fixed per session  |
+| `track`       | optional: one participant's audio in a session with several (e.g. a Zoom user id), `[A-Za-z0-9._:-]{1,64}`; omitted or empty = no track |
+| `track_name`  | optional: that participant's display name, at most 200 characters; needs `track` |
 
 A **voice note** (`kind=note`) is the owner talking to themselves: no speaker matching
 (every line is the owner), never split on gaps or joined with nearby conversations, never
@@ -290,8 +292,22 @@ implies). It shows up as a conversation with `kind` `note`. A chunk whose `kind`
 from its session's is rejected with 400. `POST /v1/ingest/chunk.json` takes the same
 `kind` field.
 
+**Tracks** (a meeting: one track per participant). Without `track` a session works as
+before tracks. With it, sequences count per track, and a retry of the same
+(`session_id`, `track`, `sequence`) is a no-op (`"duplicate": true`; its `track_name` is
+ignored too). Each track is reassembled by its own sequence and transcribed on its own, so
+two people talking at once stay apart. `track_name` is stored per chunk: a participant who
+renames mid-meeting stays one track, and `GET /v1/sessions/{id}` lists every name seen
+(`tracks`: `track`, `name` (latest), `names`, `chunks`, `started_at`, `ended_at`; each
+chunk also has `track` and `track_name`, null without one). The stop answer is for the
+whole session: trailing silence counts from the latest speech on any track, so one quiet
+participant never stops a meeting. Errors (400): `track must match
+^[A-Za-z0-9._:-]{1,64}$`, `track_name is longer than 200 characters`, `track_name needs a
+track`. `POST /v1/ingest/chunk.json` takes the same two fields.
+
 Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client"|"idle"|null,
-"duplicate": bool, "speech_seconds", "trailing_silence_seconds", "session_seconds"}`.
+"duplicate": bool, "speech_seconds", "trailing_silence_seconds", "session_seconds"}`, plus
+`"track"` when the upload had one.
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
 

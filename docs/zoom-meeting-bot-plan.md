@@ -251,9 +251,9 @@ below are agreed.
 
 **Lane 1C, ingest (`api.py`, `pipeline.py`, `store.py`):**
 
-- [ ] Accept and validate `track` and `track_name`; store chunks per track; reassemble each
+- [x] Accept and validate `track` and `track_name`; store chunks per track; reassemble each
       track by its own sequence; idempotent per (session, track, sequence).
-- [ ] Tests: no `track` behaves exactly as today; two tracks with overlapping times are
+- [x] Tests: no `track` behaves exactly as today; two tracks with overlapping times are
       kept apart; a retried chunk is a no-op.
 
 **Deploy (`server/scripts/deploy.sh`):** build the bot only when
