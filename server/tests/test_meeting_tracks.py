@@ -312,3 +312,22 @@ def test_meeting_prompt_adds_new_names_only():
                           30) == "Alice Example. Bo Example."
     assert meeting_prompt("", ["Bo"], 30) == "Bo."
     assert meeting_prompt("Hi.", [], 30) == "Hi."
+
+
+# ------------------------------------------------------------- demo seed
+
+
+def test_seed_demo_has_a_meeting_with_crosstalk(pipeline):
+    sys.path.insert(0, str(SERVER / "scripts"))
+    from seed_demo import ME, MEETINGS, insert_meeting
+
+    (key, start, lines), = MEETINGS
+    (conv,) = insert_meeting(pipeline.store, pipeline, key, start, lines)
+    segs = pipeline.store.conversation_segments(conv)
+    assert len(segs) == len(lines) and {s.device for s in segs} == {"zoom"}
+    assert {s.speaker for s in segs} == {"Priya Example", "Lena Example", "Omar Example", ME}
+    assert all(s.is_owner == (s.speaker == ME) for s in segs)
+    overlaps = [(a.speaker, b.speaker) for a, b in zip(segs, segs[1:], strict=False)
+                if b.started_at < a.ended_at]
+    assert overlaps == [("Lena Example", "Omar Example")]
+    assert pipeline.summarize_conversation(conv)
