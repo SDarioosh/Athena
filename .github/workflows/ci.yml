@@ -51,6 +51,19 @@ jobs:
         working-directory: server
         run: docker compose logs --tail 80
 
+  meeting-bot:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Zoom meeting bot core: build and host tests (no Zoom SDK)"
+        if: hashFiles('meeting-bot/CMakeLists.txt') != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ pkg-config libcurl4-openssl-dev libopus-dev libopusenc-dev libogg-dev \
+            ffmpeg opus-tools
+          cmake -S meeting-bot -B build-bot && cmake --build build-bot -j && ctest --test-dir build-bot --output-on-failure
+
   firmware-twatch-ultra:
     runs-on: ubuntu-latest
     steps:
