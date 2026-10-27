@@ -69,7 +69,7 @@ def test_links_accepted(link: str, number: str, passcode: str | None) -> None:
     ("https://zoom.us/j/12345", "9 to 11 digits"),
     ("https://zoom.us/j/123456789012", "9 to 11 digits"),
     ("https://zoom.us/j/12345678a", "9 to 11 digits"),
-    ("https://zoomgov.com/j/123456789", "not a Zoom"),
+    ("https://zoomgov.com/j/123456789", "Zoom for Government"),
     ("https://zoom.us.evil.example/j/123456789", "not a Zoom"),
     ("https://evil.example/zoom.us/j/123456789", "not a Zoom"),
     ("https://user@zoom.us/j/123456789", "not a Zoom"),
@@ -626,3 +626,26 @@ def test_already_allowed_goes_straight_to_recording(meeting_settings, client,
     assert _wait(client, mid, "recording", "waiting_permission")["state"] == "recording"
     _report(rep)
     client.delete(f"/v1/meetings/{mid}")
+
+
+# ------------------------------------------------- QA regressions (Antigravity audit)
+@pytest.mark.parametrize("link, number", [
+    ("https://zoom.us/wc/JOIN/85012345678", "85012345678"),
+    ("https://zoom.us/WC/85012345678/Join", "85012345678"),
+    ("https://zoom.us/J/85012345678", "85012345678"),
+    ("zoommtg://zoom.us/JOIN?confno=85012345678", "85012345678"),
+    ("ZOOMUS://zoom.us/Join?confno=85012345678", "85012345678"),
+])
+def test_qa25_path_segments_case_insensitive(link: str, number: str) -> None:
+    assert parse_zoom_link(link).meeting_id == number
+
+
+@pytest.mark.parametrize("link", [
+    "zoomgov.com/j/1612345678", "https://zoomgov.com/j/1612345678",
+    "acme.zoomgov.com/j/1612345678", "zoommtg://zoomgov.com/join?confno=1612345678",
+])
+def test_qa25_zoomgov_has_its_own_message(link: str) -> None:
+    with pytest.raises(ValueError, match="Zoom for Government"):
+        parse_zoom_link(link)
+    with pytest.raises(ValueError, match="start link"):
+        parse_zoom_link("zoommtg://zoom.us/START?confno=85012345678")

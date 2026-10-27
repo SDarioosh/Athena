@@ -79,6 +79,8 @@ _STATE_LINE = re.compile(r"^STATE (starting|waiting_room|waiting_permission|reco
                          r"failed)"
                          r"(?: ([a-z0-9_]{1,40}))?$")
 _MEETING_NUMBER = re.compile(r"^\d{9,11}$")
+# a link pasted without a scheme: zoom.us, or zoomgov.com for its own refusal
+_NO_SCHEME = re.compile(r"^([a-z0-9-]+\.)*zoom(?:\.us|gov\.com)/", re.IGNORECASE)
 _ZOOM_HOST = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*zoom\.us$")
 _PASSCODE = re.compile(r"^[!-~]{1,128}$")  # printable ASCII, no spaces
 _CPU = re.compile(r"^\d{1,5}%$")
@@ -110,17 +112,18 @@ def parse_zoom_link(text: str) -> ZoomMeeting:
     - ``https://zoom.us/j/<number>?pwd=<pwd>`` and any subdomain of zoom.us
       (``us06web.zoom.us``, a company's vanity ``acme.zoom.us``); ``http`` and a link
       pasted without a scheme are read too. Also the web client's ``/wc/join/<number>``
-      and ``/wc/<number>/join``.
+      and ``/wc/<number>/join``. Path words (``j``, ``wc``, ``join``) in any case.
     - ``zoommtg://zoom.us/join?confno=<number>&pwd=<pwd>`` (and ``zoomus://``).
     - The number has 9 to 11 digits. ``pwd`` is optional and passed on unchanged.
     - Refused, each with its own message: personal links (``/my/<name>``: they carry no
       meeting number), webinars (``/w/``: not supported yet), registration links, host
-      start links (``/s/``), other hosts (``zoomgov.com`` included) and anything else.
+      start links (``/s/``), Zoom for Government (``zoomgov.com``, with or without a
+      scheme), other hosts and anything else.
     """
     raw = (text or "").strip().strip("<>\"'").strip()
     if not raw:
         raise ValueError("paste a Zoom meeting link")
-    if "://" not in raw and re.match(r"^([a-z0-9-]+\.)*zoom\.us/", raw, re.IGNORECASE):
+    if "://" not in raw and _NO_SCHEME.match(raw):
         raw = "https://" + raw
     try:
         parts = urlsplit(raw)
@@ -129,12 +132,15 @@ def parse_zoom_link(text: str) -> ZoomMeeting:
     except ValueError as e:
         raise ValueError("not a Zoom meeting link") from e
     scheme = parts.scheme.lower()
+    if host == "zoomgov.com" or host.endswith(".zoomgov.com"):
+        raise ValueError("Zoom for Government links (zoomgov.com) aren't supported")
     if scheme not in ("https", "http", "zoommtg", "zoomus") or not _ZOOM_HOST.match(host) \
             or port is not None or parts.username or parts.password:
         raise ValueError("not a Zoom meeting link (expected https://…zoom.us/j/<number>)")
     query = parse_qs(parts.query)
     pwd = (query.get("pwd") or [None])[0] or None
-    segs = [s for s in parts.path.split("/") if s]
+    # path words (j, wc, join, …) in any case; the number is digits anyway
+    segs = [s.lower() for s in parts.path.split("/") if s]
     if scheme in ("zoommtg", "zoomus"):
         if segs[:1] == ["start"]:
             raise ValueError("this is the host's start link; paste the join link")
@@ -142,7 +148,7 @@ def parse_zoom_link(text: str) -> ZoomMeeting:
         if segs[:1] != ["join"] or not number:
             raise ValueError("not a Zoom meeting link (zoommtg:// links need confno)")
     else:
-        first = segs[0].lower() if segs else ""
+        first = segs[0] if segs else ""
         if first == "my":
             raise ValueError("personal links (/my/<name>) carry no meeting number; paste "
                              "the invite link with /j/<number>, or send meeting_id")
@@ -150,7 +156,7 @@ def parse_zoom_link(text: str) -> ZoomMeeting:
             raise ValueError("webinars are not supported yet")
         if first == "s":
             raise ValueError("this is the host's start link; paste the join link")
-        if first in ("meeting", "webinar") and "register" in [s.lower() for s in segs]:
+        if first in ("meeting", "webinar") and "register" in segs:
             raise ValueError("this is a registration link; register, then paste the join "
                              "link from the confirmation")
         if first == "j" and len(segs) == 2:

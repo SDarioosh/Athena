@@ -349,10 +349,11 @@ because someone asks it to.
 **Links** accepted: `https://zoom.us/j/<number>?pwd=…` and any subdomain of `zoom.us`
 (`us06web.zoom.us`, vanity `acme.zoom.us`; `http` or no scheme is read too),
 `/wc/join/<number>` and `/wc/<number>/join`, and `zoommtg://` / `zoomus://` links with
-`confno`. The number has 9-11 digits; `pwd` is optional. Refused with a message: personal
-links `/my/<name>` (no number in them), webinars `/w/` (not yet), registration and host
-start (`/s/`) links, any other host (also `zoomgov.com`). `parse_zoom_link` holds the
-rules; the hub mirrors them.
+`confno`; path words (`j`, `wc`, `join`) in any case. The number has 9-11 digits; `pwd` is
+optional. Refused with a message: personal links `/my/<name>` (no number in them),
+webinars `/w/` (not yet), registration and host start (`/s/`) links, Zoom for Government
+(`zoomgov.com`, with or without a scheme, its own message), any other host.
+`parse_zoom_link` holds the rules; the hub mirrors them.
 
 **Safety caps.** With `CONVO_MEETING_BOT_RUNNER=auto` (default) the first join checks once
 whether `systemd-run --user --scope` works. If so: `systemd-run --user --scope --quiet
