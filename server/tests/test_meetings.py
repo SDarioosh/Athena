@@ -69,7 +69,7 @@ def test_links_accepted(link: str, number: str, passcode: str | None) -> None:
     ("https://zoom.us/j/12345", "9 to 11 digits"),
     ("https://zoom.us/j/123456789012", "9 to 11 digits"),
     ("https://zoom.us/j/12345678a", "9 to 11 digits"),
-    ("https://zoomgov.com/j/123456789", "not a Zoom"),
+    ("https://zoomgov.com/j/123456789", "Zoom for Government"),
     ("https://zoom.us.evil.example/j/123456789", "not a Zoom"),
     ("https://evil.example/zoom.us/j/123456789", "not a Zoom"),
     ("https://user@zoom.us/j/123456789", "not a Zoom"),
@@ -167,7 +167,7 @@ def test_systemd_command_caps(settings) -> None:
     assert argv[:5] == ["systemd-run", "--user", "--scope", "--quiet", "--collect"]
     assert "--unit=athena-meeting-x" in argv
     assert ["-p", "CPUQuota=150%", "-p", "MemoryMax=1G",
-            "-p", f"RuntimeMaxSec={int(settings.max_session_seconds) + 60}"] == \
+            "-p", f"RuntimeMaxSec={int(settings.max_session_seconds) + 90}"] == \
         argv[6:12]
     assert argv[12:16] == ["nice", "-n", "10", "/opt/bot"]
     assert PASSCODE not in " ".join(argv)
@@ -626,3 +626,166 @@ def test_already_allowed_goes_straight_to_recording(meeting_settings, client,
     assert _wait(client, mid, "recording", "waiting_permission")["state"] == "recording"
     _report(rep)
     client.delete(f"/v1/meetings/{mid}")
+
+
+# ------------------------------------------------- QA regressions (Antigravity audit)
+def test_qa17_long_title_or_passcode_is_400_with_a_string(meeting_settings, client) -> None:
+    """BUG-17: the documented 400 {"detail": "<message>"}, never pydantic's 422 list."""
+    url = "https://zoom.us/j/85012345678"
+    r = client.post("/v1/meetings", json={"url": url, "title": "x" * 201})
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "title is longer than 200 characters"
+    r = client.post("/v1/meetings", json={"meeting_id": "85012345678",
+                                          "passcode": "p" * 129})
+    assert r.status_code == 400 and isinstance(r.json()["detail"], str), r.text
+    assert "passcode" in r.json()["detail"]
+    r = client.post("/v1/meetings", json={"url": url, "meeting_id": ["x"]})
+    assert r.status_code == 400 and isinstance(r.json()["detail"], str), r.text
+    r = client.post("/v1/meetings", content=b"[1, 2]",
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 400 and isinstance(r.json()["detail"], str), r.text
+    # a hard cap on the body stays
+    r = client.post("/v1/meetings", json={"url": url, "title": "x" * 20_000})
+    assert r.status_code == 413 and isinstance(r.json()["detail"], str), r.text
+    assert client.get("/v1/meetings").json()["meetings"] == []
+    # spaces around a title that fits are stripped, not counted
+    padded = "  " + "t" * 195 + "      "
+    r = client.post("/v1/meetings", json={"url": url, "title": padded})
+    assert r.status_code == 202, r.text
+    mid = r.json()["id"]
+    assert client.get(f"/v1/meetings/{mid}").json()["title"] == "t" * 195
+    client.delete(f"/v1/meetings/{mid}")
+
+
+def test_qa18_systemd_limit_fires_after_the_launcher_timeout(settings) -> None:
+    """BUG-18: RuntimeMaxSec is past the launcher's own lifetime plus its SIGTERM grace,
+    so the launcher's timeout (max_duration) always fires first."""
+    for seconds in (5, 5.9, 600, 14400):
+        settings.max_session_seconds = seconds
+        argv = build_command(settings, "systemd", Path("/opt/bot"), [], "u")
+        limit = int(next(a for a in argv if a.startswith("RuntimeMaxSec="))
+                    .split("=", 1)[1])
+        lifetime = seconds + meetings.LIFETIME_GRACE_SECONDS
+        assert limit >= lifetime + meetings.STOP_GRACE_SECONDS + 10, (seconds, limit)
+
+
+def test_qa18_runtime_limit_kill_is_max_duration(meeting_settings, client, tmp_path,
+                                                 monkeypatch) -> None:
+    """BUG-18: a bot killed by a signal after its max duration (systemd's RuntimeMaxSec)
+    is ended/max_duration, not failed/bot_crashed."""
+    import signal as sig
+
+    monkeypatch.setattr(meetings, "LIFETIME_GRACE_SECONDS", 100.0)  # launcher waits
+    meeting_settings.max_session_seconds = 1
+    rep = _use(meeting_settings, tmp_path, "stubborn")
+    mid = client.post("/v1/meetings", json={"meeting_id": "123456789"}).json()["id"]
+    _wait(client, mid, "recording")
+    pid = _report(rep)["pid"]
+    time.sleep(1.2)
+    os.kill(pid, sig.SIGKILL)  # what systemd does at RuntimeMaxSec
+    row = _wait(client, mid, "ended", "failed")
+    assert (row["state"], row["reason"]) == ("ended", "max_duration")
+
+
+def test_qa19_delete_answers_the_final_row(meeting_settings, client, tmp_path,
+                                           monkeypatch) -> None:
+    """BUG-19: DELETE answers the final row once the bot exited, even when the scope
+    cleanup afterwards is slow (systemctl --user stop can take up to 5 s)."""
+    slow = []
+
+    async def slow_stop(argv, env, timeout=5.0):
+        slow.append(argv)
+        await asyncio.sleep(5.5)
+        return 0
+
+    monkeypatch.setattr(meetings, "_run_quick", slow_stop)
+    monkeypatch.setattr(meetings, "build_command",
+                        lambda settings, runner, bot, args, unit: [str(bot), *args])
+    meeting_settings.meeting_bot_runner = "systemd"
+    rep = _use(meeting_settings, tmp_path, "record")
+    mid = client.post("/v1/meetings", json={"meeting_id": "123456789"}).json()["id"]
+    _wait(client, mid, "recording")
+    started = time.monotonic()
+    r = client.delete(f"/v1/meetings/{mid}").json()
+    assert (r["state"], r["reason"], r["active"]) == ("ended", "stopped", False), r
+    assert time.monotonic() - started < 5.0
+    assert _gone(_report(rep)["pid"])
+    deadline = time.monotonic() + 10
+    while _tasks(client) and time.monotonic() < deadline:  # the slow cleanup finishes
+        time.sleep(0.1)
+    assert _tasks(client) == [] and slow and slow[0][:3] == ["systemctl", "--user", "stop"]
+    assert client.get(f"/v1/meetings/{mid}").json()["state"] == "ended"
+
+
+def test_qa20_over_long_line_is_dropped_whole(meeting_settings, client, tmp_path) -> None:
+    """BUG-20: a log line over the limit is discarded up to its newline; a STATE text
+    in its tail is never read as a status line."""
+    _use(meeting_settings, tmp_path, "longline")
+    mid = client.post("/v1/meetings", json={"meeting_id": "123456789"}).json()["id"]
+    row = _wait(client, mid, "recording", "failed", "ended")
+    assert row["state"] == "recording", row
+    r = client.delete(f"/v1/meetings/{mid}").json()
+    assert (r["state"], r["reason"]) == ("ended", "stopped")
+
+
+def test_qa22_bot_token_uploads_conversation_only(meeting_settings, client,
+                                                  tmp_path) -> None:
+    """BUG-22: the per-meeting token can't make the meeting a voice note."""
+    rep = _use(meeting_settings, tmp_path, "record")
+    body = client.post("/v1/meetings", json={"meeting_id": "123456789"}).json()
+    mid, sid = body["id"], body["session_id"]
+    _wait(client, mid, "recording")
+    bot_token = _report(rep)["env"]["ATHENA_UPLOAD_TOKEN"]
+    req = _chunk(bot_token, sid)
+    req["data"]["kind"] = "note"
+    r = client.post("/v1/ingest/chunk", **req)
+    assert r.status_code == 403, r.text
+    assert client.get(f"/v1/sessions/{sid}").status_code == 404  # nothing stored
+    req["data"]["kind"] = "conversation"
+    assert client.post("/v1/ingest/chunk", **req).status_code == 200
+    client.delete(f"/v1/meetings/{mid}")
+
+
+@pytest.mark.parametrize("link, number", [
+    ("https://zoom.us/wc/JOIN/85012345678", "85012345678"),
+    ("https://zoom.us/WC/85012345678/Join", "85012345678"),
+    ("https://zoom.us/J/85012345678", "85012345678"),
+    ("zoommtg://zoom.us/JOIN?confno=85012345678", "85012345678"),
+    ("ZOOMUS://zoom.us/Join?confno=85012345678", "85012345678"),
+])
+def test_qa25_path_segments_case_insensitive(link: str, number: str) -> None:
+    assert parse_zoom_link(link).meeting_id == number
+
+
+@pytest.mark.parametrize("link", [
+    "zoomgov.com/j/1612345678", "https://zoomgov.com/j/1612345678",
+    "acme.zoomgov.com/j/1612345678", "zoommtg://zoomgov.com/join?confno=1612345678",
+])
+def test_qa25_zoomgov_has_its_own_message(link: str) -> None:
+    with pytest.raises(ValueError, match="Zoom for Government"):
+        parse_zoom_link(link)
+    with pytest.raises(ValueError, match="start link"):
+        parse_zoom_link("zoommtg://zoom.us/START?confno=85012345678")
+
+
+def test_qa20_line_splitter() -> None:
+    lines = meetings.LineSplitter(limit=20)
+    assert lines.feed(b"STATE rec") == []
+    assert lines.feed(b"ording\nab\n") == [b"STATE recording", b"ab"]
+    assert lines.feed(b"x" * 21) == []  # over the limit, no newline yet: dropped
+    assert lines.feed(b"STATE failed\nok\n") == [b"ok"]  # its tail is not a line
+    assert lines.feed(b"y" * 21 + b"\nfine\n") == [b"fine"]  # whole long line in one go
+    assert lines.feed(b"z" * 20 + b"\n") == [b"z" * 20]  # exactly the limit is kept
+    assert lines.feed(b"last") == [] and lines.end() == [b"last"]
+    lines.feed(b"q" * 21)
+    assert lines.end() == []
+
+
+def test_qa18_runtime_limit_kill() -> None:
+    import signal as sig
+
+    assert meetings.runtime_limit_kill(-sig.SIGTERM, 700, 600)
+    assert meetings.runtime_limit_kill(-sig.SIGKILL, 600, 600)
+    assert not meetings.runtime_limit_kill(-sig.SIGKILL, 30, 600)  # e.g. out of memory
+    assert not meetings.runtime_limit_kill(3, 700, 600)
+    assert not meetings.runtime_limit_kill(0, 700, 600)

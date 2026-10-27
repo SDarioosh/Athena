@@ -298,12 +298,14 @@ before tracks. With it, sequences count per track, and a retry of the same
 ignored too). Each track is reassembled by its own sequence and transcribed on its own, so
 two people talking at once stay apart. `track_name` is stored per chunk: a participant who
 renames mid-meeting stays one track, and `GET /v1/sessions/{id}` lists every name seen
-(`tracks`: `track`, `name` (latest), `names`, `chunks`, `started_at`, `ended_at`; each
+(`tracks`: `track`, `name` (of the latest chunk in time, as sent), `names` (every name,
+in order of first use), `chunks`, `started_at`, `ended_at`; each
 chunk also has `track` and `track_name`, null without one). A session with any tracked
 chunk (a meeting) never stops on trailing silence, so a quiet break doesn't end it: it
 stops at `CONVO_MAX_SESSION_SECONDS`, on `POST /v1/sessions/{id}/end`, or after
 `CONVO_SESSION_IDLE_SECONDS` without uploads (the uploader died); once ended, every track
-is told `stop: true`. Errors (400): `track must match
+is told `stop: true`. If an untracked chunk stopped the session on silence first, the
+first tracked chunk reopens it (`recording` again, no stop reason). Errors (400): `track must match
 ^[A-Za-z0-9._:-]{1,64}$`, `track_name is longer than 200 characters`, `track_name needs a
 track`. `POST /v1/ingest/chunk.json` takes the same two fields.
 
@@ -323,10 +325,10 @@ timer or poller. Same bearer token as every route.
 
 | route | answer |
 |---|---|
-| `POST /v1/meetings` JSON `{"url": "<Zoom link>"}` or `{"meeting_id": "123 4567 8901", "passcode": "…"}`, optional `"title"` (≤ 200) | `202 {"id", "state": "starting", "session_id"}`; `503 {"detail": "zoom_signin_needed", "message"}` when the join token mode needs Athena's Zoom sign-in and it is missing or expired (the message says to run `convo-server zoom-login`); `502 {"detail": "zoom_unavailable", "message"}` when Zoom's API can't be reached; `400 {"detail"}` for a link that isn't a Zoom meeting (the message says why); `409 {"detail": "busy", "message", "active": "<meeting id>"}` when `CONVO_MEETING_BOT_MAX` bots are active; `501 {"detail"}` when meetings are off (`CONVO_MEETING_BOT_PATH` unset or not executable, no SDK key/secret, a bad meeting setting); `500` when the bot can't be started |
+| `POST /v1/meetings` JSON `{"url": "<Zoom link>"}` or `{"meeting_id": "123 4567 8901", "passcode": "…"}`, optional `"title"` (≤ 200) | `202 {"id", "state": "starting", "session_id"}`; `503 {"detail": "zoom_signin_needed", "message"}` when the join token mode needs Athena's Zoom sign-in and it is missing or expired (the message says to run `convo-server zoom-login`); `502 {"detail": "zoom_unavailable", "message"}` when Zoom's API can't be reached; `400 {"detail"}` for a link that isn't a Zoom meeting or a bad body (`detail` is always a message string, e.g. `title is longer than 200 characters`; a title is stripped first); `413 {"detail"}` for a body over 16 KB; `409 {"detail": "busy", "message", "active": "<meeting id>"}` when `CONVO_MEETING_BOT_MAX` bots are active; `501 {"detail"}` when meetings are off (`CONVO_MEETING_BOT_PATH` unset or not executable, no SDK key/secret, a bad meeting setting); `500` when the bot can't be started |
 | `GET /v1/meetings/{id}` | `{"id", "state", "reason", "active", "session_id", "meeting_id", "title", "join_token_kind" (`zak`, `obf` or `none`), "created_at", "started_at", "ended_at"}` (ISO-8601; `started_at` = first recording); 404 |
 | `GET /v1/meetings?limit=20` | `{"meetings": [...]}`, newest first (the current one, if any, is first) |
-| `DELETE /v1/meetings/{id}` | the bot leaves: SIGTERM, it flushes and ends the session; SIGKILL after 10 s. Answers once it exited, with the row (`ended`, `stopped`). Idempotent; 404 |
+| `DELETE /v1/meetings/{id}` | the bot leaves: SIGTERM, it flushes and ends the session; SIGKILL after 10 s. Answers once it exited, with the final row (`ended`, `stopped`; never `active` for a bot that exited), within about 15 s. Idempotent; 404 |
 
 States: `starting` → `waiting_room` → `waiting_permission` → `recording` → `ended` or
 `failed`, each with a `reason` where it helps. `waiting_permission`: Zoom gives raw audio
@@ -349,16 +351,20 @@ because someone asks it to.
 **Links** accepted: `https://zoom.us/j/<number>?pwd=…` and any subdomain of `zoom.us`
 (`us06web.zoom.us`, vanity `acme.zoom.us`; `http` or no scheme is read too),
 `/wc/join/<number>` and `/wc/<number>/join`, and `zoommtg://` / `zoomus://` links with
-`confno`. The number has 9-11 digits; `pwd` is optional. Refused with a message: personal
-links `/my/<name>` (no number in them), webinars `/w/` (not yet), registration and host
-start (`/s/`) links, any other host (also `zoomgov.com`). `parse_zoom_link` holds the
-rules; the hub mirrors them.
+`confno`; path words (`j`, `wc`, `join`) in any case. The number has 9-11 digits; `pwd` is
+optional. Refused with a message: personal links `/my/<name>` (no number in them),
+webinars `/w/` (not yet), registration and host start (`/s/`) links, Zoom for Government
+(`zoomgov.com`, with or without a scheme, its own message), any other host.
+`parse_zoom_link` holds the rules; the hub mirrors them.
 
 **Safety caps.** With `CONVO_MEETING_BOT_RUNNER=auto` (default) the first join checks once
 whether `systemd-run --user --scope` works. If so: `systemd-run --user --scope --quiet
 --collect --unit=athena-meeting-<id> -p CPUQuota=$CONVO_MEETING_BOT_CPU -p
-MemoryMax=$CONVO_MEETING_BOT_MEMORY -p RuntimeMaxSec=<CONVO_MAX_SESSION_SECONDS + 60> nice
--n 10 <bot> …`. Else (Docker, background runner) the bot runs in its own process group at
+MemoryMax=$CONVO_MEETING_BOT_MEMORY -p RuntimeMaxSec=<CONVO_MAX_SESSION_SECONDS + 90> nice
+-n 10 <bot> …`. The launcher itself stops the bot at `CONVO_MAX_SESSION_SECONDS` + 60 s
+(SIGTERM, SIGKILL 10 s later, `ended`/`max_duration`); systemd's limit, 30 s after that,
+is only a backstop, and a bot it kills after its max duration is `max_duration` too, not
+`bot_crashed`. Else (Docker, background runner) the bot runs in its own process group at
 `nice 10` with `RLIMIT_AS` = `CONVO_MEETING_BOT_MEMORY` (no CPU cap), and the launcher
 stops it at the same lifetime. When the bot exits, anything it left in its process group
 (and the scope) is killed and its work dir is removed.
@@ -373,7 +379,8 @@ didn't end it.
 
 **Upload token.** The bot never gets `CONVO_INGEST_TOKEN`. Each meeting gets a random
 token (stored only as a SHA-256 hash, cleared when the bot exits) that is accepted only
-for `POST /v1/ingest/chunk` with that meeting's `session_id` and `device=zoom`, and
+for `POST /v1/ingest/chunk` with that meeting's `session_id`, `device=zoom` and `kind`
+`conversation` (the default; `note` answers 403), and
 `POST /v1/sessions/<that session>/end` and `/chat` (Phase 3). Every other route answers
 403; after the bot exits, 401.
 
@@ -392,7 +399,9 @@ app join a meeting hosted by another Zoom account only on behalf of a signed-in 
    in `server/.env`.
 3. Run `convo-server zoom-login` on the server. It prints a Zoom URL. Open it anywhere,
    sign in with your own Zoom account and allow the app, then paste the address the
-   browser went to (or just its `code`). It uses PKCE and checks `state`.
+   browser went to (or just its `code`). It uses PKCE and checks `state`: a pasted address
+   (or query) must carry this sign-in's `state`, and one with `error=` is refused; a bare
+   code has no state to check (PKCE ties it to this sign-in).
 4. The refresh token is saved to `<data dir>/zoom/refresh_token.json` (mode 0600,
    replaced atomically). `convo-server zoom-login --status` says whether Athena is signed
    in and which join token the next meeting gets. Delete the file to sign out.

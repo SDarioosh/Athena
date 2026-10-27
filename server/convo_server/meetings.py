@@ -45,6 +45,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -70,6 +71,11 @@ DEVICE = "zoom"  # the device name the bot uploads with
 BOT_NAME = "Athena"
 STOP_GRACE_SECONDS = 10.0  # after SIGTERM (the bot must exit within 5 s), then SIGKILL
 LIFETIME_GRACE_SECONDS = 60.0  # beyond --max-seconds before the bot is killed
+# systemd's RuntimeMaxSec comes this long after the launcher's own lifetime timeout, so
+# the launcher (SIGTERM, then SIGKILL after STOP_GRACE_SECONDS) always stops it first
+SYSTEMD_MARGIN_SECONDS = STOP_GRACE_SECONDS + 20.0
+READER_DRAIN_SECONDS = 2.0  # after the bot exited, for its last status lines
+MAX_LOG_LINE = 4096  # a longer stdout line is dropped whole, never parsed
 MAX_TITLE_CHARS = 200
 MAX_PASSCODE_CHARS = 128
 JOIN_TOKEN_SECONDS = 7200  # a ZAK or OBF token lasts about 2 h (zoom_signin.py)
@@ -79,6 +85,8 @@ _STATE_LINE = re.compile(r"^STATE (starting|waiting_room|waiting_permission|reco
                          r"failed)"
                          r"(?: ([a-z0-9_]{1,40}))?$")
 _MEETING_NUMBER = re.compile(r"^\d{9,11}$")
+# a link pasted without a scheme: zoom.us, or zoomgov.com for its own refusal
+_NO_SCHEME = re.compile(r"^([a-z0-9-]+\.)*zoom(?:\.us|gov\.com)/", re.IGNORECASE)
 _ZOOM_HOST = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*zoom\.us$")
 _PASSCODE = re.compile(r"^[!-~]{1,128}$")  # printable ASCII, no spaces
 _CPU = re.compile(r"^\d{1,5}%$")
@@ -110,17 +118,18 @@ def parse_zoom_link(text: str) -> ZoomMeeting:
     - ``https://zoom.us/j/<number>?pwd=<pwd>`` and any subdomain of zoom.us
       (``us06web.zoom.us``, a company's vanity ``acme.zoom.us``); ``http`` and a link
       pasted without a scheme are read too. Also the web client's ``/wc/join/<number>``
-      and ``/wc/<number>/join``.
+      and ``/wc/<number>/join``. Path words (``j``, ``wc``, ``join``) in any case.
     - ``zoommtg://zoom.us/join?confno=<number>&pwd=<pwd>`` (and ``zoomus://``).
     - The number has 9 to 11 digits. ``pwd`` is optional and passed on unchanged.
     - Refused, each with its own message: personal links (``/my/<name>``: they carry no
       meeting number), webinars (``/w/``: not supported yet), registration links, host
-      start links (``/s/``), other hosts (``zoomgov.com`` included) and anything else.
+      start links (``/s/``), Zoom for Government (``zoomgov.com``, with or without a
+      scheme), other hosts and anything else.
     """
     raw = (text or "").strip().strip("<>\"'").strip()
     if not raw:
         raise ValueError("paste a Zoom meeting link")
-    if "://" not in raw and re.match(r"^([a-z0-9-]+\.)*zoom\.us/", raw, re.IGNORECASE):
+    if "://" not in raw and _NO_SCHEME.match(raw):
         raw = "https://" + raw
     try:
         parts = urlsplit(raw)
@@ -129,12 +138,15 @@ def parse_zoom_link(text: str) -> ZoomMeeting:
     except ValueError as e:
         raise ValueError("not a Zoom meeting link") from e
     scheme = parts.scheme.lower()
+    if host == "zoomgov.com" or host.endswith(".zoomgov.com"):
+        raise ValueError("Zoom for Government links (zoomgov.com) aren't supported")
     if scheme not in ("https", "http", "zoommtg", "zoomus") or not _ZOOM_HOST.match(host) \
             or port is not None or parts.username or parts.password:
         raise ValueError("not a Zoom meeting link (expected https://…zoom.us/j/<number>)")
     query = parse_qs(parts.query)
     pwd = (query.get("pwd") or [None])[0] or None
-    segs = [s for s in parts.path.split("/") if s]
+    # path words (j, wc, join, …) in any case; the number is digits anyway
+    segs = [s.lower() for s in parts.path.split("/") if s]
     if scheme in ("zoommtg", "zoomus"):
         if segs[:1] == ["start"]:
             raise ValueError("this is the host's start link; paste the join link")
@@ -142,7 +154,7 @@ def parse_zoom_link(text: str) -> ZoomMeeting:
         if segs[:1] != ["join"] or not number:
             raise ValueError("not a Zoom meeting link (zoommtg:// links need confno)")
     else:
-        first = segs[0].lower() if segs else ""
+        first = segs[0] if segs else ""
         if first == "my":
             raise ValueError("personal links (/my/<name>) carry no meeting number; paste "
                              "the invite link with /j/<number>, or send meeting_id")
@@ -150,7 +162,7 @@ def parse_zoom_link(text: str) -> ZoomMeeting:
             raise ValueError("webinars are not supported yet")
         if first == "s":
             raise ValueError("this is the host's start link; paste the join link")
-        if first in ("meeting", "webinar") and "register" in [s.lower() for s in segs]:
+        if first in ("meeting", "webinar") and "register" in segs:
             raise ValueError("this is a registration link; register, then paste the join "
                              "link from the confirmation")
         if first == "j" and len(segs) == 2:
@@ -272,7 +284,8 @@ def build_command(settings: Settings, runner: str, bot: Path, args: list[str],
                   unit: str) -> list[str]:
     """The argv that starts the bot. No secret is ever in it."""
     if runner == "systemd":
-        lifetime = int(settings.max_session_seconds + LIFETIME_GRACE_SECONDS)
+        lifetime = math.ceil(settings.max_session_seconds + LIFETIME_GRACE_SECONDS
+                             + SYSTEMD_MARGIN_SECONDS)
         return ["systemd-run", "--user", "--scope", "--quiet", "--collect",
                 f"--unit={unit}", "-p", f"CPUQuota={settings.meeting_bot_cpu}",
                 "-p", f"MemoryMax={settings.meeting_bot_memory}",
@@ -328,6 +341,40 @@ def final_state(last: tuple[str, str | None] | None, code: int,
     return ("ended", "exited") if code == 0 else ("failed", "bot_crashed")
 
 
+def runtime_limit_kill(code: int, ran_for: float, max_seconds: float) -> bool:
+    """Was the bot stopped by an outside runtime limit (systemd's ``RuntimeMaxSec``):
+    killed by SIGTERM or SIGKILL after its max duration had passed?"""
+    return code in (-signal.SIGTERM, -signal.SIGKILL) and ran_for >= max_seconds
+
+
+class LineSplitter:
+    """Bytes in, complete lines out. A line longer than MAX_LOG_LINE is dropped whole,
+    up to and including its newline, so its tail is never read as a line of its own."""
+
+    def __init__(self, limit: int = MAX_LOG_LINE) -> None:
+        self.limit, self.buf, self.skipping = limit, b"", False
+
+    def feed(self, data: bytes) -> list[bytes]:
+        self.buf += data
+        lines = []
+        while True:
+            nl = self.buf.find(b"\n")
+            if nl < 0:
+                if len(self.buf) > self.limit:  # too long already: drop until its end
+                    self.buf, self.skipping = b"", True
+                return lines
+            line, self.buf = self.buf[:nl], self.buf[nl + 1:]
+            if self.skipping:
+                self.skipping = False
+            elif len(line) <= self.limit:
+                lines.append(line)
+
+    def end(self) -> list[bytes]:
+        """At EOF: a last line without a newline, unless it is being dropped."""
+        line, self.buf = self.buf, b""
+        return [line] if line and not self.skipping and len(line) <= self.limit else []
+
+
 def out(row: dict[str, Any]) -> dict[str, Any]:
     """A meetings row as the API returns it."""
     def iso(ts: float | None) -> str | None:
@@ -370,7 +417,9 @@ class _Running:
     unit: str
     work_dir: Path
     exited: asyncio.Future[int]
-    done: asyncio.Event = field(default_factory=asyncio.Event)
+    done: asyncio.Event = field(default_factory=asyncio.Event)  # watcher task over
+    finished: asyncio.Event = field(default_factory=asyncio.Event)  # final row written
+    started: float = field(default_factory=time.monotonic)
     last: tuple[str, str | None] | None = None
     stop_reason: str | None = None
     task: asyncio.Task[None] | None = None
@@ -485,9 +534,12 @@ class Launcher:
         if row["state"] in MEETING_ACTIVE:
             run = self.running.get(mid)
             if run is not None:
-                await self._terminate(run, "stopped")
+                await self._terminate(run, "stopped")  # returns once the bot exited
                 with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(run.done.wait(), 5.0)
+                    await asyncio.wait_for(run.finished.wait(), READER_DRAIN_SECONDS + 3.0)
+                exited = run.exited.done() and not run.exited.cancelled()
+                if exited and not run.finished.is_set():  # never "active" for a dead bot
+                    self._finish_run(run, run.exited.result())
             else:  # a bot started before a server restart
                 await self._stop_orphan(row)
         return out(self.store.get_meeting(mid) or row)
@@ -551,19 +603,21 @@ class Launcher:
                 log.warning("meeting %s: bot outlived its max duration", run.id)
                 await self._terminate(run, "max_duration")
             code = await run.exited
-            # helpers the bot left in its process group (or scope) go too
+            # helpers the bot left in its process group go too (they may hold stdout)
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(run.proc.pid, signal.SIGKILL)
+            try:
+                await asyncio.wait_for(reader, READER_DRAIN_SECONDS)
+            except TimeoutError:
+                reader.cancel()
+            if run.stop_reason is None and runtime_limit_kill(
+                    code, time.monotonic() - run.started, self.settings.max_session_seconds):
+                run.stop_reason = "max_duration"  # systemd's RuntimeMaxSec, not a crash
+            # the row first (DELETE answers with it), then the slower scope cleanup
+            self._finish_run(run, code)
             if run.runner == "systemd":
                 await _run_quick(["systemctl", "--user", "stop", f"{run.unit}.scope"],
                                  bot_env({}))
-            try:
-                await asyncio.wait_for(reader, 2.0)
-            except TimeoutError:
-                reader.cancel()
-            state, reason = final_state(run.last, code, run.stop_reason)
-            log.info("meeting %s: bot exited (code %s): %s %s", run.id, code, state, reason)
-            self._finish_row(run.id, run.session_id, state, reason)
         except asyncio.CancelledError:
             reader.cancel()
             _unwatch_exit(loop, run.exited)
@@ -579,22 +633,20 @@ class Launcher:
 
     async def _read(self, run: _Running) -> None:
         loop = asyncio.get_running_loop()
-        stream = asyncio.StreamReader(limit=4096, loop=loop)
+        stream = asyncio.StreamReader(limit=2 * MAX_LOG_LINE, loop=loop)
         assert run.proc.stdout is not None
         transport, _ = await loop.connect_read_pipe(
             lambda: asyncio.StreamReaderProtocol(stream, loop=loop), run.proc.stdout)
+        lines = LineSplitter()
         try:
             while True:
-                try:
-                    raw = await stream.readline()
-                except ValueError:  # an over-long line: skip it
-                    continue
-                if not raw:
+                data = await stream.read(MAX_LOG_LINE)
+                for raw in lines.feed(data) if data else lines.end():
+                    parsed = parse_state_line(raw.decode("utf-8", "replace"))
+                    if parsed is not None:
+                        self._on_state(run, *parsed)
+                if not data:
                     return
-                parsed = parse_state_line(raw.decode("utf-8", "replace"))
-                if parsed is None:
-                    continue
-                self._on_state(run, *parsed)
         finally:
             transport.close()
 
@@ -644,6 +696,15 @@ class Launcher:
                              bot_env({}))
         shutil.rmtree(self.settings.data_dir / "meetings" / row["id"], ignore_errors=True)
         self._finish_row(row["id"], sid, "ended", "stopped")
+
+    def _finish_run(self, run: _Running, code: int) -> None:
+        """The final row of a bot that exited with ``code``, written once."""
+        if run.finished.is_set():
+            return
+        state, reason = final_state(run.last, code, run.stop_reason)
+        log.info("meeting %s: bot exited (code %s): %s %s", run.id, code, state, reason)
+        self._finish_row(run.id, run.session_id, state, reason)
+        run.finished.set()
 
     def _finish_row(self, mid: str, session_id: str, state: str, reason: str) -> None:
         self.store.update_meeting(mid, state=state, reason=reason, ended_at=time.time(),

@@ -137,17 +137,32 @@ def start_login(settings: Settings) -> LoginRequest:
 
 
 def code_from_paste(pasted: str, state: str) -> str:
-    """The code from the pasted redirect URL (its ``state`` must match), or a bare code."""
+    """The code from what the owner pasted after Zoom's sign-in.
+
+    - A redirect URL or its query (anything with ``://``, ``?``, ``=`` or ``&``): an
+      ``error`` in it is an error, and its ``state`` must be present and equal ``state``
+      (missing or empty is refused too), then its ``code`` is taken.
+    - A bare code (none of those characters) is taken as it is: there is no state to
+      check, and PKCE ties the code to this sign-in attempt anyway (Zoom only trades it
+      with this attempt's verifier).
+    """
     text = pasted.strip()
-    if "://" not in text and "code=" not in text:
-        if not text:
-            raise ValueError("nothing pasted")
+    if not text:
+        raise ValueError("nothing pasted")
+    if not any(c in text for c in ("://", "?", "=", "&")):
+        if any(c.isspace() for c in text):
+            raise ValueError("paste the whole address the browser went to, or its code")
         return text
-    query = parse_qs(urlsplit(text).query if "://" in text else text.lstrip("?"))
-    if query.get("error"):
-        raise ValueError(f"Zoom refused the sign-in: {query['error'][0]}")
-    got = (query.get("state") or [None])[0]
-    if got is not None and got != state:
+    raw = urlsplit(text).query if "://" in text else text.split("?", 1)[-1]
+    query = parse_qs(raw, keep_blank_values=True)
+    error = (query.get("error") or [""])[0]
+    if "error" in query:
+        raise ValueError(f"Zoom refused the sign-in: {error or 'error'}")
+    got = (query.get("state") or [""])[0]
+    if state and got != state:
+        if not got:
+            raise ValueError("the pasted URL has no state; paste the whole address the "
+                             "browser went to")
         raise ValueError("the pasted URL is from another sign-in attempt (state differs)")
     code = (query.get("code") or [""])[0]
     if not code:
