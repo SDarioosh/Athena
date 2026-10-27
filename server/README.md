@@ -328,8 +328,13 @@ timer or poller. Same bearer token as every route.
 | `GET /v1/meetings?limit=20` | `{"meetings": [...]}`, newest first (the current one, if any, is first) |
 | `DELETE /v1/meetings/{id}` | the bot leaves: SIGTERM, it flushes and ends the session; SIGKILL after 10 s. Answers once it exited, with the row (`ended`, `stopped`). Idempotent; 404 |
 
-States: `starting` → `waiting_room` → `recording` → `ended` or `failed`, each with a
-`reason` where it helps. `starting` may carry `waiting_for_owner` (join token `obf`: Zoom
+States: `starting` → `waiting_room` → `waiting_permission` → `recording` → `ended` or
+`failed`, each with a `reason` where it helps. `waiting_permission`: Zoom gives raw audio
+only to a host, co-host or an app the host allowed to record, so once fully in the meeting
+the bot asks for recording permission once (Zoom shows the host its own prompt) and waits;
+after a Deny the reason is `denied` and it keeps waiting, because the host can still allow
+it later from the participant menu. A bot that is already host, co-host or allowed goes
+straight to `recording`. `starting` may carry `waiting_for_owner` (join token `obf`: Zoom
 refuses the join until the owner is in the meeting; the bot keeps trying). `recording` may
 carry `no_audio` (Zoom delivers no audio). `ended` reasons: `meeting_ended`, `alone` (only
 participant for `CONVO_MEETING_ALONE_SECONDS`), `removed`, `owner_left` (join token
@@ -337,8 +342,9 @@ participant for `CONVO_MEETING_ALONE_SECONDS`), `removed`, `owner_left` (join to
 `max_duration`, `server_stop`, `exited`. `failed` reasons come from the bot
 (`wrong_passcode`, `meeting_not_started`, `waiting_room_timeout`, `owner_not_joined` (the
 owner didn't join within the wait), `join_token_expired`, `join_failed`, `auth_failed`,
-`sdk_error`, …) or the launcher (`bot_not_started`, `bot_crashed`, `server_restarted`). The bot never
-asks for recording permission and never leaves because someone asks it to.
+`sdk_error`, …) or the launcher (`bot_not_started`, `bot_crashed`, `server_restarted`). The bot asks
+for recording permission once, never again, never leaves over it, and never leaves
+because someone asks it to.
 
 **Links** accepted: `https://zoom.us/j/<number>?pwd=…` and any subdomain of `zoom.us`
 (`us06web.zoom.us`, vanity `acme.zoom.us`; `http` or no scheme is read too),
@@ -439,8 +445,9 @@ starts nothing; run `convo-server zoom-login` again.
 - stdin is `/dev/null`; the working directory is `--work-dir` (for unsent chunks; removed
   after exit). stderr: free-form logs, into the server's log.
 - stdout: one line per state change, exactly `STATE <state>` or `STATE <state> <reason>`;
-  `<state>` one of `waiting_room`, `recording`, `ended`, `failed` (`starting` is set by
-  the launcher), `<reason>` `[a-z0-9_]{1,40}`. Other lines are ignored. Flush each line.
+  `<state>` one of `starting` (the launcher sets it; the bot sends it only with a
+  reason, `waiting_for_owner`), `waiting_room`, `waiting_permission`, `recording`,
+  `ended`, `failed`, `<reason>` `[a-z0-9_]{1,40}`. Other lines are ignored. Flush each line.
   Ignore SIGPIPE/EPIPE on stdout: after a server restart nobody reads it, and the bot
   keeps recording.
 - Uploads: `POST <upload-url>/v1/ingest/chunk` with `Authorization: Bearer
@@ -452,6 +459,13 @@ starts nothing; run `convo-server zoom-login` again.
 - Leave on: meeting ended, alone for `--alone-seconds`, removed, SIGTERM, `--max-seconds`
   after start. Waiting room longer than `--waiting-room-seconds`: `failed
   waiting_room_timeout`.
+- Recording permission: once fully in the meeting, without host, co-host or recording
+  rights, call the SDK's `RequestLocalRecordingPrivilege` **once** and print `STATE
+  waiting_permission`. Allowed: `STATE recording`. Denied: `STATE waiting_permission
+  denied`, then keep waiting (an Allow later still gives `STATE recording`). Never ask
+  again and never leave over permission; `--waiting-room-seconds` does not apply here
+  (the meeting's end, the alone rule, SIGTERM, `owner_left` and `--max-seconds` still
+  end it). Already host, co-host or allowed: `STATE recording` straight away.
 - With an `obf` token: while Zoom refuses the join because the authorizing user isn't in
   the meeting yet (SDK `MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING`), retry and print
   `STATE starting waiting_for_owner` (once); after `--waiting-room-seconds` give up with

@@ -269,7 +269,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
 MEETINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS meetings (
     id TEXT PRIMARY KEY,
-    state TEXT NOT NULL,                -- starting|waiting_room|recording|ended|failed
+    state TEXT NOT NULL,  -- starting|waiting_room|waiting_permission|recording|ended|failed
     reason TEXT,                        -- why it ended or failed; no_audio while recording
     session_id TEXT NOT NULL,           -- the Athena session the bot uploads to
     meeting_id TEXT NOT NULL,           -- Zoom meeting number (never the passcode)
@@ -286,7 +286,8 @@ CREATE TABLE IF NOT EXISTS meetings (
 );
 CREATE INDEX IF NOT EXISTS meetings_token ON meetings(upload_token_hash);
 """
-MEETING_ACTIVE = ("starting", "waiting_room", "recording")
+MEETING_ACTIVE = ("starting", "waiting_room", "waiting_permission", "recording")
+_ACTIVE_IN = ", ".join("?" * len(MEETING_ACTIVE))
 
 _PLACEHOLDER_SPEAKER = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
 
@@ -741,15 +742,15 @@ class Store:
         return self._q("SELECT * FROM meetings ORDER BY created_at DESC LIMIT ?", (limit,))
 
     def active_meetings(self) -> list[dict[str, Any]]:
-        return self._q("SELECT * FROM meetings WHERE state IN (?, ?, ?) ORDER BY created_at",
-                       MEETING_ACTIVE)
+        return self._q(f"SELECT * FROM meetings WHERE state IN ({_ACTIVE_IN})"
+                       " ORDER BY created_at", MEETING_ACTIVE)
 
     def meeting_upload_session(self, token: str) -> str | None:
         """The session a running meeting bot may upload to with ``token``, else None.
         Only bots that are still active hold a token (its hash; cleared on exit)."""
         digest = hashlib.sha256(token.encode()).hexdigest()
         row = self._one("SELECT session_id FROM meetings WHERE upload_token_hash = ?"
-                        " AND state IN (?, ?, ?)", (digest, *MEETING_ACTIVE))
+                        f" AND state IN ({_ACTIVE_IN})", (digest, *MEETING_ACTIVE))
         return row["session_id"] if row else None
 
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:

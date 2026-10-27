@@ -58,6 +58,16 @@ def main() -> int:
     say("waiting_room")
     time.sleep(0.1)
     extra = {}
+    if mode in ("permgrant", "permdenied"):  # asks the host once, then waits
+        say("waiting_permission")
+        report()
+        if mode == "permdenied":
+            time.sleep(0.3)
+            say("waiting_permission denied")
+            wait_for_term()  # never asks again, never leaves over it
+            say("ended stopped")
+            return 0
+        time.sleep(1.0)  # the host clicks Allow
     if mode == "child":
         extra["child"] = subprocess.Popen(["sleep", "60"]).pid  # left behind on purpose
     say("recording no_audio" if mode == "noaudio" else "recording")

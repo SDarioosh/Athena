@@ -134,7 +134,10 @@ def test_state_lines() -> None:
     assert parse_state_line("STATE recording\n") == ("recording", None)
     assert parse_state_line("STATE recording no_audio") == ("recording", "no_audio")
     assert parse_state_line("STATE failed wrong_passcode") == ("failed", "wrong_passcode")
-    for junk in ("STATE waiting_permission", "STATE recording No Audio", "state ended",
+    assert parse_state_line("STATE waiting_permission") == ("waiting_permission", None)
+    assert parse_state_line("STATE waiting_permission denied") == \
+        ("waiting_permission", "denied")
+    for junk in ("STATE recording_denied", "STATE recording No Audio", "state ended",
                  "STATE ended a b", "hello", ""):
         assert parse_state_line(junk) is None
 
@@ -584,3 +587,42 @@ def test_meetings_table_and_token_lookup(tmp_path) -> None:
     assert store.meeting_upload_session("other") is None
     store.update_meeting("m1", state="ended")
     assert store.meeting_upload_session("bot-token") is None
+
+
+def test_permission_granted_later(meeting_settings, client, tmp_path) -> None:
+    _use(meeting_settings, tmp_path, "permgrant")
+    mid = client.post("/v1/meetings", json={"meeting_id": "123456789"}).json()["id"]
+    row = _wait(client, mid, "waiting_permission")
+    assert row["active"] and row["reason"] is None and row["started_at"] is None
+    # waiting for permission counts as busy
+    assert client.post("/v1/meetings", json={"meeting_id": "987654321"}).status_code == 409
+    row = _wait(client, mid, "recording")
+    assert row["started_at"] and row["reason"] is None
+    client.delete(f"/v1/meetings/{mid}")
+
+
+def test_permission_denied_keeps_waiting(meeting_settings, client, tmp_path) -> None:
+    meeting_settings.meeting_waiting_room_seconds = 1  # not applied to waiting_permission
+    _use(meeting_settings, tmp_path, "permdenied")
+    mid = client.post("/v1/meetings", json={"meeting_id": "123456789"}).json()["id"]
+    deadline = time.monotonic() + 5
+    row = _wait(client, mid, "waiting_permission")
+    while row["reason"] != "denied":
+        assert time.monotonic() < deadline, row
+        row = client.get(f"/v1/meetings/{mid}").json()
+    time.sleep(1.2)
+    row = client.get(f"/v1/meetings/{mid}").json()
+    assert (row["state"], row["reason"], row["active"]) == ("waiting_permission", "denied",
+                                                            True)
+    out = client.delete(f"/v1/meetings/{mid}").json()
+    assert (out["state"], out["reason"]) == ("ended", "stopped")
+    assert out["started_at"] is None
+
+
+def test_already_allowed_goes_straight_to_recording(meeting_settings, client,
+                                                    tmp_path) -> None:
+    rep = _use(meeting_settings, tmp_path, "record")  # host, co-host or already allowed
+    mid = client.post("/v1/meetings", json={"meeting_id": "123456789"}).json()["id"]
+    assert _wait(client, mid, "recording", "waiting_permission")["state"] == "recording"
+    _report(rep)
+    client.delete(f"/v1/meetings/{mid}")
