@@ -148,8 +148,10 @@ other's name; two different named speakers stay apart (often a real interruption
   "Smith-Jones" stays), "@ Company", device suffixes ("Kath's iPhone", "(iPad)"), titles
   and credentials ("Dr.", ", PhD"), emoji and stray punctuation go; ALL-CAPS and
   all-lowercase names are title-cased ("MARCUS MCDONALD" → "Marcus McDonald"), mixed case
-  is kept ("van der Berg", "O'Neil"). A name that is only a device, a room or a label
-  ("iPhone", "Zoom user", "Conference Room 2") makes no person: the track gets an unnamed
+  is kept ("van der Berg", "O'Neil"). A name that is only a device, a room, conference
+  hardware or a label ("iPhone", "Zoom user", "Conference Room 2", "Huddle 4", "Lobby",
+  "Polycom", "Logitech Rally", "SM-G991B") makes no person ("Jordan Hall" and a bare
+  "Hall" are names): the track gets an unnamed
   label ("Speaker N"), which `name_speaker` can rename. A cleaned name that matches
   `CONVO_ZOOM_OWNER_NAMES` is the owner. Otherwise it is matched exactly (any case) against
   people names and aliases; an unknown name becomes a new person. There is no first-name

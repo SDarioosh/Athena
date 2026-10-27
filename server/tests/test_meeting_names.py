@@ -272,3 +272,43 @@ def test_api_import_does_not_load_meeting_names():
             "assert 'convo_server.meeting_names' not in sys.modules, 'loaded at startup'")
     subprocess.run([sys.executable, "-c", code], check=True)
 
+
+
+# ------------------------------------------------------------------ QA audit regressions
+# BUG-01: rooms and conference hardware hold several people; they name no person.
+# Kept in step with lane 2A's ``meeting_tracks.is_shared_room`` on the clear cases.
+@pytest.mark.parametrize("raw", [
+    "Polycom", "Polycom Trio 8800", "Logitech Rally", "Rally Bar", "Logitech MeetUp",
+    "Meetup", "Cisco", "Cisco Webex Room Kit", "Webex", "Crestron", "Neat Bar", "Neat Board",
+    "Meeting Owl 3", "Owl Pro", "Yealink", "Yealink MeetingBar A20", "Jabra Speak 750",
+    "Speakerphone", "ZoomRoom-3F", "Zoom Room", "Poly Studio X50", "Surface Hub 2S",
+    "Huddle 4", "Huddle", "Huddle Space B", "Conf Rm A", "Conf Room 2", "Conference",
+    "Rm 204", "Lobby", "Main Lobby", "Lobby 2", "Main Hall", "Conference Hall", "Town Hall",
+    "Hall 2", "Hall B", "SM-G991B", "Samsung SM-A515F", "Dial-in", "+44 20 7946 0000",
+])
+def test_rooms_and_conference_hardware_clean_to_empty(raw):
+    assert looks_like_device(raw)
+    assert clean_display_name(raw) == ""
+
+
+@pytest.mark.parametrize("raw, clean", [
+    ("Jordan Hall", "Jordan Hall"),  # Hall is a surname
+    ("Hall", "Hall"),  # alone: a surname as likely as a room; no room word, no number
+    ("Annie Hall", "Annie Hall"),
+    ("Neat", "Neat"),  # Neat and Owl alone are no product: Neat Bar, Meeting Owl are
+    ("Owl", "Owl"),
+    ("Cisco Ramirez", "Cisco Ramirez"),  # Cisco as a nickname with a surname
+    ("Rally Okafor", "Rally Okafor"),
+    ("Kath Lobbyist", "Kath Lobbyist"),
+    ("Polly Studio", "Polly Studio"),
+])
+def test_names_that_look_like_rooms_stay_names(raw, clean):
+    assert clean_display_name(raw) == clean
+
+
+def test_room_tracks_make_no_person(store):
+    for i, raw in enumerate(("Polycom", "Logitech Rally", "Huddle 4", "Conf Rm A",
+                             "SM-G991B", "Lobby", "Speakerphone", "Boardroom | Acme HQ")):
+        assert speaker_for_track(store, track(raw, track_id=str(i)), OWNER) == (
+            "Unknown", False), raw
+    assert people_count(store) == 0

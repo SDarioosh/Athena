@@ -60,6 +60,33 @@ _HOSTNAME_RE = re.compile(r"(?:desktop|laptop|pc|win|macbook(?:-pro|-air)?|ipad|
 _ROOM_RE = re.compile(r"\b(?:conference|meeting|board|huddle|zoom|focus|team)\s*rooms?\b|"
                       r"^rooms?\b|\brooms?\s*[a-z]?\d|\b(?:boardroom|auditorium)\b",
                       re.IGNORECASE)
+# Rooms and conference hardware (QA BUG-01): a track that can hold several people, never
+# one person. Agrees with lane 2A's ``meeting_tracks.is_shared_room`` on the clear cases.
+# Product words with no use as a name match anywhere in the name ("Polycom Trio 8800").
+_HARDWARE_RE = re.compile(r"\b(?:polycom|crestron|logitech|yealink|webex|speakerphone|meetup|"
+                          r"zoom\s*rooms?|dial-?in)\b", re.IGNORECASE)
+# Words that are also names, or surnames ("Hall", "Cisco", "Jabra", "Rally"), only as the
+# whole name: alone when no one is called that, else with a room or product word or a
+# number. "Main Hall", "Hall 2", "Neat Bar", "Meeting Owl 3" are rooms; "Jordan Hall",
+# "Cisco Ramirez", "Neat", "Owl" are names.
+_NUM = r"(?:[a-z]?\d+[a-z0-9]*|[a-z])"  # "4", "4b", "a20", "b"
+_ROOM_ONLY_RE = re.compile(
+    rf"(?:(?:main|front)\s+)?lobby(?:\s+{_NUM})?|"
+    rf"(?:main|conference|town|lecture|great|dining|assembly|event|meeting|concert|sports|"
+    rf"exhibition|banquet|function|study|music|community|church|village|entrance)\s+hall"
+    rf"(?:\s+{_NUM})?|hall\s+{_NUM}|"
+    rf"huddle(?:\s+(?:room|space|area|pod))?(?:\s+{_NUM})?|"
+    rf"conf(?:erence)?\.?(?:\s*(?:rm|room|call|line|bridge|phone)\.?)?(?:\s+{_NUM})?|"
+    rf"rm\.?\s*{_NUM}|"
+    rf"cisco(?:\s+(?:webex|room|kit|desk|board|codec|bar|pro|plus|mini|navigator|touch|"
+    rf"{_NUM}))*|"
+    rf"jabra(?:\s+(?:speak|panacast|evolve|link|{_NUM}))*|"
+    rf"(?:logitech\s+)?rally(?:\s+(?:bar|plus|mini|camera|board|{_NUM}))*|"
+    rf"neat\s+(?:bar|board|pad|frame|center)(?:\s+(?:pro|{_NUM}))*|"
+    rf"(?:meeting\s+owl|owl\s+(?:pro|labs|bar))(?:\s+(?:pro|{_NUM}))*|"
+    rf"poly\s+(?:studio|trio|sync|voyager|g\d+|x\d+)(?:\s+{_NUM})*|"
+    rf"surface\s+hub(?:\s+{_NUM})*|"
+    rf"(?:(?:samsung|galaxy)\s+)*sm-[a-z]?\d+[a-z0-9]*")  # Samsung model "SM-G991B"
 _GENERIC = {"zoom user", "zoom", "user", "guest", "host", "co-host", "cohost", "participant",
             "attendee", "panelist", "anonymous", "unknown", "admin", "test", "me", "owner",
             "speaker", "audio", "phone user", "call-in user", "dial-in user"}
@@ -87,7 +114,16 @@ def looks_like_device(name: str) -> bool:
     if not n:
         return True
     return bool(n in _GENERIC or _PLACEHOLDER_RE.fullmatch(n) or _ONLY_DEVICE_RE.fullmatch(n)
-                or _HOSTNAME_RE.fullmatch(n) or _ROOM_RE.search(n))
+                or _HOSTNAME_RE.fullmatch(n) or _ROOM_RE.search(n) or looks_like_room(n))
+
+
+def looks_like_room(name: str) -> bool:
+    """Whether a display name is a room or conference hardware ("Huddle 4", "Conf Rm A",
+    "Polycom", "Logitech Rally", "Lobby", "SM-G991B"): a track several people can share.
+    """
+    n = re.sub(r"\s+", " ", _strip_symbols(name)).strip(_EDGE_PUNCT).lower()
+    return bool(n and (_ROOM_RE.search(n) or _HARDWARE_RE.search(n)
+                       or _ROOM_ONLY_RE.fullmatch(n)))
 
 
 def clean_display_name(raw: str) -> str:
