@@ -153,6 +153,11 @@ AGENTS.md.
 
 New settings, all optional, read only when a join request arrives:
 
+The names below use today's `CONVO_` prefix. If step 7 of `docs/athena-rename-plan.md` has
+landed by the time a lane starts, use `ATHENA_` instead (and `ATHENA_*` for the deploy.sh
+variable in Phase 1), following that plan's rules.
+
+
 - `CONVO_MEETING_BOT_PATH`: the bot binary. Unset means meetings are off and
   `POST /v1/meetings` answers `501`.
 - `CONVO_ZOOM_SDK_KEY`, `CONVO_ZOOM_SDK_SECRET`: the owner's Meeting SDK app credentials.

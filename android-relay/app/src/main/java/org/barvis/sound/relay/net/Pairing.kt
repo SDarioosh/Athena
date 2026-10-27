@@ -4,7 +4,7 @@ import java.io.IOException
 import java.net.URLDecoder
 
 /**
- * Pairing with Odysseus (hub: Conversations → Pair a phone). The QR code holds
+ * Pairing with Odysseus (hub: Settings → Integrations → Pair a phone). The QR code holds
  * `odysseus-pair:v1?url=<Odysseus URL>&code=<pairing code>`: no token. The code is single use
  * and valid for 10 minutes; [PairingClient.redeem] trades it for this phone's own `ody_…`
  * API token, which the hub shows (and revokes) in Settings → API tokens.
@@ -24,7 +24,7 @@ object PairingLink {
     fun parse(raw: String): Result {
         val text = raw.trim()
         if (!text.startsWith(PREFIX)) {
-            return Result.Invalid("Not an Odysseus pairing code. In Odysseus open Conversations → Pair a phone.")
+            return Result.Invalid("Not an Odysseus pairing code. In Odysseus open Settings → Integrations → Pair a phone.")
         }
         val fields = HashMap<String, String>()
         for (part in text.removePrefix(PREFIX).split('&')) {

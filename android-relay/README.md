@@ -61,7 +61,7 @@ on the branch you run it from. These are debug-signed builds for sideloading.
 
 ## First-time setup
 
-1. **Pair with Odysseus.** In Odysseus (as admin) open **Conversations → Pair a phone**,
+1. **Pair with Odysseus.** In Odysseus (as admin) open **Settings → Integrations → Pair a phone**,
    check the address the phone should use (its Tailscale address, for example
    `https://odysseus.<tailnet>.ts.net` or `http://100.x.y.z:7000`) and tap **Show pairing
    code**. In the app open **Settings → Scan pairing code** and point the camera at it (or
