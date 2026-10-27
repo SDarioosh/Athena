@@ -106,6 +106,39 @@ def run(bot: str, url: str, name: str, scenario: str, expect: list[str], code: i
     return problems
 
 
+def check_ended_session() -> int:
+    """What the `ended` scenario sent: Dana's track, the chat call, then /end."""
+    mine = [r for r in REQUESTS if b"zoom-ended" in r["body"] or "zoom-ended" in r["path"]]
+    chunks = [r for r in mine if r["path"] == "/v1/ingest/chunk"]
+    chat = [r for r in mine if r["path"] == "/v1/sessions/zoom-ended/chat"]
+    end = [r for r in mine if r["path"] == "/v1/sessions/zoom-ended/end"]
+    problems = []
+    if not chunks or not all(b"16779264" in r["body"] and b"Dana Example" in r["body"]
+                             and b"device" in r["body"] for r in chunks):
+        problems.append("no chunk on Dana's track (16779264, Dana Example)")
+    if any(b"16778240" in r["body"] for r in chunks):
+        problems.append("the bot's own audio was uploaded")
+    if len(chat) != 1:
+        problems.append(f"{len(chat)} chat calls (want 1)")
+    else:
+        body = json.loads(chat[0]["body"])
+        if body.get("topic") != "Q4 budget review (fictional)":
+            problems.append("chat call without the topic")
+        if [line.get("from") for line in body.get("lines", [])] != ["Dana Example"]:
+            problems.append(f"chat lines {body.get('lines')}")
+        names = sorted(p.get("name") for p in body.get("participants", []))
+        if names != ["Dana Example", "Lee Sample"]:
+            problems.append(f"participants {names}")
+        lee = [p for p in body.get("participants", []) if p.get("name") == "Lee Sample"]
+        if not lee or not lee[0].get("left_at"):
+            problems.append("Lee's leave time missing")
+    if len(end) != 1:
+        problems.append(f"{len(end)} end calls (want 1)")
+    print("ok   ended session uploads" if not problems
+           else "FAIL ended session uploads: " + "; ".join(problems))
+    return 1 if problems else 0
+
+
 def main() -> int:
     bot = sys.argv[1]
     server = ThreadingHTTPServer(("127.0.0.1", 0), Api)
@@ -155,6 +188,7 @@ def main() -> int:
         if PRIVATE_TEXT.encode() in r["body"]:
             print(f"FAIL a private chat message reached the server ({r['path']})")
             failures += 1
+    failures += check_ended_session()
     print(f"{len(REQUESTS)} request(s) to the fake upload API")
     return 1 if failures else 0
 
