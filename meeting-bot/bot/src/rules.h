@@ -14,7 +14,14 @@ struct RulesConfig {
   int64_t wait_ms = 0;      // --waiting-room-seconds: waiting room, host, owner (obf)
   int64_t no_audio_ms = 60000;  // recording but no frames this long -> recording no_audio
   bool obf = false;         // joined with an on-behalf-of token
+  // Rejoin after a drop: try k (0-based) not before drop + rejoin_at_ms[k], nor while
+  // the SDK reconnects on its own or a try is still out; give up kRejoinTries failed tries
+  // or rejoin_window_ms after the drop, whichever comes first (ended connection_lost).
+  int64_t rejoin_window_ms = 120000;
+  int64_t rejoin_at_ms[3] = {2000, 20000, 60000};
 };
+
+constexpr int kRejoinTries = 3;
 
 // SDK-neutral join failure (main.cpp maps MeetingFailCode to it).
 enum class JoinFail { WrongPasscode, NotStarted, NotFound, TokenExpired, OwnerNotIn, Other };
@@ -39,43 +46,68 @@ struct Status {
   bool operator!=(const Status& o) const { return !(*this == o); }
 };
 
-enum class Phase { Joining, WaitingForOwner, WaitingForHost, WaitingRoom, InMeeting, Done };
+// Reconnecting: dropped after joining; the SDK reconnects on its own or the bot rejoins.
+enum class Phase {
+  Joining, WaitingForOwner, WaitingForHost, WaitingRoom, InMeeting, Reconnecting, Done
+};
+
+// What a participant poll changed about breakout rooms (main.cpp notes it in the session).
+enum class Breakouts {
+  None,
+  MostLeft,  // breakout rooms are open and most participants left the main room
+  Over,      // breakout rooms closed after MostLeft
+};
 
 class Rules {
  public:
   Rules(RulesConfig cfg, int64_t start_ms);
 
-  // Zoom put us in the waiting room / waiting for the host to start the meeting.
+  // Zoom put us in the waiting room / waiting for the host to start the meeting. After
+  // joining, the waiting room means the host moved Athena back there.
   void waiting_room(int64_t now);
   void waiting_for_host(int64_t now);
-  // Fully in the meeting (again, after a reconnect: timers keep running).
+  // Fully in the meeting: first time, after a rejoin or let in from the waiting room again
+  // (max duration counts from the start; recording must be started again).
   void joined(int64_t now);
-  // Participants other than the bot, from the poll of the participant list.
-  void others(int count, int64_t now);
+  // The SDK lost the connection and reconnects on its own (MEETING_STATUS_RECONNECTING).
+  void reconnecting(int64_t now);
+  // Participants other than the bot, from the poll of the participant list, and whether
+  // breakout rooms are open. While they are, the alone rule waits.
+  Breakouts others(int count, int64_t now, bool breakouts_open = false);
   // Raw audio subscribed: recording.
   void recording(int64_t now);
-  // The host declined the one recording request.
+  // The host declined the recording request.
   void permission_denied();
 
-  // A join attempt (or the session after joining) failed. None = retry the join (obf,
-  // owner not in yet, within the wait): main.cpp tries again in 3 s.
+  // A join attempt (or the session after joining) failed. None = go on: retry the join
+  // (obf, owner not in yet, within the wait: main.cpp tries again in 3 s) or, after a
+  // drop, rejoin when rejoin_due() says so.
   Decision join_failed(JoinFail why, int64_t now);
-  // Zoom ended our meeting session (not because we left).
+  // Zoom ended our meeting session (not because we left). None = a drop: rejoin.
   Decision meeting_ended(EndKind why);
   // SIGTERM / SIGINT.
   Decision stop_signal();
   // Every second while the bot runs. last_audio_ms = the newest raw audio frame (0: none).
   Decision tick(int64_t now, int64_t last_audio_ms, bool server_stop, bool upload_rejected);
 
+  // After a drop: call join() now (then rejoin_started()).
+  bool rejoin_due(int64_t now) const;
+  void rejoin_started(int64_t now);
+  int rejoin_tries() const { return tries_; }
+
   // What the status line should say now.
   Status status() const;
   Phase phase() const { return phase_; }
   bool done() const { return phase_ == Phase::Done; }
   bool ever_joined() const { return joined_ms_ != 0; }
-  bool is_recording() const { return recording_ms_ != 0; }
+  bool is_recording() const { return recording_; }
+  bool ever_recorded() const { return recording_ms_ != 0; }
+  int64_t breakouts_since() const { return bo_since_; }
 
  private:
   Decision conclude(Decision d);
+  void left_meeting();               // recording and the alone timer stop
+  void start_drop(int64_t now, bool by_sdk);
 
   RulesConfig cfg_;
   int64_t start_ms_;
@@ -85,9 +117,21 @@ class Rules {
   int64_t joined_ms_ = 0;
   int64_t alone_since_ = 0;      // 0 = someone else is here (or not known yet)
   bool others_known_ = false;
-  int64_t recording_ms_ = 0;
+  bool recording_ = false;
+  int64_t recording_ms_ = 0;     // the latest start of recording
   bool denied_ = false;
   bool no_audio_ = false;
+  // drop and rejoin
+  int64_t drop_since_ = 0;
+  bool sdk_reconnecting_ = false;
+  bool attempt_ = false;         // a rejoin try is out (Join called, no answer yet)
+  int tries_ = 0;
+  // breakout rooms
+  bool bo_open_ = false;
+  bool bo_noted_ = false;
+  int64_t bo_since_ = 0;
+  int bo_before_ = 0;            // others in the main room when they opened
+  int last_others_ = 0;
   Decision final_;
 };
 
