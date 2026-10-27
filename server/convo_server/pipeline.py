@@ -393,8 +393,9 @@ class Pipeline:
             from . import meeting_live
 
             return meeting_live.step(self, ids, cfg.meeting_live_budget_seconds)
-        except Exception:  # whisper-server down: the end-of-meeting pass does the rest
-            log.exception("live meeting transcription failed; trying again next tick")
+        except Exception as e:  # whisper-server down: next tick, or the end pass
+            log.warning("live meeting transcription paused (%s: %s); trying again next tick",
+                        type(e).__name__, e)
             return 0
         finally:
             self._process_lock.release()
