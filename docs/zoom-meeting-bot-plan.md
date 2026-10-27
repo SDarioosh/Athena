@@ -341,9 +341,9 @@ Phase 1B.
 
 **Lane 4A, Athena relay (`server/convo_server/ingest_relay.py`):**
 
-- [ ] Forward `POST /meetings`, `GET`/`DELETE /meetings/{id}` to the ingest API with
+- [x] Forward `POST /meetings`, `GET`/`DELETE /meetings/{id}` to the ingest API with
       `CONVO_INGEST_TOKEN`, behind `BearerAuth`. Not MCP tools.
-- [ ] Tests next to the existing relay tests.
+- [x] Tests next to the existing relay tests.
 
 **Lane 4B, hub (fork code in new files, hooks listed in `FORK.md`):**
 

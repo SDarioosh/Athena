@@ -170,11 +170,16 @@ server. **Nothing in the data path touches the cloud.**
   `DELETE /ingest/text/{source_id}`, MCP 0.12.0) and the few API reads the relay's T5
   sync uses (`READ_ROUTES`: `/health`, conversations, transcript, action items, digests), plus
   `GET`/`PUT /settings/llm` for the hub's settings page (which model writes summaries;
-  only the model name, never `CONVO_LLM_BASE_URL`). They are **not MCP tools** (never register
+  only the model name, never `CONVO_LLM_BASE_URL`), and the meeting bot's
+  `POST /meetings`, `GET /meetings`, `GET`/`DELETE /meetings/{id}` for the hub's "Send
+  Athena to a meeting" box (same JSON and status as `/v1/meetings`, including the 409's
+  `message` and `active`; ids checked before forwarding; `DELETE` waits up to 30 s for the
+  bot to exit). They are **not MCP tools** (never register
   them as tools) and forward unchanged to the ingest API with `CONVO_INGEST_TOKEN`, which
   never leaves the module. So **the MCP token can add recordings**: Odysseus uses it for
-  its call recorder and for phones paired through it. Their paths, the multipart
-  fields and the JSON fields of `/ingest/text` are part of the contract like a tool's
+  its call recorder and for phones paired through it, and it can send the meeting bot
+  into a Zoom meeting. Their paths, the multipart fields and the JSON fields of
+  `/ingest/text` and `/meetings` are part of the contract like a tool's
   arguments.
 - Written notes (MCP 0.12.0, additive): the hub sends a handwritten note's reviewed text
   to `POST /v1/ingest/text` (relay `POST /ingest/text`), JSON `source_id`
