@@ -36,7 +36,7 @@ from .config import Settings
 AUTHORIZE_URL = "https://zoom.us/oauth/authorize"
 TOKEN_URL = "https://zoom.us/oauth/token"
 API_URL = "https://api.zoom.us/v2"
-TIMEOUT = httpx.Timeout(10.0)
+TIMEOUT = httpx.Timeout(5.0)  # per call; two calls stay under the relay's 15 s
 MODES = ("auto", "zak", "obf", "none")
 LOGIN_HINT = "run convo-server zoom-login"
 

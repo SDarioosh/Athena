@@ -400,7 +400,7 @@ Only on a join request, the launcher trades the refresh token for an access toke
 the new refresh token Zoom hands back (it rotates on every use) before using the access
 token, and asks `GET https://api.zoom.us/v2/users/me/token?type=zak` (or
 `type=onbehalf&meeting_id=<number>`). These are the only network calls, to Zoom's API,
-with a 10 s timeout; no audio or transcript goes there, nothing refreshes in the
+with a 5 s timeout each; no audio or transcript goes there, nothing refreshes in the
 background, and no token is logged or put on a command line. Zoom expires a refresh token
 that goes unused for a long time: then `POST /v1/meetings` answers 503
 `zoom_signin_needed` ("Athena's Zoom sign-in expired … run convo-server zoom-login") and
