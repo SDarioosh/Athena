@@ -118,7 +118,11 @@ other's name; two different named speakers stay apart (often a real interruption
   voice is at least `CONVO_SPEAKER_ABSORB_THRESHOLD` (0.30) similar, instead of becoming
   one more "Speaker N" (one noisy piece often ends up alone). 0 turns it off.
 - whisper gets a prompt: the names of known speakers (`CONVO_WHISPER_PROMPT_NAMES`,
-  default on), so they are spelled right, plus `CONVO_WHISPER_PROMPT` (empty by default).
+  default on), so they are spelled right, plus `CONVO_WHISPER_PROMPT` (empty by default)
+  and the words set in the hub's settings (Settings → AI Defaults → "Transcription
+  vocabulary": comma-separated, at most 50, `GET`/`PUT /v1/settings/vocabulary
+  {"words": "RokTalk, Meshtastic" | [...] | null}`, stored in `convo.db`, used from the
+  next recording on). Order: `CONVO_WHISPER_PROMPT`, the words, then the names.
   Measured on AMI (`eval/recognition.py`): the names made WER and DER slightly better;
   a 12-word vocabulary list in `CONVO_WHISPER_PROMPT` broke whisper's timestamps (lines
   stretched over 30 s: false alarm 8% → 58%, wrong names 2% → 6%). Leave it empty
@@ -1096,6 +1100,7 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 | `GET /action-items`, `PATCH /action-items/{id}` | the `/v1` routes |
 | `GET /digests/{date}`, `POST /digests/{date}` | the `/v1` routes |
 | `GET /settings/llm`, `PUT /settings/llm` | the `/v1` routes (the hub's settings page: the summary model) |
+| `GET /settings/vocabulary`, `PUT /settings/vocabulary` | the `/v1` routes (the hub's settings page: words whisper is nudged toward) |
 | `POST /meetings` | `POST /v1/meetings` (same JSON `{url}` or `{meeting_id, passcode}`, `title?`; same answer: 202, 400, 409 busy with `message` and `active`, 501 meetings off, 500) |
 | `GET /meetings` | `GET /v1/meetings` (only `limit`, bounded to 1–100) |
 | `GET /meetings/{id}`, `DELETE /meetings/{id}` | the `/v1` routes (state; leave, answering once the bot exited) |

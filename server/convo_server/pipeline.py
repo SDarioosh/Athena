@@ -44,6 +44,7 @@ from .store import (
 )
 from .transcribe import Transcriber
 from .vad import VAD, Span, merge_spans
+from .vocabulary import words as vocabulary_words
 
 log = logging.getLogger(__name__)
 
@@ -595,15 +596,21 @@ class Pipeline:
         return out, out_labels
 
     def whisper_prompt(self) -> str:
-        """CONVO_WHISPER_PROMPT plus the names of known speakers, for whisper's spelling."""
+        """CONVO_WHISPER_PROMPT, the words set in the hub's settings (vocabulary.py) and
+        the names of known speakers, for whisper's spelling."""
         known = ([s["name"] for s in self.store.speakers()]
                  + [s["name"] for s in self.store.speaker_stats()]
                  if self.settings.whisper_prompt_names else [])
+        vocab = vocabulary_words(self.store)
+        taken = {w.lower() for w in vocab}
         names: list[str] = []
         for n in known:
-            if not _PLACEHOLDER_NAME.match(n) and n.lower() not in {x.lower() for x in names}:
+            if not _PLACEHOLDER_NAME.match(n) and n.lower() not in taken:
+                taken.add(n.lower())
                 names.append(n)
         parts = [self.settings.whisper_prompt.strip()]
+        if vocab:
+            parts.append(", ".join(vocab) + ".")
         if names[:MAX_PROMPT_NAMES]:
             parts.append(", ".join(names[:MAX_PROMPT_NAMES]) + ".")
         return " ".join(p for p in parts if p)
