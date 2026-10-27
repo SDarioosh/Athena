@@ -1,5 +1,6 @@
 """Cross-lane QA for the Zoom meeting wiring (lanes 2A + 2B): one room rule for both
-lanes, rooms and conference hardware end to end (BUG-01). Fictional names only."""
+lanes, rooms and conference hardware end to end (BUG-01), the owner's one identity in a
+meeting (BUG-07, BUG-08). Fictional names only."""
 
 from __future__ import annotations
 
@@ -104,3 +105,53 @@ def test_a_person_named_hall_is_not_diarized(pipeline):
     pipeline.diarizer.diarize_runs = lambda *a: pytest.fail("diarized a person")
     segs = _meeting(pipeline, [("t1", "Jordan Hall", T0, track_audio((1, tone(900, 4))))])
     assert [s.speaker for s in segs] == ["Jordan Hall"]
+
+
+# ---------------------------------------- BUG-07 / BUG-08 end to end: the owner
+
+
+def _no_owner_voice(pipeline):
+    pipeline.store._conn.execute("DELETE FROM speakers")
+    pipeline.store._conn.execute("DELETE FROM people")
+    pipeline.diarizer.voices = []
+    assert pipeline.store.owner_name() is None
+
+
+def test_bug07_owner_lines_and_owner_person_share_one_name(pipeline):
+    """QA BUG-07: owner matched by CONVO_ZOOM_OWNER_NAMES, no owner voice enrolled. The
+    owner's lines and the owner's person carry one name, not "Me" next to "Cleo"."""
+    _no_owner_voice(pipeline)
+    segs = _meeting(pipeline, [("t1", "Cleo Example (she/her)", T0,
+                                track_audio((1, tone(700, 4)))),
+                               ("t2", "Bo Example", T0, track_audio((9, tone(500, 4))))],
+                    owners="Cleo Example")
+    assert [(s.speaker, s.is_owner) for s in segs] == [("Cleo Example", True),
+                                                       ("Bo Example", False)]
+    owners = [p for p in pipeline.store.people() if p["is_owner"]]
+    assert [p["name"] for p in owners] == ["Cleo Example"]
+    assert pipeline.store.owner_name() == "Cleo Example"
+
+
+@pytest.mark.parametrize("raw", ["Me", "iPhone"])
+def test_bug08_owner_joining_as_a_bare_name_is_the_owner(pipeline, raw):
+    """QA BUG-08: the owner joins as "Me" or "iPhone", both listed in owner names: owner
+    lines (is_owner), never diarized as a room, no "Speaker N", no person of that name."""
+    pipeline.diarizer.diarize_runs = lambda *a: pytest.fail("owner track diarized")
+    segs = _meeting(pipeline, [("t1", raw, T0, track_audio((1, tone(700, 4))))],
+                    owners="Me, iPhone")
+    assert [(s.speaker, s.is_owner) for s in segs] == [("Me", True)]
+    people = pipeline.store.people()
+    assert [p["name"] for p in people if p["is_owner"]] == ["Me"]
+    assert not any(p["name"] == "iPhone" or "iPhone" in p["aliases"] for p in people)
+
+
+def test_bug08_without_an_owner_voice(pipeline):
+    _no_owner_voice(pipeline)
+    pipeline.settings.owner_name = "Sam"
+    pipeline.diarizer.diarize_runs = lambda *a: pytest.fail("owner track diarized")
+    segs = _meeting(pipeline, [("t1", "iPhone", T0, track_audio((1, tone(700, 4))))],
+                    owners="iPhone")
+    assert [s.is_owner for s in segs] == [True]
+    assert not any(_SPEAKER_N.match(s.speaker) for s in segs)
+    owners = [p["name"] for p in pipeline.store.people() if p["is_owner"]]
+    assert {s.speaker for s in segs} == set(owners or ["Sam"])

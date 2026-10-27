@@ -205,7 +205,6 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
 
     store, cfg = pipeline.store, pipeline.settings
     owner_names = cfg.zoom_owner_name_list
-    owner_display = store.owner_name() or cfg.owner_name
     infos = {t["track"]: t for t in store.tracks(session_id)}
     by_track: dict[str, list[dict[str, Any]]] = {}
     for c in chunks:
@@ -215,6 +214,9 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
                                             t))
     who = {t: track_speaker(store, infos.get(t, {"track": t, "name": None}), owner_names)
            for t in order if t}
+    # after naming the tracks: an owner track matched by CONVO_ZOOM_OWNER_NAMES makes the
+    # owner's person when no owner voice is enrolled, and the lines take its name (QA BUG-07)
+    owner_display = store.owner_name() or cfg.owner_name
     prompt = pipeline.whisper_prompt()
     if cfg.whisper_prompt_names:
         prompt = meeting_prompt(prompt, [n for t, (n, _) in who.items()
