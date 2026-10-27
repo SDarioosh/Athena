@@ -242,6 +242,30 @@ class CoreUploadTests(unittest.TestCase):
         self.assertGreaterEqual(run.num("queue_files_before_finish"), 2)
         self.assertIn("queue over the cap", run.stderr)
 
+    def test_bursts_are_padded_into_few_chunks(self):
+        run = self.run_core("ok", "--pattern", "bursts", "--audio-seconds", "120")
+        self.assertEqual(run.num("finish"), 1, run.stderr)
+        chunks = sorted(run.chunks(), key=lambda c: int(c["fields"]["sequence"]))
+        self.assertEqual(len(chunks), 4)  # 1 s every 10 s for 2 min: not 12 chunks
+        for i, c in enumerate(chunks):
+            self.assertEqual(c["fields"]["track"], DANA)
+            self.assertEqual(int(c["fields"]["sequence"]), i)
+            self.assertAlmostEqual(float(c["fields"]["timestamp"]), 1760367600.0 + 30 * i,
+                                   places=3)
+            data = Path(c["files"][0]["path"]).read_bytes()
+            self.assertAlmostEqual(opus_seconds(data), 21.0, delta=0.002)
+
+    def test_quiet_track_closed_by_tick(self):
+        # Dana talks until 29.5 s and stops; no more audio comes. The uploader's ~1 s tick
+        # closes the window and the chunk goes out before finish() is called.
+        run = self.run_core("ok", "--pattern", "tail", "--wait-ms", "2500")
+        self.assertEqual(run.num("finish"), 1, run.stderr)
+        chunks = run.chunks()
+        self.assertEqual(len(chunks), 1)
+        self.assertLess(chunks[0]["t"], float(run.result["finish_wall"]))
+        data = Path(chunks[0]["files"][0]["path"]).read_bytes()
+        self.assertAlmostEqual(opus_seconds(data), 29.5, delta=0.002)
+
     def test_chat_cap_and_private_drop(self):
         run = self.run_core("ok", "--chat-flood")
         self.assertEqual(run.num("chat_lines_before_finish"), 2000)

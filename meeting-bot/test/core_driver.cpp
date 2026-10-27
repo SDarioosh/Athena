@@ -4,6 +4,10 @@
 //   core_driver --url http://127.0.0.1:PORT --session S --token T --work DIR
 //               [--codec opus|wav] [--audio-seconds 70] [--max-seconds 14400]
 //               [--wait-ms 0] [--deadline-ms 4000] [--chat-flood]
+//               [--pattern meeting|bursts|tail]
+//   meeting: Dana talks throughout, Lee 5..15 s and 40..45 s (leaves in between)
+//   bursts:  Dana alone, 1 s of speech every 10 s
+//   tail:    Dana alone, 0..29.5 s, then silence (the uploader's tick closes the chunk)
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -48,6 +52,7 @@ int main(int argc, char** argv) {
   cfg.codec = "opus";
   int audio_seconds = 70, wait_ms = 0, deadline_ms = 4000;
   bool chat_flood = false;
+  std::string pattern = "meeting";
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
@@ -61,6 +66,7 @@ int main(int argc, char** argv) {
     else if (a == "--wait-ms") wait_ms = std::atoi(next().c_str());
     else if (a == "--deadline-ms") deadline_ms = std::atoi(next().c_str());
     else if (a == "--chat-flood") chat_flood = true;
+    else if (a == "--pattern") pattern = next();
     else {
       std::fprintf(stderr, "unknown argument %s\n", a.c_str());
       return 2;
@@ -78,11 +84,14 @@ int main(int argc, char** argv) {
     dana[i] = static_cast<int16_t>(6000 * std::sin(2 * M_PI * 220 * i / kRate));
     lee[i] = static_cast<int16_t>(6000 * std::sin(2 * M_PI * 330 * i / kRate));
   }
-  const int64_t total_ms = int64_t(audio_seconds) * 1000;
+  const int64_t total_ms = pattern == "tail" ? 29500 : int64_t(audio_seconds) * 1000;
+  const bool meeting = pattern == "meeting";
   for (int64_t t = 0; t < total_ms; t += 10) {
     const int64_t now = kT0 + t;
-    core.on_audio(kDana, t < 50000 ? "Dana Example" : "Dana E.", dana.data(), dana.size(),
-                  kRate, now);
+    if (pattern != "bursts" || t % 10000 < 1000)
+      core.on_audio(kDana, t < 50000 ? "Dana Example" : "Dana E.", dana.data(), dana.size(),
+                    kRate, now);
+    if (!meeting) continue;
     if ((t >= 5000 && t < 15000) || (t >= 40000 && t < 45000))
       core.on_audio(kLee, "Lee Example", lee.data(), lee.size(), kRate, now);
     if (t == 15000) core.on_participant(kLee, "Lee Example", false, now);
@@ -111,6 +120,9 @@ int main(int argc, char** argv) {
   std::printf("stop=%d\nrejected=%d\n", core.stop_requested() ? 1 : 0,
               core.upload_rejected() ? 1 : 0);
 
+  std::printf("finish_wall=%.3f\n",
+              std::chrono::duration<double>(
+                  std::chrono::system_clock::now().time_since_epoch()).count());
   const auto start = std::chrono::steady_clock::now();
   const bool ok = core.finish(start + std::chrono::milliseconds(deadline_ms));
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(

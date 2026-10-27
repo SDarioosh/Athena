@@ -14,16 +14,25 @@ cmake -S meeting-bot -B build-bot && cmake --build build-bot -j && ctest --test-
 What it does:
 
 - **Tracks and chunks.** One track per Zoom user id (the chunk `track`; ids are cleaned to
-  `[A-Za-z0-9._:-]{1,64}`), its latest display name as `track_name`. A chunk is 30 s of
-  that track's wall-clock time, with a sequence per track from 0. Someone who leaves and
-  comes back keeps their track and its sequence. Audio the SDK doesn't deliver is not
-  padded: a block that starts more than 300 ms after the end of the open chunk starts a
-  new chunk, timestamped with its first sample (`kGapToleranceMs` in `src/chunker.h`).
-  A track that goes quiet has its open chunk closed within about a second while anyone
-  else still talks, and at once when its participant leaves.
+  `[A-Za-z0-9._:-]{1,64}`), its latest display name as `track_name`, a sequence per track
+  from 0. Someone who leaves and comes back keeps their track and its sequence.
+- **Padding rule.** A chunk covers at most 30 s of wall-clock time from its first sample,
+  `[start, start + 30 s)`, and holds the audio at its true offsets: a pause inside that
+  window (Zoom delivered nothing, e.g. only while someone speaks) is filled with silence,
+  so whisper gets whole 30 s stretches with context, not one clip per reply. A chunk ends
+  at its last real sample, never with trailing silence, so the server's duration is
+  honest; audio after the window starts a new chunk with its own timestamp, and a pause
+  that crosses the window's end is not padded across chunks. Delivery jitter up to
+  300 ms is appended as it comes (`kJitterToleranceMs` in `src/chunker.h`).
+  A chunk closes when its window is full or over (checked on incoming audio and by the
+  uploader's ~1 s tick while a chunk is open, using the latest block's time plus the time
+  since; no extra thread), when its participant leaves, on `finish()`, on a sample-rate
+  change, or when the clock steps back more than 5 s. Padding is bounded by one 30 s
+  chunk per track.
 - **Encoding.** Ogg/Opus at 32 kbps (`codec=opus`, libopusenc) or WAV (`codec=wav`), mono
   at the sample rate Zoom delivers (32 kHz in the spike). Chunks are encoded block by
-  block as they grow, so closing one is cheap and no PCM piles up.
+  block as they grow, so closing one is cheap and no PCM piles up. Opus uses DTX, so the
+  silence of a padded pause costs almost nothing (30 s of it is about 7 KB).
 - **Queue and upload.** A finished chunk is written to `<work_dir>/queue/` first and
   deleted only after the server answers 200 with `"ok": true`. One uploader thread
   (libcurl, never through a proxy) sends `POST /v1/ingest/chunk` multipart with `audio`,
@@ -47,4 +56,5 @@ What it does:
   then removes the queue folder, `chat.jsonl` and `participants.json`.
 
 Logs go to stderr, prefixed `athena-core:`; nothing goes to stdout (the launcher reads the
-bot's status lines there). The core starts one thread (the uploader) and no timer.
+bot's status lines there). The core starts one thread (the uploader) and no timer; the uploader wakes once a
+second only while a chunk is open.

@@ -1,6 +1,9 @@
-// Per-track chunker: one track per Zoom user id, chunks of `chunk_seconds` of that track's
-// wall-clock time, a sequence per track counting from 0. Audio the SDK doesn't deliver is
-// not padded: a gap starts a new chunk whose timestamp is its first sample's.
+// Per-track chunker: one track per Zoom user id, a sequence per track counting from 0.
+// A chunk covers at most `chunk_seconds` of wall-clock time from its first sample,
+// [start, start + 30 s), and holds the track's audio at its true offsets: a pause inside
+// the window (the SDK delivered nothing) is filled with silence. The chunk ends at its
+// last real sample (no trailing silence); audio after the window starts a new chunk with
+// its own timestamp, so nothing is padded across chunks.
 // Not thread-safe; Core holds a lock around it.
 #pragma once
 
@@ -14,11 +17,12 @@
 
 namespace athena {
 
-// A block that starts more than this later than the end of the track's open chunk (the
-// SDK delivered nothing in between) closes that chunk; the block starts a new one.
-constexpr int64_t kGapToleranceMs = 300;
+// A block that starts at most this much after the end of the audio so far is appended
+// as it is (delivery jitter); a later one is placed at its true offset, the pause filled
+// with silence.
+constexpr int64_t kJitterToleranceMs = 300;
 // A block that starts this much earlier than the open chunk's end (the clock stepped
-// back) also starts a new chunk. Smaller differences are delivery jitter.
+// back) starts a new chunk. Smaller differences are delivery jitter.
 constexpr int64_t kClockBackMs = 5000;
 
 struct FinishedChunk {
@@ -27,7 +31,7 @@ struct FinishedChunk {
   int sequence = 0;
   int64_t start_ms = 0;    // epoch ms of the first sample
   int sample_rate = 0;
-  size_t samples = 0;
+  size_t samples = 0;      // real audio plus the silence of pauses inside the chunk
   std::string data;        // the encoded file
   double seconds() const { return sample_rate ? double(samples) / sample_rate : 0.0; }
 };
@@ -41,16 +45,16 @@ class TrackChunker {
 
   void add(const std::string& track_id, const std::string& track_name, const int16_t* pcm,
            size_t samples, int sample_rate, int64_t now_ms);
-  // The participant left: their open chunk is finished now, not when they speak again.
+  // The participant left: their open chunk is finished now.
   void close_track(const std::string& track_id);
-  // Finish open chunks of tracks that went quiet (no block for longer than the gap
-  // tolerance before `now_ms`), so their audio goes out without waiting for them.
-  void close_stale(int64_t now_ms);
+  // Finish the open chunks whose window is over at `now_ms`, so a track that went quiet
+  // is uploaded without waiting for it to speak again.
+  void close_expired(int64_t now_ms);
   // Finish every open chunk (a partial last chunk too).
   void flush();
 
   int next_sequence(const std::string& track_id) const;
-  size_t open_chunks() const;
+  size_t open_chunks() const { return open_; }
 
  private:
   struct Track {
@@ -64,11 +68,13 @@ class TrackChunker {
   };
   bool open(const std::string& key, Track& t, int rate, int64_t start_ms);
   void close(const std::string& key, Track& t);
+  int64_t window_ms() const { return int64_t(chunk_seconds_) * 1000; }
 
   int chunk_seconds_;
   EncoderFactory factory_;
   Sink sink_;
   std::map<std::string, Track> tracks_;
+  size_t open_ = 0;
 };
 
 }  // namespace athena

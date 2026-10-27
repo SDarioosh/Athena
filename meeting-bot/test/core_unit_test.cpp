@@ -1,5 +1,6 @@
 // Host tests of the core's parts: chunker, encoders, chat log, helpers. No SDK, no
 // network. Fictional data only.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -45,22 +46,40 @@ constexpr int kRate = 32000;          // what Zoom delivers
 constexpr int kBlock = kRate / 100;   // 10 ms blocks, like the SDK
 constexpr int64_t kT0 = 1760367600000LL;  // 2025-10-13T15:00:00Z, fictional meeting
 
-// Counts samples instead of encoding, so chunk lengths are exact.
-class CountingEncoder : public ChunkEncoder {
+// Keeps the raw samples instead of encoding, so lengths and offsets are exact.
+class RawEncoder : public ChunkEncoder {
  public:
-  bool write(const int16_t*, size_t n) override {
-    samples_ += n;
+  bool write(const int16_t* pcm, size_t n) override {
+    pcm_.insert(pcm_.end(), pcm, pcm + n);
     return true;
   }
-  std::string finish() override { return std::to_string(samples_); }
+  std::string finish() override {
+    return std::string(reinterpret_cast<const char*>(pcm_.data()), pcm_.size() * 2);
+  }
 
  private:
-  size_t samples_ = 0;
+  std::vector<int16_t> pcm_;
 };
+
+// The raw samples of a chunk made with RawEncoder.
+std::vector<int16_t> raw(const FinishedChunk& c) {
+  std::vector<int16_t> v(c.data.size() / 2);
+  std::memcpy(v.data(), c.data.data(), v.size() * 2);
+  return v;
+}
+
+// Samples [from_s, to_s) of a chunk: count of non-zero ones.
+size_t nonzero(const FinishedChunk& c, double from_s, double to_s) {
+  const auto v = raw(c);
+  size_t n = 0;
+  const size_t a = size_t(from_s * c.sample_rate), b = std::min(v.size(), size_t(to_s * c.sample_rate));
+  for (size_t i = a; i < b; ++i) n += v[i] != 0;
+  return n;
+}
 
 struct Harness {
   std::vector<FinishedChunk> out;
-  TrackChunker chunker{30, [](int) { return std::make_unique<CountingEncoder>(); },
+  TrackChunker chunker{30, [](int) { return std::make_unique<RawEncoder>(); },
                        [this](FinishedChunk&& c) { out.push_back(std::move(c)); }};
   // `ms` of audio for one track in 10 ms blocks starting at `start`.
   void feed(const std::string& id, const std::string& name, int64_t start, int64_t ms,
@@ -107,7 +126,7 @@ void test_chunk_boundaries_and_sequences() {
   }
   CHECK_EQ(h.out[0].samples, size_t(30 * kRate));
   CHECK_EQ(h.out[2].samples, size_t(10 * kRate));
-  CHECK_EQ(h.out[2].data, std::to_string(10 * kRate));
+  CHECK_EQ(raw(h.out[2]).size(), size_t(10 * kRate));
   CHECK_EQ(h.chunker.open_chunks(), size_t(0));
 }
 
@@ -151,20 +170,59 @@ void test_tracks_interleaved_keep_own_sequences() {
   CHECK_EQ(seq2, 1);
 }
 
-void test_gap_starts_new_chunk() {
+void test_pause_inside_window_is_silence() {
   Harness h;
   h.feed("5", "Dana Example", kT0, 4000);
-  h.feed("5", "Dana Example", kT0 + 4000 + kGapToleranceMs, 1000);  // within tolerance
+  h.feed("5", "Dana Example", kT0 + 4000 + kJitterToleranceMs, 1000);  // jitter: appended
+  h.feed("5", "Dana Example", kT0 + 11000, 2000);  // a 6 s pause: silence at its offset
   CHECK_EQ(h.out.size(), size_t(0));
-  h.feed("5", "Dana Example", kT0 + 20000, 2000);  // a real gap: not padded
+  h.chunker.flush();
   CHECK_EQ(h.out.size(), size_t(1));
-  CHECK_EQ(h.out[0].samples, size_t(5 * kRate));
-  CHECK_EQ(h.out[0].start_ms, kT0);
+  const FinishedChunk& c = h.out[0];
+  CHECK_EQ(c.start_ms, kT0);
+  CHECK_EQ(c.samples, size_t(13 * kRate));  // ends at the last real sample
+  CHECK_EQ(raw(c).size(), size_t(13 * kRate));
+  CHECK_EQ(nonzero(c, 0, 5), size_t(5 * kRate));
+  CHECK_EQ(nonzero(c, 5, 11), size_t(0));  // the pause
+  CHECK_EQ(nonzero(c, 11, 13), size_t(2 * kRate));
+}
+
+void test_bursts_every_10s_make_few_chunks() {
+  Harness h;
+  for (int64_t t = 0; t < 120000; t += 10000) h.feed("5", "Dana Example", kT0 + t, 1000);
+  h.chunker.flush();
+  CHECK_EQ(h.out.size(), size_t(4));  // not 12
+  for (size_t i = 0; i < h.out.size(); ++i) {
+    CHECK_EQ(h.out[i].sequence, int(i));
+    CHECK_EQ(h.out[i].start_ms, kT0 + 30000 * int64_t(i));
+    CHECK_EQ(h.out[i].samples, size_t(21 * kRate));  // 0..1, 10..11, 20..21 s
+    CHECK_EQ(nonzero(h.out[i], 1, 10), size_t(0));
+    CHECK_EQ(nonzero(h.out[i], 10, 11), size_t(kRate));
+  }
+}
+
+void test_pause_across_window_starts_new_chunk() {
+  Harness h;
+  h.feed("5", "Dana Example", kT0, 25000);
+  h.feed("5", "Dana Example", kT0 + 33000, 2000);  // after the window: not padded across
+  CHECK_EQ(h.out.size(), size_t(1));
+  CHECK_EQ(h.out[0].samples, size_t(25 * kRate));
   h.chunker.flush();
   CHECK_EQ(h.out.size(), size_t(2));
-  CHECK_EQ(h.out[1].start_ms, kT0 + 20000);
+  CHECK_EQ(h.out[1].start_ms, kT0 + 33000);
   CHECK_EQ(h.out[1].samples, size_t(2 * kRate));
   CHECK_EQ(h.out[1].sequence, 1);
+}
+
+void test_long_silence_then_speech() {
+  Harness h;
+  h.feed("5", "Dana Example", kT0, 5000);
+  h.feed("5", "Dana Example", kT0 + 125000, 3000);  // silent for 2 min
+  h.chunker.flush();
+  CHECK_EQ(h.out.size(), size_t(2));
+  CHECK_EQ(h.out[0].samples, size_t(5 * kRate));
+  CHECK_EQ(h.out[1].start_ms, kT0 + 125000);
+  CHECK_EQ(h.out[1].samples, size_t(3 * kRate));
 }
 
 void test_rejoin_keeps_track() {
@@ -196,14 +254,20 @@ void test_rate_change_and_clock_back() {
   CHECK_EQ(h.out.size(), size_t(2));
 }
 
-void test_close_stale() {
+void test_close_expired() {
   Harness h;
   h.feed("1", "Dana Example", kT0, 2000);
-  h.feed("2", "Lee Example", kT0, 10000);
-  h.chunker.close_stale(kT0 + 10000);  // track 1 went quiet 8 s ago
+  h.feed("2", "Lee Example", kT0 + 5000, 10000);
+  h.chunker.close_expired(kT0 + 29999);  // no window is over yet
+  CHECK_EQ(h.out.size(), size_t(0));
+  h.chunker.close_expired(kT0 + 30000);  // track 1's window is over; it went quiet
   CHECK_EQ(h.out.size(), size_t(1));
   CHECK_EQ(h.out[0].track, std::string("1"));
+  CHECK_EQ(h.out[0].samples, size_t(2 * kRate));  // no trailing silence
   CHECK_EQ(h.chunker.open_chunks(), size_t(1));
+  h.chunker.close_expired(kT0 + 35000);
+  CHECK_EQ(h.chunker.open_chunks(), size_t(0));
+  CHECK_EQ(h.out[1].samples, size_t(10 * kRate));
 }
 
 void test_sanitized_track_and_bad_input() {
@@ -276,6 +340,14 @@ void test_opus_encoder() {
   CHECK(std::llabs(g - preskip - int64_t(seconds * 48000)) < 48);  // within 1 ms
   // 32 kbps: about 4 KB per second, plus headers
   CHECK(ogg.size() > 6000 && ogg.size() < 20000);
+  {  // a long pause padded with silence costs next to nothing
+    auto quiet = make_encoder("opus", kRate);
+    std::vector<int16_t> zeros(kBlock, 0);
+    for (int i = 0; i < 30 * 100; ++i) quiet->write(zeros.data(), zeros.size());
+    const std::string q = quiet->finish();
+    CHECK(!q.empty());
+    CHECK(q.size() < 20000);  // speech at 32 kbps would be ~120 KB
+  }
   CHECK(make_encoder("mp3", kRate) == nullptr);
   CHECK(make_encoder("opus", 0) == nullptr);
 #ifdef HAVE_OPUSFILE
@@ -382,10 +454,13 @@ int main() {
   test_chunk_boundaries_and_sequences();
   test_block_straddles_boundary();
   test_tracks_interleaved_keep_own_sequences();
-  test_gap_starts_new_chunk();
+  test_pause_inside_window_is_silence();
+  test_bursts_every_10s_make_few_chunks();
+  test_pause_across_window_starts_new_chunk();
+  test_long_silence_then_speech();
   test_rejoin_keeps_track();
   test_rate_change_and_clock_back();
-  test_close_stale();
+  test_close_expired();
   test_sanitized_track_and_bad_input();
   test_wav_encoder();
   test_opus_encoder();

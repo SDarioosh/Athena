@@ -31,7 +31,8 @@ namespace fs = std::filesystem;
 constexpr auto kBackoffFirst = std::chrono::seconds(1);
 constexpr auto kBackoffMax = std::chrono::seconds(30);
 constexpr long kUploadTimeoutMs = 120000;
-constexpr long kStaleCheckEveryMs = 1000;
+constexpr long kExpiryCheckEveryMs = 1000;
+constexpr auto kTick = std::chrono::seconds(1);
 constexpr auto kEndCallsReserve = std::chrono::milliseconds(1000);
 
 __attribute__((format(printf, 1, 2))) void logf(const char* fmt, ...) {
@@ -129,6 +130,27 @@ struct Core::Impl {
     queue.erase(it);
   }
 
+  // ---- open chunks and their windows (under chunk_mu) --------------------------------
+  // The audio clock: the latest block's wall-clock time plus the time since it came.
+  // It closes the windows of tracks that went quiet even when nobody talks.
+  void tick() {
+    std::lock_guard<std::mutex> lock(chunk_mu);
+    if (closed || last_audio_ms == 0) return;
+    const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
+        Clock::now() - last_audio_at);
+    chunker.close_expired(last_audio_ms + since.count());
+    note_open_locked();
+  }
+  // Tells the uploader whether it should tick (only while some chunk is open).
+  void note_open_locked() {
+    const bool open = chunker.open_chunks() > 0;
+    if (open != has_open.load()) {
+      std::lock_guard<std::mutex> lock(q_mu);  // no lost wakeup: the uploader waits on it
+      has_open.store(open);
+      q_cv.notify_all();
+    }
+  }
+
   // ---- uploader thread ---------------------------------------------------------------
   bool cut_passed() const {
     const int64_t c = cutoff_ns.load();
@@ -138,16 +160,26 @@ struct Core::Impl {
 
   void upload_loop() {
     auto backoff = std::chrono::duration_cast<Clock::duration>(kBackoffFirst);
+    Clock::time_point next_tick = Clock::now() + kTick;
     std::unique_lock<std::mutex> lk(q_mu);
     for (;;) {
       while (!must_stop() && (queue.empty() || Clock::now() < next_try)) {
         Clock::time_point until = queue.empty() ? Clock::time_point::max() : next_try;
         if (const int64_t c = cutoff_ns.load())
           until = std::min(until, Clock::time_point(Clock::duration(c)));
+        if (has_open.load()) until = std::min(until, next_tick);  // only while recording
         if (until == Clock::time_point::max())
           q_cv.wait(lk);
         else
           q_cv.wait_until(lk, until);
+        if (Clock::now() >= next_tick) {
+          next_tick = Clock::now() + kTick;
+          if (has_open.load()) {
+            lk.unlock();  // tick() takes chunk_mu, and closing a chunk takes q_mu
+            tick();
+            lk.lock();
+          }
+        }
       }
       if (must_stop()) break;
       queue.front().in_flight = true;
@@ -222,7 +254,10 @@ struct Core::Impl {
 
   std::mutex chunk_mu;  // before q_mu when both are held
   TrackChunker chunker;
-  int64_t last_stale_check_ms = 0;
+  int64_t last_expiry_check_ms = 0;
+  int64_t last_audio_ms = 0;           // wall-clock ms of the latest block
+  Clock::time_point last_audio_at{};   // when it came
+  std::atomic<bool> has_open{false};   // some chunk is open: the uploader ticks
   bool closed = false;  // finish() started: audio is no longer taken
 
   std::mutex q_mu;
@@ -268,10 +303,13 @@ void Core::on_audio(const std::string& track_id, const std::string& track_name,
   std::lock_guard<std::mutex> lock(d.chunk_mu);
   if (d.closed) return;
   d.chunker.add(track_id, track_name, pcm, samples, sample_rate, now_ms);
-  if (now_ms - d.last_stale_check_ms >= kStaleCheckEveryMs) {
-    d.last_stale_check_ms = now_ms;
-    d.chunker.close_stale(now_ms);
+  d.last_audio_ms = now_ms;
+  d.last_audio_at = Clock::now();
+  if (now_ms - d.last_expiry_check_ms >= kExpiryCheckEveryMs) {
+    d.last_expiry_check_ms = now_ms;
+    d.chunker.close_expired(now_ms);
   }
+  d.note_open_locked();
 }
 
 void Core::on_participant(const std::string& track_id, const std::string& name, bool joined,
@@ -279,7 +317,10 @@ void Core::on_participant(const std::string& track_id, const std::string& name, 
   impl_->chat.on_participant(track_id, name, joined, at_ms);
   if (!joined) {
     std::lock_guard<std::mutex> lock(impl_->chunk_mu);
-    if (!impl_->closed) impl_->chunker.close_track(track_id);
+    if (!impl_->closed) {
+      impl_->chunker.close_track(track_id);
+      impl_->note_open_locked();
+    }
   }
 }
 
@@ -304,6 +345,7 @@ bool Core::finish(std::chrono::steady_clock::time_point deadline) {
     std::lock_guard<std::mutex> lock(d.chunk_mu);
     d.closed = true;
     d.chunker.flush();
+    d.note_open_locked();
   }
 
   // Chunks first, then the chat call, then /end; keep a little time for the two calls.
