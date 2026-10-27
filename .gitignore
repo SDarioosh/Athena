@@ -58,3 +58,6 @@ meeting-bot/**/*.whl
 meeting-bot/**/build/
 meeting-bot/**/out/
 meeting-bot/**/results/
+
+# meeting bot build dir (meeting-bot/core/README.md)
+/build-bot/

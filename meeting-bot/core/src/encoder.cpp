@@ -59,6 +59,8 @@ class OpusEncoder : public ChunkEncoder {
     }
     ope_encoder_ctl(enc_, OPUS_SET_BITRATE(kOpusBitrate));
     ope_encoder_ctl(enc_, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
+    // DTX: the silence that fills pauses inside a chunk costs almost nothing.
+    ope_encoder_ctl(enc_, OPUS_SET_DTX(1));
   }
   ~OpusEncoder() override {
     if (enc_) ope_encoder_destroy(enc_);

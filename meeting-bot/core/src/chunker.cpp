@@ -22,6 +22,7 @@ bool TrackChunker::open(const std::string& key, Track& t, int rate, int64_t star
   t.start_ms = start_ms;
   t.rate = rate;
   t.samples = 0;
+  ++open_;
   return true;
 }
 
@@ -30,6 +31,7 @@ void TrackChunker::close(const std::string& key, Track& t) {
   FinishedChunk c;
   c.data = t.enc->finish();
   t.enc.reset();
+  --open_;
   if (t.samples == 0) return;
   if (c.data.empty()) {
     std::fprintf(stderr, "athena-core: encoding failed, chunk of track %s dropped\n",
@@ -45,6 +47,20 @@ void TrackChunker::close(const std::string& key, Track& t) {
   sink_(std::move(c));
 }
 
+namespace {
+
+// Writes `n` samples of silence (bounded by one chunk: the caller never pads past it).
+void write_silence(ChunkEncoder& enc, size_t n) {
+  static const int16_t zeros[4800] = {};
+  while (n > 0) {
+    const size_t k = std::min(n, sizeof zeros / sizeof zeros[0]);
+    enc.write(zeros, k);
+    n -= k;
+  }
+}
+
+}  // namespace
+
 void TrackChunker::add(const std::string& track_id, const std::string& track_name,
                        const int16_t* pcm, size_t samples, int sample_rate,
                        int64_t now_ms) {
@@ -54,8 +70,16 @@ void TrackChunker::add(const std::string& track_id, const std::string& track_nam
   if (!track_name.empty()) t.name = track_name;
   if (t.enc) {
     const int64_t late = now_ms - t.end_ms();
-    if (sample_rate != t.rate || late > kGapToleranceMs || late < -kClockBackMs)
-      close(key, t);
+    if (sample_rate != t.rate || late < -kClockBackMs || now_ms >= t.start_ms + window_ms()) {
+      close(key, t);  // new rate, clock stepped back, or past the window: a new chunk
+    } else if (late > kJitterToleranceMs) {
+      // A pause inside the window: silence up to the block's true offset.
+      const size_t at = size_t((now_ms - t.start_ms) * t.rate / 1000);
+      if (at > t.samples) {
+        write_silence(*t.enc, at - t.samples);
+        t.samples = at;
+      }
+    }
   }
   if (!t.enc && !open(key, t, sample_rate, now_ms)) return;
   const size_t cap = size_t(chunk_seconds_) * size_t(t.rate);
@@ -65,8 +89,8 @@ void TrackChunker::add(const std::string& track_id, const std::string& track_nam
     t.samples += take;
     pcm += take;
     samples -= take;
-    if (t.samples >= cap) {
-      const int64_t next_start = t.start_ms + int64_t(chunk_seconds_) * 1000;
+    if (t.samples >= cap) {  // the window is full: the rest starts the next chunk
+      const int64_t next_start = t.start_ms + window_ms();
       const int rate = t.rate;
       close(key, t);
       if (samples > 0 && !open(key, t, rate, next_start)) return;
@@ -80,9 +104,9 @@ void TrackChunker::close_track(const std::string& track_id) {
   if (it != tracks_.end()) close(key, it->second);
 }
 
-void TrackChunker::close_stale(int64_t now_ms) {
+void TrackChunker::close_expired(int64_t now_ms) {
   for (auto& [key, t] : tracks_)
-    if (t.enc && now_ms - t.end_ms() > kGapToleranceMs) close(key, t);
+    if (t.enc && now_ms >= t.start_ms + window_ms()) close(key, t);
 }
 
 void TrackChunker::flush() {
@@ -94,10 +118,5 @@ int TrackChunker::next_sequence(const std::string& track_id) const {
   return it == tracks_.end() ? 0 : it->second.next_seq;
 }
 
-size_t TrackChunker::open_chunks() const {
-  size_t n = 0;
-  for (const auto& kv : tracks_) n += kv.second.enc ? 1 : 0;
-  return n;
-}
 
 }  // namespace athena
