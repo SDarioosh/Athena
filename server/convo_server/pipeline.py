@@ -374,6 +374,12 @@ class Pipeline:
             return [], ranges, chunks
         if self.transcriber is None:
             raise RuntimeError("no transcriber configured (set CONVO_WHISPER_SERVER_URL)")
+        if not note and self.store.has_tracks(session_id):
+            # A meeting: one track per participant, each transcribed on its own and named
+            # by its track. Imported only here, so sessions without tracks never load it.
+            from . import meeting_tracks
+
+            return meeting_tracks.transcribe_meeting(self, session_id, chunks), ranges, chunks
         prompt = self.whisper_prompt()
         runs: list[np.ndarray] = []
         pieces: list[tuple[float, float, str, PieceRef]] = []
@@ -385,30 +391,10 @@ class Pipeline:
             if track != last_track:  # whisper's context never crosses participants
                 context, last_track = "", track
             runs.append(run_audio)
-            regions = merge_spans(run_speech, REGION_MERGE_GAP)
-            windows = plan_windows(regions, run_audio.size / audio_mod.SAMPLE_RATE,
-                                   pad=cfg.whisper_pad_seconds,
-                                   max_seconds=cfg.whisper_window_seconds,
-                                   max_gap=cfg.whisper_window_gap_seconds)
-            for w in windows:
-                # The diarizer keeps the ungained run audio; only the transcriber hears
-                # the gain (CONVO_ASR_AGC_MAX_GAIN).
-                clip, _ = audio_mod.bounded_gain(w.extract(run_audio),
-                                                 max_gain=cfg.asr_agc_max_gain,
-                                                 deadband=ASR_AGC_DEADBAND)
-                got = self.transcriber.transcribe(
-                    clip, " ".join(x for x in (prompt, context) if x))
-                for p in (q for piece in got for q in w.split(piece)):
-                    s = w.to_run(p.start)
-                    e = max(s, w.to_run(max(p.end, p.start), end=True))
-                    s, e = w.clamp(s, e)
-                    pieces.append((run_start + s, run_start + e, p.text,
-                                   PieceRef(len(runs) - 1, s, e)))
-                    piece_words.append([(w.to_run(a), w.to_run(b, end=True), t)
-                                        for a, b, t in p.words])
-                if cfg.whisper_context_words > 0 and got:
-                    context = tail_words(" ".join([context] + [p.text for p in got]),
-                                         cfg.whisper_context_words)
+            got, got_words, context = self._whisper_run(len(runs) - 1, run_start, run_audio,
+                                                        run_speech, prompt, context)
+            pieces += got
+            piece_words += got_words
         order = sorted(range(len(pieces)), key=lambda i: pieces[i][0])
         pieces = [pieces[i] for i in order]
         piece_words = [piece_words[i] for i in order]
@@ -436,6 +422,43 @@ class Pipeline:
             segments.append(Segment(started_at=s, ended_at=e, text=text, speaker=name,
                                     is_owner=owner))
         return segments, ranges, chunks
+
+    def _whisper_run(self, run: int, run_start: float, run_audio: np.ndarray,
+                     run_speech: list[Span], prompt: str, context: str
+                     ) -> tuple[list[tuple[float, float, str, PieceRef]],
+                                list[list[tuple[float, float, str]]], str]:
+        """Transcribe one run's VAD speech in whisper windows.
+
+        Returns its pieces (epoch start, epoch end, text, ``PieceRef(run, ...)``), each
+        piece's words (run time) and the context for the run's next window
+        (``CONVO_WHISPER_CONTEXT_WORDS``)."""
+        cfg = self.settings
+        pieces: list[tuple[float, float, str, PieceRef]] = []
+        piece_words: list[list[tuple[float, float, str]]] = []
+        regions = merge_spans(run_speech, REGION_MERGE_GAP)
+        windows = plan_windows(regions, run_audio.size / audio_mod.SAMPLE_RATE,
+                               pad=cfg.whisper_pad_seconds,
+                               max_seconds=cfg.whisper_window_seconds,
+                               max_gap=cfg.whisper_window_gap_seconds)
+        for w in windows:
+            # The diarizer keeps the ungained run audio; only the transcriber hears
+            # the gain (CONVO_ASR_AGC_MAX_GAIN).
+            clip, _ = audio_mod.bounded_gain(w.extract(run_audio),
+                                             max_gain=cfg.asr_agc_max_gain,
+                                             deadband=ASR_AGC_DEADBAND)
+            got = self.transcriber.transcribe(
+                clip, " ".join(x for x in (prompt, context) if x))
+            for p in (q for piece in got for q in w.split(piece)):
+                s = w.to_run(p.start)
+                e = max(s, w.to_run(max(p.end, p.start), end=True))
+                s, e = w.clamp(s, e)
+                pieces.append((run_start + s, run_start + e, p.text, PieceRef(run, s, e)))
+                piece_words.append([(w.to_run(a), w.to_run(b, end=True), t)
+                                    for a, b, t in p.words])
+            if cfg.whisper_context_words > 0 and got:
+                context = tail_words(" ".join([context] + [p.text for p in got]),
+                                     cfg.whisper_context_words)
+        return pieces, piece_words, context
 
     def _split_pieces(self, runs: list[np.ndarray],
                       pieces: list[tuple[float, float, str, PieceRef]],
@@ -488,9 +511,8 @@ class Pipeline:
         ('' = chunks without a track, which is all of a session before tracks). Runs never
         mix tracks, and ``join_lines`` never joins lines of two runs.
 
-        Seam for per-track transcription (meeting lane 2A): lines of a tracked session
-        are still diarized as today; 2A replaces this loop's caller for tracked
-        sessions with whisper per track and lines named by track."""
+        A session with tracks (a meeting) doesn't come here: ``meeting_tracks`` transcribes
+        it track by track and names lines by track."""
         ordered = sorted(chunks, key=lambda c: (c.get("track") or "", c["sequence"]))
         for track, group in itertools.groupby(ordered, key=lambda c: c.get("track") or ""):
             for run_start, audio, spans in self._runs(list(group)):
