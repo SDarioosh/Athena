@@ -5,6 +5,8 @@
 set -euo pipefail
 echo "STATE starting"
 sleep 1
+echo "STATE waiting_permission"
+sleep 1
 echo "STATE recording"
 end=$((SECONDS + ${FAKE_SECONDS:-3}))
 while ((SECONDS < end)); do :; done

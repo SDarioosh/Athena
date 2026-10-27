@@ -37,14 +37,16 @@ def test_clean_run_reports_timing_and_nothing_left(tmp_path):
                         str(FAKE)], capture_output=True, text=True, timeout=60,
                        env={**os.environ, "FAKE_SECONDS": "3"})
     assert r.returncode == 0, r.stdout + r.stderr
-    run, duration, cpu_avg, cpu_peak, rss, to_recording, left = _row(results)
+    run, duration, cpu_avg, cpu_peak, rss, to_meeting, left = _row(results)
     assert run == "clean"
     assert float(duration) > 0
     assert float(cpu_peak) >= float(cpu_avg) > 5  # the stand-in spins one core
     assert int(rss) >= 1
-    assert 0.5 <= float(to_recording) <= 4
+    assert 0.5 <= float(to_meeting) <= 4  # first STATE waiting_permission
     assert left == "none"
     summary = next(tmp_path.glob("clean-*/summary.md")).read_text()
+    to_recording = float(summary.split("includes the host allowing it): ")[1].split(" ")[0])
+    assert to_recording >= float(to_meeting) + 0.5
     assert "last state: ended duration" in summary
 
 

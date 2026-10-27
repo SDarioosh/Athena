@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Measure one spike bot run (Phase 0 of docs/zoom-meeting-bot-plan.md): CPU, peak RSS,
-# time from start to the first `STATE recording` line, and what is left behind after it
+# time from start to "in meeting" (the first `STATE waiting_permission` or `STATE recording`
+# line) and to the first `STATE recording`, and what is left behind after it
 # exits (processes, listening sockets, temp files). Throwaway dev tool, not in CI.
 #
 # Launch the bot through it (preferred; timing starts at launch):
@@ -126,6 +127,7 @@ printf 'epoch\tcpu_pct\trss_kb\n' > "$samples"
 declare -A seen=()
 declare -A opened_temp=()
 peak_hwm_kb=0
+t_meeting=""
 t_recording=""
 last_ticks=0
 last_t="$(date +%s.%N)"
@@ -143,6 +145,10 @@ while alive "$pid"; do
     if [[ -n "$hwm" ]] && ((hwm > peak_hwm_kb)); then peak_hwm_kb="$hwm"; fi
     rss_total=$((rss_total + ${rss:-0}))
   done
+  if [[ -z "$t_meeting" ]] && grep -qE '^STATE (waiting_permission|recording)' "$log" 2>/dev/null; then
+    t_meeting="$(awk -v n="$(date +%s.%N)" -v s="$start" 'BEGIN {printf "%.1f", n - s}')"
+    echo "measure.sh: in the meeting after ${t_meeting} s"
+  fi
   if [[ -z "$t_recording" ]] && grep -q '^STATE recording' "$log" 2>/dev/null; then
     t_recording="$(awk -v n="$(date +%s.%N)" -v s="$start" 'BEGIN {printf "%.1f", n - s}')"
     echo "measure.sh: first STATE recording after ${t_recording} s"
@@ -198,6 +204,7 @@ fi
 ps -e -o pid= | tr -d ' ' | sort > "$run_dir/pids.after"
 while read -r p; do
   [[ -z "$p" || "$p" == "$$" ]] && continue
+  alive "$p" || continue  # gone, or a zombie waiting for init to reap it: not a leftover
   ppid="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ' || true)"
   owner="$(ps -o uid= -p "$p" 2>/dev/null | tr -d ' ' || true)"
   if [[ "$ppid" == 1 && "$owner" == "$(id -u)" ]]; then leftover_procs+=("$p"); fi
@@ -266,7 +273,8 @@ if ((${#left[@]})); then leftovers="$(printf '%s, ' "${left[@]}")"; leftovers="$
   echo "- Duration: $duration_min min"
   echo "- CPU avg / peak: $cpu_avg % / $cpu_peak % (source: $cpu_src; 100 % = one core)"
   echo "- Peak RSS: $peak_mb MB (max VmHWM over the bot's processes)"
-  echo "- Start to first STATE recording: ${t_recording:-never} s"
+  echo "- Start to in meeting (first STATE waiting_permission or recording): ${t_meeting:-never} s"
+  echo "- Start to first STATE recording (includes the host allowing it): ${t_recording:-never} s"
   echo "- Processes seen: ${!seen[*]}"
   echo "- Left behind: $leftovers"
   if ((${#leftover_procs[@]})); then
@@ -287,11 +295,11 @@ if ((${#left[@]})); then leftovers="$(printf '%s, ' "${left[@]}")"; leftovers="$
 
 if [[ ! -s "$results" ]]; then
   {
-    echo "| Run | Duration (min) | CPU avg % | CPU peak % | Peak RSS MB | Start → recording s | Left behind |"
+    echo "| Run | Duration (min) | CPU avg % | CPU peak % | Peak RSS MB | Start → in meeting s | Left behind |"
     echo "| --- | --- | --- | --- | --- | --- | --- |"
   } > "$results"
 fi
-echo "| $label | $duration_min | $cpu_avg | $cpu_peak | $peak_mb | ${t_recording:-never} | $leftovers |" >> "$results"
+echo "| $label | $duration_min | $cpu_avg | $cpu_peak | $peak_mb | ${t_meeting:-never} | $leftovers |" >> "$results"
 
 cat "$run_dir/summary.md"
 echo
