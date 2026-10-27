@@ -246,8 +246,8 @@ below are agreed.
 - [ ] If Phase 0 found that joining other accounts' meetings needs a token from the owner's
       Zoom account: a one-time Zoom sign-in for the owner (OAuth; the refresh token stays in
       the data dir on the server) and a fresh join token fetched per meeting.
-      Built in lane 1B (`zoom_signin.py`, `convo-server zoom-login`, Athena's own Zoom
-      account, ZAK or OBF per join); the box is ticked once PR #119's wording merges.
+      Built in lane 1B (`zoom_signin.py`, `convo-server zoom-login` with the owner's own
+      account, an on-behalf-of token per join; ZAK later); ticked once PR #119 merges.
 - [x] Tests with a fake bot script; a test that importing `convo_server.api` starts no
       thread and imports nothing from `meetings.py`.
 
