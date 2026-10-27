@@ -302,3 +302,34 @@ def test_lone_note_with_tasks_keeps_its_words():
                  True)], kind="note")["action_items"]
     assert sorted((i["kind"], i["text"]) for i in items) == [
         ("note", "The gate code is 4417"), ("task", "Call the plumber")]
+
+
+# ---------------------------------- the key points of a lone note in JSON (MCP 0.15.0)
+T4_SUMMARY = ("Recorded physical specifications for the AMOLED T4-S3 device, including "
+              "screen, overall thickness, and PCB dimensions.")
+T4_POINTS = ["Screen: 49mm x 60mm", "Overall device thickness: ~8mm", "PCB: 39mm x 52mm",
+             "Distance between PCB and screen: 6.5mm"]
+
+
+def test_lone_note_json_has_the_voice_notes_key_points(pipeline, stored):
+    def transcribe(audio, prompt=""):
+        return [TranscriptPiece(0.0, audio.size / 16000,
+                                "Make a note, AMOLED T4-S3 dimensions. The screen is 49mm by "
+                                "60mm. Thickness of the overall device is about 8mm.")]
+    pipeline.transcriber.transcribe = transcribe
+    summary = {"title": "AMOLED T4-S3 Dimensions", "summary": T4_SUMMARY,
+               "key_points": T4_POINTS, "people": [], "topics": [], "facts": [],
+               "action_items": []}
+    pipeline.summarizer = Summarizer(
+        LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary=summary)),
+        "Me", timezone="Europe/Berlin")
+    record(pipeline, "n2", T0 + 3600, "note")
+    mcp = build_mcp(pipeline.store, pipeline.settings)
+    rows = {r["text"]: r for r in json.loads(call(mcp, "list_action_items", format="json"))}
+    lone = rows[T4_SUMMARY]
+    assert (lone["kind"], lone["note_title"], lone["key_points"]) == (
+        "note", "AMOLED T4-S3 Dimensions", T4_POINTS)
+    # several notes, named notes and to-dos keep their own words: no key points
+    assert rows["Battery dimensions are 13 mm x 14 mm x 3 mm"]["key_points"] == []
+    assert rows["The screen is 1.4 inch"]["key_points"] == []
+    assert rows["Call the plumber"]["key_points"] == []

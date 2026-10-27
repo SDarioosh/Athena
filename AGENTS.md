@@ -192,6 +192,10 @@ server. **Nothing in the data path touches the cloud.**
   also has `valid_until` (MCP 0.13.0, additive): the last day a fact about one occasion
   ("has a meeting with X on Tuesday at 11 a.m.") is worth keeping, else null; the hub
   ends the belief after it. JSON fields are listed in `server/README.md`.
+- Each `list_action_items` JSON row has `key_points` (MCP 0.15.0, additive): for a note
+  that is a whole voice note (its text is the voice note's summary), the voice note's key
+  points, which the hub writes into the note between the summary and the transcript
+  link; `[]` for every other item.
 - `search_conversations(kind=…)`: `note` (voice notes and notes written by hand),
   `conversation`, or empty for everything; from MCP 0.14.0 (additive) also `voice` (voice
   notes only) and `written` (notes written by hand only), and the result header says

@@ -406,8 +406,14 @@ conversation first, with no citation line:
   "conversation_at": "2025-10-09T08:53:20+00:00",
   "created_at": "2025-10-09T08:55:02+00:00", "timezone": "Europe/Berlin",
   "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=0",
-  "with": [{"id": 4, "name": "Greta"}, {"id": null, "name": "Tom"}]}]
+  "with": [{"id": 4, "name": "Greta"}, {"id": null, "name": "Tom"}], "key_points": []}]
 ```
+
+`key_points` (MCP 0.15.0, additive) is set on a note that is a whole voice note ("Make a
+note, AMOLED T4-S3 dimensions. The screen is 49 mm by 60 mm. ..."): its `text` is then
+the voice note's summary, and `key_points` are the voice note's key points ("Screen: 49mm
+x 60mm"), so the hub's note holds what was said. `[]` for every other item (to-dos,
+notes added to named notes, a voice note with several notes or with to-dos besides).
 
 `title` is a short imperative summary of at most 60 characters ("Call the plumber about
 the tap"), written by the model; when it gives none (or a longer one) code takes the
