@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from . import audio as audio_mod
-from .clips import plan_windows, tail_words
+from .clips import Window, plan_windows, tail_words
 from .config import Settings
 from .conversations import split_on_gaps
 from .diarize import Diarizer, PieceRef, load_voices
@@ -377,6 +377,32 @@ class Pipeline:
                                stop_on_failure=True, now=now)
         return n
 
+    def transcribe_live(self) -> int:
+        """Transcribe meetings that are still being recorded, window by window, so only
+        their last windows are left when they end (``meeting_live.py``). Called on each
+        worker tick: with no meeting in progress it costs one indexed query and imports
+        nothing; ``CONVO_MEETING_LIVE_TRANSCRIBE=false`` makes it cost nothing. Returns
+        how many whisper windows were done."""
+        cfg = self.settings
+        if not cfg.meeting_live_transcribe or self.transcriber is None:
+            return 0
+        ids = self.store.live_meetings()
+        if not ids:
+            return 0
+        # never beside a session being processed (an API call can process one)
+        if not self._process_lock.acquire(blocking=False):
+            return 0
+        try:
+            from . import meeting_live
+
+            return meeting_live.step(self, ids, cfg.meeting_live_budget_seconds)
+        except Exception as e:  # whisper-server down: next tick, or the end pass
+            log.warning("live meeting transcription paused (%s: %s); trying again next tick",
+                        type(e).__name__, e)
+            return 0
+        finally:
+            self._process_lock.release()
+
     def process_session(self, session_id: str) -> None:
         with self._process_lock:
             sess = self.store.get_session(session_id)
@@ -400,6 +426,9 @@ class Pipeline:
                 from .meeting_voices import learn_from_meeting
 
                 learn_from_meeting(self, session_id, done, kept)
+            if any(c["track"] for c in done):
+                # a meeting's live transcript (meeting_live.py) is in its lines now
+                self.store.drop_live_states(session_id)
             if not self.settings.keep_audio:
                 # Only the chunks transcribed here: one uploaded meanwhile waits for the
                 # next pass (add_chunk set the session back to 'ended').
@@ -488,32 +517,50 @@ class Pipeline:
         Returns its pieces (epoch start, epoch end, text, ``PieceRef(run, ...)``), each
         piece's words (run time) and the context for the run's next window
         (``CONVO_WHISPER_CONTEXT_WORDS``)."""
+        pieces: list[tuple[float, float, str, PieceRef]] = []
+        piece_words: list[list[tuple[float, float, str]]] = []
+        for w in self._plan_windows(run_speech, run_audio.size / audio_mod.SAMPLE_RATE):
+            got, got_words, context = self._whisper_window(run, run_start, w,
+                                                           w.extract(run_audio), prompt,
+                                                           context)
+            pieces += got
+            piece_words += got_words
+        return pieces, piece_words, context
+
+    def _plan_windows(self, run_speech: list[Span], run_seconds: float) -> list[Window]:
+        """The whisper windows of a run: its VAD speech merged into regions, padded and
+        packed (``clips.plan_windows``)."""
+        cfg = self.settings
+        return plan_windows(merge_spans(run_speech, REGION_MERGE_GAP), run_seconds,
+                            pad=cfg.whisper_pad_seconds,
+                            max_seconds=cfg.whisper_window_seconds,
+                            max_gap=cfg.whisper_window_gap_seconds)
+
+    def _whisper_window(self, run: int, run_start: float, w: Window, clip: np.ndarray,
+                        prompt: str, context: str
+                        ) -> tuple[list[tuple[float, float, str, PieceRef]],
+                                   list[list[tuple[float, float, str]]], str]:
+        """Transcribe one window (``clip`` is ``w.extract`` of the run audio): its pieces,
+        their words and the context after it. ``meeting_live`` calls this one window at a
+        time while a meeting runs, so both paths send whisper the same clips."""
         cfg = self.settings
         pieces: list[tuple[float, float, str, PieceRef]] = []
         piece_words: list[list[tuple[float, float, str]]] = []
-        regions = merge_spans(run_speech, REGION_MERGE_GAP)
-        windows = plan_windows(regions, run_audio.size / audio_mod.SAMPLE_RATE,
-                               pad=cfg.whisper_pad_seconds,
-                               max_seconds=cfg.whisper_window_seconds,
-                               max_gap=cfg.whisper_window_gap_seconds)
-        for w in windows:
-            # The diarizer keeps the ungained run audio; only the transcriber hears
-            # the gain (CONVO_ASR_AGC_MAX_GAIN).
-            clip, _ = audio_mod.bounded_gain(w.extract(run_audio),
-                                             max_gain=cfg.asr_agc_max_gain,
-                                             deadband=ASR_AGC_DEADBAND)
-            got = self.transcriber.transcribe(
-                clip, " ".join(x for x in (prompt, context) if x))
-            for p in (q for piece in got for q in w.split(piece)):
-                s = w.to_run(p.start)
-                e = max(s, w.to_run(max(p.end, p.start), end=True))
-                s, e = w.clamp(s, e)
-                pieces.append((run_start + s, run_start + e, p.text, PieceRef(run, s, e)))
-                piece_words.append([(w.to_run(a), w.to_run(b, end=True), t)
-                                    for a, b, t in p.words])
-            if cfg.whisper_context_words > 0 and got:
-                context = tail_words(" ".join([context] + [p.text for p in got]),
-                                     cfg.whisper_context_words)
+        # The diarizer keeps the ungained run audio; only the transcriber hears
+        # the gain (CONVO_ASR_AGC_MAX_GAIN).
+        clip, _ = audio_mod.bounded_gain(clip, max_gain=cfg.asr_agc_max_gain,
+                                         deadband=ASR_AGC_DEADBAND)
+        got = self.transcriber.transcribe(clip, " ".join(x for x in (prompt, context) if x))
+        for p in (q for piece in got for q in w.split(piece)):
+            s = w.to_run(p.start)
+            e = max(s, w.to_run(max(p.end, p.start), end=True))
+            s, e = w.clamp(s, e)
+            pieces.append((run_start + s, run_start + e, p.text, PieceRef(run, s, e)))
+            piece_words.append([(w.to_run(a), w.to_run(b, end=True), t)
+                                for a, b, t in p.words])
+        if cfg.whisper_context_words > 0 and got:
+            context = tail_words(" ".join([context] + [p.text for p in got]),
+                                 cfg.whisper_context_words)
         return pieces, piece_words, context
 
     def _split_pieces(self, runs: list[np.ndarray],
@@ -870,6 +917,7 @@ class Worker(threading.Thread):
         try:
             self.pipeline.finalize_idle(now)
             self.pipeline.process_pending(now)
+            self.pipeline.transcribe_live()  # after ended sessions: a finished one first
             self.pipeline.rewrite_forgotten()
             self._maybe_digest()
             self._maybe_prune()

@@ -409,9 +409,11 @@ summary ready soon after the meeting. Nothing new runs in the background between
 
 **Lane 5D, results ready sooner (optional):**
 
-- [ ] Transcribe each track's chunks while the meeting runs, so only the last chunk and the
+- [x] Transcribe each track's chunks while the meeting runs, so only the last chunk and the
       summary are left when it ends. Uses the existing worker and whisper-server; no new
-      process. Target: summary within 2 minutes of the meeting ending.
+      process (`server/convo_server/meeting_live.py`, `CONVO_MEETING_LIVE_TRANSCRIBE`).
+      Target: summary within 2 minutes of the meeting ending (owner: measure on the
+      server, see the 5D PR's Server verification).
 
 **Later, not planned here:** Google Meet and Teams. The upload format (`track` fields, chat
 route) stays the same, so only a new bot is needed.

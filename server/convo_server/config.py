@@ -197,6 +197,12 @@ class Settings(BaseSettings):
     # Save up to 3 voice samples of 3 s from each named participant's own track, so they
     # are recognized in later recordings (convo_server/meeting_voices.py). false = off.
     learn_meeting_voices: bool = True
+    # Transcribe a meeting's tracks while it runs (convo_server/meeting_live.py), on the
+    # worker's existing ticks, so only the last window of each track and the summary are
+    # left when it ends. Each tick spends at most about meeting_live_budget_seconds on it
+    # (whisper requests one at a time); false transcribes the whole meeting at its end.
+    meeting_live_transcribe: bool = True
+    meeting_live_budget_seconds: float = 20.0
     # Where downloaded model weights are cached (speaker models). Default: <data_dir>/models.
     models_dir: Path | None = None
 
