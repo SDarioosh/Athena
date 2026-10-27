@@ -171,16 +171,19 @@ server. **Nothing in the data path touches the cloud.**
   `DELETE /ingest/text/{source_id}`, MCP 0.12.0) and the few API reads the relay's T5
   sync uses (`READ_ROUTES`: `/health`, conversations, transcript, action items, digests), plus
   `GET`/`PUT /settings/llm` for the hub's settings page (which model writes summaries;
-  only the model name, never `CONVO_LLM_BASE_URL`), and the meeting bot's
+  only the model name, never `CONVO_LLM_BASE_URL`) and `GET`/`PUT /settings/vocabulary`
+  (words whisper is nudged toward, `{"words": "a, b"}`), and the meeting bot's
   `POST /meetings`, `GET /meetings`, `GET`/`DELETE /meetings/{id}` for the hub's "Send
   Athena to a meeting" box (same JSON and status as `/v1/meetings`, including the 409's
   `message` and `active`; ids checked before forwarding; `DELETE` waits up to 30 s for the
-  bot to exit). They are **not MCP tools** (never register
+  bot to exit), and `GET /zoom/signin`, `POST /zoom/signin/start`,
+  `POST /zoom/signin/finish` for the hub's "Sign in to Zoom" button (same JSON and status
+  as `/v1/zoom/signin*`, contract in `server/README.md`). They are **not MCP tools** (never register
   them as tools) and forward unchanged to the ingest API with `CONVO_INGEST_TOKEN`, which
   never leaves the module. So **the MCP token can add recordings**: Odysseus uses it for
   its call recorder and for phones paired through it, and it can send the meeting bot
   into a Zoom meeting. Their paths, the multipart fields and the JSON fields of
-  `/ingest/text` and `/meetings` are part of the contract like a tool's
+  `/ingest/text`, `/meetings` and `/zoom/signin*` are part of the contract like a tool's
   arguments.
 - Written notes (MCP 0.12.0, additive): the hub sends a handwritten note's reviewed text
   to `POST /v1/ingest/text` (relay `POST /ingest/text`), JSON `source_id`
@@ -212,10 +215,11 @@ server. **Nothing in the data path touches the cloud.**
 - Zoom meetings (MCP 0.16.0, additive): the bot sends a meeting's chat, topic and
   participant list in one call, `POST /v1/sessions/{id}/chat` (not a relay route, not a
   tool; contract in `server/README.md`). Chat lines are transcript lines of kind `chat`;
-  results show them as `<name> (chat): …`, mark a meeting's conversation `(Zoom meeting:
-  <topic>)` (or `(Zoom meeting)`) and list its participants (also those who never spoke).
-  JSON fact and action-item rows have `source`: `"meeting"` when they come from a Zoom
-  meeting, else null.
+  results show them as `<name> (chat): …`, mark a meeting's conversation `(Online meeting:
+  <topic>)` (or `(Online meeting)`; MCP 0.17.0, before that `(Zoom meeting…)`: the mark
+  names no platform, meetings may come from others than Zoom later; the hub reads both)
+  and list its participants (also those who never spoke). JSON fact and action-item rows
+  have `source`: `"meeting"` when they come from a meeting, else null.
 - `search_conversations(kind=…)`: `note` (voice notes and notes written by hand),
   `conversation`, or empty for everything; from MCP 0.14.0 (additive) also `voice` (voice
   notes only) and `written` (notes written by hand only), and the result header says

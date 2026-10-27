@@ -35,7 +35,9 @@
 #                             (meeting-bot/). Docker: adds compose.meeting.yml (the bot in the
 #                             sound-api image). Native: builds it in $CONVO_DATA_DIR/meeting-bot
 #                             and sets CONVO_MEETING_BOT_PATH in server/.env if unset. No new
-#                             service either way (README "Meeting bot in Docker")
+#                             service either way (README "Meeting bot in Docker"). Unset (not
+#                             in the environment nor in .env): ~/zoom-sdk if it holds the SDK
+#                             (h/zoom_sdk.h); off (or empty): no meeting bot
 #   BARVIS_SOUND_ODYSSEUS_DIR the Odysseus checkout whose scripts/fork_deploy.sh runs after a
 #                             deploy, or off (default: found from the running Odysseus container)
 set -euo pipefail
@@ -86,6 +88,14 @@ load_config() {
   fi
   case $RUNNER in systemd|background|docker) ;; *) die "BARVIS_SOUND_RUNNER must be systemd, background, docker or auto" ;; esac
   ZOOM_SDK_DIR=$(env_value BARVIS_SOUND_ZOOM_SDK_DIR "")
+  ZOOM_SDK_AUTO=""
+  if [ "$ZOOM_SDK_DIR" = off ]; then
+    ZOOM_SDK_DIR=""
+  elif [ -z "${BARVIS_SOUND_ZOOM_SDK_DIR+x}" ] && ! grep -qE '^BARVIS_SOUND_ZOOM_SDK_DIR=' .env 2>/dev/null \
+       && [ -f "$HOME/zoom-sdk/h/zoom_sdk.h" ]; then
+    ZOOM_SDK_DIR=$HOME/zoom-sdk  # not set anywhere: the SDK where the README unpacks it
+    ZOOM_SDK_AUTO=1
+  fi
   # shellcheck disable=SC2088,SC2016  # matches a literal ~ or $HOME written in .env
   case $ZOOM_SDK_DIR in
     "~"|"~/"*) ZOOM_SDK_DIR=$HOME${ZOOM_SDK_DIR#"~"} ;;
@@ -246,8 +256,15 @@ bg_stop() {
 # --- docker (server/compose.yml) ------------------------------------------------------
 
 dc() {
-  # shellcheck disable=SC2086  # DOCKER may be "sudo docker"
-  $DOCKER compose --project-directory "$SERVER_DIR" "${COMPOSE_FILES[@]}" "$@"
+  local cmd
+  read -r -a cmd <<< "$DOCKER"  # DOCKER may be "sudo docker"
+  # sudo drops the environment: hand compose.meeting.yml the SDK folder by name (it may
+  # be the auto-detected ~/zoom-sdk, or a ~ path in .env, neither of which compose reads)
+  if [ "${cmd[0]##*/}" = sudo ] && [ -n "${BARVIS_SOUND_ZOOM_SDK_DIR:-}" ] \
+     && [[ " ${COMPOSE_FILES[*]} " == *"/compose.meeting.yml "* ]]; then
+    cmd=("${cmd[0]}" "BARVIS_SOUND_ZOOM_SDK_DIR=$BARVIS_SOUND_ZOOM_SDK_DIR" "${cmd[@]:1}")
+  fi
+  "${cmd[@]}" compose --project-directory "$SERVER_DIR" "${COMPOSE_FILES[@]}" "$@"
 }
 
 docker_preflight() {  # settings the containers would crash on, said before building
@@ -424,7 +441,19 @@ install_deps() {
   fi
 }
 
-# --- meeting bot (native runners) -----------------------------------------------------
+# --- meeting bot ----------------------------------------------------------------------
+
+zoom_sdk_notes() {  # what deploy does about the meeting bot, said once per deploy
+  [ -n "$ZOOM_SDK_DIR" ] || return 0
+  if [ -n "$ZOOM_SDK_AUTO" ]; then
+    log "meeting bot: found the Zoom Meeting SDK in $ZOOM_SDK_DIR (BARVIS_SOUND_ZOOM_SDK_DIR unset; set it to off for no bot)"
+  fi
+  if [ -z "$(env_value CONVO_ZOOM_SDK_KEY "")" ] || [ -z "$(env_value CONVO_ZOOM_SDK_SECRET "")" ]; then
+    log "warning: CONVO_ZOOM_SDK_KEY / CONVO_ZOOM_SDK_SECRET are not set in server/.env: the meeting bot is built, but joining a meeting answers 501 until they are (README \"Meeting bot\")"
+  fi
+}
+
+# Native runners:
 
 # Builds meeting-bot/ against BARVIS_SOUND_ZOOM_SDK_DIR in $CONVO_DATA_DIR/meeting-bot/build
 # (outside git) and points CONVO_MEETING_BOT_PATH at its start script if .env has none.
@@ -507,6 +536,7 @@ cmd_deploy() {
   update_checkout "${1:-}"
   first_env
   load_config  # .env may be new
+  zoom_sdk_notes
   if [ "$RUNNER" = docker ]; then
     deploy_docker
     return
@@ -544,6 +574,7 @@ deploy_docker() {  # cmd_deploy for the docker runner
   if [ "$PREV" != "$NEW" ]; then
     log "rolling back to $(git -C "$REPO_DIR" rev-parse --short "$PREV")"
     git -C "$REPO_DIR" checkout -q --detach "$PREV"
+    set_compose_files  # the old checkout may have no compose.meeting.yml
     docker_up || true
     die "deploy of $short failed and was rolled back (checkout is detached at the old commit; the next deploy returns to $BRANCH)"
   fi
@@ -613,7 +644,7 @@ cmd_status() {
 
 docker_cmd() {  # start | restart | stop | logs | units for the docker runner
   case $1 in
-    start) docker_up ;;
+    start) zoom_sdk_notes; docker_up ;;
     restart) dc restart && dc up -d --wait --wait-timeout 300 ;;
     stop) dc stop && log "stopped" ;;
     logs) dc logs --tail 40 "${@:3}" "$(docker_service "${2:-serve}")" ;;

@@ -200,7 +200,7 @@ def test_chat_after_processing_is_attached_and_resummarized(pipeline, client, ll
     assert pipeline.summarize_pending() == 1
     prompt = "\n".join(m["content"] for b in llm_log for m in b["messages"])
     assert f"Dana Example (chat): Here is the sheet: {LINK}" in prompt
-    assert 'This is a Zoom meeting with the topic "Q4 budget review".' in prompt
+    assert 'This is an online meeting with the topic "Q4 budget review".' in prompt
     assert "Rafael Example" in prompt  # participants, also the silent one
     assert 'Lines marked "(chat)" were typed in the meeting chat' in prompt
 
@@ -263,7 +263,7 @@ def test_mcp_version(mcp):
         async with Client(mcp) as client:
             return client.server_info.version
 
-    assert asyncio.run(go()) == "0.16.0"
+    assert asyncio.run(go()) == "0.17.0"
 
 
 def test_mcp_transcripts_show_chat(done_meeting, mcp):
@@ -273,19 +273,19 @@ def test_mcp_transcripts_show_chat(done_meeting, mcp):
     assert "Alice Example: Hello everyone" in out
     hits = call(mcp, "search_transcripts", query="sheet")
     assert f'Dana Example (chat): "Here is the sheet: {LINK}"' in hits
-    assert "(Zoom meeting: Q4 budget review)" in hits
+    assert "(Online meeting: Q4 budget review)" in hits
 
 
 def test_mcp_conversations_show_meeting_and_participants(done_meeting, mcp):
     conv_id = done_meeting[0].conversation_id
     out = call(mcp, "search_conversations")
-    assert "(Zoom meeting: Q4 budget review)" in out
+    assert "(Online meeting: Q4 budget review)" in out
     assert ("participants: Alice Example, Bo Example, Me, Dana Example, Rafael Example"
             in out)
     found = call(mcp, "search_conversations", query="budget review")
     assert conv_id in found
     detail = call(mcp, "get_conversation", conversation_id=conv_id)
-    assert "(Zoom meeting: Q4 budget review)" in detail
+    assert "(Online meeting: Q4 budget review)" in detail
     assert "Rafael Example (" in detail  # joined–left times
     plain = Store(":memory:")
     assert plain.meetings_for([conv_id]) == {}
@@ -295,7 +295,7 @@ def test_meeting_without_topic(pipeline, client, mcp):
     upload(pipeline)
     segs = process(pipeline)
     out = call(mcp, "get_conversation", conversation_id=segs[0].conversation_id)
-    assert "(Zoom meeting)" in out and "Participants: Alice Example, Bo Example, Me" in out
+    assert "(Online meeting)" in out and "Participants: Alice Example, Bo Example, Me" in out
 
 
 def test_json_rows_have_source(done_meeting, pipeline, mcp):
@@ -312,7 +312,7 @@ def test_json_rows_have_source(done_meeting, pipeline, mcp):
         assert {r["source"] for r in rows if r["conversation_id"] != conv_id} == {None}
         assert any(r["conversation_id"] != conv_id for r in rows)
     text = call(mcp, "list_action_items")
-    assert "(Zoom meeting: Q4 budget review)" in text
+    assert "(Online meeting: Q4 budget review)" in text
 
 
 def test_view_page_shows_chat_and_meeting(done_meeting, client, pipeline):
@@ -321,7 +321,7 @@ def test_view_page_shows_chat_and_meeting(done_meeting, client, pipeline):
     conv_id = done_meeting[0].conversation_id
     link = transcript_link(pipeline.settings, conv_id).split("/view/")[1]
     page = client.get(f"/view/{link}").text
-    assert "Zoom meeting: Q4 budget review" in page and "Rafael Example" in page
+    assert "Online meeting: Q4 budget review" in page and "Rafael Example" in page
     assert "Dana Example <span class=via>(chat)</span>:" in page
     t = client.get(f"/v1/conversations/{conv_id}/transcript").json()
     assert {s["kind"] for s in t["segments"]} == {"speech", "chat"}
@@ -354,7 +354,7 @@ def test_retention_removes_chat_lines_and_keeps_the_meeting(done_meeting, pipeli
     out = pipeline.store.prune_transcripts(T0 + 10 ** 6)
     assert out["conversations"] == 1
     assert pipeline.store.session_segments("m1") == []
-    assert "(Zoom meeting: Q4 budget review)" in call(mcp, "get_conversation",
+    assert "(Online meeting: Q4 budget review)" in call(mcp, "get_conversation",
                                                       conversation_id=conv_id)
 
 
@@ -463,3 +463,13 @@ def test_bot_silent_start_makes_a_session_for_chat_only(pipeline, client):
     assert conv_id is not None
     conv = pipeline.store.get_conversation(conv_id)
     assert conv["meeting"]["topic"] == "Q4 budget review"
+
+
+def test_meeting_label_names_no_platform():
+    # MCP 0.17.0: meetings may come from other platforms than Zoom later, so the mark
+    # after a title says "Online meeting", never the platform.
+    from convo_server.links import meeting_label
+    assert meeting_label({"topic": "Q4 budget review"}) == " (Online meeting: Q4 budget review)"
+    assert meeting_label({"topic": None}) == " (Online meeting)"
+    assert meeting_label(None) == ""
+    assert "Zoom" not in meeting_label({"topic": "Weekly sync"})

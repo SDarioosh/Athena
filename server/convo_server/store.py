@@ -1308,9 +1308,9 @@ class Store:
                 "SELECT speaker, text, kind FROM segments WHERE conversation_id = ?"
                 " ORDER BY started_at", (conv_id,)))
         meeting = self._meetings_for(c, [conv_id]).get(conv_id)
-        if meeting:  # "budget meeting" finds the meeting by its Zoom topic and people
+        if meeting:  # "budget meeting" finds the meeting by its topic and people
             transcript = "\n".join([
-                f"Zoom meeting: {meeting['topic'] or ''}",
+                f"Online meeting: {meeting['topic'] or ''}",
                 "Participants: " + ", ".join(p["name"] for p in meeting["participants"]),
                 transcript])
         c.execute("INSERT INTO search_fts VALUES ('transcript', ?, ?, ?)",

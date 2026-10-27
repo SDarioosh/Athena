@@ -62,7 +62,7 @@ latest ones). Notes the user wrote by hand are notes too, marked "(written by ha
 <link>)" instead; that link opens the handwritten page. kind="voice" keeps only voice \
 notes, kind="written" only handwritten ones.
 
-Zoom meetings: a meeting is marked "(Zoom meeting: <topic>)" after its title and lists \
+Online meetings: a meeting is marked "(Online meeting: <topic>)" after its title and lists \
 its participants (everyone in the meeting, also those who never spoke). A line "Dana \
 (chat): ..." was typed in the meeting chat, not said. For "who was in the X meeting" call \
 search_conversations with the topic words and answer from its participants.
@@ -105,7 +105,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.16.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.17.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -520,7 +520,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             conv = store.get_conversation(cid)
             what = ("Written note" if conv and conv.get("written") else
                     "Voice note" if conv and conv.get("kind") == "note" else
-                    "Zoom meeting" if conv and conv.get("meeting") else "Conversation")
+                    "Online meeting" if conv and conv.get("meeting") else "Conversation")
             out.append(f"{what}: {transcript_link(settings, cid)}")
         out.append(f"{cite}.")
         return "\n".join(out)
@@ -796,7 +796,7 @@ def _note_key_points(r: dict[str, Any], summary: dict[str, Any] | None) -> list[
 
 def _source(conv_id: str, meetings: dict[str, dict[str, Any]]) -> str | None:
     """JSON rows' ``source`` (MCP 0.16.0): "meeting" when the fact or item comes from a
-    Zoom meeting, else null (a recording, a voice note or a written note; those are told
+    meeting (Zoom today), else null (a recording, a voice note or a written note; those are told
     apart by ``conversation_kind`` and ``written_by_hand``)."""
     return "meeting" if conv_id in meetings else None
 
