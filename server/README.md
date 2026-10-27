@@ -298,7 +298,8 @@ before tracks. With it, sequences count per track, and a retry of the same
 ignored too). Each track is reassembled by its own sequence and transcribed on its own, so
 two people talking at once stay apart. `track_name` is stored per chunk: a participant who
 renames mid-meeting stays one track, and `GET /v1/sessions/{id}` lists every name seen
-(`tracks`: `track`, `name` (latest), `names`, `chunks`, `started_at`, `ended_at`; each
+(`tracks`: `track`, `name` (of the latest chunk in time, as sent), `names` (every name,
+in order of first use), `chunks`, `started_at`, `ended_at`; each
 chunk also has `track` and `track_name`, null without one). A session with any tracked
 chunk (a meeting) never stops on trailing silence, so a quiet break doesn't end it: it
 stops at `CONVO_MAX_SESSION_SECONDS`, on `POST /v1/sessions/{id}/end`, or after

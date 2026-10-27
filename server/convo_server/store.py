@@ -719,13 +719,16 @@ class Store:
     def tracks(self, session_id: str) -> list[dict[str, Any]]:
         """The session's tracks (chunks without a track are not one), ordered by first
         chunk time: ``{"track", "name", "names", "chunks", "started_at", "ended_at"}``.
-        ``name`` is the display name of the track's latest chunk (highest sequence) that
-        had one, else None; ``names`` every distinct name seen, in order of first use, so
-        a participant who renames mid-meeting stays one track with several names."""
+        ``name`` is the raw display name of the track's latest chunk in time (by
+        ``started_at``, then sequence) that had one, else None; ``names`` every distinct
+        raw name seen, in order of first use in time, so a participant who renames
+        mid-meeting stays one track with several names. Names are stored as sent: a
+        later name replaces an earlier one even if a cleaner would drop it (an emoji,
+        "iPhone"), so callers that clean names should check all of ``names``."""
         out: dict[str, dict[str, Any]] = {}
         for r in self._q(
                 "SELECT track, track_name, sequence, started_at, duration FROM chunks"
-                " WHERE session_id = ? AND track != '' ORDER BY track, sequence",
+                " WHERE session_id = ? AND track != '' ORDER BY track, started_at, sequence",
                 (session_id,)):
             t = out.setdefault(r["track"], {"track": r["track"], "name": None, "names": [],
                                             "chunks": 0, "started_at": r["started_at"],

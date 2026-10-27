@@ -386,3 +386,21 @@ def test_relay_passes_track_fields_through(pipeline):
     bad = upload(relay, 1, wav(silence(1)), path="/ingest/chunk", track_name="Alice")
     assert bad.status_code == 400 and bad.json()["detail"] == "track_name needs a track"
     assert TOKEN not in r.text
+
+
+def test_track_name_is_latest_by_time_not_sequence(client, pipeline):
+    # QA BUG-15: the latest name is the one of the latest chunk in time (started_at, then
+    # sequence), not the highest sequence; ``names`` keeps every raw name in first-use
+    # order, so a later name that a cleaner would drop ("iPhone", an emoji) doesn't hide
+    # an earlier one ("Conference Room 2").
+    upload(client, 0, wav(silence(30)), ts=T0 + 60, track="t1", track_name="Alice Example")
+    upload(client, 1, wav(silence(30)), ts=T0, track="t1", track_name="Conference Room 2")
+    upload(client, 2, wav(silence(30)), ts=T0 + 30, track="t1", track_name=None)
+    (t1,) = pipeline.store.tracks("m1")
+    assert t1["name"] == "Alice Example"
+    assert t1["names"] == ["Conference Room 2", "Alice Example"]
+    upload(client, 0, wav(silence(30)), ts=T0, track="t2", track_name="Conference Room 2")
+    upload(client, 1, wav(silence(30)), ts=T0 + 30, track="t2", track_name="iPhone")
+    t2 = pipeline.store.tracks("m1")[1]
+    assert t2["name"] == "iPhone"  # raw names at the store level; cleaning is downstream
+    assert t2["names"] == ["Conference Room 2", "iPhone"]
