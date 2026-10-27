@@ -135,8 +135,8 @@ meeting ends; the hub, API and worker are the services already running today.
    (display name). A participant who joins late starts a new track.
 5. Athena runs VAD per chunk as today, per track. The bot obeys `"stop": true` too.
 6. The bot leaves when the meeting ends, when it has been the only participant for 60 s,
-   when it is removed, on `DELETE`, or at the max duration (and, only in the on-behalf-of
-   fallback, when the owner leaves, since Zoom then drops the bot). It never leaves because of
+   when it is removed, on `DELETE`, at the max duration, or when the owner leaves (with the
+   default on-behalf-of token Zoom drops the bot then). It never leaves because of
    recording permission or because someone asks it to in chat. It ends the session, uploads
    chat (Phase 3) and exits.
 7. Athena's worker finalizes the session: whisper on each track's speech, lines named by
@@ -245,14 +245,16 @@ below are agreed.
       `RLIMIT_AS`); read its state from a status line it prints on stdout. No polling
       thread: state updates come from the bot's output and its exit.
 - [ ] Sign the Meeting SDK join token locally from the key and secret.
-- [ ] Zoom sign-in (owner's decision: Athena joins any meeting the owner has a link to,
-      whether or not the owner is there). Since 2026-03-02 Zoom requires a signed-in Zoom
-      user to join meetings in other accounts. Athena gets **its own Zoom account**; a
-      one-time OAuth sign-in stores its refresh token in the data dir on the server, and
-      each join fetches a fresh ZAK and joins as that account (no one else needs to be in
-      the meeting). Fallback when Phase 0 shows Zoom refuses ZAK joins: an on-behalf-of
-      token from the owner's account, which works only while the owner is in the meeting.
-      Tokens are fetched only on a join request; nothing refreshes in the background.
+- [ ] Zoom sign-in. Since 2026-03-02 Zoom requires a signed-in Zoom user to join meetings
+      in other accounts. **Default (owner's decision): an on-behalf-of (OBF) token from the
+      owner's own Zoom account.** A one-time OAuth sign-in stores the refresh token in the
+      data dir on the server; each join fetches a fresh OBF token for that meeting. Zoom only
+      lets the bot in once the owner is in the meeting (the bot waits and retries, state
+      `starting` with reason `waiting_for_owner`) and drops it when the owner leaves (`ended`
+      with reason `owner_left`). Later option, for meetings the owner skips: a ZAK from a
+      dedicated Athena Zoom account (`CONVO_ZOOM_JOIN_TOKEN=zak`), once Phase 0 Test C shows
+      Zoom accepts it. Tokens are fetched only on a join request; nothing refreshes in the
+      background.
 - [ ] Tests with a fake bot script; a test that importing `convo_server.api` starts no
       thread and imports nothing from `meetings.py`.
 
@@ -481,7 +483,7 @@ stop and write ESCALATE: <reason>.
 
 | Risk | Effect | Fallback |
 | --- | --- | --- |
-| Zoom requires app review and a signed-in Zoom user for meetings in other accounts (the main use; enforced since 2026-03-02). Zoom's docs say the Meeting SDK "does not support bots or AI notetakers" and point to RTMS | Bot can't join most meetings until approved; Zoom may refuse a bot account's ZAK join | Submit for review in Phase 0. Athena joins with its own Zoom account's ZAK (Phase 1B sign-in); Phase 0 Test C checks it works with the owner absent. Fallback: on-behalf-of the owner (owner must be present). Last resort: RTMS, which needs an always-listening public endpoint and so breaks priority 2; the owner decides |
+| Zoom requires app review and a signed-in Zoom user for meetings in other accounts (the main use; enforced since 2026-03-02). Zoom's docs say the Meeting SDK "does not support bots or AI notetakers" and point to RTMS | Bot can't join most meetings until approved; Zoom may refuse a bot account's ZAK join | Submit for review in Phase 0. Default: on-behalf-of the owner (owner's decision; the owner must be in the meeting). Later: Athena's own Zoom account's ZAK for meetings the owner skips, if Phase 0 Test C shows Zoom accepts it. Last resort: RTMS, which needs an always-listening public endpoint and so breaks priority 2; the owner decides |
 | SDK needs a display, PulseAudio or other helpers | More to start per meeting | Start them inside the bot's scope only, so idle cost stays zero |
 | Cold start is slow (over 30 s to join) | Joins late | A small standby process within the idle limit (≤ 50 MB, no CPU while waiting), decided in Phase 0 |
 | Zoom SDK updates force a rebuild | Bot stops joining until updated | `GET /v1/meetings` reports the SDK error; deploy.sh rebuilds when the SDK folder changes |
