@@ -873,12 +873,21 @@ class Store:
                     "status": sess["status"], "device": sess["device"]}
 
     def link_meeting(self, session_id: str, conv_id: str) -> None:
-        """Record ``conv_id`` as the conversation of the meeting ``session_id``."""
+        """Record ``conv_id`` as the conversation of the meeting ``session_id`` and index
+        its search entry again, so a topic, participants or chat lines sent late are found
+        before the summary is redone (QA BUG-14)."""
         with self.tx() as c:
+            old = c.execute("SELECT conversation_id FROM meeting_info WHERE session_id = ?",
+                            (session_id,)).fetchone()
             c.execute("INSERT INTO meeting_info (session_id, conversation_id, updated_at)"
                       " VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET"
                       " conversation_id = excluded.conversation_id",
                       (session_id, conv_id, time.time()))
+            for cid in {conv_id, *([old[0]] if old and old[0] else [])}:
+                c.execute("DELETE FROM search_fts WHERE kind = 'transcript'"
+                          " AND conversation_id = ?", (cid,))
+                if c.execute("SELECT 1 FROM conversations WHERE id = ?", (cid,)).fetchone():
+                    self._index_transcript(c, cid)
 
     def has_meeting_info(self, session_id: str) -> bool:
         return self._one("SELECT 1 AS x FROM meeting_info WHERE session_id = ?",

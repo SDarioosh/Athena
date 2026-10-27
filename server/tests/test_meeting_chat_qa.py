@@ -144,3 +144,21 @@ def test_bug13_resent_participant_listed_once(pipeline, client):
     conv_id = process(pipeline)[0].conversation_id
     parts = pipeline.store.get_conversation(conv_id)["meeting"]["participants"]
     assert [p["name"] for p in parts].count("Rafael Example") == 1
+
+
+# ------------------------------------------------------------------ BUG-14
+
+
+def test_bug14_late_topic_refreshes_search(pipeline, client):
+    upload(pipeline, tracks=(ALICE,))
+    conv_id = process(pipeline)[0].conversation_id
+    r = chat(client, {"topic": "Project Phoenix Retro", "participants": [], "lines": []})
+    assert r.json()["result"] == "attached"
+    assert conv_id in {h["conversation_id"] for h in pipeline.store.fts_search("Phoenix")}
+
+
+def test_bug14_late_participants_refresh_search(pipeline, client):
+    upload(pipeline, tracks=(ALICE,))
+    conv_id = process(pipeline)[0].conversation_id
+    chat(client, {"participants": [{"name": "Rafael Quintero", "zoom_user_id": "16799999"}]})
+    assert conv_id in {h["conversation_id"] for h in pipeline.store.fts_search("Quintero")}
