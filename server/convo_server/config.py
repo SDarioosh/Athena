@@ -189,6 +189,10 @@ class Settings(BaseSettings):
     owner_hint_margin: float = 0.10
     owner_hint_db: float = 3.0
     owner_name: str = "Me"
+    # --- meetings: lines from per-participant tracks (convo_server/meeting_tracks.py) ---
+    # The owner's Zoom display names, comma-separated (any case): that track's lines are
+    # the owner's (is_owner=true) and named like the owner everywhere else.
+    zoom_owner_names: str = ""
     # Where downloaded model weights are cached (speaker models). Default: <data_dir>/models.
     models_dir: Path | None = None
 
@@ -266,6 +270,11 @@ class Settings(BaseSettings):
         if v is not None and v.lower().startswith("change-me"):
             raise ValueError(f"CONVO_{info.field_name.upper()} still has the placeholder value")
         return v
+
+    @property
+    def zoom_owner_name_list(self) -> tuple[str, ...]:
+        """CONVO_ZOOM_OWNER_NAMES as a tuple, blanks dropped."""
+        return tuple(n.strip() for n in self.zoom_owner_names.split(",") if n.strip())
 
     @property
     def db_path(self) -> Path:

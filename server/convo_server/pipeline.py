@@ -205,7 +205,7 @@ class Pipeline:
         stops on trailing silence, so a quiet break doesn't end it: it stops at
         ``CONVO_MAX_SESSION_SECONDS``, on ``end_session`` or, if its uploader dies,
         after ``CONVO_SESSION_IDLE_SECONDS`` without uploads (``finalize_idle``)."""
-        from .store import DuplicateChunk
+        from .store import DuplicateChunk, MeetingClosed
 
         validate_id(device, "device")
         validate_id(session_id, "session_id")
@@ -224,6 +224,9 @@ class Pipeline:
             raise ValueError(f"codec must be one of {sorted(audio_mod.KNOWN_CODECS)}")
         if not data:
             raise ValueError("empty audio")
+        late = self._late_meeting_chunk(session_id, track, sequence)
+        if late is not None:
+            return late
         pcm = audio_mod.decode(data, codec, sample_rate)
         if codec == "pcm16" and sample_rate != audio_mod.SAMPLE_RATE:
             # Raw PCM carries no rate, and processing decodes the stored file as 16 kHz:
@@ -251,6 +254,14 @@ class Pipeline:
             duplicate = False
             if part and path:
                 part.replace(path)
+        except MeetingClosed:  # raced the worker: refused like _late_meeting_chunk
+            sess = self.store.get_session(session_id)
+            assert sess is not None
+            if part:
+                part.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):  # the folder this upload made, if empty
+                    part.parent.rmdir()
+            return self._meeting_closed(sess, track, sequence)
         except DuplicateChunk:
             # Retry of an already-stored chunk: keep the original, answer consistently.
             sess = self.store.get_session(session_id)
@@ -277,6 +288,39 @@ class Pipeline:
                             speech_seconds=sum(e - s for s, e in speech),
                             trailing_silence_seconds=trailing, session_seconds=length,
                             duplicate=duplicate)
+
+    def _late_meeting_chunk(self, session_id: str, track: str,
+                            sequence: int) -> IngestResult | None:
+        """A new chunk for a meeting (a session with tracks) that is being or was already
+        processed is answered ``stop: true`` and not stored: processing it alone would
+        replace the other tracks' lines in its time range, whose audio is already gone.
+        Until processing starts (status ``ended``), chunks of the last round are still
+        stored, e.g. the other tracks' chunks of the round that reached the max duration.
+        A retry of a stored chunk goes on and is answered ``duplicate: true``. Sessions
+        without tracks keep taking late chunks (transcribed on the next pass); so does
+        one an untracked chunk stopped on silence, whose first tracked chunk reopens it.
+        ``Store.add_chunk`` makes the same check inside its transaction (``MeetingClosed``),
+        so a chunk racing the worker is refused too; this one only skips the decode."""
+        from .store import MEETING_CLOSED_STATUSES
+
+        sess = self.store.get_session(session_id)
+        if (sess is None or sess["status"] not in MEETING_CLOSED_STATUSES
+                or not ((track and sess["stop_reason"] != "silence")
+                        or self.store.has_tracks(session_id))
+                or self.store.has_chunk(session_id, track, sequence)):
+            return None
+        return self._meeting_closed(sess, track, sequence)
+
+    def _meeting_closed(self, sess: dict[str, Any], track: str,
+                        sequence: int) -> IngestResult:
+        reason = sess["stop_reason"] or "ended"
+        log.warning("meeting %s already processed (%s): chunk %s#%d not stored", sess["id"],
+                    reason, track or "-", sequence)
+        speech_end = sess["last_speech_at"] or sess["started_at"]
+        return IngestResult(stop=True, reason=reason, speech_seconds=0.0,
+                            trailing_silence_seconds=max(0.0, sess["last_chunk_at"]
+                                                         - speech_end),
+                            session_seconds=sess["last_chunk_at"] - sess["started_at"])
 
     # ------------------------------------------------------------ written notes
     def ingest_text(self, *, source_id: str, text: str, written_at: float, link: str,
@@ -374,6 +418,12 @@ class Pipeline:
             return [], ranges, chunks
         if self.transcriber is None:
             raise RuntimeError("no transcriber configured (set CONVO_WHISPER_SERVER_URL)")
+        if not note and self.store.has_tracks(session_id):
+            # A meeting: one track per participant, each transcribed on its own and named
+            # by its track. Imported only here, so sessions without tracks never load it.
+            from . import meeting_tracks
+
+            return meeting_tracks.transcribe_meeting(self, session_id, chunks), ranges, chunks
         prompt = self.whisper_prompt()
         runs: list[np.ndarray] = []
         pieces: list[tuple[float, float, str, PieceRef]] = []
@@ -385,30 +435,10 @@ class Pipeline:
             if track != last_track:  # whisper's context never crosses participants
                 context, last_track = "", track
             runs.append(run_audio)
-            regions = merge_spans(run_speech, REGION_MERGE_GAP)
-            windows = plan_windows(regions, run_audio.size / audio_mod.SAMPLE_RATE,
-                                   pad=cfg.whisper_pad_seconds,
-                                   max_seconds=cfg.whisper_window_seconds,
-                                   max_gap=cfg.whisper_window_gap_seconds)
-            for w in windows:
-                # The diarizer keeps the ungained run audio; only the transcriber hears
-                # the gain (CONVO_ASR_AGC_MAX_GAIN).
-                clip, _ = audio_mod.bounded_gain(w.extract(run_audio),
-                                                 max_gain=cfg.asr_agc_max_gain,
-                                                 deadband=ASR_AGC_DEADBAND)
-                got = self.transcriber.transcribe(
-                    clip, " ".join(x for x in (prompt, context) if x))
-                for p in (q for piece in got for q in w.split(piece)):
-                    s = w.to_run(p.start)
-                    e = max(s, w.to_run(max(p.end, p.start), end=True))
-                    s, e = w.clamp(s, e)
-                    pieces.append((run_start + s, run_start + e, p.text,
-                                   PieceRef(len(runs) - 1, s, e)))
-                    piece_words.append([(w.to_run(a), w.to_run(b, end=True), t)
-                                        for a, b, t in p.words])
-                if cfg.whisper_context_words > 0 and got:
-                    context = tail_words(" ".join([context] + [p.text for p in got]),
-                                         cfg.whisper_context_words)
+            got, got_words, context = self._whisper_run(len(runs) - 1, run_start, run_audio,
+                                                        run_speech, prompt, context)
+            pieces += got
+            piece_words += got_words
         order = sorted(range(len(pieces)), key=lambda i: pieces[i][0])
         pieces = [pieces[i] for i in order]
         piece_words = [piece_words[i] for i in order]
@@ -436,6 +466,43 @@ class Pipeline:
             segments.append(Segment(started_at=s, ended_at=e, text=text, speaker=name,
                                     is_owner=owner))
         return segments, ranges, chunks
+
+    def _whisper_run(self, run: int, run_start: float, run_audio: np.ndarray,
+                     run_speech: list[Span], prompt: str, context: str
+                     ) -> tuple[list[tuple[float, float, str, PieceRef]],
+                                list[list[tuple[float, float, str]]], str]:
+        """Transcribe one run's VAD speech in whisper windows.
+
+        Returns its pieces (epoch start, epoch end, text, ``PieceRef(run, ...)``), each
+        piece's words (run time) and the context for the run's next window
+        (``CONVO_WHISPER_CONTEXT_WORDS``)."""
+        cfg = self.settings
+        pieces: list[tuple[float, float, str, PieceRef]] = []
+        piece_words: list[list[tuple[float, float, str]]] = []
+        regions = merge_spans(run_speech, REGION_MERGE_GAP)
+        windows = plan_windows(regions, run_audio.size / audio_mod.SAMPLE_RATE,
+                               pad=cfg.whisper_pad_seconds,
+                               max_seconds=cfg.whisper_window_seconds,
+                               max_gap=cfg.whisper_window_gap_seconds)
+        for w in windows:
+            # The diarizer keeps the ungained run audio; only the transcriber hears
+            # the gain (CONVO_ASR_AGC_MAX_GAIN).
+            clip, _ = audio_mod.bounded_gain(w.extract(run_audio),
+                                             max_gain=cfg.asr_agc_max_gain,
+                                             deadband=ASR_AGC_DEADBAND)
+            got = self.transcriber.transcribe(
+                clip, " ".join(x for x in (prompt, context) if x))
+            for p in (q for piece in got for q in w.split(piece)):
+                s = w.to_run(p.start)
+                e = max(s, w.to_run(max(p.end, p.start), end=True))
+                s, e = w.clamp(s, e)
+                pieces.append((run_start + s, run_start + e, p.text, PieceRef(run, s, e)))
+                piece_words.append([(w.to_run(a), w.to_run(b, end=True), t)
+                                    for a, b, t in p.words])
+            if cfg.whisper_context_words > 0 and got:
+                context = tail_words(" ".join([context] + [p.text for p in got]),
+                                     cfg.whisper_context_words)
+        return pieces, piece_words, context
 
     def _split_pieces(self, runs: list[np.ndarray],
                       pieces: list[tuple[float, float, str, PieceRef]],
@@ -488,9 +555,8 @@ class Pipeline:
         ('' = chunks without a track, which is all of a session before tracks). Runs never
         mix tracks, and ``join_lines`` never joins lines of two runs.
 
-        Seam for per-track transcription (meeting lane 2A): lines of a tracked session
-        are still diarized as today; 2A replaces this loop's caller for tracked
-        sessions with whisper per track and lines named by track."""
+        A session with tracks (a meeting) doesn't come here: ``meeting_tracks`` transcribes
+        it track by track and names lines by track."""
         ordered = sorted(chunks, key=lambda c: (c.get("track") or "", c["sequence"]))
         for track, group in itertools.groupby(ordered, key=lambda c: c.get("track") or ""):
             for run_start, audio, spans in self._runs(list(group)):
@@ -545,16 +611,33 @@ class Pipeline:
             (self.settings.audio_dir / device / session_id).rmdir()
 
     def _assign_conversations(self, session_id: str, device: str) -> list[str]:
+        if self.store.has_tracks(session_id):
+            return self._assign_meeting(session_id, device)
         gap = self.settings.conversation_gap_seconds
         touched: list[str] = []
         for group in split_on_gaps(self.store.session_segments(session_id), gap):
             start, end = group[0].started_at, max(s.ended_at for s in group)
             near = [c["id"] for c in self.store.overlapping_conversations(device, start, end, gap)]
+            meetings = self.store.meeting_conversations(near)  # never joined with a meeting
+            near = [c for c in near if c not in meetings]
             conv_id = self.store.save_conversation(near[0] if near else None, device,
                                                    [s.id for s in group if s.id is not None],
                                                    absorb=near[1:])
             touched = [t for t in touched if t not in near] + [conv_id]
         return touched
+
+    def _assign_meeting(self, session_id: str, device: str) -> list[str]:
+        """A meeting (a session with tracks) is one conversation: never split at speech
+        gaps (a break inside it), never joined with another session's conversation (two
+        back-to-back meetings stay two). A pass after the first keeps its conversation."""
+        segs = self.store.session_segments(session_id)
+        if not segs:
+            return []
+        have = self.store.session_conversations(session_id)
+        conv_id = self.store.save_conversation(have[0] if have else None, device,
+                                               [s.id for s in segs if s.id is not None],
+                                               absorb=have[1:])
+        return [conv_id]
 
     def _assign_note(self, session_id: str, device: str) -> list[str]:
         """A voice note is one conversation of kind NOTE: no gap split, never joined with
