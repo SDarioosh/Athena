@@ -66,7 +66,9 @@ server. **Nothing in the data path touches the cloud.**
   recorder on the LilyGO T-Watch Ultra, built first, with one shared ESP-IDF firmware.
   Milestone 1 of the T-Watch Ultra is implemented in `firmware/recorder/`, and so is the BLE
   upload path; `twatch-ble-protocol.md`: the watch ↔ relay protocol;
-  `t5-pda-plan.md`: a T5 E-Paper Pro PDA synced over BLE through the phone, planned).
+  `t5-pda-plan.md`: a T5 E-Paper Pro PDA synced over BLE through the phone, planned;
+  `zoom-meeting-bot-plan.md`: a Zoom bot that joins meetings as "Athena", planned in lanes
+  for subagents).
 - `hermes/`: Hermes profile snippet used by the orchestrator.
 - `orchestrator/`: optional build loop. Leave it alone.
 
