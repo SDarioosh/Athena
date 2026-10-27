@@ -323,15 +323,16 @@ timer or poller. Same bearer token as every route.
 
 | route | answer |
 |---|---|
-| `POST /v1/meetings` JSON `{"url": "<Zoom link>"}` or `{"meeting_id": "123 4567 8901", "passcode": "…"}`, optional `"title"` (≤ 200) | `202 {"id", "state": "starting", "session_id"}`; `400 {"detail"}` for a link that isn't a Zoom meeting (the message says why); `409 {"detail": "busy", "message", "active": "<meeting id>"}` when `CONVO_MEETING_BOT_MAX` bots are active; `501 {"detail"}` when meetings are off (`CONVO_MEETING_BOT_PATH` unset or not executable, no SDK key/secret, a bad meeting setting); `500` when the bot can't be started |
-| `GET /v1/meetings/{id}` | `{"id", "state", "reason", "active", "session_id", "meeting_id", "title", "created_at", "started_at", "ended_at"}` (ISO-8601; `started_at` = first recording); 404 |
+| `POST /v1/meetings` JSON `{"url": "<Zoom link>"}` or `{"meeting_id": "123 4567 8901", "passcode": "…"}`, optional `"title"` (≤ 200) | `202 {"id", "state": "starting", "session_id"}`; `503 {"detail": "zoom_signin_needed", "message"}` when the join token mode needs Athena's Zoom sign-in and it is missing or expired (the message says to run `convo-server zoom-login`); `502 {"detail": "zoom_unavailable", "message"}` when Zoom's API can't be reached; `400 {"detail"}` for a link that isn't a Zoom meeting (the message says why); `409 {"detail": "busy", "message", "active": "<meeting id>"}` when `CONVO_MEETING_BOT_MAX` bots are active; `501 {"detail"}` when meetings are off (`CONVO_MEETING_BOT_PATH` unset or not executable, no SDK key/secret, a bad meeting setting); `500` when the bot can't be started |
+| `GET /v1/meetings/{id}` | `{"id", "state", "reason", "active", "session_id", "meeting_id", "title", "join_token_kind" (`zak`, `obf` or `none`), "created_at", "started_at", "ended_at"}` (ISO-8601; `started_at` = first recording); 404 |
 | `GET /v1/meetings?limit=20` | `{"meetings": [...]}`, newest first (the current one, if any, is first) |
 | `DELETE /v1/meetings/{id}` | the bot leaves: SIGTERM, it flushes and ends the session; SIGKILL after 10 s. Answers once it exited, with the row (`ended`, `stopped`). Idempotent; 404 |
 
 States: `starting` → `waiting_room` → `recording` → `ended` or `failed`, each with a
 `reason` where it helps. `recording` may carry `no_audio` (Zoom delivers no audio).
 `ended` reasons: `meeting_ended`, `alone` (only participant for
-`CONVO_MEETING_ALONE_SECONDS`), `removed`, `stopped` (DELETE), `max_duration`,
+`CONVO_MEETING_ALONE_SECONDS`), `removed`, `owner_left` (join token `obf`: Zoom ends the
+bot's session when the signed-in user leaves), `stopped` (DELETE), `max_duration`,
 `server_stop`, `exited`. `failed` reasons come from the bot (`wrong_passcode`,
 `meeting_not_started`, `waiting_room_timeout`, `join_failed`, `auth_failed`, `sdk_error`,
 …) or the launcher (`bot_not_started`, `bot_crashed`, `server_restarted`). The bot never
@@ -368,11 +369,42 @@ for `POST /v1/ingest/chunk` with that meeting's `session_id` and `device=zoom`, 
 `POST /v1/sessions/<that session>/end` and `/chat` (Phase 3). Every other route answers
 403; after the bot exits, 401.
 
-**Join token.** The Meeting SDK signature is signed locally (HS256) from
+**SDK signature.** The Meeting SDK signature is signed locally (HS256) from
 `CONVO_ZOOM_SDK_KEY` / `CONVO_ZOOM_SDK_SECRET`: `appKey`, `mn`, `role` 0, `iat`, `exp` and
-`tokenExp` (Zoom: 30 min to 48 h; here `CONVO_MAX_SESSION_SECONDS` + 1 h). A sign-in to the
-owner's Zoom account for meetings that need one waits on Phase 0; `join_token_provider`
-is the hook (returns None today).
+`tokenExp` (Zoom: 30 min to 48 h; here `CONVO_MAX_SESSION_SECONDS` + 1 h).
+
+**Zoom sign-in (meetings in other accounts).** Since 2026-03-02 Zoom lets a Meeting SDK
+app join a meeting hosted by another Zoom account only for a signed-in Zoom user
+(developers.zoom.us/docs/meeting-sdk/obf-faq/). Athena has its own Zoom account and signs
+in once:
+
+1. Create a Zoom account for Athena (its display name is what others see), and in the
+   Meeting SDK app on the Zoom Marketplace add OAuth (user-managed) with the scope
+   `user:read:token` and a redirect URL. Nothing needs to answer at that URL.
+2. Set `CONVO_ZOOM_CLIENT_ID`, `CONVO_ZOOM_CLIENT_SECRET` and `CONVO_ZOOM_REDIRECT_URL`
+   in `server/.env`.
+3. Run `convo-server zoom-login` on the server. It prints a Zoom URL. Open it anywhere,
+   sign in as Athena's account and allow the app, then paste the address the browser
+   went to (or just its `code`). It uses PKCE and checks `state`.
+4. The refresh token is saved to `<data dir>/zoom/refresh_token.json` (mode 0600,
+   replaced atomically). `convo-server zoom-login --status` says whether Athena is signed
+   in and which join token the next meeting gets. Delete the file to sign out.
+
+`CONVO_ZOOM_JOIN_TOKEN` picks the join token: `auto` (default: `zak` once signed in, else
+`none`), `zak` (Athena joins as its own signed-in account, whether or not the owner is in
+the meeting), `obf` (an on-behalf-of token for the signed-in user and this meeting
+number: that user must be in the meeting, and Zoom drops the bot when they leave, reason
+`owner_left`) or `none` (no token: only meetings in the app's own account).
+
+Only on a join request, the launcher trades the refresh token for an access token, saves
+the new refresh token Zoom hands back (it rotates on every use) before using the access
+token, and asks `GET https://api.zoom.us/v2/users/me/token?type=zak` (or
+`type=onbehalf&meeting_id=<number>`). These are the only network calls, to Zoom's API,
+with a 10 s timeout; no audio or transcript goes there, nothing refreshes in the
+background, and no token is logged or put on a command line. Zoom expires a refresh token
+that goes unused for a long time: then `POST /v1/meetings` answers 503
+`zoom_signin_needed` ("Athena's Zoom sign-in expired … run convo-server zoom-login") and
+starts nothing; run `convo-server zoom-login` again.
 
 **Bot contract** (lane 1A implements it):
 
@@ -386,8 +418,9 @@ is the hook (returns None today).
 
 - Environment (secrets never go in argv): `ATHENA_MEETING_JWT` (the SDK join token),
   `ATHENA_UPLOAD_TOKEN` (bearer for uploads), `ATHENA_MEETING_PASSCODE` (the passcode or
-  the link's `pwd` value; absent when there is none), `ATHENA_ZOOM_JOIN_TOKEN` (reserved,
-  absent today). Plus `PATH`, `HOME`, `LANG`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR`,
+  the link's `pwd` value; absent when there is none), `ATHENA_ZOOM_JOIN_TOKEN` (ZAK or OBF
+  token from Athena's Zoom sign-in) and `ATHENA_ZOOM_JOIN_TOKEN_KIND` (`zak` or `obf`;
+  both absent when the join token mode is `none`). Plus `PATH`, `HOME`, `LANG`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR`,
   `DBUS_SESSION_BUS_ADDRESS` from the server, nothing else.
 - stdin is `/dev/null`; the working directory is `--work-dir` (for unsent chunks; removed
   after exit). stderr: free-form logs, into the server's log.
@@ -403,7 +436,8 @@ is the hook (returns None today).
   with `ended server_stop` (or `max_duration`). End with `POST
   <upload-url>/v1/sessions/<session_id>/end`.
 - Leave on: meeting ended, alone for `--alone-seconds`, removed, SIGTERM, `--max-seconds`
-  after start. Waiting room longer than `--waiting-room-seconds`: `failed
+  after start; with an `obf` token, Zoom ending the session because the signed-in user
+  left is `STATE ended owner_left`. Waiting room longer than `--waiting-room-seconds`: `failed
   waiting_room_timeout`.
 - SIGTERM: flush the last chunks, end the session, print `STATE ended stopped`, exit 0
   within 5 s (SIGKILL follows after 10 s).
