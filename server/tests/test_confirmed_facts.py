@@ -120,7 +120,8 @@ def test_json_mode_shape_and_counts(pipeline):
         "conversation_id": fact["conversation_id"],
         "quote": "Alice is vegetarian, really",
         "times_said": 3, "days": 2, "first_said": "2025-10-09", "last_said": "2025-10-10",
-        "confirmed": True, "valid_until": None, "link": link, "written_by_hand": False,
+        "confirmed": True, "valid_until": None, "link": link, "source": None,
+        "written_by_hand": False,
         "note_link": None}]}
     assert "/view/" in link and "#t=2" in link
     assert not out.rstrip().endswith(".")  # no citation line after the JSON
