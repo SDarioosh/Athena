@@ -25,11 +25,11 @@ off). Live work only does what that pass would do, earlier:
   crosses a chunk boundary is in one window, never cut. The last window of an open run
   waits for more audio or for the end.
 * **Context**: whisper's context words carry on per track across windows and runs.
-* **Joining** (``CONVO_JOIN_LINES``) is a left fold, so it continues from the last line,
-  which stays open until the next line can't join it.
-* **Loudness** of each line (dBFS on its own track, for the bleed check) is measured
-  from the same samples the end pass would read, and stored with the line. Bleed is
-  decided at the end over all lines of all tracks (text and stored loudness only).
+* **Pieces, not joined lines**: the state keeps whisper's own pieces, each with its
+  loudness (dBFS on its own track, for the bleed check) measured from the same samples
+  the end pass would read. Bleed is decided at the end over all tracks' pieces (text and
+  stored loudness only), and only then are lines joined (``CONVO_JOIN_LINES``), as
+  ``meeting_tracks`` does for every track (QA BUG-04).
 * **Prompt**: the participants' names whisper is given are those of the tracks known at
   the time. Someone who joins late is only in the prompt of later windows; that is the
   one way a live result can differ from an end-only one (spelling of a name).
@@ -60,7 +60,6 @@ import numpy as np
 from .audio import SAMPLE_RATE
 from .clips import Window
 from .diarize import PieceRef, rms_db
-from .lines import join_lines
 from .meeting_names import clean_display_name
 from .meeting_tracks import is_shared_room, meeting_prompt
 from .vad import Span
@@ -191,15 +190,15 @@ class TrackState:
     """How far a track is transcribed. ``runs_done``: [first, last] sequence of each run
     finished; ``run`` / ``windows`` / ``until``: the run in progress (its first
     sequence), how many of its windows are done and where the last one ends (run time,
-    a check); ``lines`` final lines and ``open`` the last one, which may still join the
-    next, each [start, end, text, run, ref_start, ref_end, loudness]."""
+    a check); ``lines`` whisper's pieces so far, unjoined, each [start, end, text, run,
+    ref_start, ref_end, loudness]. A state saved by an older version (with a joined
+    ``open`` line) doesn't load, so that track starts again."""
     runs_done: list[list[int]] = field(default_factory=list)
     run: int | None = None
     windows: int = 0
     until: float = 0.0
     context: str = ""
     lines: list[list[Any]] = field(default_factory=list)
-    open: list[Any] | None = None
 
     @classmethod
     def load(cls, raw: str | None) -> TrackState | None:
@@ -214,7 +213,7 @@ class TrackState:
         return json.dumps(asdict(self), separators=(",", ":"))
 
     def empty(self) -> bool:
-        return not (self.runs_done or self.run is not None or self.lines or self.open)
+        return not (self.runs_done or self.run is not None or self.lines)
 
     def matches(self, runs: list[Run], pipeline: Pipeline) -> bool:
         """Whether this state still describes ``runs``: the same finished runs, and the
@@ -236,8 +235,7 @@ class TrackState:
         return True
 
     def all_lines(self) -> list[tuple[Piece, float]]:
-        rows = self.lines + ([self.open] if self.open else [])
-        return [((r[0], r[1], r[2], PieceRef(r[3], r[4], r[5])), r[6]) for r in rows]
+        return [((r[0], r[1], r[2], PieceRef(r[3], r[4], r[5])), r[6]) for r in self.lines]
 
 
 def _row(p: Piece, loud: float) -> list[Any]:
@@ -249,7 +247,6 @@ def track_steps(pipeline: Pipeline, session_id: str, track: str, runs: list[Run]
                 st: TrackState, prompt: Callable[[], str]) -> Iterator[None]:
     """Transcribe the track's final windows not done yet, one window per step, saving
     the state after each; ``prompt`` gives whisper's prompt (asked once, when needed)."""
-    cfg = pipeline.settings
     store = pipeline.store
     text_prompt: str | None = None
     for run in runs[len(st.runs_done):]:
@@ -265,8 +262,7 @@ def track_steps(pipeline: Pipeline, session_id: str, track: str, runs: list[Run]
             got, _, context = pipeline._whisper_window(run.first, start, w, audio.extract(w),
                                                        text_prompt, st.context)
             got.sort(key=lambda p: p[0])  # as the end pass sorts the track's pieces
-            if got:
-                _fold(st, got, audio, cfg)
+            _fold(st, got, audio)
             st.windows, st.until, st.context = st.windows + 1, w.parts[-1][1], context
             store.put_live_state(session_id, track, st.dump())
             yield
@@ -277,33 +273,11 @@ def track_steps(pipeline: Pipeline, session_id: str, track: str, runs: list[Run]
         store.put_live_state(session_id, track, st.dump())
 
 
-def _fold(st: TrackState, got: list[Piece], audio: RunAudio, cfg: Any) -> None:
-    """Add a window's pieces (in time order) to the lines: joined as ``join_lines`` joins
-    the whole track, the last line kept open; each new or changed line measured."""
-    prev = None
-    pieces: list[Piece] = []
-    if st.open is not None:
-        prev = ((st.open[0], st.open[1], st.open[2],
-                 PieceRef(st.open[3], st.open[4], st.open[5])), st.open[6])
-        pieces.append(prev[0])
-    pieces += got
-    if cfg.join_lines:
-        out, _ = join_lines(pieces, None, cfg.join_gap_seconds, cfg.join_max_seconds)
-    else:
-        out = pieces
-
-    def row(p: Piece) -> list[Any]:
-        if prev is not None and p is prev[0]:  # the open line, unchanged
-            return _row(p, prev[1])
-        return _row(p, audio.loudness(p[3]))
-
-    rows = [row(p) for p in out]
-    if cfg.join_lines:
-        st.lines += rows[:-1]
-        st.open = rows[-1]
-    else:
-        st.lines += rows
-        st.open = None
+def _fold(st: TrackState, got: list[Piece], audio: RunAudio) -> None:
+    """Add a window's pieces (in time order) to the track's pieces, each measured.
+    Nothing is joined here: bleed is decided on the unjoined pieces at the end, then
+    ``meeting_tracks`` joins the lines kept (QA BUG-04)."""
+    st.lines += [_row(p, audio.loudness(p[3])) for p in got]
 
 
 def deferred(info: dict[str, Any]) -> bool:

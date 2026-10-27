@@ -202,10 +202,10 @@ def test_word_across_a_chunk_boundary_is_never_cut(pipeline):
     clips = [c for c in pipeline.transcriber.calls if c[0] == 1300]
     assert len(clips) == 1
     st = meeting_live.TrackState.load(pipeline.store.live_states("m1")[ALICE])
-    # the whole 6 s line (here already joined with the 2.5 s one that finishes it)
-    seg = next(r for r in st.lines + [st.open] if r[2].startswith(SCRIPT[1300]))
+    # the whole 6 s piece, unjoined (lines join at the end, after the bleed check)
+    seg = next(r for r in st.lines if r[2].startswith(SCRIPT[1300]))
     assert seg[0] - T0 == pytest.approx(27.0, abs=0.3)
-    assert seg[1] - T0 == pytest.approx(38.0, abs=0.3)
+    assert seg[1] - T0 == pytest.approx(33.0, abs=0.3)
 
 
 def test_context_carries_on_across_ticks(pipeline):
@@ -449,6 +449,45 @@ def test_random_meetings_match_the_end_of_meeting_result(settings, tmp_path, see
     play(batch, False)
     assert times(live) == times(batch) and times(live)
     assert sorted(live.transcriber.calls) == sorted(batch.transcriber.calls)
+
+
+def _pause_meeting(p, *, live):
+    """Alice: "Let's ship the release" at the end of her chunk 0, a pause, then "before
+    Friday afternoon" in chunk 1; Bo agrees with the same words in her pause, across his
+    chunk boundary. Later Bo speaks and Alice's mic hears him quietly (true bleed)."""
+    worker = setup(p, live=live)
+    a0 = chunk((26.5, tone(1400, 2)))
+    a1 = chunk((1.5, tone(1500, 2)), (15, tone(1700, 3, amp=0.05)))
+    bo = tone(1600, 1.6)
+    b0 = chunk((28.7, bo[:int(1.3 * SAMPLE_RATE)]))
+    b1 = chunk((0, bo[int(1.3 * SAMPLE_RATE):]), (15, tone(1700, 3)))
+    for seq, (a, b) in enumerate([(a0, b0), (a1, b1), (chunk(), chunk())]):
+        for track, data in ((ALICE, a), (BO, b)):
+            p.ingest_chunk(device="zoom", session_id="m1", sequence=seq,
+                           started_at=T0 + 30 * seq, codec="wav", data=data, track=track,
+                           track_name=NAMES[track])
+        worker.tick()
+    p.end_session("m1")
+    worker.tick()
+
+
+def test_live_bleed_is_decided_before_joining(settings, tmp_path, monkeypatch):
+    """QA BUG-04 (live): live work keeps whisper's unjoined pieces, so Bo's agreement in
+    Alice's pause isn't taken for bleed of her joined line; a true copy is still
+    dropped and never joined back. Live and end-only give the same lines."""
+    monkeypatch.setitem(SCRIPT, 1400, "Let's ship the release")
+    monkeypatch.setitem(SCRIPT, 1500, "before Friday afternoon.")
+    monkeypatch.setitem(SCRIPT, 1600, "Let's ship the release!")
+    monkeypatch.setitem(SCRIPT, 1700, "The build is green on main.")
+    live, batch = fresh(settings, tmp_path, "live"), fresh(settings, tmp_path, "batch")
+    _pause_meeting(live, live=True)
+    _pause_meeting(batch, live=False)
+    assert rows(live) == [
+        ("Alice Example", False, "Let's ship the release before Friday afternoon."),
+        ("Bo Example", False, "Let's ship the release!"),
+        ("Bo Example", False, "The build is green on main."),
+    ]
+    assert times(live) == times(batch)
 
 
 # --------------------------------------------------------- rooms, audio, chat
