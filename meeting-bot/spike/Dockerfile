@@ -24,7 +24,7 @@ ARG UBUNTU=ubuntu:24.04
 ARG SDK_LIBS="libglib2.0-0t64 libdbus-1-3 libgbm1 libdrm2 libgl1 libegl1 \
   libx11-6 libx11-xcb1 libxcb1 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
   libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-xtest0 libxfixes3 libxkbcommon0 \
-  libfontconfig1 libfreetype6 libssl3t64 libasound2t64"
+  libfontconfig1 libfreetype6 libatomic1 libssl3t64 libasound2t64"
 
 FROM ${UBUNTU} AS build
 ARG DEBIAN_FRONTEND=noninteractive
