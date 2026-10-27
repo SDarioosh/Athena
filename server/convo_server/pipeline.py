@@ -38,6 +38,7 @@ from .store import (
     SESSION_KINDS,
     WRITTEN_DEVICE,
     WRITTEN_SESSION_PREFIX,
+    ZOOM_DEVICE,
     Segment,
     Store,
 )
@@ -297,14 +298,16 @@ class Pipeline:
         Until processing starts (status ``ended``), chunks of the last round are still
         stored, e.g. the other tracks' chunks of the round that reached the max duration.
         A retry of a stored chunk goes on and is answered ``duplicate: true``. Sessions
-        without tracks keep taking late chunks (transcribed on the next pass).
+        without tracks keep taking late chunks (transcribed on the next pass); so does
+        one an untracked chunk stopped on silence, whose first tracked chunk reopens it.
         ``Store.add_chunk`` makes the same check inside its transaction (``MeetingClosed``),
         so a chunk racing the worker is refused too; this one only skips the decode."""
         from .store import MEETING_CLOSED_STATUSES
 
         sess = self.store.get_session(session_id)
         if (sess is None or sess["status"] not in MEETING_CLOSED_STATUSES
-                or not (track or self.store.has_tracks(session_id))
+                or not ((track and sess["stop_reason"] != "silence")
+                        or self.store.has_tracks(session_id))
                 or self.store.has_chunk(session_id, track, sequence)):
             return None
         return self._meeting_closed(sess, track, sequence)
@@ -669,7 +672,9 @@ class Pipeline:
                                                    [s.id for s in group if s.id is not None],
                                                    absorb=near[1:])
             touched = [t for t in touched if t not in near] + [conv_id]
-        if touched and self.store.has_meeting_info(session_id):  # Zoom without tracks
+        # a Zoom session without tracks is a meeting too, with or without a chat call
+        # (QA BUG-27): its conversation gets the meeting block
+        if touched and (device == ZOOM_DEVICE or self.store.has_meeting_info(session_id)):
             self.store.link_meeting(session_id, touched[0])
         return touched
 

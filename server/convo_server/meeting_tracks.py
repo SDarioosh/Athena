@@ -10,9 +10,10 @@ participant's: no diarizer, no speaker embedder. Then:
 * **Bleed**: two participants in one room hear each other, so one voice can reach two
   microphones. A line whose words nearly match a line on another track at about the
   same time is dropped, keeping the louder track's line (``find_bleed``).
-* **Shared rooms and devices**: a track whose display name is a room or a device
-  ("Conference Room", "iPhone", "Zoom user", ``is_shared_room``) can hold several
-  people. The configured diarizer runs on that track only; its unnamed voices become
+* **Shared rooms and devices**: a track whose display name is, or ever was, a room,
+  conference hardware or a bare device with no person ("Conference Room", "Polycom",
+  "iPhone", "Zoom user", ``is_shared_room``; "Kath's iPhone" is Kath) can hold
+  several people. The configured diarizer runs on that track only; its unnamed voices become
   "Speaker N" (numbered across the meeting) with stored voices, so ``name_speaker`` and
   ``list_unnamed_speakers`` work on them as on any recording.
 * **Owner**: a track named in ``CONVO_ZOOM_OWNER_NAMES`` is the owner's
@@ -70,32 +71,16 @@ BLEED_MIN_SECONDS = 0.5
 _UNNAMED = re.compile(r"^Speaker \d+$")
 _WORD = re.compile(r"[\w']+")
 
-# Display names that are a room or a device rather than one person (lowercase; matched
-# as whole words). Zoom shows a Zoom Rooms system or a conference phone by its room or
-# product name, a phone by its model, and a guest who never set a name as "Zoom user".
-_ROOM_WORDS = (
-    r"room", r"rooms", r"boardroom", r"conference", r"conf", r"meeting\s*room",
-    r"huddle", r"auditorium", r"lobby", r"hall", r"zoom\s*user", r"zoomroom",
-    r"polycom", r"poly\s+studio", r"logitech", r"cisco", r"webex", r"crestron",
-    r"yealink", r"jabra", r"neat\s*(?:bar|board|pad)", r"meeting\s*owl", r"owl\s*pro",
-    r"iphone", r"ipad", r"android", r"galaxy", r"pixel", r"samsung", r"oneplus",
-    r"huawei", r"xiaomi", r"redmi", r"motorola", r"moto\s*g", r"sm-[a-z]?\d+\w*",
-    r"macbook(?:\s*(?:pro|air))?", r"imac", r"laptop", r"desktop", r"chromebook",
-    r"surface\s*(?:pro|hub|laptop)", r"phone", r"speakerphone", r"dial-?in", r"call-?in",
-)
-_ROOM = re.compile(r"(?<!\w)(?:" + "|".join(_ROOM_WORDS) + r")(?!\w)", re.IGNORECASE)
-# A dial-in caller shows as their phone number.
-_PHONE_NUMBER = re.compile(r"^[\s+()\d.-]{6,}$")
-
-
 def is_shared_room(name: str | None) -> bool:
-    """True when a Zoom display name looks like a room or a device, which can hold
-    several people ("Conference Room", "Boardroom", "Meeting Room 2", "Anna's iPhone",
-    "Galaxy S23", "Zoom user", "Polycom", a dial-in number), not one person's name."""
-    n = " ".join((name or "").split())
-    if not n:
-        return False
-    return bool(_ROOM.search(n) or _PHONE_NUMBER.match(n))
+    """True when a Zoom display name can stand for several people: a room or conference
+    hardware ("Conference Room", "Polycom", "Huddle 4", "Rally Bar"), a bare device with
+    no person on it ("iPhone", "Galaxy S23"), a dial-in number or "Zoom user". Not a
+    person whose name holds such a word ("Jordan Hall", "Cisco Ramirez") or a personal
+    device ("Kath's iPhone" is Kath). Lane 2B's ``meeting_names.is_room_or_hardware`` is
+    the one rule; this name stays for callers of lane 2A's API."""
+    from .meeting_names import is_room_or_hardware
+
+    return is_room_or_hardware(name)
 
 
 def _same_name(a: str, b: str) -> bool:
@@ -115,6 +100,21 @@ def track_speaker(store: Store, track_info: dict[str, Any],
     from .meeting_names import speaker_for_track
 
     return speaker_for_track(store, {**track_info, "placeholder": ""}, owner_names)
+
+
+def _room_track(info: dict[str, Any], owner_names: Sequence[str]) -> bool:
+    """True when any display name the track ever had (raw) is a room or a device, other
+    than one of the owner's own names ("Cleo (phone)"). A track that showed "Conference
+    Room 2" and later "Alice Example" stays a room: most likely someone in that room set
+    a name, and others may still be speaking there. Diarizing is the safe side: the
+    diarizer still names enrolled voices, while a wrongly named track would put a whole
+    room's words on one person."""
+    names = list(info.get("names") or [])
+    if info.get("name") and info["name"] not in names:
+        names.append(info["name"])
+    return any(is_shared_room(n) and not any(_same_name(n, o) for o in owner_names
+                                             if o.strip())
+               for n in names)
 
 
 @dataclass
@@ -207,14 +207,13 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
     track (shared-room tracks by the diarizer), bleed dropped, merged in time order.
 
     A track of a person is finished from what ``meeting_live`` transcribed while the
-    meeting ran (the same windows, context and lines this pass would make), plus the
+    meeting ran (the same windows, context and pieces this pass would make), plus the
     windows left; without live work it is transcribed here from the start. Shared-room
     tracks and chunks without a track are always transcribed here, whole."""
     from . import meeting_live
 
     store, cfg = pipeline.store, pipeline.settings
     owner_names = cfg.zoom_owner_name_list
-    owner_display = store.owner_name() or cfg.owner_name
     track_list = store.tracks(session_id)
     infos = {t["track"]: t for t in track_list}
     states = store.live_states(session_id)
@@ -226,19 +225,22 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
                                             t))
     who = {t: track_speaker(store, infos.get(t, {"track": t, "name": None}), owner_names)
            for t in order if t}
+    # after naming the tracks: an owner track matched by CONVO_ZOOM_OWNER_NAMES makes the
+    # owner's person when no owner voice is enrolled, and the lines take its name (QA BUG-07)
+    owner_display = store.owner_name() or cfg.owner_name
     prompt = meeting_live.meeting_whisper_prompt(pipeline, track_list)
 
     lines: list[Line] = []
-    loud: list[float] = []
+    loud: list[float] = []  # dBFS of each line on its own track, for the bleed check
     candidates: dict[str, np.ndarray] = {}
     unnamed = 0  # "Speaker N" numbering across the meeting
     voices_loaded = False
     for track in order:
         name, owner = who.get(track, ("", False))
-        # a shared room: no person's name in it, and its raw Zoom name is a room or device
-        # ("Conference Room 2", "iPhone", "Zoom user"); "Anna's iPhone" is Anna
+        # a shared room: any display name the track ever had is a room or a device
+        # ("Conference Room 2", "iPhone", "Zoom user"), other than the owner's own names
         raw = infos.get(track, {}).get("name")
-        shared = not track or (not owner and not name and is_shared_room(raw))
+        shared = not track or (not owner and _room_track(infos.get(track, {}), owner_names))
         if not shared:
             got = meeting_live.finish_track(pipeline, session_id, track, by_track[track],
                                             states.get(track), lambda: prompt)
@@ -281,16 +283,15 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
                       for lab in labels]
             candidates.update({renumber[k]: v for k, v in found.items() if k in renumber})
         else:
-            # a room with diarization off keeps the room's name
-            name = " ".join(raw.split()) if raw else name
-            if not name:
+            if not name and raw:  # a room, diarization off: the room's name
+                name = " ".join(raw.split())
+            elif not name:
                 unnamed += 1
                 name = f"Speaker {unnamed}"
             labels = [SpeakerLabel(name, False)] * len(pieces)
-        if cfg.join_lines:  # within this track only: never joins two participants
-            pieces, joined = join_lines(pieces, labels, cfg.join_gap_seconds,
-                                        cfg.join_max_seconds)
-            labels = joined if joined is not None else labels
+        # Bleed is decided on whisper's own pieces, before any joining: a joined line
+        # spans its speaker's pauses, so another track's words said in such a pause would
+        # look simultaneous, and the pause's silence would lower the line's loudness.
         for (s, e, text, ref), lab in zip(pieces, labels, strict=True):
             lines.append(Line(s, e, text, ref, track, lab))
             loud.append(rms_db(runs[ref.run][int(ref.start * SAMPLE_RATE):
@@ -299,11 +300,28 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
         store.put_speaker_candidates(session_id, candidates)
 
     drop = find_bleed(lines, loud)
+    kept_lines = [ln for i, ln in enumerate(lines) if i not in drop]
+    if cfg.join_lines:  # then join, within each track only: never two participants
+        kept_lines = [j for track in order
+                      for j in _join_track([ln for ln in kept_lines if ln.track == track],
+                                           cfg.join_gap_seconds, cfg.join_max_seconds)]
     rank = {t: i for i, t in enumerate(order)}
-    kept = sorted((ln for i, ln in enumerate(lines) if i not in drop),
-                  key=lambda ln: (ln.start, rank[ln.track], ln.end))
+    kept = sorted(kept_lines, key=lambda ln: (ln.start, rank[ln.track], ln.end))
     return [Segment(started_at=ln.start, ended_at=ln.end, text=ln.text,
                     speaker=ln.label.name, is_owner=ln.label.is_owner) for ln in kept]
+
+
+def _join_track(lines: list[Line], gap: float, max_seconds: float) -> list[Line]:
+    """``join_lines`` over one track's kept lines (in time order); a joined line spans
+    from its first piece's start to its last piece's end."""
+    if not lines:
+        return lines
+    track = lines[0].track
+    pieces, labels = join_lines([(ln.start, ln.end, ln.text, ln.ref) for ln in lines],
+                                [ln.label for ln in lines], gap, max_seconds)
+    assert labels is not None
+    return [Line(s, e, text, ref, track, lab)
+            for (s, e, text, ref), lab in zip(pieces, labels, strict=True)]
 
 
 def _diarize_track(pipeline: Pipeline, runs: list[np.ndarray], first_run: int,

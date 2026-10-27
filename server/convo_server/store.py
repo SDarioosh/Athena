@@ -669,8 +669,11 @@ class Store:
         ``track_name`` is ignored too), and ValueError if the session belongs to another
         device or is of another ``kind``. The session's silence bookkeeping spans all
         tracks: ``last_speech_at`` is the latest speech on any track. Raises
-        MeetingClosed for a new chunk of a meeting that is being or was processed; a
-        session without tracks takes it and goes back for another pass.
+        MeetingClosed for a new chunk of a meeting (a session with tracked chunks) that is
+        being or was processed; a session without tracks takes it and goes back for
+        another pass. A tracked chunk in a session an untracked chunk stopped on silence
+        reopens it ('recording', no stop reason), since a tracked session never stops on
+        silence; other stops stand.
         """
         now = time.time() if now is None else now
         end = started_at + duration
@@ -689,9 +692,9 @@ class Store:
                 raise ValueError(f"session {session_id} is a {sess['kind']} session, "
                                  f"not {kind}")
             if (sess is not None and sess["status"] in MEETING_CLOSED_STATUSES
-                    and (track or c.execute("SELECT 1 FROM chunks WHERE session_id = ? AND"
-                                            " track != '' LIMIT 1",
-                                            (session_id,)).fetchone())
+                    and ((track and sess["stop_reason"] != "silence")
+                         or c.execute("SELECT 1 FROM chunks WHERE session_id = ? AND"
+                                      " track != '' LIMIT 1", (session_id,)).fetchone())
                     and not c.execute("SELECT 1 FROM chunks WHERE session_id = ? AND"
                                       " track = ? AND sequence = ?",
                                       (session_id, track, sequence)).fetchone()):
@@ -715,12 +718,18 @@ class Store:
                     " last_speech_at = CASE WHEN ? IS NULL THEN last_speech_at"
                     "   ELSE MAX(COALESCE(last_speech_at, 0), ?) END,"
                     " received_at = ?,"
+                    # A tracked session never stops on silence: a tracked chunk undoes a
+                    # silence stop an untracked chunk made, and the session records again.
+                    " status = CASE WHEN ? != '' AND stop_reason = 'silence' THEN 'recording'"
                     # A chunk for a session being processed or already processed sends
                     # it back for another pass (store-and-forward relays upload late).
-                    " status = CASE WHEN status IN ('processing','done','failed') THEN 'ended'"
-                    " ELSE status END"
+                    " WHEN status IN ('processing','done','failed') THEN 'ended'"
+                    " ELSE status END,"
+                    " stop_reason = CASE WHEN ? != '' AND stop_reason = 'silence' THEN NULL"
+                    " ELSE stop_reason END"
                     " WHERE id = ?",
-                    (started_at, end, last_speech, last_speech, now, session_id),
+                    (started_at, end, last_speech, last_speech, now, track, track,
+                     session_id),
                 )
             return dict(c.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone())
 
@@ -799,13 +808,16 @@ class Store:
     def tracks(self, session_id: str) -> list[dict[str, Any]]:
         """The session's tracks (chunks without a track are not one), ordered by first
         chunk time: ``{"track", "name", "names", "chunks", "started_at", "ended_at"}``.
-        ``name`` is the display name of the track's latest chunk (highest sequence) that
-        had one, else None; ``names`` every distinct name seen, in order of first use, so
-        a participant who renames mid-meeting stays one track with several names."""
+        ``name`` is the raw display name of the track's latest chunk in time (by
+        ``started_at``, then sequence) that had one, else None; ``names`` every distinct
+        raw name seen, in order of first use in time, so a participant who renames
+        mid-meeting stays one track with several names. Names are stored as sent: a
+        later name replaces an earlier one even if a cleaner would drop it (an emoji,
+        "iPhone"), so callers that clean names should check all of ``names``."""
         out: dict[str, dict[str, Any]] = {}
         for r in self._q(
                 "SELECT track, track_name, sequence, started_at, duration FROM chunks"
-                " WHERE session_id = ? AND track != '' ORDER BY track, sequence",
+                " WHERE session_id = ? AND track != '' ORDER BY track, started_at, sequence",
                 (session_id,)):
             t = out.setdefault(r["track"], {"track": r["track"], "name": None, "names": [],
                                             "chunks": 0, "started_at": r["started_at"],
@@ -899,12 +911,21 @@ class Store:
                     "status": sess["status"], "device": sess["device"]}
 
     def link_meeting(self, session_id: str, conv_id: str) -> None:
-        """Record ``conv_id`` as the conversation of the meeting ``session_id``."""
+        """Record ``conv_id`` as the conversation of the meeting ``session_id`` and index
+        its search entry again, so a topic, participants or chat lines sent late are found
+        before the summary is redone (QA BUG-14)."""
         with self.tx() as c:
+            old = c.execute("SELECT conversation_id FROM meeting_info WHERE session_id = ?",
+                            (session_id,)).fetchone()
             c.execute("INSERT INTO meeting_info (session_id, conversation_id, updated_at)"
                       " VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET"
                       " conversation_id = excluded.conversation_id",
                       (session_id, conv_id, time.time()))
+            for cid in {conv_id, *([old[0]] if old and old[0] else [])}:
+                c.execute("DELETE FROM search_fts WHERE kind = 'transcript'"
+                          " AND conversation_id = ?", (cid,))
+                if c.execute("SELECT 1 FROM conversations WHERE id = ?", (cid,)).fetchone():
+                    self._index_transcript(c, cid)
 
     def has_meeting_info(self, session_id: str) -> bool:
         return self._one("SELECT 1 AS x FROM meeting_info WHERE session_id = ?",
@@ -944,7 +965,9 @@ class Store:
                 m["participants"] += json.loads(r["participants"] or "[]")
         for conv_id, m in out.items():
             people: list[dict[str, Any]] = []
-            seen: set[str] = set()
+            keys: set[tuple[Any, ...]] = set()  # one entry per zoom_user_id (QA BUG-13)
+            seen: set[str] = set()  # names listed, so heard speakers aren't listed twice
+            devices: list[dict[str, Any]] = []  # shown only as a device or room
             for p in m["participants"]:
                 name, owner = p.get("name") or p.get("zoom_name") or "", False
                 pid = p.get("person_id")
@@ -952,22 +975,41 @@ class Store:
                     live = _live_person(c, pid)
                     if live is not None:
                         pid, name, owner = live["id"], live["name"], bool(live["is_owner"])
-                if not name or name.casefold() in seen:
+                zid = p.get("zoom_user_id")
+                # two people with one name ("Alex", "iPhone") are two entries
+                key = ("id", zid) if zid else ("name", name.casefold(), p.get("joined_at"))
+                if not name or key in keys:
                     continue
+                keys.add(key)
                 seen.add(name.casefold())
-                people.append({"name": name, "person_id": pid, "is_owner": owner,
-                               "zoom_name": p.get("zoom_name"),
-                               "joined_at": p.get("joined_at"), "left_at": p.get("left_at")})
+                entry = {"name": name, "person_id": pid, "is_owner": owner,
+                         "zoom_name": p.get("zoom_name"),
+                         "joined_at": p.get("joined_at"), "left_at": p.get("left_at")}
+                people.append(entry)
+                if pid is None and not owner and _device_name(p.get("zoom_name") or name):
+                    devices.append(entry)
+            heard, unnamed = [], []  # unnamed: "Speaker 1", a room: no person
             for r in c.execute("SELECT speaker, MAX(is_owner) AS is_owner, MIN(started_at)"
                                " AS first FROM segments WHERE conversation_id = ?"
                                " GROUP BY speaker COLLATE NOCASE ORDER BY first",
                                (conv_id,)).fetchall():
                 if r["speaker"].casefold() not in seen:
                     seen.add(r["speaker"].casefold())
-                    people.append({"name": r["speaker"], "person_id": None,
-                                   "is_owner": bool(r["is_owner"]), "zoom_name": None,
-                                   "joined_at": None, "left_at": None})
-            m["participants"] = people
+                    heard.append({"name": r["speaker"], "person_id": None,
+                                  "is_owner": bool(r["is_owner"]), "zoom_name": None,
+                                  "joined_at": None, "left_at": None})
+                    if not r["is_owner"] and _person_id(c, r["speaker"]) is None:
+                        unnamed.append(heard[-1])
+            if unnamed and devices:
+                # A participant Zoom shows only as a device or room ("iPhone") whose lines
+                # are named "Speaker 1" (no person) is listed by those speakers, not
+                # twice; with one such participant they keep its Zoom name and times.
+                people = [p for p in people if p not in devices]
+                if len(devices) == 1:
+                    for h in unnamed:
+                        h.update({k: devices[0][k] for k in ("zoom_name", "joined_at",
+                                                             "left_at")})
+            m["participants"] = people + heard
         return out
 
     def clear_chunk_audio(self, session_id: str,
@@ -2301,7 +2343,14 @@ class Store:
         return rows
 
     def owner_name(self) -> str | None:
+        """The name owner lines are written under: the enrolled owner voice's name; without
+        one, the owner's person (a Zoom track matched by CONVO_ZOOM_OWNER_NAMES makes one),
+        so lines and ``people`` name the owner alike (QA BUG-07). None when neither exists;
+        callers then use CONVO_OWNER_NAME."""
         row = self._one("SELECT name FROM speakers WHERE is_owner = 1")
+        if row is None:
+            row = self._one("SELECT name FROM people WHERE is_owner = 1"
+                            " AND merged_into IS NULL")
         return row["name"] if row else None
 
     # ------------------------------------------------------------------ people
@@ -2729,6 +2778,14 @@ def _move_knowledge(c: sqlite3.Connection, src: str, dst: str) -> None:
               " FROM conversation_people WHERE conversation_id = ?", (dst, src))
     c.execute("UPDATE search_fts SET conversation_id = ? WHERE conversation_id = ?"
               " AND kind IN ('fact', 'action_item')", (dst, src))
+
+
+def _device_name(name: str) -> bool:
+    """A Zoom display name with no person in it: a device, a room or conference hardware
+    ("iPhone", "Zoom user", "Conference Room 2"). Only meetings get here."""
+    from .meeting_names import clean_display_name, is_room_or_hardware
+
+    return is_room_or_hardware(name) or not clean_display_name(name)
 
 
 def _segment(r: dict[str, Any]) -> Segment:
