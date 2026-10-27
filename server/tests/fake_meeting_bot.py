@@ -44,6 +44,16 @@ def main() -> int:
         report()
         say("failed wrong_passcode")
         return 2
+    if mode in ("owner", "noowner"):  # OBF: Zoom refuses until the owner is in
+        say("starting waiting_for_owner")
+        report()
+        if mode == "noowner":
+            time.sleep(0.3)
+            say("failed owner_not_joined")
+            return 2
+        wait_for_term()
+        say("ended stopped")
+        return 0
     print("SDK: hello, this line is not a status line", flush=True)
     say("waiting_room")
     time.sleep(0.1)
@@ -52,9 +62,9 @@ def main() -> int:
         extra["child"] = subprocess.Popen(["sleep", "60"]).pid  # left behind on purpose
     say("recording no_audio" if mode == "noaudio" else "recording")
     report(extra)
-    if mode == "exit":
+    if mode in ("exit", "ownerleft"):
         time.sleep(0.3)
-        say("ended meeting_ended")
+        say("ended meeting_ended" if mode == "exit" else "ended owner_left")
         return 0
     if mode == "crash":
         time.sleep(0.2)

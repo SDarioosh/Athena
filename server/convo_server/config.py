@@ -229,11 +229,12 @@ class Settings(BaseSettings):
     # The owner's Zoom Meeting SDK app credentials; the join token is signed locally.
     zoom_sdk_key: str | None = None
     zoom_sdk_secret: str | None = None
-    # Athena's own Zoom account, for meetings in other accounts (Zoom requires a signed-in
-    # user there since 2026-03-02): the Marketplace app's OAuth client, signed in once with
-    # `convo-server zoom-login`. Join token: "zak" (join as Athena's account), "obf" (on
-    # behalf of the signed-in user, who must be in the meeting), "none" (the app's own
-    # account only) or "auto" (zak once signed in, else none).
+    # Zoom sign-in for meetings in other accounts (Zoom requires a signed-in user there
+    # since 2026-03-02): the Marketplace app's OAuth client, signed in once with the
+    # owner's own Zoom account (`convo-server zoom-login`). Join token: "obf" (on behalf
+    # of the signed-in owner, who must be in the meeting), "zak" (join as the signed-in
+    # user; later option with a dedicated Athena account), "none" (the app's own account
+    # only) or "auto" (obf once signed in, else none).
     zoom_client_id: str | None = None
     zoom_client_secret: str | None = None
     zoom_redirect_url: str | None = None

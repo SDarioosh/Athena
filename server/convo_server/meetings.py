@@ -24,7 +24,10 @@ Bot contract (lane 1A codes against it; also in ``server/README.md``)::
           ATHENA_ZOOM_JOIN_TOKEN   ZAK or OBF token from Athena's Zoom sign-in (absent
                                    in mode none), see join_token_provider
           ATHENA_ZOOM_JOIN_TOKEN_KIND  zak | obf (absent with no join token)
-    stdout: one status line per change: ``STATE <state> [<reason>]``
+    stdout: one status line per change: ``STATE <state> [<reason>]``; with an OBF token,
+            ``STATE starting waiting_for_owner`` while Zoom refuses the join until the
+            owner is in the meeting, ``STATE failed owner_not_joined`` after the wait,
+            ``STATE ended owner_left`` when Zoom drops the bot as the owner leaves
     stderr: free-form logs (go to the server's log)
 
 Secrets never go on the command line (``ps`` shows it to every user), and the bot never
@@ -67,6 +70,8 @@ STOP_GRACE_SECONDS = 10.0  # after SIGTERM (the bot must exit within 5 s), then 
 LIFETIME_GRACE_SECONDS = 60.0  # beyond --max-seconds before the bot is killed
 MAX_TITLE_CHARS = 200
 MAX_PASSCODE_CHARS = 128
+JOIN_TOKEN_SECONDS = 7200  # a ZAK or OBF token lasts about 2 h (zoom_signin.py)
+JOIN_TOKEN_MARGIN_SECONDS = 300  # the wait ends this long before the token does
 
 _STATE_LINE = re.compile(r"^STATE (starting|waiting_room|recording|ended|failed)"
                          r"(?: ([a-z0-9_]{1,40}))?$")
@@ -242,7 +247,13 @@ def memory_bytes(value: str) -> int:
 
 
 def bot_args(settings: Settings, meeting: ZoomMeeting, session_id: str,
-             work_dir: Path) -> list[str]:
+             work_dir: Path, *, join_token: bool = False) -> list[str]:
+    """The bot's arguments. With a join token (valid about 2 h from now), the wait for
+    the waiting room or the owner is capped below the token's lifetime, so the bot gives
+    up with a clear reason instead of trying a dead token."""
+    wait = settings.meeting_waiting_room_seconds
+    if join_token:
+        wait = min(wait, JOIN_TOKEN_SECONDS - JOIN_TOKEN_MARGIN_SECONDS)
     host = settings.host if settings.host not in ("0.0.0.0", "::", "") else "127.0.0.1"
     if ":" in host:
         host = f"[{host}]"
@@ -250,7 +261,7 @@ def bot_args(settings: Settings, meeting: ZoomMeeting, session_id: str,
             "--upload-url", f"http://{host}:{settings.port}", "--name", BOT_NAME,
             "--max-seconds", str(int(settings.max_session_seconds)),
             "--alone-seconds", str(int(settings.meeting_alone_seconds)),
-            "--waiting-room-seconds", str(int(settings.meeting_waiting_room_seconds)),
+            "--waiting-room-seconds", str(int(wait)),
             "--codec", settings.meeting_track_codec, "--work-dir", str(work_dir)]
 
 
@@ -428,7 +439,8 @@ class Launcher:
             "ATHENA_ZOOM_JOIN_TOKEN_KIND": join_kind if join_token else "",
         })
         argv = build_command(self.settings, runner, bot,
-                             bot_args(self.settings, meeting, session_id, work_dir), unit)
+                             bot_args(self.settings, meeting, session_id, work_dir,
+                                      join_token=join_token is not None), unit)
         try:
             work_dir.mkdir(parents=True, exist_ok=True)
             proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
