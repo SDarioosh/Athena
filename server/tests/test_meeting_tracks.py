@@ -129,16 +129,40 @@ def test_fictional_meeting_names_every_line(pipeline):
     assert all(c["audio_path"] is None for c in pipeline.store.chunks("m1"))
 
 
+class EmbedderOnly(NoDiarizer):
+    """Lane 2C: learning meeting voices may use the speaker embedder, nothing else of the
+    diarizer (no clustering, no naming, no line check)."""
+
+    def __init__(self) -> None:
+        object.__setattr__(self, "clips", [])
+        object.__setattr__(self, "embedder", self)
+
+    def embed(self, audio):
+        self.clips.append(audio.size)
+        v = np.zeros(16, np.float32)
+        v[len(self.clips) % 16] = 1.0
+        return v
+
+
 def test_named_tracks_never_use_the_diarizer(pipeline):
-    pipeline.diarizer = NoDiarizer()
+    pipeline.diarizer = EmbedderOnly()
     segs = meeting(pipeline, [ALICE, BO, CLEO])
     assert [s.speaker for s in segs] == ["Alice Example", "Bo Example", "Bo Example", "Me"]
+    # only Bo has >= 10 s of speech: one 3 s window after Alice stops (6.5-10 s) and one
+    # in his 15-20 s line (her mic's quiet copy of it is below the VAD)
+    assert pipeline.diarizer.clips == [3 * SAMPLE_RATE] * 2
+    pipeline.settings.learn_meeting_voices = False
+    pipeline.diarizer = NoDiarizer()
+    meeting(pipeline, [ALICE, BO, CLEO], session="m2")
 
 
 def test_meeting_never_imports_pyannote_and_plain_sessions_never_import_meeting_code(
         tmp_path):
     """In a fresh interpreter: the API, CLI and a recording without tracks never import
-    meeting_tracks; a meeting of named tracks imports it but never diarize_pyannote."""
+    meeting_tracks; a meeting of named tracks imports it but never diarize_pyannote.
+    Lane 2C: with CONVO_LEARN_MEETING_VOICES=false neither meeting_voices nor any speaker
+    model is imported; with it on, only the speaker embedder runs, on <= 3 windows of
+    3 s per person, never the diarizer (clustering, naming) and never pyannote."""
     script = textwrap.dedent(f"""
         import sys
         import numpy as np
@@ -150,7 +174,8 @@ def test_meeting_never_imports_pyannote_and_plain_sessions_never_import_meeting_
         from convo_server.store import Store
         from convo_server.vad import EnergyVAD
         s = Settings(ingest_token="x" * 20, data_dir={str(tmp_path)!r}, run_worker=False,
-                     vad_backend="energy", whisper_window_seconds=0)
+                     vad_backend="energy", whisper_window_seconds=0,
+                     learn_meeting_voices=False)
         p = Pipeline(s, Store(s.db_path), EnergyVAD(), FakeTranscriber(), None)
         p.ingest_chunk(device="omi", session_id="s", sequence=0, started_at=1e9,
                        codec="wav", data=wav(tone(300, 5), silence(25)))
@@ -162,10 +187,36 @@ def test_meeting_never_imports_pyannote_and_plain_sessions_never_import_meeting_
                            track=str(i), track_name="Person " + "AB"[i])
         p.end_session("m"); p.process_session("m")
         assert "convo_server.meeting_tracks" in sys.modules
-        bad = [m for m in sys.modules if m.startswith(("convo_server.diarize_pyannote",
-                                                         "pyannote", "speechbrain"))]
+        speaker_models = ("convo_server.diarize_pyannote", "pyannote", "speechbrain")
+        bad = [m for m in sys.modules if m.startswith(speaker_models)]
         assert not bad, bad
+        assert "convo_server.meeting_voices" not in sys.modules, "learning is off"
         print([x.speaker for x in p.store.session_segments("m")])
+
+        class EmbedderOnly:
+            clips = []
+            def embed(self, audio):
+                self.clips.append(audio.size)
+                return np.ones(16, np.float32)
+            def __getattr__(self, name):  # diarize_runs, check_lines, voices, ...
+                raise AssertionError("diarizer used: " + name)
+        class Trap(EmbedderOnly):
+            embedder = EmbedderOnly()
+            def __setattr__(self, name, value):
+                raise AssertionError("diarizer touched: " + name)
+        p.diarizer = Trap()
+        s.learn_meeting_voices = True
+        # A talks 0-12 s, B 15-27 s: 12 s each, no overlap -> 3 windows each
+        for i, (f, at) in enumerate(((300, 0), (500, 15))):
+            p.ingest_chunk(device="zoom", session_id="m2", sequence=0, started_at=3e9,
+                           codec="wav", data=wav(silence(at), tone(f, 12),
+                                                 silence(18 - at)),
+                           track=str(i), track_name="Person " + "AB"[i])
+        p.end_session("m2"); p.process_session("m2")
+        assert "convo_server.meeting_voices" in sys.modules
+        bad = [m for m in sys.modules if m.startswith(speaker_models)]
+        assert not bad, bad
+        assert Trap.embedder.clips == [3 * 16000] * 6, Trap.embedder.clips
     """)
     r = subprocess.run([sys.executable, "-c", script], cwd=SERVER, capture_output=True,
                        text=True, timeout=120)
