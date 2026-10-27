@@ -34,8 +34,10 @@ off). Live work only does what that pass would do, earlier:
   the time. Someone who joins late is only in the prompt of later windows; that is the
   one way a live result can differ from an end-only one (spelling of a name).
 
-**Deferred to the end**: shared-room tracks ("Conference Room", a phone: diarized over
-the whole track so its "Speaker N" numbering is consistent) and chunks without a track.
+**Deferred to the end**: shared-room tracks (any display name they ever had is a room
+or a bare device, by the end pass's own rule, ``meeting_tracks.is_room_track``: diarized
+over the whole track so its "Speaker N" numbering is consistent), tracks with no display
+name yet, and chunks without a track.
 
 **Crash-safe**: each window's result is saved (``meeting_live`` table) with how far the
 track got; a restart redoes at most the window in flight. The state names the runs and
