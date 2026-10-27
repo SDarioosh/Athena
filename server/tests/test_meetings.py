@@ -629,6 +629,34 @@ def test_already_allowed_goes_straight_to_recording(meeting_settings, client,
 
 
 # ------------------------------------------------- QA regressions (Antigravity audit)
+def test_qa17_long_title_or_passcode_is_400_with_a_string(meeting_settings, client) -> None:
+    """BUG-17: the documented 400 {"detail": "<message>"}, never pydantic's 422 list."""
+    url = "https://zoom.us/j/85012345678"
+    r = client.post("/v1/meetings", json={"url": url, "title": "x" * 201})
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "title is longer than 200 characters"
+    r = client.post("/v1/meetings", json={"meeting_id": "85012345678",
+                                          "passcode": "p" * 129})
+    assert r.status_code == 400 and isinstance(r.json()["detail"], str), r.text
+    assert "passcode" in r.json()["detail"]
+    r = client.post("/v1/meetings", json={"url": url, "meeting_id": ["x"]})
+    assert r.status_code == 400 and isinstance(r.json()["detail"], str), r.text
+    r = client.post("/v1/meetings", content=b"[1, 2]",
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 400 and isinstance(r.json()["detail"], str), r.text
+    # a hard cap on the body stays
+    r = client.post("/v1/meetings", json={"url": url, "title": "x" * 20_000})
+    assert r.status_code == 413 and isinstance(r.json()["detail"], str), r.text
+    assert client.get("/v1/meetings").json()["meetings"] == []
+    # spaces around a title that fits are stripped, not counted
+    padded = "  " + "t" * 195 + "      "
+    r = client.post("/v1/meetings", json={"url": url, "title": padded})
+    assert r.status_code == 202, r.text
+    mid = r.json()["id"]
+    assert client.get(f"/v1/meetings/{mid}").json()["title"] == "t" * 195
+    client.delete(f"/v1/meetings/{mid}")
+
+
 def test_qa22_bot_token_uploads_conversation_only(meeting_settings, client,
                                                   tmp_path) -> None:
     """BUG-22: the per-meeting token can't make the meeting a voice note."""

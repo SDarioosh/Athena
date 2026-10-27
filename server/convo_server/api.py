@@ -50,7 +50,7 @@ from fastapi import (
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from . import audio as audio_mod
 from . import llm_settings
@@ -154,11 +154,16 @@ class LlmSettingsPut(BaseModel):
 
 
 class MeetingJoin(BaseModel):
-    """``POST /v1/meetings``: a Zoom link, or its number and passcode."""
+    """``POST /v1/meetings``: a Zoom link, or its number and passcode. The launcher checks
+    the title (200 characters once stripped) and passcode (128) itself, with a 400 and a
+    message; the body as a whole is capped at MAX_MEETING_BODY."""
     url: str | None = Field(default=None, max_length=2048)
     meeting_id: str | int | None = None
-    passcode: str | None = Field(default=None, max_length=128)
-    title: str | None = Field(default=None, max_length=200)
+    passcode: str | None = None
+    title: str | None = None
+
+
+MAX_MEETING_BODY = 16 * 1024  # POST /v1/meetings: far above any real link and title
 
 
 # What a meeting bot's upload token may call (its own session only).
@@ -554,12 +559,32 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     def meeting_error(e: Any) -> JSONResponse:
         return JSONResponse({"detail": e.detail, **e.extra}, status_code=e.status)
 
+    async def meeting_body(request: Request) -> MeetingJoin | JSONResponse:
+        """The join body, or the documented 400 with a string ``detail`` (never a 422
+        list of validation errors); 413 past MAX_MEETING_BODY."""
+        raw = b""
+        async for part in request.stream():
+            raw += part
+            if len(raw) > MAX_MEETING_BODY:
+                return JSONResponse({"detail": "request body too large"}, status_code=413)
+        try:
+            return MeetingJoin.model_validate_json(raw or b"{}")
+        except ValidationError as e:
+            err = e.errors()[0]
+            where = ".".join(str(x) for x in err.get("loc", ()))
+            return JSONResponse({"detail": f"{where}: {err['msg']}" if where else err["msg"]},
+                                status_code=400)
+
     @v1.post("/meetings", status_code=202)
-    async def join_meeting(body: MeetingJoin) -> Any:
-        """Send Athena to a Zoom meeting: 202 {id, state, session_id}; 400 bad link,
-        409 busy, 501 meetings off."""
+    async def join_meeting(request: Request) -> Any:
+        """Send Athena to a Zoom meeting (JSON body: MeetingJoin): 202 {id, state,
+        session_id}; 400 bad link or body, 409 busy, 413 body too large, 501 meetings
+        off."""
         from .meetings import MeetingError
 
+        body = await meeting_body(request)
+        if isinstance(body, JSONResponse):
+            return body
         try:
             return await launcher().join(body.url, body.meeting_id, body.passcode,
                                          body.title)
