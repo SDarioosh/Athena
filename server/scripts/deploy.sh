@@ -29,6 +29,8 @@
 #                             if available, else background; docker is never picked by auto)
 #   DOCKER                    docker command for the docker runner (default: docker if it
 #                             works without sudo, else "sudo docker")
+#   CONVO_DOCKER_API_GPU      true: the docker runner adds compose.gpu.yml (CUDA PyTorch,
+#                             sound-api on the GPU, for pyannote)
 #   BARVIS_SOUND_ODYSSEUS_DIR the Odysseus checkout whose scripts/fork_deploy.sh runs after a
 #                             deploy, or off (default: found from the running Odysseus container)
 set -euo pipefail
@@ -83,6 +85,11 @@ load_config() {
     if [ -z "$DOCKER" ]; then
       if docker info >/dev/null 2>&1; then DOCKER=docker; else DOCKER="sudo docker"; fi
     fi
+    COMPOSE_FILES=(-f "$SERVER_DIR/compose.yml")
+    local gpu; gpu=$(env_value CONVO_DOCKER_API_GPU false)
+    case ${gpu,,} in
+      true|1|yes|on) COMPOSE_FILES+=(-f "$SERVER_DIR/compose.gpu.yml") ;;
+    esac
   fi
 }
 
@@ -217,7 +224,15 @@ bg_stop() {
 
 dc() {
   # shellcheck disable=SC2086  # DOCKER may be "sudo docker"
-  $DOCKER compose --project-directory "$SERVER_DIR" -f "$SERVER_DIR/compose.yml" "$@"
+  $DOCKER compose --project-directory "$SERVER_DIR" "${COMPOSE_FILES[@]}" "$@"
+}
+
+docker_preflight() {  # settings the containers would crash on, said before building
+  local extras
+  extras=$(env_value CONVO_DOCKER_EXTRAS vad,diarization)
+  if [ "$(env_value CONVO_DIARIZER ecapa)" = pyannote ] && [[ ,$extras, != *,pyannote,* ]]; then
+    die "CONVO_DIARIZER=pyannote needs pyannote in the image: add CONVO_DOCKER_EXTRAS=$extras,pyannote to server/.env (and CONVO_DOCKER_API_GPU=true to run it on the GPU)"
+  fi
 }
 
 retire_native() {  # stop what a native deploy started; its unit files stay for a way back
@@ -237,6 +252,7 @@ retire_native() {  # stop what a native deploy started; its unit files stay for 
 
 docker_up() {  # build, (re)create what changed, wait until every container is healthy
   local s active
+  docker_preflight
   retire_native
   # A whisper container of a profile that is no longer selected would keep the
   # "whisper" name; remove it.

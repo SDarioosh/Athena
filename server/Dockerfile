@@ -7,6 +7,7 @@ FROM python:3.12-slim
 ARG EXTRAS=vad,diarization
 # CPU torch: ECAPA speaker embeddings and Silero VAD run fine on CPU, and the CUDA
 # wheels would add ~3 GB. Whisper gets the GPU (docker/whisper.Dockerfile).
+# compose.gpu.yml passes a CUDA index instead, for pyannote on the GPU.
 ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
 
 RUN apt-get update \
@@ -15,11 +16,15 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Dependencies first, so a code change doesn't reinstall torch.
+# Dependencies first, so a code change doesn't reinstall torch. torchcodec (pyannote
+# reads audio with it) comes from TORCH_INDEX too: PyPI's is built for PyPI's torch
+# (CUDA 13) and fails to load next to this one. The constraints keep these builds when
+# the extras are installed.
 COPY pyproject.toml ./
 RUN mkdir convo_server && touch convo_server/__init__.py \
-    && pip install --no-cache-dir --index-url "$TORCH_INDEX" torch torchaudio \
-    && pip install --no-cache-dir ".[$EXTRAS]" \
+    && pip install --no-cache-dir --index-url "$TORCH_INDEX" torch torchaudio torchcodec \
+    && pip freeze | grep -E '^(torch|torchaudio|torchcodec)==' > /tmp/torch-pins.txt \
+    && pip install --no-cache-dir -c /tmp/torch-pins.txt ".[$EXTRAS]" \
     && pip uninstall -y -q convo-server && rm -rf convo_server build
 
 COPY convo_server ./convo_server

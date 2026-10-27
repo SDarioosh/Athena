@@ -1,0 +1,34 @@
+# Athena API on the GPU (README "Docker", "pyannote on the GPU"). Added on top of
+# compose.yml by deploy.sh when server/.env has CONVO_DOCKER_API_GPU=true; by hand:
+#
+#   docker compose -f compose.yml -f compose.gpu.yml up -d --build --wait
+#
+# Builds the server image with CUDA PyTorch (~3 GB more than the CPU one) and gives
+# sound-api the NVIDIA GPU, so pyannote (CONVO_DIARIZER=pyannote, CONVO_PYANNOTE_DEVICE=auto)
+# runs on it. Needs the NVIDIA Container Toolkit, like whisper-gpu. sound-mcp uses the
+# same image but no GPU.
+x-cuda-build: &cuda-build
+  build:
+    context: .
+    args:
+      EXTRAS: ${CONVO_DOCKER_EXTRAS:-vad,diarization}
+      # PyTorch's CUDA wheel index. cu126 runs on any driver for CUDA 12 (nvidia-smi
+      # "CUDA Version" 12.x or newer); cu128/cu130 need a newer driver.
+      TORCH_INDEX: https://download.pytorch.org/whl/${CONVO_DOCKER_TORCH_CUDA:-cu126}
+  image: odysseus-sound:${CONVO_DOCKER_TAG:-current}-cuda
+
+services:
+  sound-api:
+    <<: *cuda-build
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  sound-mcp:
+    <<: *cuda-build
