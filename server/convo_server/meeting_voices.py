@@ -290,6 +290,8 @@ def learn_from_meeting(pipeline: Pipeline, session_id: str,
     for name, clips in chosen:
         samples = [embedder.embed(c) for c in clips]
         store.put_meeting_voice_samples(name, session_id, samples, MAX_MEETING_SAMPLES)
+        # the person's voice may carry another spelling ("alice example"): relabel by it
+        name = store.voice_name(name) or name
         done = relabel_matches(store, name, cfg.speaker_relabel_threshold)
         learned.append(Learned(name, len(samples), len(done)))
         log.info("meeting %s: learned %d voice sample(s) of %s; relabeled %d unnamed "

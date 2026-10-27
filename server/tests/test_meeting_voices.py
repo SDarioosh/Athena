@@ -347,3 +347,36 @@ def test_name_like_device_words_still_learn(pipeline, rec):
     # "Mac" and "Dell" alone are names (QA BUG-09), not devices
     meeting(pipeline, [("m", "Mac Example", track((0, 14, 300)))])
     assert sources(pipeline.store, "Mac Example") == ["meeting"] * 3
+
+
+def test_meeting_samples_join_the_enrolled_speaker_in_any_case(pipeline):
+    # QA BUG-06: enrolled as "alice example", learned as "Alice Example": one speaker
+    store, e = pipeline.store, ToneEmbedder()
+    v = e.embed(tone(300, 3))
+    store.put_speaker("alice example", v, False)
+    store.put_meeting_voice_samples("Alice Example", "s1", [e.embed(tone(310, 3))], 5)
+    with store.tx() as c:
+        rows = c.execute("SELECT id, name FROM speakers WHERE name = 'alice example'"
+                         " COLLATE NOCASE").fetchall()
+        assert len(rows) == 1
+        sid = rows[0]["id"]
+        srcs = [r["source"] for r in c.execute(
+            "SELECT source FROM voice_samples WHERE speaker_id = ? ORDER BY id", (sid,))]
+        linked = c.execute("SELECT speaker_id FROM people WHERE name = 'Alice Example'"
+                           " COLLATE NOCASE AND merged_into IS NULL").fetchone()
+    assert srcs == ["enrolled", "meeting"]
+    assert linked["speaker_id"] == sid
+
+
+def test_meeting_samples_follow_the_persons_linked_voice(pipeline):
+    # QA BUG-06: the person's speaker_id wins over a name lookup (a renamed person whose
+    # voice row kept its old name)
+    store, e = pipeline.store, ToneEmbedder()
+    store.put_speaker("Kath", e.embed(tone(300, 3)), False)
+    pid = store.ensure_person("Kath")
+    with store.tx() as c:
+        c.execute("UPDATE people SET name = 'Kath Example' WHERE id = ?", (pid,))
+    store.put_meeting_voice_samples("Kath Example", "s1", [e.embed(tone(300, 3))], 5)
+    names = [s["name"] for s in store.speakers()]
+    assert "Kath Example" not in names
+    assert sources(store, "Kath") == ["enrolled", "meeting"]

@@ -2067,13 +2067,16 @@ class Store:
                                   samples: list[np.ndarray], cap: int) -> int:
         """Voice samples of ``name`` learned from a meeting (``source='meeting'``).
 
-        The speaker is created if new (never as the owner, and an existing speaker's
-        ``is_owner`` is left alone). Earlier samples of the same meeting are replaced;
-        then only the newest ``cap`` meeting samples are kept. Enrolled and named samples
-        are never touched. Returns how many meeting samples the speaker has now.
+        The speaker is the person's linked voice (``people.speaker_id``, the person found
+        by name or alias in any case), else a speaker of that name in any case, else new
+        (never as the owner, and an existing speaker's ``is_owner`` is left alone): one
+        voice per person, never a second row next to an enrolled one (QA BUG-06). Earlier
+        samples of the same meeting are replaced; then only the newest ``cap`` meeting
+        samples are kept. Enrolled and named samples are never touched. Returns how many
+        meeting samples the speaker has now.
         """
         with self.tx() as c:
-            row = c.execute("SELECT id FROM speakers WHERE name = ?", (name,)).fetchone()
+            row = _voice_of(c, name)
             if row is None:
                 sid = c.execute(
                     "INSERT INTO speakers (name, is_owner, embedding, created_at)"
@@ -2096,6 +2099,13 @@ class Store:
             _refresh_voiceprint(c, sid)
             return c.execute("SELECT COUNT(*) FROM voice_samples WHERE speaker_id = ?"
                              " AND source = 'meeting'", (sid,)).fetchone()[0]
+
+    def voice_name(self, name: str) -> str | None:
+        """The name of the voice (``speakers.name``) that samples for ``name`` go to (see
+        ``put_meeting_voice_samples``), None when there is none yet."""
+        with self.tx() as c:
+            row = _voice_of(c, name)
+            return row["name"] if row else None
 
     def voice_samples(self, name: str) -> list[dict[str, Any]]:
         """A speaker's voice samples, oldest first: source, session_id, created_at."""
@@ -2388,6 +2398,19 @@ def _person_id(c: sqlite3.Connection, name: str | None) -> int | None:
         pid = row["merged_into"]
         row = c.execute("SELECT id, merged_into FROM people WHERE id = ?", (pid,)).fetchone()
     return pid
+
+
+def _voice_of(c: sqlite3.Connection, name: str) -> sqlite3.Row | None:
+    """The speaker row (id, name) of ``name``: the person's linked voice first, else a
+    speaker called that in any case (people names are NOCASE, speaker names are not)."""
+    pid = _person_id(c, name)
+    if pid is not None:
+        row = c.execute("SELECT s.id, s.name FROM people p JOIN speakers s"
+                        " ON s.id = p.speaker_id WHERE p.id = ?", (pid,)).fetchone()
+        if row is not None:
+            return row
+    return c.execute("SELECT id, name FROM speakers WHERE name = ? COLLATE NOCASE"
+                     " ORDER BY name = ? DESC, id LIMIT 1", (name, name)).fetchone()
 
 
 def _ensure_person(c: sqlite3.Connection, name: str | None, speaker_id: int | None = None,
