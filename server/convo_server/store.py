@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS chunks (
     audio_path TEXT,                    -- NULL once audio is deleted
     speech TEXT NOT NULL DEFAULT '[]',  -- JSON [[start,end],...] relative to chunk
     received_at REAL NOT NULL,
-    PRIMARY KEY (session_id, sequence)
+    track TEXT NOT NULL DEFAULT '',     -- '' = no track; else e.g. a Zoom user id
+    track_name TEXT,                    -- the track's display name in this chunk
+    PRIMARY KEY (session_id, track, sequence)  -- sequences count per track
 );
 
 CREATE TABLE IF NOT EXISTS conversations (
@@ -505,6 +507,37 @@ class Store:
             # the summary model; older facts have none
             self._add_column("facts", "kind", "TEXT")
             self._conn.execute("PRAGMA user_version = 14")
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 15:
+            # chunks per track (a meeting: one track per participant): sequences count per
+            # track, so the primary key gains the track; SQLite can't change a primary
+            # key, so the table is rebuilt. Older chunks have no track ('').
+            self._rebuild_chunks_with_track()
+            self._conn.execute("PRAGMA user_version = 15")
+
+    def _rebuild_chunks_with_track(self) -> None:
+        c = self._conn
+        if "track" in {r[1] for r in c.execute("PRAGMA table_info(chunks)")}:
+            return  # created by SCHEMA with the track already
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            c.execute(
+                "CREATE TABLE chunks_v15 ("
+                " session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,"
+                " sequence INTEGER NOT NULL, started_at REAL NOT NULL, duration REAL NOT NULL,"
+                " codec TEXT NOT NULL, audio_path TEXT, speech TEXT NOT NULL DEFAULT '[]',"
+                " received_at REAL NOT NULL, track TEXT NOT NULL DEFAULT '', track_name TEXT,"
+                " PRIMARY KEY (session_id, track, sequence))")
+            c.execute(
+                "INSERT INTO chunks_v15 (session_id, sequence, started_at, duration, codec,"
+                " audio_path, speech, received_at, track, track_name)"
+                " SELECT session_id, sequence, started_at, duration, codec, audio_path,"
+                " speech, received_at, '', NULL FROM chunks")
+            c.execute("DROP TABLE chunks")
+            c.execute("ALTER TABLE chunks_v15 RENAME TO chunks")
+        except BaseException:
+            c.execute("ROLLBACK")
+            raise
+        c.execute("COMMIT")
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
         cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -568,12 +601,19 @@ class Store:
         speech: list[tuple[float, float]],
         now: float | None = None,
         kind: str = CONVERSATION,
+        track: str = "",
+        track_name: str | None = None,
     ) -> dict[str, Any]:
         """Record a chunk and update the session's silence bookkeeping.
 
+        ``track`` ('' = none) keeps one participant's chunks apart; sequences count per
+        track. ``track_name`` is the track's display name when this chunk was recorded.
+
         Returns the updated session row. Raises DuplicateChunk on a repeated
-        (session, sequence) so device retries are idempotent, and ValueError if the
-        session belongs to another device or is of another ``kind``.
+        (session, track, sequence) so device retries are idempotent (the retry's
+        ``track_name`` is ignored too), and ValueError if the session belongs to another
+        device or is of another ``kind``. The session's silence bookkeeping spans all
+        tracks: ``last_speech_at`` is the latest speech on any track.
         """
         now = time.time() if now is None else now
         end = started_at + duration
@@ -594,12 +634,14 @@ class Store:
             try:
                 c.execute(
                     "INSERT INTO chunks (session_id, sequence, started_at, duration, codec,"
-                    " audio_path, speech, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    " audio_path, speech, received_at, track, track_name)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (session_id, sequence, started_at, duration, codec, audio_path,
-                     json.dumps(speech), now),
+                     json.dumps(speech), now, track, track_name),
                 )
             except sqlite3.IntegrityError as e:
-                raise DuplicateChunk(f"{session_id}#{sequence}") from e
+                where = f"{track}#" if track else ""
+                raise DuplicateChunk(f"{session_id}#{where}{sequence}") from e
             if sess is not None:
                 # Chunks may arrive out of order (offline queues); keep maxima.
                 c.execute(
@@ -656,23 +698,56 @@ class Store:
             "SELECT s.*, (SELECT COUNT(*) FROM chunks c WHERE c.session_id = s.id) AS chunk_count"
             " FROM sessions s ORDER BY started_at DESC LIMIT ?", (limit,))
 
-    def chunks(self, session_id: str) -> list[dict[str, Any]]:
-        rows = self._q("SELECT * FROM chunks WHERE session_id = ? ORDER BY sequence",
-                       (session_id,))
+    def chunks(self, session_id: str, track: str | None = None) -> list[dict[str, Any]]:
+        """The session's chunk rows ordered by (track, sequence); only ``track``'s when
+        given ('' = the chunks without a track). Each row has ``track`` ('' = none),
+        ``track_name`` (or None) and ``speech`` as a list of (start, end) tuples."""
+        sql, params = "SELECT * FROM chunks WHERE session_id = ?", [session_id]
+        if track is not None:
+            sql += " AND track = ?"
+            params.append(track)
+        rows = self._q(sql + " ORDER BY track, sequence", params)
         for r in rows:
             r["speech"] = [tuple(s) for s in json.loads(r["speech"])]
         return rows
 
-    def clear_chunk_audio(self, session_id: str, sequences: Iterable[int] | None = None) -> None:
-        """Forget the audio of the given chunks (all chunks of the session if None)."""
+    def tracks(self, session_id: str) -> list[dict[str, Any]]:
+        """The session's tracks (chunks without a track are not one), ordered by first
+        chunk time: ``{"track", "name", "names", "chunks", "started_at", "ended_at"}``.
+        ``name`` is the display name of the track's latest chunk (highest sequence) that
+        had one, else None; ``names`` every distinct name seen, in order of first use, so
+        a participant who renames mid-meeting stays one track with several names."""
+        out: dict[str, dict[str, Any]] = {}
+        for r in self._q(
+                "SELECT track, track_name, sequence, started_at, duration FROM chunks"
+                " WHERE session_id = ? AND track != '' ORDER BY track, sequence",
+                (session_id,)):
+            t = out.setdefault(r["track"], {"track": r["track"], "name": None, "names": [],
+                                            "chunks": 0, "started_at": r["started_at"],
+                                            "ended_at": r["started_at"] + r["duration"]})
+            t["chunks"] += 1
+            t["started_at"] = min(t["started_at"], r["started_at"])
+            t["ended_at"] = max(t["ended_at"], r["started_at"] + r["duration"])
+            name = r["track_name"]
+            if name:
+                t["name"] = name
+                if name not in t["names"]:
+                    t["names"].append(name)
+        return sorted(out.values(), key=lambda t: (t["started_at"], t["track"]))
+
+    def clear_chunk_audio(self, session_id: str,
+                          keys: Iterable[tuple[str, int]] | None = None) -> None:
+        """Forget the audio of the given chunks, as (track, sequence) pairs ('' = no
+        track); all chunks of the session if None."""
         with self.tx() as c:
-            if sequences is None:
+            if keys is None:
                 c.execute("UPDATE chunks SET audio_path = NULL WHERE session_id = ?",
                           (session_id,))
             else:
                 c.executemany(
-                    "UPDATE chunks SET audio_path = NULL WHERE session_id = ? AND sequence = ?",
-                    [(session_id, seq) for seq in sequences])
+                    "UPDATE chunks SET audio_path = NULL WHERE session_id = ? AND track = ?"
+                    " AND sequence = ?",
+                    [(session_id, track, seq) for track, seq in keys])
 
     # ---------------------------------------------------------------- segments
     def replace_segments(self, session_id: str, device: str, segments: list[Segment],
@@ -1034,14 +1109,15 @@ class Store:
                 c.execute("UPDATE conversations SET transcript_pruned_at = ? WHERE id = ?",
                           (now, conv_id))
             audio = [r for r in c.execute(
-                "SELECT k.session_id, k.sequence, k.audio_path FROM chunks k JOIN sessions s"
-                " ON s.id = k.session_id WHERE s.status = 'done' AND k.audio_path IS NOT NULL"
-                " AND k.started_at + k.duration < ?", (before,)).fetchall()]
+                "SELECT k.session_id, k.track, k.sequence, k.audio_path FROM chunks k"
+                " JOIN sessions s ON s.id = k.session_id WHERE s.status = 'done'"
+                " AND k.audio_path IS NOT NULL AND k.started_at + k.duration < ?",
+                (before,)).fetchall()]
             c.executemany("UPDATE chunks SET audio_path = NULL WHERE session_id = ?"
-                          " AND sequence = ?", [(r[0], r[1]) for r in audio])
+                          " AND track = ? AND sequence = ?", [(r[0], r[1], r[2]) for r in audio])
         if convs or audio:
             self.compact()
-        return {"conversations": len(convs), "lines": lines, "audio": [r[2] for r in audio]}
+        return {"conversations": len(convs), "lines": lines, "audio": [r[3] for r in audio]}
 
     # ------------------------------------------------------------- forgetting
     def erase_fact(self, fact_id: int, reason: str = "") -> dict[str, Any] | None:
@@ -1127,12 +1203,15 @@ class Store:
                   (conv_id,))
         self._index_transcript(c, conv_id)
         for chunk in c.execute(
-                "SELECT sequence, audio_path FROM chunks WHERE session_id = ?"
+                "SELECT track, sequence, audio_path FROM chunks WHERE session_id = ?"
                 " AND audio_path IS NOT NULL AND started_at < ? AND started_at + duration > ?",
                 (line["session_id"], line["ended_at"], line["started_at"])).fetchall():
+            # every track's audio at that time: a line's words can be heard on another
+            # participant's microphone too
             audio.append(chunk["audio_path"])
             c.execute("UPDATE chunks SET audio_path = NULL WHERE session_id = ?"
-                      " AND sequence = ?", (line["session_id"], chunk["sequence"]))
+                      " AND track = ? AND sequence = ?",
+                      (line["session_id"], chunk["track"], chunk["sequence"]))
         return 1
 
     def _queue_rewrite(self, c: sqlite3.Connection, conv_id: str, facts: list[str],
