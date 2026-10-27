@@ -276,7 +276,7 @@ def test_api_import_does_not_load_meeting_names():
 
 # ------------------------------------------------------------------ QA audit regressions
 # BUG-01: rooms and conference hardware hold several people; they name no person.
-# Kept in step with lane 2A's ``meeting_tracks.is_shared_room`` on the clear cases.
+# ``is_room_or_hardware`` is the one rule; ``meeting_tracks.is_shared_room`` calls it.
 @pytest.mark.parametrize("raw", [
     "Polycom", "Polycom Trio 8800", "Logitech Rally", "Rally Bar", "Logitech MeetUp",
     "Meetup", "Cisco", "Cisco Webex Room Kit", "Webex", "Crestron", "Neat Bar", "Neat Board",

@@ -10,13 +10,15 @@ participant's: no diarizer, no speaker embedder. Then:
 * **Bleed**: two participants in one room hear each other, so one voice can reach two
   microphones. A line whose words nearly match a line on another track at about the
   same time is dropped, keeping the louder track's line (``find_bleed``).
-* **Shared rooms and devices**: a track whose display name is, or ever was, a room or
-  a device ("Conference Room", "iPhone", "Zoom user", ``is_shared_room``) can hold
+* **Shared rooms and devices**: a track whose display name is, or ever was, a room,
+  conference hardware or a bare device with no person ("Conference Room", "Polycom",
+  "iPhone", "Zoom user", ``is_shared_room``; "Kath's iPhone" is Kath) can hold
   several people. The configured diarizer runs on that track only; its unnamed voices become
   "Speaker N" (numbered across the meeting) with stored voices, so ``name_speaker`` and
   ``list_unnamed_speakers`` work on them as on any recording.
-* **Owner**: a track named in ``CONVO_ZOOM_OWNER_NAMES`` is the owner's
-  (``is_owner=true``), named as the owner is everywhere else.
+* **Owner**: a track named CONVO_OWNER_NAME or in ``CONVO_ZOOM_OWNER_NAMES``
+  (``Settings.zoom_owner_name_list``) is the owner's (``is_owner=true``), named as the
+  owner is everywhere else (enrolled owner voice, else CONVO_OWNER_NAME).
 
 Imported only by ``Pipeline._transcribe_session`` for a session that has tracks, so a
 server that never sees a meeting never loads this module.
@@ -66,32 +68,16 @@ BLEED_MIN_SECONDS = 0.5
 _UNNAMED = re.compile(r"^Speaker \d+$")
 _WORD = re.compile(r"[\w']+")
 
-# Display names that are a room or a device rather than one person (lowercase; matched
-# as whole words). Zoom shows a Zoom Rooms system or a conference phone by its room or
-# product name, a phone by its model, and a guest who never set a name as "Zoom user".
-_ROOM_WORDS = (
-    r"room", r"rooms", r"boardroom", r"conference", r"conf", r"meeting\s*room",
-    r"huddle", r"auditorium", r"lobby", r"hall", r"zoom\s*user", r"zoomroom",
-    r"polycom", r"poly\s+studio", r"logitech", r"cisco", r"webex", r"crestron",
-    r"yealink", r"jabra", r"neat\s*(?:bar|board|pad)", r"meeting\s*owl", r"owl\s*pro",
-    r"iphone", r"ipad", r"android", r"galaxy", r"pixel", r"samsung", r"oneplus",
-    r"huawei", r"xiaomi", r"redmi", r"motorola", r"moto\s*g", r"sm-[a-z]?\d+\w*",
-    r"macbook(?:\s*(?:pro|air))?", r"imac", r"laptop", r"desktop", r"chromebook",
-    r"surface\s*(?:pro|hub|laptop)", r"phone", r"speakerphone", r"dial-?in", r"call-?in",
-)
-_ROOM = re.compile(r"(?<!\w)(?:" + "|".join(_ROOM_WORDS) + r")(?!\w)", re.IGNORECASE)
-# A dial-in caller shows as their phone number.
-_PHONE_NUMBER = re.compile(r"^[\s+()\d.-]{6,}$")
-
-
 def is_shared_room(name: str | None) -> bool:
-    """True when a Zoom display name looks like a room or a device, which can hold
-    several people ("Conference Room", "Boardroom", "Meeting Room 2", "Anna's iPhone",
-    "Galaxy S23", "Zoom user", "Polycom", a dial-in number), not one person's name."""
-    n = " ".join((name or "").split())
-    if not n:
-        return False
-    return bool(_ROOM.search(n) or _PHONE_NUMBER.match(n))
+    """True when a Zoom display name can stand for several people: a room or conference
+    hardware ("Conference Room", "Polycom", "Huddle 4", "Rally Bar"), a bare device with
+    no person on it ("iPhone", "Galaxy S23"), a dial-in number or "Zoom user". Not a
+    person whose name holds such a word ("Jordan Hall", "Cisco Ramirez") or a personal
+    device ("Kath's iPhone" is Kath). Lane 2B's ``meeting_names.is_room_or_hardware`` is
+    the one rule; this name stays for callers of lane 2A's API."""
+    from .meeting_names import is_room_or_hardware
+
+    return is_room_or_hardware(name)
 
 
 def _same_name(a: str, b: str) -> bool:
@@ -99,20 +85,22 @@ def _same_name(a: str, b: str) -> bool:
 
 
 def track_speaker(store: Store, track_info: dict[str, Any],
-                  owner_names: Sequence[str]) -> tuple[str, bool]:
+                  owner_names: Sequence[str], *,
+                  owner_display: str | None = None) -> tuple[str, bool]:
     """Who a track's lines belong to: (speaker name for its segments, is_owner).
 
-    The one place a track becomes a speaker. This version: the track's latest display
-    name, stripped, and the owner when it matches one of ``owner_names`` (any case).
-    An empty name means the track has none; the caller numbers it "Speaker N".
-
-    Seam for lane 2B: ``meeting_names.speaker_for_track`` has the same signature and
-    adds name cleaning and matching to people; this function is wired to call it once
-    both lanes are merged.
+    The one place a track becomes a speaker. Lane 2B's ``meeting_names.speaker_for_track``
+    cleans the display name ("Anna (she/her) | Acme" -> "Anna"), matches it against people
+    and their aliases (creating a person when it is new) and keeps every display name as
+    an alias. An empty name means the track has no person's name (a device, a room or
+    nothing); the caller numbers it "Speaker N" or diarizes it as a shared room.
+    ``owner_display`` is the owner's canonical name (``store.owner_name() or
+    CONVO_OWNER_NAME``): an owner track is named by it, never by its Zoom name.
     """
-    name = " ".join((track_info.get("name") or "").split())
-    owner = bool(name) and any(_same_name(name, o) for o in owner_names if o.strip())
-    return name, owner
+    from .meeting_names import speaker_for_track
+
+    return speaker_for_track(store, {**track_info, "placeholder": ""}, owner_names,
+                             owner_display=owner_display)
 
 
 def _room_track(info: dict[str, Any], owner_names: Sequence[str]) -> bool:
@@ -222,7 +210,6 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
 
     store, cfg = pipeline.store, pipeline.settings
     owner_names = cfg.zoom_owner_name_list
-    owner_display = store.owner_name() or cfg.owner_name
     infos = {t["track"]: t for t in store.tracks(session_id)}
     by_track: dict[str, list[dict[str, Any]]] = {}
     for c in chunks:
@@ -230,7 +217,11 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
     # tracks in order of first audio; chunks without a track (none from the bot) last
     order = sorted(by_track, key=lambda t: (t == "", infos.get(t, {}).get("started_at", 0.0),
                                             t))
-    who = {t: track_speaker(store, infos.get(t, {"track": t, "name": None}), owner_names)
+    # the owner's one name (QA BUG-07, owner request): the enrolled owner voice's, else
+    # CONVO_OWNER_NAME, never a Zoom name; an owner track's Zoom names become aliases
+    owner_display = store.owner_name() or cfg.owner_name
+    who = {t: track_speaker(store, infos.get(t, {"track": t, "name": None}), owner_names,
+                            owner_display=owner_display)
            for t in order if t}
     prompt = pipeline.whisper_prompt()
     if cfg.whisper_prompt_names:
@@ -258,7 +249,10 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
         idx = sorted(range(len(pieces)), key=lambda i: pieces[i][0])
         pieces, words = [pieces[i] for i in idx], [words[i] for i in idx]
         name, owner = who.get(track, ("", False))
-        shared = not track or _room_track(infos.get(track, {}), owner_names)
+        # a shared room: any display name the track ever had is a room or a device
+        # ("Conference Room 2", "iPhone", "Zoom user"), other than the owner's own names
+        raw = infos.get(track, {}).get("name")
+        shared = not track or (not owner and _room_track(infos.get(track, {}), owner_names))
         if shared and pipeline.diarizer is not None:
             if not voices_loaded:
                 pipeline.diarizer.voices = load_voices(store)
@@ -276,6 +270,8 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
         else:
             if owner:
                 name = owner_display or name
+            elif shared and not name and raw:  # a room, diarization off: the room's name
+                name = " ".join(raw.split())
             elif not name:
                 unnamed += 1
                 name = f"Speaker {unnamed}"

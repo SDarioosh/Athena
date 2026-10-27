@@ -242,7 +242,7 @@ def test_sessions_without_tracks_are_unchanged(pipeline):
 
 @pytest.mark.parametrize("name", [
     "Conference Room", "Boardroom", "Meeting Room 2", "Zoom Rooms", "ZoomRoom-3F",
-    "iPhone", "Anna's iPhone", "Galaxy S23", "Zoom user", "Polycom", "Logitech Rally",
+    "iPhone", "Galaxy S23", "Zoom user", "Polycom", "Logitech Rally",
     "Huddle 4", "Pixel 8", "SM-G991B", "+1 555 0100", "Conf Rm A", "Cisco Webex Room",
     "Dial-in user", "MacBook Pro",
 ])
@@ -253,18 +253,23 @@ def test_rooms_and_devices(name):
 @pytest.mark.parametrize("name", [
     "Alice Example", "Bo Example (he/him)", "Roomi Example", "Hallie Example",
     "Max Pixelton", "Mac Example", "Owen Polyakov", "", None, "Dr. Cleo Example | Acme",
+    "Anna's iPhone",  # a personal phone is Anna (one room rule with lane 2B, QA BUG-01)
 ])
 def test_people_are_not_rooms(name):
     assert not is_shared_room(name)
 
 
-def test_track_speaker():
-    owners = ["Cleo Example", "Cleo (phone)"]
-    assert track_speaker(None, {"name": "  Bo   Example "}, owners) == ("Bo Example", False)
-    assert track_speaker(None, {"name": "CLEO EXAMPLE"}, owners) == ("CLEO EXAMPLE", True)
-    assert track_speaker(None, {"name": "Cleo"}, owners) == ("Cleo", False)
-    assert track_speaker(None, {"name": None}, owners) == ("", False)
-    assert track_speaker(None, {"name": "Bo"}, ["", " "]) == ("Bo", False)
+def test_track_speaker(pipeline):
+    """Wired to lane 2B: names are cleaned and matched to people; no person -> ""."""
+    store, owners = pipeline.store, ["Cleo Example", "Cleo (phone)"]
+    assert track_speaker(store, {"name": "  Bo   Example "}, owners) == ("Bo Example", False)
+    assert track_speaker(store, {"name": "CLEO EXAMPLE"}, owners)[1] is True
+    # "Cleo (phone)" cleans to "Cleo", so a track called "Cleo" is the owner too
+    assert track_speaker(store, {"name": "Cleo"}, owners)[1] is True
+    assert track_speaker(store, {"name": "Dana"}, owners) == ("Dana", False)
+    assert track_speaker(store, {"name": None}, owners) == ("", False)
+    assert track_speaker(store, {"name": "Conference Room 2"}, owners) == ("", False)
+    assert track_speaker(store, {"name": "Bo (he/him)"}, ["", " "]) == ("Bo", False)
 
 
 def _line(track, start, end, text):
