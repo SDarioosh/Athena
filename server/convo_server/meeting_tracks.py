@@ -197,10 +197,15 @@ def meeting_prompt(base: str, names: Sequence[str], max_names: int) -> str:
     return " ".join(p for p in (base, ", ".join(extra) + "." if extra else "") if p)
 
 
-def transcribe_meeting(pipeline: Pipeline, session_id: str,
-                       chunks: list[dict[str, Any]]) -> list[Segment]:
+def transcribe_meeting(pipeline: Pipeline, session_id: str, chunks: list[dict[str, Any]],
+                       kept: dict[str, list[tuple[float, float]]] | None = None,
+                       ) -> list[Segment]:
     """Lines of a tracked session: each track transcribed on its own and named by its
-    track (shared-room tracks by the diarizer), bleed dropped, merged in time order."""
+    track (shared-room tracks by the diarizer), bleed dropped, merged in time order.
+
+    ``kept``, when given, is filled with each named (not shared-room) track's kept lines
+    as (start, end) epoch seconds, after bleed is dropped and before lines are joined:
+    the only speech lane 2C learns a voice from (QA BUG-05)."""
     from .pipeline import MAX_PROMPT_NAMES
 
     store, cfg = pipeline.store, pipeline.settings
@@ -224,6 +229,7 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
 
     runs: list[np.ndarray] = []
     lines: list[Line] = []
+    shared_tracks: set[str] = set()
     candidates: dict[str, np.ndarray] = {}
     unnamed = 0  # "Speaker N" numbering across the meeting
     voices_loaded = False
@@ -247,6 +253,8 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
         # ("Conference Room 2", "iPhone", "Zoom user"), other than the owner's own names
         raw = infos.get(track, {}).get("name")
         shared = not track or (not owner and _room_track(infos.get(track, {}), owner_names))
+        if shared:
+            shared_tracks.add(track)
         if shared and pipeline.diarizer is not None:
             if not voices_loaded:
                 pipeline.diarizer.voices = load_voices(store)
@@ -282,6 +290,10 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
                                     int(ln.ref.end * SAMPLE_RATE)]) for ln in lines]
     drop = find_bleed(lines, loud)
     kept_lines = [ln for i, ln in enumerate(lines) if i not in drop]
+    if kept is not None:
+        for ln in kept_lines:
+            if ln.track not in shared_tracks:
+                kept.setdefault(ln.track, []).append((ln.start, ln.end))
     if cfg.join_lines:  # then join, within each track only: never two participants
         kept_lines = [j for track in order
                       for j in _join_track([ln for ln in kept_lines if ln.track == track],

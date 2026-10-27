@@ -169,12 +169,17 @@ other's name; two different named speakers stay apart (often a real interruption
   track is one known voice, so a few seconds of it become that person's voice samples and
   the diarizer recognizes them in later in-person recordings:
   - Tracks: each named participant's own track. Not a room or device track ("Conference
-    Room", "iPhone": several voices), not an unnamed "Speaker N" track, not a track with
-    under 10 s of VAD speech. The owner's track (`CONVO_ZOOM_OWNER_NAMES`) adds samples to
+    Room", "iPhone": several voices), decided exactly as transcription decides it (any
+    display name the track ever had), not a personal device track ("Anna's iPhone",
+    "Kath (mobile)": her lines carry her name, but a phone is passed around and put on
+    speakerphone), not an unnamed "Speaker N" track, not a track with under 10 s of speech
+    in its kept lines. The owner's track (`CONVO_ZOOM_OWNER_NAMES`) adds samples to
     the enrolled owner voice (`is_owner`) only; without an enrolled owner it is skipped, so
     a meeting never makes a second owner.
-  - Windows: 3 s of the track's own VAD speech, never while another track has VAD speech
-    (±0.5 s): no crosstalk, no bleed of someone else's voice. Up to 12 windows spread over
+  - Windows: 3 s of the track's own VAD speech that also lies in its kept transcript
+    lines (after bleed is dropped: speech that gave no line, such as a muted neighbour's
+    murmur, is never learned), never while another track has VAD speech (±0.5 s): no
+    crosstalk, no bleed of someone else's voice. Up to 12 windows spread over
     the meeting are decoded and the 3 loudest are embedded.
   - Storage: `voice_samples` rows in `convo.db` with `source='meeting'` and the meeting's
     session id; voiceprints never leave the server. A person keeps at most 3 meeting

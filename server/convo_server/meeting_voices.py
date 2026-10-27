@@ -13,8 +13,13 @@ How samples are chosen, per track:
   unnamed "Speaker N" track. The owner's track counts
   only when the owner has an enrolled voice (``is_owner``); its samples go to that voice,
   so a meeting never makes a second owner or a non-owner speaker with the owner's name.
-* The track needs at least ``MIN_SPEECH_SECONDS`` of VAD speech in total.
-* Windows of ``WINDOW_SECONDS`` are cut from the track's own VAD speech, never while any
+* Not a track on a personal device ("Anna's iPhone", "Kath (mobile)"): her lines carry
+  her name, but a phone is passed around and put on speakerphone.
+* Only speech that became kept transcript lines of the track (after bleed is dropped,
+  before lines are joined): VAD speech that gave no line (a muted neighbour's murmur,
+  laughter) or a line dropped as bleed is never learned.
+* The track needs at least ``MIN_SPEECH_SECONDS`` of such speech in total.
+* Windows of ``WINDOW_SECONDS`` are cut from that speech, never while any
   other track has VAD speech (``OTHERS_PAD_SECONDS`` around it): no crosstalk and no bleed
   of another participant's voice. Up to ``MAX_CANDIDATES`` windows spread over the
   meeting are loaded; the ``SAMPLES_PER_MEETING`` loudest (clearest on their own mic)
@@ -39,6 +44,7 @@ setting is on, so nothing of this loads otherwise.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -138,13 +144,20 @@ def runs(chunks: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     return out
 
 
+def own_speech(own: Sequence[dict[str, Any]], spoken: Sequence[Interval]) -> list[Interval]:
+    """The track's VAD speech that also lies in its kept transcript lines (``spoken``)."""
+    return intersect(merge(speech(own), MERGE_GAP_SECONDS), merge(spoken, MERGE_GAP_SECONDS))
+
+
 def candidate_windows(own: Sequence[dict[str, Any]], others: Sequence[dict[str, Any]],
+                      spoken: Sequence[Interval],
                       ) -> list[tuple[float, float, list[dict[str, Any]]]]:
-    """3 s windows of the track's own speech while no other track speaks:
-    (start, end, the run's chunks), in time order, at most MAX_CANDIDATES spread evenly."""
+    """3 s windows of the track's own speech, inside its kept lines (``spoken``), while no
+    other track speaks: (start, end, the run's chunks), in time order, at most
+    MAX_CANDIDATES spread evenly."""
     busy = merge([(a - OTHERS_PAD_SECONDS, b + OTHERS_PAD_SECONDS)
                   for a, b in speech(others)])
-    free = subtract(merge(speech(own), MERGE_GAP_SECONDS), busy)
+    free = subtract(own_speech(own, spoken), busy)
     out: list[tuple[float, float, list[dict[str, Any]]]] = []
     for run in runs(own):
         span = (run[0]["started_at"], run[-1]["started_at"] + run[-1]["duration"])
@@ -157,6 +170,21 @@ def candidate_windows(own: Sequence[dict[str, Any]], others: Sequence[dict[str, 
         step = len(out) / MAX_CANDIDATES
         out = [out[int(i * step)] for i in range(MAX_CANDIDATES)]
     return out
+
+
+def on_device(name: str) -> bool:
+    """Whether a display name puts its person on a personal device ("Anna's iPhone",
+    "Kath (mobile)", "iPad von Jan"). "Mac" and "Dell" that are the person's own name
+    ("Mac Example") are not devices (``meeting_names``' rule)."""
+    from .meeting_names import _DEVICE, _NAME_LIKE_DEVICE, clean_display_name
+
+    kept = clean_display_name(name).lower().split()
+    return any(not (w.lower() in _NAME_LIKE_DEVICE and w.lower() in kept)
+               for w in re.findall(rf"\b(?:{_DEVICE})\b", name, re.IGNORECASE))
+
+
+def _names(info: dict[str, Any]) -> list[str]:
+    return [n for n in [*(info.get("names") or []), info.get("name")] if n]
 
 
 class _Audio:
@@ -182,15 +210,17 @@ class _Audio:
 
 
 def choose_clips(pipeline: Pipeline, own: Sequence[dict[str, Any]],
-                 others: Sequence[dict[str, Any]]) -> list[np.ndarray]:
+                 others: Sequence[dict[str, Any]], spoken: Sequence[Interval],
+                 ) -> list[np.ndarray]:
     """Up to SAMPLES_PER_MEETING clips of WINDOW_SECONDS for one track ([] when it has
-    under MIN_SPEECH_SECONDS of speech or no window free of other tracks' speech)."""
-    total = sum(b - a for a, b in speech(own))
+    under MIN_SPEECH_SECONDS of speech in kept lines or no window free of other tracks'
+    speech)."""
+    total = sum(b - a for a, b in own_speech(own, spoken))
     if total < MIN_SPEECH_SECONDS:
         return []
     audio = _Audio(pipeline)
     clips = []
-    for a, b, run in candidate_windows(own, others):
+    for a, b, run in candidate_windows(own, others, spoken):
         clip = audio.clip(a, b, run)
         if clip.size >= MIN_FILL * WINDOW_SECONDS * SAMPLE_RATE:
             clips.append((rms_db(clip), a, clip))
@@ -199,9 +229,11 @@ def choose_clips(pipeline: Pipeline, own: Sequence[dict[str, Any]],
 
 
 def learn_from_meeting(pipeline: Pipeline, session_id: str,
-                       chunks: Sequence[dict[str, Any]]) -> list[Learned]:
+                       chunks: Sequence[dict[str, Any]],
+                       spoken: dict[str, list[Interval]]) -> list[Learned]:
     """Save voice samples of the meeting's named participants (see the module doc) and
-    relabel matching unnamed speakers in other recordings. Call after the meeting's
+    relabel matching unnamed speakers in other recordings. ``spoken``: each named
+    track's kept lines (``transcribe_meeting``'s ``kept``). Call after the meeting's
     lines are stored and before its audio is deleted."""
     from .meeting_names import PLACEHOLDER
     from .meeting_tracks import _UNNAMED, _room_track, track_speaker
@@ -232,6 +264,10 @@ def learn_from_meeting(pipeline: Pipeline, session_id: str,
             name = owner_voice
         elif not name or name == PLACEHOLDER or _UNNAMED.match(name):
             continue  # an unnamed "Speaker N" or "Unknown": nobody to learn for
+        if any(on_device(n) for n in _names(info)):
+            # "Anna's iPhone": her lines, but a phone is passed around and put on
+            # speakerphone, so whose voice it carries is not sure enough (QA BUG-05)
+            continue
         plan.append((track, name))
     if not plan:
         return []
@@ -243,7 +279,7 @@ def learn_from_meeting(pipeline: Pipeline, session_id: str,
     chosen = []
     for track, name in plan:
         others = [c for t, cs in by_track.items() if t != track for c in cs]
-        clips = choose_clips(pipeline, by_track[track], others)
+        clips = choose_clips(pipeline, by_track[track], others, spoken.get(track, []))
         if clips:
             chosen.append((name, clips))
     if not chosen:

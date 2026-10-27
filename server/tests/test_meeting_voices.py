@@ -75,7 +75,7 @@ def test_windows_come_from_own_speech_never_while_others_speak():
             "speech": [(0.0, 12.0)]}]
     others = [{"track": "b", "sequence": 0, "started_at": 100.0, "duration": 30.0,
                "speech": [(4.0, 5.0)]}]
-    wins = [(a - 100, b - 100) for a, b, _ in candidate_windows(own, others)]
+    wins = [(a - 100, b - 100) for a, b, _ in candidate_windows(own, others, [(100.0, 130.0)])]
     # 4-5 s is b's speech, padded by 0.5 s: windows only in 0-3.5 and 5.5-12
     assert wins == [(0.0, 3.0), (5.5, 8.5), (8.5, 11.5)]
 
@@ -295,3 +295,55 @@ def test_room_and_hardware_names_are_never_learned(pipeline, rec, name):
 def test_placeholder_tracks_are_never_learned(pipeline, rec, name):
     meeting(pipeline, [("p", name, track((0, 14, 300)))])
     assert meeting_samples(pipeline.store) == 0  # (rec also sees the diarizer's windows)
+
+
+class DropsTranscriber:
+    """FakeTranscriber that hears no words in one tone (laughter, a muted neighbour's
+    murmur whisper returns nothing for)."""
+
+    def __init__(self, inner, silent_freq: int) -> None:
+        self.inner, self.silent_freq = inner, silent_freq
+
+    def transcribe(self, audio, prompt=""):
+        if dominant_freq(audio) == self.silent_freq:
+            return []
+        return self.inner.transcribe(audio, prompt)
+
+
+def test_only_windows_with_kept_lines_of_the_track_are_learned(pipeline, rec):
+    # QA BUG-05: Alice (300 Hz) speaks 0-12 s; then, while she is silent, a colleague
+    # in her office who is muted on Zoom (900 Hz, louder) talks into her open mic for
+    # 14 s. No transcript line comes of it, so it must never become Alice's voice.
+    pipeline.transcriber = DropsTranscriber(pipeline.transcriber, 900)
+    loud = np.zeros(30 * SAMPLE_RATE, np.float32)
+    loud[:12 * SAMPLE_RATE] = tone(300, 12, amp=0.1)
+    loud[16 * SAMPLE_RATE:30 * SAMPLE_RATE] = tone(900, 14, amp=0.6)
+    meeting(pipeline, [("a", "Alice Example", wav(loud))])
+    assert {s.speaker for s in pipeline.store.session_segments("m1")} == {"Alice Example"}
+    assert rec.clips and {dominant_freq(c) for c in rec.clips} == {300}
+
+
+def test_windows_need_a_kept_line_of_the_track():
+    # QA BUG-05: VAD speech alone is not enough; a window must lie in the track's kept
+    # lines (a line dropped as bleed or never transcribed is not in them)
+    own = [{"track": "a", "sequence": 0, "started_at": 100.0, "duration": 30.0,
+            "speech": [(0.0, 20.0)]}]
+    wins = [(a - 100, b - 100) for a, b, _ in candidate_windows(own, [], [(106.0, 113.0)])]
+    assert wins == [(6.0, 9.0), (9.0, 12.0)]
+    assert candidate_windows(own, [], []) == []
+
+
+def test_personal_device_track_is_named_but_not_learned(pipeline, rec):
+    # QA BUG-05: "Anna's iPhone" is Anna for her lines, but a phone is passed around
+    # and put on speakerphone, so its audio never becomes Anna's voiceprint
+    meeting(pipeline, [("a", "Anna's iPhone", track((0, 14, 300))),
+                       ("k", "Kath (mobile)", track((15, 14, 500)))])
+    speakers = {s.speaker for s in pipeline.store.session_segments("m1")}
+    assert speakers == {"Anna", "Kath"}
+    assert meeting_samples(pipeline.store) == 0  # (rec also sees the diarizer's windows)
+
+
+def test_name_like_device_words_still_learn(pipeline, rec):
+    # "Mac" and "Dell" alone are names (QA BUG-09), not devices
+    meeting(pipeline, [("m", "Mac Example", track((0, 14, 300)))])
+    assert sources(pipeline.store, "Mac Example") == ["meeting"] * 3

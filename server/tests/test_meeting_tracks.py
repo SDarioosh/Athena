@@ -148,9 +148,11 @@ def test_named_tracks_never_use_the_diarizer(pipeline):
     pipeline.diarizer = EmbedderOnly()
     segs = meeting(pipeline, [ALICE, BO, CLEO])
     assert [s.speaker for s in segs] == ["Alice Example", "Bo Example", "Bo Example", "Me"]
-    # only Bo has >= 10 s of speech: one 3 s window after Alice stops (6.5-10 s) and one
-    # in his 15-20 s line (her mic's quiet copy of it is below the VAD)
-    assert pipeline.diarizer.clips == [3 * SAMPLE_RATE] * 2
+    # learning embeds one 3 s window of Bo, after Alice stops (6.5-10 s; his 15-20 s line
+    # has her mic's copy of it alongside). Alice is not learned: her VAD speech is 11 s,
+    # but 5 s of it is that copy of Bo, dropped as bleed, and only kept lines count
+    # (QA BUG-05), so she has 6 s, under the 10 s minimum.
+    assert pipeline.diarizer.clips == [3 * SAMPLE_RATE]
     pipeline.settings.learn_meeting_voices = False
     pipeline.diarizer = NoDiarizer()
     meeting(pipeline, [ALICE, BO, CLEO], session="m2")
