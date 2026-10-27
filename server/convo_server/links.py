@@ -120,7 +120,7 @@ def _written(written: dict[str, Any] | None) -> str:
 
 
 def _meeting(meeting: dict[str, Any] | None) -> str:
-    """A Zoom meeting: its topic and participants."""
+    """An online meeting: its topic and participants."""
     if not meeting:
         return ""
     e = html.escape
@@ -130,11 +130,12 @@ def _meeting(meeting: dict[str, Any] | None) -> str:
 
 
 def meeting_label(meeting: dict[str, Any] | None) -> str:
-    """" (Zoom meeting: <topic>)" after a title, " (Zoom meeting)" without a topic; ""
-    for anything else (MCP 0.16.0)."""
+    """" (Online meeting: <topic>)" after a title, " (Online meeting)" without a topic; ""
+    for anything else (MCP 0.17.0; 0.16.0 said "Zoom meeting"). It names no platform:
+    meetings may come from others than Zoom later."""
     if not meeting:
         return ""
-    return f" (Zoom meeting: {meeting['topic']})" if meeting.get("topic") else " (Zoom meeting)"
+    return f" (Online meeting: {meeting['topic']})" if meeting.get("topic") else " (Online meeting)"
 
 
 def speaker_label(segment: Any) -> str:

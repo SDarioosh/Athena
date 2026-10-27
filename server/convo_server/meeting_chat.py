@@ -14,7 +14,7 @@ The bot sends them in one call when the meeting ends: ``POST /v1/sessions/{id}/c
   and join its conversation then; while it is processed the session is sent back for one
   more pass; after, they are added to its conversation, which is summarized again.
 * The topic and participant list show on the meeting's conversation (MCP
-  ``(Zoom meeting: <topic>)``) and go into its summary prompt (``summary_context``).
+  ``(Online meeting: <topic>)``) and go into its summary prompt (``summary_context``).
 
 Imported only by the chat route and, for a meeting's conversation, by the summary step,
 so a server that never sees a meeting never loads it.
@@ -288,7 +288,7 @@ def ingest_chat(pipeline: Pipeline, session_id: str, body: ChatIn) -> dict[str, 
 def summary_context(meeting: dict[str, Any], segments: list[Segment]) -> str:
     """What the summary model is told about a meeting before its transcript."""
     topic = meeting.get("topic")
-    out = ["This is a Zoom meeting" + (f' with the topic "{topic}"' if topic else "") + "."]
+    out = ["This is an online meeting" + (f' with the topic "{topic}"' if topic else "") + "."]
     people = [p["name"] for p in meeting.get("participants") or []]
     if people:
         out.append("Participants: " + ", ".join(people) + ".")

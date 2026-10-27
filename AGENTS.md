@@ -214,10 +214,11 @@ server. **Nothing in the data path touches the cloud.**
 - Zoom meetings (MCP 0.16.0, additive): the bot sends a meeting's chat, topic and
   participant list in one call, `POST /v1/sessions/{id}/chat` (not a relay route, not a
   tool; contract in `server/README.md`). Chat lines are transcript lines of kind `chat`;
-  results show them as `<name> (chat): …`, mark a meeting's conversation `(Zoom meeting:
-  <topic>)` (or `(Zoom meeting)`) and list its participants (also those who never spoke).
-  JSON fact and action-item rows have `source`: `"meeting"` when they come from a Zoom
-  meeting, else null.
+  results show them as `<name> (chat): …`, mark a meeting's conversation `(Online meeting:
+  <topic>)` (or `(Online meeting)`; MCP 0.17.0, before that `(Zoom meeting…)`: the mark
+  names no platform, meetings may come from others than Zoom later; the hub reads both)
+  and list its participants (also those who never spoke). JSON fact and action-item rows
+  have `source`: `"meeting"` when they come from a meeting, else null.
 - `search_conversations(kind=…)`: `note` (voice notes and notes written by hand),
   `conversation`, or empty for everything; from MCP 0.14.0 (additive) also `voice` (voice
   notes only) and `written` (notes written by hand only), and the result header says

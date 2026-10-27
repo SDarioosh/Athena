@@ -741,7 +741,7 @@ after `/end`:
   "added", "duplicates", "private_dropped", "conversation_id"}` (`conversation_id` once
   the meeting has one; `attached`: added to a processed meeting).
 
-The summary prompt gets "This is a Zoom meeting with the topic …", the participants, and
+The summary prompt gets "This is an online meeting with the topic …", the participants, and
 chat lines as `[21] Dana Example (chat): …` (links and file names kept as written).
 `GET /v1/conversations/{id}` has `meeting` (`topic`, `participants`) for every
 conversation of a meeting session, a session with tracked chunks (any device) or device
@@ -952,8 +952,9 @@ fact id that stops being returned (replaced, retired, or its conversation delete
 `list_action_items` row: `"meeting"` when the fact or item comes from a Zoom meeting's
 conversation, else null (recordings, voice notes and written notes are told apart by
 `conversation_kind` and `written_by_hand`; other values may be added later, so treat an
-unknown one as null). In the text results a meeting's conversation is marked `(Zoom
-meeting: <topic>)` (`(Zoom meeting)` without a topic) and lists its participants
+unknown one as null). In the text results a meeting's conversation is marked `(Online
+meeting: <topic>)` (`(Online meeting)` without a topic; MCP 0.17.0, before that `(Zoom
+meeting…)`: the mark names no platform) and lists its participants
 (`search_conversations`, `get_conversation` with join and leave times), and chat lines
 read `<name> (chat): …` (`get_transcript`, `search_transcripts`, the `/view` page).
 
