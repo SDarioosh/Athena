@@ -490,6 +490,85 @@ def test_live_bleed_is_decided_before_joining(settings, tmp_path, monkeypatch):
     assert times(live) == times(batch)
 
 
+# ------------------------------------------------- chunks that don't match (BUG-03)
+
+
+def _live_then(pipeline, change):
+    """The fixture meeting with live work done, ``change`` applied to the stored chunks,
+    then the end of the meeting processed."""
+    worker = setup(pipeline)
+    for rnd in range(len(ROUNDS)):
+        upload(pipeline, rnd)
+        worker.tick()
+    assert set(pipeline.store.live_states("m1")) == {ALICE, BO, CLEO}
+    change(pipeline.store)
+    pipeline.end_session("m1")
+    worker.tick()
+
+
+def test_a_duration_rounded_by_one_sample_still_finishes(pipeline):
+    """QA BUG-03: a chunk's stored duration that rounds to one sample more than its
+    audio (1.00004 s for 16000 samples) is the same audio: the meeting finishes with the
+    same lines, the live work used."""
+    def nudge(store):
+        store._conn.execute("UPDATE chunks SET duration = duration + 0.00004 "
+                            "WHERE track = ? AND sequence = 1", (ALICE,))
+
+    _live_then(pipeline, nudge)
+    assert pipeline.store.get_session("m1")["status"] == "done"
+    assert rows(pipeline) == EXPECTED
+
+
+def test_a_chunk_whose_audio_doesnt_match_falls_back_for_that_track(pipeline, caplog):
+    """QA BUG-03: a chunk whose audio is much shorter than its stored duration (a
+    truncated file) doesn't fail the meeting: that track's live work is dropped and the
+    track is transcribed again from its chunks; the other tracks keep theirs."""
+    def truncate(store):
+        c = next(c for c in store.chunks("m1") if c["track"] == ALICE and c["sequence"] == 1)
+        store._conn.execute("UPDATE chunks SET duration = duration + 0.5 "
+                            "WHERE track = ? AND sequence = 1", (ALICE,))
+        assert Path(c["audio_path"]).exists()
+
+    with caplog.at_level("WARNING"):
+        _live_then(pipeline, truncate)
+    assert pipeline.store.get_session("m1")["status"] == "done"
+    texts = [t for _, _, t in rows(pipeline)]
+    assert SCRIPT[300] in texts and SCRIPT[800] in texts and SCRIPT[700] in texts
+    assert "transcribing the track again" in caplog.text
+    assert pipeline.store.live_states("m1") == {}
+
+
+def test_a_missing_chunk_file_doesnt_fail_the_meeting(pipeline, caplog):
+    """QA BUG-03: a chunk file gone after live work (deleted, disk error) doesn't fail
+    the meeting: that track is transcribed again from the chunks it still has."""
+    def delete(store):
+        c = next(c for c in store.chunks("m1") if c["track"] == ALICE and c["sequence"] == 1)
+        Path(c["audio_path"]).unlink()
+
+    with caplog.at_level("WARNING"):
+        _live_then(pipeline, delete)
+    assert pipeline.store.get_session("m1")["status"] == "done"
+    got = rows(pipeline)
+    assert ("Alice Example", False, SCRIPT[300]) in got        # her chunk 0
+    assert not any(SCRIPT[400] in t for _, _, t in got)         # chunk 1 is gone
+    assert ("Bo Example", False, SCRIPT[800]) in got            # other tracks unchanged
+    assert ("Me", True, SCRIPT[1000]) in got
+    assert pipeline.store.live_states("m1") == {}
+
+
+def test_a_duration_off_by_one_sample_doesnt_pause_live_work(pipeline):
+    """QA BUG-03: while the meeting records, a one-sample rounding difference is no
+    mismatch: live work goes on."""
+    worker = setup(pipeline)
+    pipeline.settings.meeting_live_budget_seconds = 600.0
+    upload(pipeline, 0)
+    pipeline.store._conn.execute("UPDATE chunks SET duration = duration + 0.00004 "
+                                 "WHERE track = ?", (BO,))
+    upload(pipeline, 1)
+    worker.tick()
+    assert 500 in pipeline.transcriber.voices()
+
+
 # --------------------------------------------------------- rooms, audio, chat
 
 

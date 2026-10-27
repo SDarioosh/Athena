@@ -57,7 +57,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .audio import SAMPLE_RATE
+from .audio import SAMPLE_RATE, AudioDecodeError
 from .clips import Window
 from .diarize import PieceRef, rms_db
 from .meeting_names import clean_display_name
@@ -76,6 +76,15 @@ Piece = tuple[float, float, str, PieceRef]
 
 class LiveMismatch(Exception):
     """A chunk's audio is not as long as its stored duration."""
+
+
+# A chunk's stored duration is its decoded size / SAMPLE_RATE; a float rounded on the way
+# can read one sample more or less. That much is the same audio (padded or cut by one
+# sample), not a mismatch (QA BUG-03).
+SIZE_TOLERANCE = 1
+# What reading a chunk's audio can fail with: the file gone or unreadable, audio that
+# doesn't decode, or audio not as long as stored.
+UNREADABLE = (OSError, AudioDecodeError, LiveMismatch)
 
 
 @dataclass
@@ -158,9 +167,12 @@ class RunAudio:
     def _chunk(self, i: int) -> np.ndarray:
         if i not in self._pcm:
             pcm = self.pipeline._load_chunk(self.run.chunks[i])
-            if pcm.size != self.sizes[i]:
+            n = self.sizes[i]
+            if abs(pcm.size - n) > SIZE_TOLERANCE:
                 raise LiveMismatch(f"chunk {self.run.chunks[i]['sequence']}: "
-                                   f"{pcm.size} samples, expected {self.sizes[i]}")
+                                   f"{pcm.size} samples, expected {n}")
+            if pcm.size != n:
+                pcm = pcm[:n] if pcm.size > n else np.pad(pcm, (0, n - pcm.size))
             self._pcm[i] = pcm
         return self._pcm[i]
 
@@ -309,7 +321,40 @@ def finish_track(pipeline: Pipeline, session_id: str, track: str,
                  chunks: list[dict[str, Any]], raw_state: str | None,
                  prompt: Callable[[], str]) -> list[tuple[Piece, float]]:
     """The end-of-meeting pass for one track: what live transcription did, plus the
-    windows left. Without a usable state the whole track is transcribed here."""
+    windows left. Without a usable state the whole track is transcribed here.
+
+    A chunk that can't be read as stored (file gone or corrupt, audio not as long as its
+    duration) doesn't fail the meeting (QA BUG-03): the track's live work is dropped and
+    the track is transcribed again from the chunks that read, each as long as its
+    audio."""
+    try:
+        return _finish_track(pipeline, session_id, track, chunks, raw_state, prompt)
+    except UNREADABLE as e:
+        log.warning("meeting %s track %s: %s; transcribing the track again from the "
+                    "chunks that read", session_id, track, e)
+    pipeline.store.put_live_state(session_id, track, TrackState().dump())
+    return _finish_track(pipeline, session_id, track, _readable(pipeline, chunks), None,
+                         prompt)
+
+
+def _readable(pipeline: Pipeline, chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The chunks whose audio decodes, each with the duration of its audio."""
+    out = []
+    for c in chunks:
+        if not c["audio_path"]:
+            continue
+        try:
+            pcm = pipeline._load_chunk(c)
+        except (OSError, AudioDecodeError) as e:
+            log.warning("chunk %s of track %s left out: %s", c["sequence"], c["track"], e)
+            continue
+        out.append({**c, "duration": pcm.size / SAMPLE_RATE})
+    return out
+
+
+def _finish_track(pipeline: Pipeline, session_id: str, track: str,
+                  chunks: list[dict[str, Any]], raw_state: str | None,
+                  prompt: Callable[[], str]) -> list[tuple[Piece, float]]:
     runs = plan_runs(chunks, final=True)
     st = TrackState.load(raw_state) or TrackState()
     if not st.matches(runs, pipeline):
@@ -341,7 +386,7 @@ def step(pipeline: Pipeline, session_ids: list[str], budget_seconds: float,
                     done += 1
                 except StopIteration:
                     steps.remove(it)
-                except (OSError, LiveMismatch) as e:
+                except UNREADABLE as e:
                     # e.g. a chunk whose file is still being moved in place: next tick
                     log.info("live transcription paused for a track: %s", e)
                     steps.remove(it)
