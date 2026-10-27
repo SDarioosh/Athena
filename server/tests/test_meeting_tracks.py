@@ -541,3 +541,31 @@ def test_qa_room_and_hardware_names_are_diarized(pipeline, name):
     assert is_shared_room(name)
     calls, speakers = _two_chunk_track(pipeline, [name])
     assert calls == [1] and speakers == {"Speaker 1", "Speaker 2"}
+
+
+def test_first_tracked_chunk_reopens_a_processed_silence_stopped_session(pipeline):
+    """QA BUG-16 with the late-chunk rule: an untracked chunk stopped the session on
+    silence and the worker processed it before the meeting's first tracked chunk came.
+    That chunk reopens the session instead of being refused as a late meeting chunk;
+    a real meeting (with tracked chunks) that was processed still refuses new ones."""
+    s = pipeline.settings
+    t = T0
+    r = pipeline.ingest_chunk(device="zoom", session_id="mix", sequence=0, started_at=t,
+                              codec="wav", data=wav(silence(30)),
+                              now=t + s.silence_stop_seconds + 60)
+    sess = pipeline.store.get_session("mix")
+    if sess["status"] == "recording":  # a short silence needs more chunks to stop
+        pipeline.end_session("mix", reason="silence")
+    pipeline.store.set_session_status("mix", "done")
+    r = pipeline.ingest_chunk(device="zoom", session_id="mix", sequence=0,
+                              started_at=t + 40, codec="wav", data=wav(tone(200, 5)),
+                              track="t1", track_name="Alice Example")
+    sess = pipeline.store.get_session("mix")
+    assert r.stop is False and sess["status"] == "recording" and not sess["stop_reason"]
+    # now a real meeting: processed, a new tracked chunk is refused
+    pipeline.end_session("mix")
+    pipeline.store.set_session_status("mix", "done")
+    r = pipeline.ingest_chunk(device="zoom", session_id="mix", sequence=1,
+                              started_at=t + 70, codec="wav", data=wav(tone(200, 5)),
+                              track="t1")
+    assert r.stop is True and pipeline.store.get_session("mix")["status"] == "done"
