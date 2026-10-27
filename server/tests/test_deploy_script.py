@@ -180,3 +180,85 @@ def test_docker_pyannote_with_its_extra_starts(tmp_path):
     run("start", BARVIS_SOUND_RUNNER="docker", DOCKER=str(docker),
         CONVO_DIARIZER="pyannote", CONVO_DOCKER_EXTRAS="vad,diarization,pyannote")
     assert " up -d --build" in calls.read_text()
+
+
+# Meeting bot: BARVIS_SOUND_ZOOM_SDK_DIR unset finds ~/zoom-sdk; off turns the bot off.
+
+def fake_sdk(home: Path) -> Path:
+    sdk = home / "zoom-sdk"
+    (sdk / "h").mkdir(parents=True)
+    (sdk / "h" / "zoom_sdk.h").write_text("/* fictional */\n")
+    return sdk
+
+
+def docker_start(tmp_path: Path, home: Path, **env: str):
+    docker, calls = fake_docker(tmp_path)
+    base = {"BARVIS_SOUND_RUNNER": "docker", "DOCKER": str(docker), "HOME": str(home),
+            "CONVO_ZOOM_SDK_KEY": "fictional-key", "CONVO_ZOOM_SDK_SECRET": "fictional-secret"}
+    r = run("start", **{**base, **env})
+    return r, calls.read_text() if calls.exists() else ""
+
+
+def test_sdk_in_home_is_found_without_a_setting(tmp_path):
+    home = tmp_path / "home"
+    sdk = fake_sdk(home)
+    r, calls = docker_start(tmp_path, home)
+    assert f"-f {SERVER}/compose.meeting.yml" in calls
+    assert f"found the Zoom Meeting SDK in {sdk}" in r.stdout
+    assert r.stdout.count("found the Zoom Meeting SDK") == 1
+    assert "CONVO_ZOOM_SDK_KEY" not in r.stdout  # keys set: no warning
+
+
+def test_sdk_off_disables_the_bot(tmp_path):
+    home = tmp_path / "home"
+    fake_sdk(home)
+    r, calls = docker_start(tmp_path, home, BARVIS_SOUND_ZOOM_SDK_DIR="off")
+    assert " up -d --build" in calls and "compose.meeting.yml" not in calls
+    assert "Zoom Meeting SDK" not in r.stdout
+
+
+def test_sdk_empty_setting_still_means_no_bot(tmp_path):
+    home = tmp_path / "home"
+    fake_sdk(home)
+    r, calls = docker_start(tmp_path, home, BARVIS_SOUND_ZOOM_SDK_DIR="")
+    assert " up -d --build" in calls and "compose.meeting.yml" not in calls
+
+
+def test_no_sdk_in_home_no_bot(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    r, calls = docker_start(tmp_path, home)
+    assert " up -d --build" in calls and "compose.meeting.yml" not in calls
+    assert "Zoom Meeting SDK" not in r.stdout
+
+
+def test_explicit_sdk_dir_wins_over_home(tmp_path):
+    home = tmp_path / "home"
+    fake_sdk(home)
+    other = fake_sdk(tmp_path / "elsewhere")
+    r, calls = docker_start(tmp_path, home, BARVIS_SOUND_ZOOM_SDK_DIR=str(other))
+    assert "compose.meeting.yml" in calls and "found the Zoom Meeting SDK" not in r.stdout
+
+
+def test_sdk_without_keys_warns_but_deploys(tmp_path):
+    home = tmp_path / "home"
+    fake_sdk(home)
+    r, calls = docker_start(tmp_path, home, CONVO_ZOOM_SDK_KEY="", CONVO_ZOOM_SDK_SECRET="")
+    assert r.returncode == 0, r.stderr
+    assert "warning: CONVO_ZOOM_SDK_KEY / CONVO_ZOOM_SDK_SECRET are not set" in r.stdout
+    assert "answers 501" in r.stdout and " up -d --build" in calls
+
+
+def test_sudo_docker_gets_the_sdk_dir_by_name(tmp_path):
+    """sudo drops the environment, so the auto-detected folder goes on its command line."""
+    home = tmp_path / "home"
+    sdk = fake_sdk(home)
+    calls = tmp_path / "sudo-calls"
+    sudo = tmp_path / "bin" / "sudo"
+    sudo.parent.mkdir()
+    sudo.write_text(f'#!/usr/bin/env bash\necho "$*" >> {calls}\n')
+    sudo.chmod(0o755)
+    run("start", BARVIS_SOUND_RUNNER="docker", DOCKER=f"{sudo} docker", HOME=str(home),
+        CONVO_ZOOM_SDK_KEY="k", CONVO_ZOOM_SDK_SECRET="s")
+    first = calls.read_text().splitlines()[0]
+    assert first.startswith(f"BARVIS_SOUND_ZOOM_SDK_DIR={sdk} docker compose ")
