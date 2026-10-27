@@ -141,7 +141,7 @@ def zoom_login(settings: Settings, *, status_only: bool = False,
     except zoom_signin.SigninNeeded as e:
         print(f"error: {e}")
         return 2
-    print("1. Open this URL in a browser and sign in as Athena's own Zoom account:\n")
+    print("1. Open this URL in a browser and sign in with your Zoom account:\n")
     print(f"   {login.url}\n")
     print("2. Allow the app. The browser then goes to the redirect URL (the page itself may")
     print("   fail to load; that's fine). Copy the whole address from the address bar.\n")

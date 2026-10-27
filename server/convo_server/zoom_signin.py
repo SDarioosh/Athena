@@ -1,16 +1,18 @@
 """Athena's Zoom sign-in: a join token for meetings in other Zoom accounts.
 
 Since 2026-03-02 a Meeting SDK app may join a meeting hosted by another Zoom account only
-on behalf of a signed-in Zoom user (developers.zoom.us/docs/meeting-sdk/obf-faq/). Athena
-signs in once to its own Zoom account through the Marketplace app's OAuth client
+on behalf of a signed-in Zoom user (developers.zoom.us/docs/meeting-sdk/obf-faq/). The
+owner signs Athena in once with their own Zoom account (a dedicated Athena account with a
+ZAK is a later option) through the Marketplace app's OAuth client
 (``convo-server zoom-login``, authorization code with PKCE; the server listens for
 nothing) and keeps only the refresh token, in ``<data dir>/zoom/refresh_token.json``
 (mode 0600, replaced atomically).
 
 On a join request, and only then, the launcher calls ``join_token``: it trades the refresh
 token for an access token (Zoom rotates the refresh token on every use, so the new one is
-saved before the access token is used) and asks Zoom for a ZAK (join as Athena's account)
-or an OBF token (on behalf of the signed-in user, who must be in the meeting). These are
+saved before the access token is used) and asks Zoom for a ZAK (join as the signed-in account)
+or an OBF token (on behalf of the signed-in user, who must be in the meeting; it is for
+one meeting and lasts about JOIN_TOKEN_SECONDS). These are
 the only network calls, to Zoom's own API, with a short timeout; no audio, transcript or
 other data goes there. Nothing refreshes in the background. Tokens are never logged.
 """
@@ -39,6 +41,8 @@ API_URL = "https://api.zoom.us/v2"
 TIMEOUT = httpx.Timeout(5.0)  # per call; two calls stay under the relay's 15 s
 MODES = ("auto", "zak", "obf", "none")
 LOGIN_HINT = "run convo-server zoom-login"
+# How long a ZAK or OBF token lasts (Zoom: about 2 hours); the bot must join within it.
+JOIN_TOKEN_SECONDS = 7200
 
 
 class SigninNeeded(Exception):
@@ -58,11 +62,12 @@ def signed_in(settings: Settings) -> bool:
 
 
 def join_mode(settings: Settings) -> str:
-    """``zak``, ``obf`` or ``none`` for the next join. ``auto`` (the default) is ``zak``
-    once Athena is signed in, else ``none`` (meetings in the app's own account only)."""
+    """``zak``, ``obf`` or ``none`` for the next join. ``auto`` (the default) is ``obf``
+    once signed in (the owner's own Zoom account, owner's decision 2026-10-27), else
+    ``none`` (meetings in the app's own account only)."""
     mode = settings.zoom_join_token
     if mode == "auto":
-        return "zak" if signed_in(settings) else "none"
+        return "obf" if signed_in(settings) else "none"
     return mode
 
 
@@ -111,7 +116,7 @@ def load_refresh_token(settings: Settings) -> str:
 # --------------------------------------------------------------------- login
 @dataclass(frozen=True)
 class LoginRequest:
-    url: str  # open it, sign in as Athena's Zoom account, allow
+    url: str  # open it, sign in with the owner's Zoom account, allow
     state: str
     verifier: str  # PKCE code verifier, kept in memory until the code comes back
 
