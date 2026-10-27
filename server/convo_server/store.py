@@ -460,6 +460,9 @@ class Store:
         with _init_lock(self.path):
             self._conn.executescript(SCHEMA)
             self._migrate()
+            # voices learned from meetings (meeting_voices.py): which meeting a sample
+            # came from, so processing it again replaces its own samples
+            self._add_column("voice_samples", "session_id", "TEXT")
 
     def _migrate(self) -> None:
         if self._conn.execute("PRAGMA user_version").fetchone()[0] < 2:
@@ -2322,6 +2325,57 @@ class Store:
                 " id DESC LIMIT -1 OFFSET ?)", (sid, MAX_LEARNED_SAMPLES))
             _refresh_voiceprint(c, sid)
 
+    def put_meeting_voice_samples(self, name: str, session_id: str,
+                                  samples: list[np.ndarray], cap: int) -> int:
+        """Voice samples of ``name`` learned from a meeting (``source='meeting'``).
+
+        The speaker is the person's linked voice (``people.speaker_id``, the person found
+        by name or alias in any case), else a speaker of that name in any case, else new
+        (never as the owner, and an existing speaker's ``is_owner`` is left alone): one
+        voice per person, never a second row next to an enrolled one (QA BUG-06). Earlier
+        samples of the same meeting are replaced; then only the newest ``cap`` meeting
+        samples are kept. Enrolled and named samples are never touched. Returns how many
+        meeting samples the speaker has now.
+        """
+        with self.tx() as c:
+            row = _voice_of(c, name)
+            if row is None:
+                sid = c.execute(
+                    "INSERT INTO speakers (name, is_owner, embedding, created_at)"
+                    " VALUES (?, 0, ?, ?)",
+                    (name, _unit(np.mean(samples, axis=0)).tobytes(), time.time())).lastrowid
+            else:
+                sid = row["id"]
+            _ensure_person(c, name, sid)
+            c.execute("DELETE FROM voice_samples WHERE speaker_id = ? AND source = 'meeting'"
+                      " AND session_id = ?", (sid, session_id))
+            now = time.time()
+            c.executemany(
+                "INSERT INTO voice_samples (speaker_id, embedding, source, created_at,"
+                " session_id) VALUES (?, ?, 'meeting', ?, ?)",
+                [(sid, _unit(v).tobytes(), now, session_id) for v in samples])
+            c.execute(
+                "DELETE FROM voice_samples WHERE id IN (SELECT id FROM voice_samples"
+                " WHERE speaker_id = ? AND source = 'meeting' ORDER BY created_at DESC,"
+                " id DESC LIMIT -1 OFFSET ?)", (sid, cap))
+            _refresh_voiceprint(c, sid)
+            return c.execute("SELECT COUNT(*) FROM voice_samples WHERE speaker_id = ?"
+                             " AND source = 'meeting'", (sid,)).fetchone()[0]
+
+    def voice_name(self, name: str) -> str | None:
+        """The name of the voice (``speakers.name``) that samples for ``name`` go to (see
+        ``put_meeting_voice_samples``), None when there is none yet."""
+        with self.tx() as c:
+            row = _voice_of(c, name)
+            return row["name"] if row else None
+
+    def voice_samples(self, name: str) -> list[dict[str, Any]]:
+        """A speaker's voice samples, oldest first: source, session_id, created_at."""
+        return self._q(
+            "SELECT v.source, v.session_id, v.created_at FROM voice_samples v"
+            " JOIN speakers s ON s.id = v.speaker_id WHERE s.name = ? ORDER BY v.id",
+            (name,))
+
     def put_speaker(self, name: str, embedding: np.ndarray, is_owner: bool,
                     samples: list[np.ndarray] | None = None, source: str = "enrolled") -> None:
         """Create or update a speaker; ``samples`` replace their earlier ``source`` samples."""
@@ -2363,6 +2417,14 @@ class Store:
             r["samples"] = (np.stack(got) if got
                             else np.zeros((0, r["embedding"].size), np.float32))
         return rows
+
+    def owner_voice_name(self) -> str | None:
+        """The enrolled owner voice's name (``speakers.is_owner``), None without one: the
+        voice learned owner samples go to. The same as ``owner_name`` (which no longer
+        falls back to the owner's person); kept as its own name so learning reads as
+        "needs a voice"."""
+        row = self._one("SELECT name FROM speakers WHERE is_owner = 1")
+        return row["name"] if row else None
 
     def owner_name(self) -> str | None:
         """The enrolled owner voice's name, or None; callers then use CONVO_OWNER_NAME.
@@ -2638,6 +2700,19 @@ def _person_id(c: sqlite3.Connection, name: str | None) -> int | None:
         pid = row["merged_into"]
         row = c.execute("SELECT id, merged_into FROM people WHERE id = ?", (pid,)).fetchone()
     return pid
+
+
+def _voice_of(c: sqlite3.Connection, name: str) -> sqlite3.Row | None:
+    """The speaker row (id, name) of ``name``: the person's linked voice first, else a
+    speaker called that in any case (people names are NOCASE, speaker names are not)."""
+    pid = _person_id(c, name)
+    if pid is not None:
+        row = c.execute("SELECT s.id, s.name FROM people p JOIN speakers s"
+                        " ON s.id = p.speaker_id WHERE p.id = ?", (pid,)).fetchone()
+        if row is not None:
+            return row
+    return c.execute("SELECT id, name FROM speakers WHERE name = ? COLLATE NOCASE"
+                     " ORDER BY name = ? DESC, id LIMIT 1", (name, name)).fetchone()
 
 
 def _ensure_person(c: sqlite3.Connection, name: str | None, speaker_id: int | None = None,
