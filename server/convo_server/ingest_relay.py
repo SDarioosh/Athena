@@ -13,6 +13,16 @@ The phone relay's T5 sync, paired through Odysseus, also reads a few API routes 
 way (:data:`READ_ROUTES`): the same paths without ``/v1``, same query, same JSON. The
 hub's settings page reads and sets the summary model through ``/settings/llm``.
 
+The hub's "Send Athena to a meeting" box starts and stops the Zoom bot the same way:
+
+    POST   /meetings                 same JSON and answer as /v1/meetings (join)
+    GET    /meetings                 same as /v1/meetings (?limit=1..100)
+    GET    /meetings/{id}            same as /v1/meetings/{id} (state)
+    DELETE /meetings/{id}            same as /v1/meetings/{id} (leave; waits for the bot)
+
+The relay only forwards HTTP: it never imports ``convo_server.meetings``, so building
+the MCP app starts and loads nothing meeting-related.
+
 They are not MCP tools (the model never sees them) and sit behind the same ``BearerAuth``
 as ``/mcp``; the MCP token can already read all of this through the tools. Each request is
 forwarded unchanged to this module's own ingest API with ``CONVO_INGEST_TOKEN``, so there
@@ -22,7 +32,9 @@ leaves the module.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -41,6 +53,15 @@ _ANY_ADDRESS = {"", "0.0.0.0", "::", "[::]"}
 MAX_JSON_BYTES = 64 * 1024
 # A written note: its text (up to 4 bytes per character, escaped in JSON) and fields.
 MAX_TEXT_BODY_BYTES = MAX_TEXT_CHARS * 6 + 16 * 1024
+
+# Meetings: a join request is a link, a passcode and a title; ids are the launcher's
+# uuid4 hex. GET and POST answer quickly; DELETE waits for the bot to exit (SIGTERM, then
+# SIGKILL after 10 s, then up to 5 s for its last state), so it gets more time.
+MAX_MEETING_BODY_BYTES = 16 * 1024
+MEETING_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
+MEETING_LEAVE_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
+MEETING_LIST_MAX = 100
+_MEETING_ID = re.compile(r"^[0-9a-f]{32}$")
 
 # (method, path on the MCP app); the API path is "/v1" + path ("/health" stays as it is).
 READ_ROUTES = [
@@ -74,14 +95,49 @@ def _json(status: int, detail: str) -> Any:
     return JSONResponse({"detail": detail}, status_code=status)
 
 
+def _readable(value: Any) -> str:
+    """One line for an error ``detail`` that isn't a string (FastAPI's 422 list...)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, dict) and "msg" in item:
+                loc = ".".join(str(p) for p in item.get("loc") or ())
+                parts.append(f"{loc}: {item['msg']}" if loc else str(item["msg"]))
+            else:
+                parts.append(_readable(item))
+        return "; ".join(p for p in parts if p)
+    if value is None:
+        return ""
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
 def _passthrough(resp: httpx.Response) -> Any:
-    """The API's status and JSON body as they are; a non-JSON body becomes ``detail``."""
+    """The API's status and JSON body as they are; a non-JSON body becomes ``detail``.
+
+    An error answer (4xx/5xx) always has a string ``detail``, which is what the hub
+    reads: a list ``detail`` (FastAPI's 422 validation errors) is joined into one line
+    and kept as ``errors``; a non-object JSON error is wrapped (QA BUG-23).
+    """
     from starlette.responses import JSONResponse
 
     try:
         body = resp.json()
     except ValueError:
         body = {"detail": (resp.text or resp.reason_phrase or "")[:500]}
+    if resp.status_code >= 400:
+        if not isinstance(body, dict):
+            body = {"detail": _readable(body)[:500]}
+        elif not isinstance(body.get("detail"), str):
+            raw = body.get("detail")
+            body = dict(body)
+            if isinstance(raw, list):
+                body.setdefault("errors", raw)
+            msg = body.get("message")
+            body["detail"] = (_readable(raw) or (msg if isinstance(msg, str) else ""))[:500]
+        if not body["detail"]:
+            body["detail"] = resp.reason_phrase or f"HTTP {resp.status_code}"
     return JSONResponse(body, status_code=resp.status_code)
 
 
@@ -112,9 +168,10 @@ def add_ingest_routes(mcp: Any, settings: Settings,
     async def forward(path: str, **kwargs: Any) -> Any:
         return await forward_method("POST", path, **kwargs)
 
-    async def forward_method(method: str, path: str, **kwargs: Any) -> Any:
+    async def forward_method(method: str, path: str, timeout: httpx.Timeout = TIMEOUT,
+                             **kwargs: Any) -> Any:
         try:
-            async with httpx.AsyncClient(base_url=base, transport=transport, timeout=TIMEOUT,
+            async with httpx.AsyncClient(base_url=base, transport=transport, timeout=timeout,
                                          follow_redirects=False) as client:
                 resp = await client.request(method, path, **kwargs)
         except httpx.HTTPError as e:
@@ -186,3 +243,46 @@ def add_ingest_routes(mcp: Any, settings: Settings,
 
         session_id = request.path_params["session_id"]
         return await forward(f"/v1/sessions/{quote(session_id, safe='')}/end", headers=auth)
+
+    # ----------------------------------------------------------------- meetings
+    @mcp.custom_route("/meetings", methods=["POST"], include_in_schema=False)
+    async def join_meeting(request: Any) -> Any:
+        ctype = request.headers.get("content-type", "")
+        if not ctype.lower().startswith("application/json"):
+            return _json(415, "send application/json, like /v1/meetings")
+        body = await _read_capped(request, MAX_MEETING_BODY_BYTES)
+        if body is None:
+            return _json(413, "request too large")
+        return await forward_method("POST", "/v1/meetings", timeout=MEETING_TIMEOUT,
+                                    content=body,
+                                    headers={**auth, "Content-Type": "application/json"})
+
+    @mcp.custom_route("/meetings", methods=["GET"], include_in_schema=False)
+    async def list_meetings(request: Any) -> Any:
+        params: dict[str, int] = {}
+        raw = request.query_params.get("limit")
+        if raw is not None:
+            if not raw.strip().isdigit():
+                return _json(400, f"limit must be a whole number from 1 to {MEETING_LIST_MAX}")
+            params["limit"] = max(1, min(int(raw), MEETING_LIST_MAX))
+        return await forward_method("GET", "/v1/meetings", timeout=MEETING_TIMEOUT,
+                                    params=params, headers=auth)
+
+    def meeting_path(request: Any) -> str | None:
+        mid = request.path_params["meeting_id"]
+        return f"/v1/meetings/{mid}" if _MEETING_ID.fullmatch(mid) else None
+
+    @mcp.custom_route("/meetings/{meeting_id}", methods=["GET"], include_in_schema=False)
+    async def get_meeting(request: Any) -> Any:
+        path = meeting_path(request)
+        if path is None:  # the API's own answer for an id it doesn't know
+            return _json(404, "meeting not found")
+        return await forward_method("GET", path, timeout=MEETING_TIMEOUT, headers=auth)
+
+    @mcp.custom_route("/meetings/{meeting_id}", methods=["DELETE"], include_in_schema=False)
+    async def leave_meeting(request: Any) -> Any:
+        path = meeting_path(request)
+        if path is None:
+            return _json(404, "meeting not found")
+        return await forward_method("DELETE", path, timeout=MEETING_LEAVE_TIMEOUT,
+                                    headers=auth)

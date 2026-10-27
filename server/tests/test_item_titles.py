@@ -220,7 +220,7 @@ def test_migration_gives_old_items_a_title_and_explicit(tmp_path):
     c.commit()
     store.close()
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 14
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 16
     got = {r["text"]: r for r in map(dict, store._conn.execute(
         "SELECT * FROM action_items").fetchall())}
     brakes = got["Buy the replacement brake pads for the bike at the shop on Lindenstrasse"]

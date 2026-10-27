@@ -123,7 +123,10 @@ server. **Nothing in the data path touches the cloud.**
    speech spans, and returns `{"ok": true, "stop": bool, "reason": ...}`.
    Stop when trailing silence ≥ `CONVO_SILENCE_STOP_SECONDS` or the session
    exceeds `CONVO_MAX_SESSION_SECONDS`. Retries of the same
-   (session, sequence) are idempotent. `POST /v1/sessions/{id}/end` = Stop.
+   (session, sequence) are idempotent. Optional `track` / `track_name` keep one
+   participant's audio apart (a meeting): sequences then count per track, retries are
+   idempotent per (session, track, sequence), and such a session never stops on silence.
+   `POST /v1/sessions/{id}/end` = Stop.
 2. **Finalize** — a session ends on Stop, server stop, or
    `CONVO_SESSION_IDLE_SECONDS` without uploads; the worker then processes it.
 3. **Transcribe** — contiguous chunks are reassembled by sequence; only VAD
@@ -133,7 +136,8 @@ server. **Nothing in the data path touches the cloud.**
    the owner is `is_owner=true`).
 5. **Split** — conversations break on speech gaps > 3 min
    (`CONVO_CONVERSATION_GAP_SECONDS`); a new session within the gap on the
-   same device extends the previous conversation.
+   same device extends the previous conversation. A meeting (a session with tracks) is one
+   conversation of its own: never split at gaps, never joined with another session.
 6. **Summarize** — llama-server (OpenAI-compatible, `json_schema` constrained,
    thinking disabled) returns title, summary, key points, action items,
    people, topics, durable facts, each with a source offset. Daily digest per
@@ -167,11 +171,16 @@ server. **Nothing in the data path touches the cloud.**
   `DELETE /ingest/text/{source_id}`, MCP 0.12.0) and the few API reads the relay's T5
   sync uses (`READ_ROUTES`: `/health`, conversations, transcript, action items, digests), plus
   `GET`/`PUT /settings/llm` for the hub's settings page (which model writes summaries;
-  only the model name, never `CONVO_LLM_BASE_URL`). They are **not MCP tools** (never register
+  only the model name, never `CONVO_LLM_BASE_URL`), and the meeting bot's
+  `POST /meetings`, `GET /meetings`, `GET`/`DELETE /meetings/{id}` for the hub's "Send
+  Athena to a meeting" box (same JSON and status as `/v1/meetings`, including the 409's
+  `message` and `active`; ids checked before forwarding; `DELETE` waits up to 30 s for the
+  bot to exit). They are **not MCP tools** (never register
   them as tools) and forward unchanged to the ingest API with `CONVO_INGEST_TOKEN`, which
   never leaves the module. So **the MCP token can add recordings**: Odysseus uses it for
-  its call recorder and for phones paired through it. Their paths, the multipart
-  fields and the JSON fields of `/ingest/text` are part of the contract like a tool's
+  its call recorder and for phones paired through it, and it can send the meeting bot
+  into a Zoom meeting. Their paths, the multipart fields and the JSON fields of
+  `/ingest/text` and `/meetings` are part of the contract like a tool's
   arguments.
 - Written notes (MCP 0.12.0, additive): the hub sends a handwritten note's reviewed text
   to `POST /v1/ingest/text` (relay `POST /ingest/text`), JSON `source_id`
@@ -200,6 +209,13 @@ server. **Nothing in the data path touches the cloud.**
   that is a whole voice note (its text is the voice note's summary), the voice note's key
   points, which the hub writes into the note between the summary and the transcript
   link; `[]` for every other item.
+- Zoom meetings (MCP 0.16.0, additive): the bot sends a meeting's chat, topic and
+  participant list in one call, `POST /v1/sessions/{id}/chat` (not a relay route, not a
+  tool; contract in `server/README.md`). Chat lines are transcript lines of kind `chat`;
+  results show them as `<name> (chat): …`, mark a meeting's conversation `(Zoom meeting:
+  <topic>)` (or `(Zoom meeting)`) and list its participants (also those who never spoke).
+  JSON fact and action-item rows have `source`: `"meeting"` when they come from a Zoom
+  meeting, else null.
 - `search_conversations(kind=…)`: `note` (voice notes and notes written by hand),
   `conversation`, or empty for everything; from MCP 0.14.0 (additive) also `voice` (voice
   notes only) and `written` (notes written by hand only), and the result header says

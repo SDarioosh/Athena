@@ -95,7 +95,7 @@ def test_migration_gives_old_sessions_kind_conversation(tmp_path):
     old.close()
     store = Store(path)
     assert store.get_session("old")["kind"] == "conversation"
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 14
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 16
 
 
 # ---------------------------------------------------------------- pipeline
@@ -132,6 +132,24 @@ def test_note_owner_name_falls_back_to_settings(pipeline):
     record(pipeline, "n1", T0, "note", freq=600)
     segs = pipeline.store.session_segments("n1")
     assert [(s.speaker, s.is_owner) for s in segs] == [("Sam", True)]
+
+
+def test_note_after_a_zoom_meeting_keeps_convo_owner_name(pipeline):
+    # owner request (QA BUG-07 follow-up): a Zoom meeting matched the owner by
+    # CONVO_ZOOM_OWNER_NAMES with no owner voice enrolled; voice notes keep CONVO_OWNER_NAME
+    from convo_server.meeting_names import speaker_for_track
+    pipeline.store._conn.execute("DELETE FROM speakers")
+    pipeline.store._conn.execute("DELETE FROM people")
+    pipeline.settings.owner_name = "Shahyah"
+    zoom = {"track": "1", "name": "Cleo Example", "names": ["Cleo Example"]}
+    assert speaker_for_track(pipeline.store, zoom, ("Cleo Example",),
+                             owner_display=pipeline.settings.owner_name) == ("Shahyah", True)
+    record(pipeline, "n1", T0, "note", freq=600)
+    segs = pipeline.store.session_segments("n1")
+    assert [(s.speaker, s.is_owner) for s in segs] == [("Shahyah", True)]
+    (owner,) = [p for p in pipeline.store.people() if p["is_owner"]]
+    assert owner["name"] == "Shahyah" and "Cleo Example" in owner["aliases"]
+    assert owner["conversations"] == 1
 
 
 def test_note_is_never_joined_with_nearby_conversations(pipeline):

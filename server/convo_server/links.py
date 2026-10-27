@@ -52,6 +52,7 @@ h1{{font-size:1.3rem;margin:.2rem 0}} .meta{{color:#666;font-size:.9rem}}
 .line{{padding:.25rem .4rem;border-radius:.3rem;margin:.1rem 0}}
 .line.hit{{background:#fff3b0}} .t{{color:#888;font-size:.8rem;margin-right:.4rem}}
 .spk{{font-weight:600;margin-right:.3rem}} .owner{{color:#0a5}}
+.chat .via{{color:#888;font-weight:400;font-size:.85rem}}
 section{{background:#fff;border:1px solid #e3e3e3;border-radius:.5rem;padding:.6rem .9rem;
 margin:.8rem 0}}
 @media (prefers-color-scheme:dark){{body{{background:#161616;color:#ddd}}
@@ -86,13 +87,15 @@ def render_conversation(settings: Settings, conv: dict[str, Any], segments: list
     for s in segments:
         off = int(s.started_at - origin)
         cls = "spk owner" if s.is_owner else "spk"
+        chat = getattr(s, "kind", "speech") == "chat"  # typed in the meeting chat
         lines.append(
-            f'<div class="line" data-t="{off}"><span class="t">'
+            f'<div class="line{" chat" if chat else ""}" data-t="{off}"><span class="t">'
             f'{e(local_time(settings, s.started_at, "%H:%M:%S") or "")}</span>'
-            f'<span class="{cls}">{e(s.speaker)}:</span>{e(s.text)}</div>')
+            f'<span class="{cls}">{e(s.speaker)}'
+            f'{" <span class=via>(chat)</span>" if chat else ""}:</span>{e(s.text)}</div>')
     return _PAGE.format(
         title=e(conv.get("title") or "Untitled conversation"),
-        written=_written(conv.get("written")),
+        written=_written(conv.get("written")) + _meeting(conv.get("meeting")),
         when=e(f"{local_time(settings, origin)} – {local_time(settings, conv['ended_at'], '%H:%M')}"
                f" ({settings.timezone})"),
         people=e(", ".join(conv.get("people", [])) or "—"),
@@ -114,6 +117,31 @@ def _written(written: dict[str, Any] | None) -> str:
     label = f"“{written['title']}” in Odysseus" if written.get("title") else "the note in Odysseus"
     return (f'<div class="meta">Written by hand · <a href="{e(written["link"], quote=True)}"'
             f' rel="noreferrer noopener">Open {e(label)}</a></div>')
+
+
+def _meeting(meeting: dict[str, Any] | None) -> str:
+    """A Zoom meeting: its topic and participants."""
+    if not meeting:
+        return ""
+    e = html.escape
+    people = ", ".join(p["name"] for p in meeting.get("participants") or [])
+    return (f'<div class="meta">{e(meeting_label(meeting).strip(" ()"))}'
+            + (f" · Participants: {e(people)}" if people else "") + "</div>")
+
+
+def meeting_label(meeting: dict[str, Any] | None) -> str:
+    """" (Zoom meeting: <topic>)" after a title, " (Zoom meeting)" without a topic; ""
+    for anything else (MCP 0.16.0)."""
+    if not meeting:
+        return ""
+    return f" (Zoom meeting: {meeting['topic']})" if meeting.get("topic") else " (Zoom meeting)"
+
+
+def speaker_label(segment: Any) -> str:
+    """A line's speaker as shown: "Dana (chat)" for a meeting chat message."""
+    kind = segment.get("kind") if isinstance(segment, dict) else getattr(segment, "kind", None)
+    name = segment["speaker"] if isinstance(segment, dict) else segment.speaker
+    return f"{name} (chat)" if kind == "chat" else name
 
 
 def written_label(written: dict[str, Any] | None) -> str:

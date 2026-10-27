@@ -189,6 +189,11 @@ class Settings(BaseSettings):
     owner_hint_margin: float = 0.10
     owner_hint_db: float = 3.0
     owner_name: str = "Me"
+    # --- meetings: lines from per-participant tracks (convo_server/meeting_tracks.py) ---
+    # The owner's Zoom display names in addition to CONVO_OWNER_NAME (which counts too
+    # unless it is the default "Me"), comma-separated (any case), e.g. "Shahyah (phone)":
+    # that track's lines are the owner's (is_owner=true), named by the owner's name.
+    zoom_owner_names: str = ""
     # Where downloaded model weights are cached (speaker models). Default: <data_dir>/models.
     models_dir: Path | None = None
 
@@ -212,6 +217,33 @@ class Settings(BaseSettings):
     # best first (0 = no cap). Decisions a voice note states are kept either way.
     fact_min_score: int = Field(default=4, ge=1, le=5)
     max_facts_per_conversation: int = Field(default=3, ge=0)
+
+    # --- meeting bot (POST /v1/meetings; convo_server/meetings.py) ---
+    # Read only when a join request arrives; nothing runs between meetings.
+    # The bot program (athena-meeting-bot). Unset = meetings are off (501).
+    meeting_bot_path: Path | None = None
+    # How the bot is started: "systemd" (systemd-run --user --scope with CPU, memory and
+    # lifetime caps), "plain" (nice 10 + RLIMIT_AS) or "auto" (systemd when it works).
+    meeting_bot_runner: str = "auto"
+    meeting_bot_max: int = Field(default=1, ge=1)  # bots at a time; more answers 409 busy
+    meeting_bot_cpu: str = "200%"  # systemd CPUQuota (safety cap, systemd runner only)
+    meeting_bot_memory: str = "2G"  # systemd MemoryMax, or RLIMIT_AS with the plain runner
+    meeting_alone_seconds: float = 60.0  # leave after being the only participant this long
+    meeting_waiting_room_seconds: float = 600.0  # give up in the waiting room after this
+    meeting_track_codec: str = "opus"  # per-participant tracks: "opus" (32 kbps) or "wav"
+    # The owner's Zoom Meeting SDK app credentials; the join token is signed locally.
+    zoom_sdk_key: str | None = None
+    zoom_sdk_secret: str | None = None
+    # Zoom sign-in for meetings in other accounts (Zoom requires a signed-in user there
+    # since 2026-03-02): the Marketplace app's OAuth client, signed in once with the
+    # owner's own Zoom account (`convo-server zoom-login`). Join token: "obf" (on behalf
+    # of the signed-in owner, who must be in the meeting), "zak" (join as the signed-in
+    # user; later option with a dedicated Athena account), "none" (the app's own account
+    # only) or "auto" (obf once signed in, else none).
+    zoom_client_id: str | None = None
+    zoom_client_secret: str | None = None
+    zoom_redirect_url: str | None = None
+    zoom_join_token: str = "auto"
 
     @property
     def base_url(self) -> str:
@@ -239,6 +271,18 @@ class Settings(BaseSettings):
         if v is not None and v.lower().startswith("change-me"):
             raise ValueError(f"CONVO_{info.field_name.upper()} still has the placeholder value")
         return v
+
+    @property
+    def zoom_owner_name_list(self) -> tuple[str, ...]:
+        """CONVO_ZOOM_OWNER_NAMES as a tuple, blanks dropped, then CONVO_OWNER_NAME unless
+        it is the default placeholder "Me" or already listed (any case): an owner who
+        joins Zoom under their own name needs no extra setting."""
+        names = [n.strip() for n in self.zoom_owner_names.split(",") if n.strip()]
+        owner = " ".join((self.owner_name or "").split())
+        if owner and owner.casefold() != "me" and owner.casefold() not in {
+                " ".join(n.split()).casefold() for n in names}:
+            names.append(owner)
+        return tuple(names)
 
     @property
     def db_path(self) -> Path:

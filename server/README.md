@@ -142,6 +142,29 @@ other's name; two different named speakers stay apart (often a real interruption
   split by its token times. `CONVO_WHISPER_WINDOW_SECONDS=0` sends every region alone
   (the behaviour before). `CONVO_WHISPER_CONTEXT_WORDS` (0 = off) adds the end of the
   previous clip's text to the prompt; it made the eval worse.
+- Zoom names become people (`convo_server/meeting_names.py`, imported only by the meeting
+  pipeline, never at startup). Each track's display names are cleaned first: pronouns
+  ("(she/her)"), bracketed tags, "| Company", " - Company" (spaced dash only, so
+  "Smith-Jones" stays), "@ Company", device suffixes ("Kath's iPhone", "(iPad)"), titles
+  and credentials ("Dr.", ", PhD"), emoji and stray punctuation go (of the parts between separators the first that is a
+  name is kept, so "she/her | Kath Dlamini" and "iPhone | Kath Dlamini" are Kath Dlamini; a
+  room part makes the whole name a room); ALL-CAPS and
+  all-lowercase names are title-cased ("MARCUS MCDONALD" → "Marcus McDonald"), mixed case
+  is kept ("van der Berg", "O'Neil"). A name that is only a device, a room, conference
+  hardware or a label ("iPhone", "Zoom user", "Conference Room 2", "Huddle 4", "Lobby",
+  "Polycom", "Logitech Rally", "SM-G991B") makes no person ("Jordan Hall" and a bare
+  "Hall", "Mac" or "Dell" are names; "Mac Pro" and "Dell XPS 13" are not): the track gets an unnamed
+  label ("Speaker N"), which `name_speaker` can rename. A cleaned name that matches
+  `CONVO_OWNER_NAME` or `CONVO_ZOOM_OWNER_NAMES` is the owner. The owner keeps their own name on every owner
+  line (meetings, voice notes, written notes) and in `list_people`: the enrolled owner
+  voice's name, else `CONVO_OWNER_NAME`, never the Zoom name. The track's Zoom names
+  become aliases of the owner, so the next meeting finds them again; an owner person
+  named by a Zoom name before this rule is renamed (same id, the old name an alias). Otherwise it is matched exactly (any case) against
+  people names and aliases; an unknown name becomes a new person. There is no first-name
+  guessing ("Kath Dlamini" is not merged into "Kath"): a wrong merge mixes two people,
+  while `rename_speaker_everywhere("Kath Dlamini", "Kath")` merges them for good. Every
+  display name a track used, raw and cleaned, is kept as an alias, so a participant who
+  renames mid-meeting stays one person and the next meeting finds them again.
 - Decoding settings go with every whisper request (whisper-server form fields, the same
   flags for whisper-cli): `CONVO_WHISPER_BEAM_SIZE`, `_BEST_OF`, `_SUPPRESS_NON_SPEECH`,
   `_NO_SPEECH_THOLD`, `_LOGPROB_THOLD`, `_ENTROPY_THOLD`, `_CARRY_INITIAL_PROMPT`,
@@ -282,6 +305,8 @@ curl -H "Authorization: Bearer $CONVO_INGEST_TOKEN" -F name=Me -F is_owner=true 
 | `codec`       | `opus` (default), `ogg`, `wav`, `pcm16`, `mp3`, `m4a`, `aac`, `webm` |
 | `sample_rate` | only for `pcm16` (default 16000)                                   |
 | `kind`        | `conversation` (default) or `note` (voice note); fixed per session  |
+| `track`       | optional: one participant's audio in a session with several (e.g. a Zoom user id), `[A-Za-z0-9._:-]{1,64}`; omitted or empty = no track |
+| `track_name`  | optional: that participant's display name, at most 200 characters; needs `track` |
 
 A **voice note** (`kind=note`) is the owner talking to themselves: no speaker matching
 (every line is the owner), never split on gaps or joined with nearby conversations, never
@@ -290,10 +315,296 @@ implies). It shows up as a conversation with `kind` `note`. A chunk whose `kind`
 from its session's is rejected with 400. `POST /v1/ingest/chunk.json` takes the same
 `kind` field.
 
+**Tracks** (a meeting: one track per participant). Without `track` a session works as
+before tracks. With it, sequences count per track, and a retry of the same
+(`session_id`, `track`, `sequence`) is a no-op (`"duplicate": true`; its `track_name` is
+ignored too). Each track is reassembled by its own sequence and transcribed on its own, so
+two people talking at once stay apart. `track_name` is stored per chunk: a participant who
+renames mid-meeting stays one track, and `GET /v1/sessions/{id}` lists every name seen
+(`tracks`: `track`, `name` (of the latest chunk in time, as sent), `names` (every name,
+in order of first use), `chunks`, `started_at`, `ended_at`; each
+chunk also has `track` and `track_name`, null without one). A session with any tracked
+chunk (a meeting) never stops on trailing silence, so a quiet break doesn't end it: it
+stops at `CONVO_MAX_SESSION_SECONDS`, on `POST /v1/sessions/{id}/end`, or after
+`CONVO_SESSION_IDLE_SECONDS` without uploads (the uploader died); once ended, every track
+is told `stop: true`. If an untracked chunk stopped the session on silence first, the
+first tracked chunk reopens it (`recording` again, no stop reason). Errors (400): `track must match
+^[A-Za-z0-9._:-]{1,64}$`, `track_name is longer than 200 characters`, `track_name needs a
+track`. `POST /v1/ingest/chunk.json` takes the same two fields.
+
+**Meeting lines** (`convo_server/meeting_tracks.py`, imported only when a session with
+tracks is processed). Each track's VAD speech goes to whisper on its own (whisper's
+context never crosses tracks; the participants' names are added to its prompt for
+spelling), and every line from a track is that participant's:
+
+- A line is named by the track's latest `track_name`. A track named `CONVO_OWNER_NAME`
+  (unless it is the default "Me") or one of `CONVO_ZOOM_OWNER_NAMES` (extra names in
+  addition to `CONVO_OWNER_NAME`, comma-separated, any case, e.g. "Shahyah (phone)") is
+  the owner's: `is_owner=true`, named like the owner everywhere else (the enrolled owner
+  voice's name, else `CONVO_OWNER_NAME`, never the Zoom name; the Zoom names become
+  aliases of the owner). A track without a name is an unnamed "Speaker N".
+- No diarizer or speaker model runs for these tracks. A track whose name is a room or
+  a device ("Conference Room", "Meeting Room 2", "Zoom Rooms", "Anna's iPhone", "Galaxy
+  S23", "Zoom user", "Polycom", a dial-in number) can hold several people: the configured
+  diarizer runs on that track only, and its voices are named from enrolled voices or
+  become "Speaker N" (numbered across the meeting) with a stored voice, so
+  `name_speaker` and `list_unnamed_speakers` work on them. With diarization off the
+  room's lines carry the room's name.
+- Lines of different tracks may overlap (crosstalk); all are kept, in start-time order.
+  `CONVO_JOIN_LINES` joins fragments within one track only.
+- Bleed (two participants in one room, one voice on both mics): a line on another track
+  that overlaps by at least half the shorter line and says nearly the same words is
+  dropped, keeping the louder line (RMS dBFS of each line on its own track). Nearly the
+  same: word similarity >= 0.9, or >= 0.7 when one line is at least 6 dB quieter
+  (whisper slips words on the far mic; two people saying the same sentence at once are
+  about as loud and both stay).
+- One meeting is one conversation: its lines are never split at a speech gap
+  (`CONVO_CONVERSATION_GAP_SECONDS` doesn't apply to a break inside a meeting), it never
+  extends the conversation before it on the same device, and a session without tracks
+  never joins a meeting's conversation. Two back-to-back meetings are two conversations.
+- Late chunks: once a meeting is being or has been processed, a new chunk (a new
+  (`track`, `sequence`)) is answered `stop: true` with the session's stop reason and is
+  not stored, so it can't replace the other tracks' lines, whose audio is gone. Until
+  processing starts (status `ended`), chunks are still stored: the other tracks' chunks
+  of the round that reached `CONVO_MAX_SESSION_SECONDS` are kept. A retry of a stored
+  chunk is `duplicate: true` as before. Sessions without tracks still take late chunks
+  and transcribe them on the next pass.
+
 Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client"|"idle"|null,
-"duplicate": bool, "speech_seconds", "trailing_silence_seconds", "session_seconds"}`.
+"duplicate": bool, "speech_seconds", "trailing_silence_seconds", "session_seconds"}`, plus
+`"track"` when the upload had one.
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
+
+### Meeting bot
+
+Athena can join a Zoom meeting as a participant named "Athena" and record one track per
+participant (the bot itself, `athena-meeting-bot`, is lane 1A of
+`docs/zoom-meeting-bot-plan.md`). The launcher (`convo_server/meetings.py`) is imported
+on the first meeting request; nothing about it runs between meetings: no service, thread,
+timer or poller. Same bearer token as every route.
+
+| route | answer |
+|---|---|
+| `POST /v1/meetings` JSON `{"url": "<Zoom link>"}` or `{"meeting_id": "123 4567 8901", "passcode": "…"}`, optional `"title"` (≤ 200) | `202 {"id", "state": "starting", "session_id"}`; `503 {"detail": "zoom_signin_needed", "message"}` when the join token mode needs Athena's Zoom sign-in and it is missing or expired (the message says to run `convo-server zoom-login`); `502 {"detail": "zoom_unavailable", "message"}` when Zoom's API can't be reached; `400 {"detail"}` for a link that isn't a Zoom meeting or a bad body (`detail` is always a message string, e.g. `title is longer than 200 characters`; a title is stripped first); `413 {"detail"}` for a body over 16 KB; `409 {"detail": "busy", "message", "active": "<meeting id>"}` when `CONVO_MEETING_BOT_MAX` bots are active; `501 {"detail"}` when meetings are off (`CONVO_MEETING_BOT_PATH` unset or not executable, no SDK key/secret, a bad meeting setting); `500` when the bot can't be started |
+| `GET /v1/meetings/{id}` | `{"id", "state", "reason", "active", "session_id", "meeting_id", "title", "join_token_kind" (`zak`, `obf` or `none`), "created_at", "started_at", "ended_at"}` (ISO-8601; `started_at` = first recording); 404 |
+| `GET /v1/meetings?limit=20` | `{"meetings": [...]}`, newest first (the current one, if any, is first) |
+| `DELETE /v1/meetings/{id}` | the bot leaves: SIGTERM, it flushes and ends the session; SIGKILL after 10 s. Answers once it exited, with the final row (`ended`, `stopped`; never `active` for a bot that exited), within about 15 s. Idempotent; 404 |
+
+States: `starting` → `waiting_room` → `waiting_permission` → `recording` → `ended` or
+`failed`, each with a `reason` where it helps. `waiting_permission`: Zoom gives raw audio
+only to a host, co-host or an app the host allowed to record, so once fully in the meeting
+the bot asks for recording permission once (Zoom shows the host its own prompt) and waits;
+after a Deny the reason is `denied` and it keeps waiting, because the host can still allow
+it later from the participant menu. A bot that is already host, co-host or allowed goes
+straight to `recording`. `starting` may carry `waiting_for_owner` (join token `obf`: Zoom
+refuses the join until the owner is in the meeting; the bot keeps trying). `recording` may
+carry `no_audio` (Zoom delivers no audio). `ended` reasons: `meeting_ended`, `alone` (only
+participant for `CONVO_MEETING_ALONE_SECONDS`), `removed`, `owner_left` (join token
+`obf`: Zoom ends the bot's session when the owner leaves), `stopped` (DELETE),
+`max_duration`, `server_stop`, `exited`. `failed` reasons come from the bot
+(`wrong_passcode`, `meeting_not_started`, `waiting_room_timeout`, `owner_not_joined` (the
+owner didn't join within the wait), `join_token_expired`, `join_failed`, `auth_failed`,
+`sdk_error`, …) or the launcher (`bot_not_started`, `bot_crashed`, `server_restarted`). The bot asks
+for recording permission once, never again, never leaves over it, and never leaves
+because someone asks it to.
+
+**Links** accepted: `https://zoom.us/j/<number>?pwd=…` and any subdomain of `zoom.us`
+(`us06web.zoom.us`, vanity `acme.zoom.us`; `http` or no scheme is read too),
+`/wc/join/<number>` and `/wc/<number>/join`, and `zoommtg://` / `zoomus://` links with
+`confno`; path words (`j`, `wc`, `join`) in any case. The number has 9-11 digits; `pwd` is
+optional. Refused with a message: personal links `/my/<name>` (no number in them),
+webinars `/w/` (not yet), registration and host start (`/s/`) links, Zoom for Government
+(`zoomgov.com`, with or without a scheme, its own message), any other host.
+`parse_zoom_link` holds the rules; the hub mirrors them.
+
+**Safety caps.** With `CONVO_MEETING_BOT_RUNNER=auto` (default) the first join checks once
+whether `systemd-run --user --scope` works. If so: `systemd-run --user --scope --quiet
+--collect --unit=athena-meeting-<id> -p CPUQuota=$CONVO_MEETING_BOT_CPU -p
+MemoryMax=$CONVO_MEETING_BOT_MEMORY -p RuntimeMaxSec=<CONVO_MAX_SESSION_SECONDS + 90> nice
+-n 10 <bot> …`. The launcher itself stops the bot at `CONVO_MAX_SESSION_SECONDS` + 60 s
+(SIGTERM, SIGKILL 10 s later, `ended`/`max_duration`); systemd's limit, 30 s after that,
+is only a backstop, and a bot it kills after its max duration is `max_duration` too, not
+`bot_crashed`. Else (Docker, background runner) the bot runs in its own process group at
+`nice 10` with `RLIMIT_AS` = `CONVO_MEETING_BOT_MEMORY` (no CPU cap), and the launcher
+stops it at the same lifetime. When the bot exits, anything it left in its process group
+(and the scope) is killed and its work dir is removed.
+
+**State, no polling.** The launcher starts the bot from the request's event loop and keeps
+one asyncio task per running bot: it reads the bot's status lines and waits for its exit
+on a pidfd (no thread). The task ends with the bot. After a server restart, active rows
+are checked on the next meeting request: if the pid is no longer that bot, the row
+becomes `failed`/`server_restarted`; a bot still running counts as busy and `DELETE`
+stops it. On exit the session is ended (`stop_reason` `meeting_<reason>`) if the bot
+didn't end it.
+
+**Upload token.** The bot never gets `CONVO_INGEST_TOKEN`. Each meeting gets a random
+token (stored only as a SHA-256 hash, cleared when the bot exits) that is accepted only
+for `POST /v1/ingest/chunk` with that meeting's `session_id`, `device=zoom` and `kind`
+`conversation` (the default; `note` answers 403), and
+`POST /v1/sessions/<that session>/end` and `/chat` (Phase 3). Every other route answers
+403; after the bot exits, 401.
+
+**SDK signature.** The Meeting SDK signature is signed locally (HS256) from
+`CONVO_ZOOM_SDK_KEY` / `CONVO_ZOOM_SDK_SECRET`: `appKey`, `mn`, `role` 0, `iat`, `exp` and
+`tokenExp` (Zoom: 30 min to 48 h; here `CONVO_MAX_SESSION_SECONDS` + 1 h).
+
+**Zoom sign-in (meetings in other accounts).** Since 2026-03-02 Zoom lets a Meeting SDK
+app join a meeting hosted by another Zoom account only on behalf of a signed-in Zoom user
+(developers.zoom.us/docs/meeting-sdk/obf-faq/). The owner signs Athena in once with
+**their own Zoom account**:
+
+1. In the Meeting SDK app on the Zoom Marketplace, add OAuth (user-managed) with the scope
+   `user:read:token` and a redirect URL. Nothing needs to answer at that URL.
+2. Set `CONVO_ZOOM_CLIENT_ID`, `CONVO_ZOOM_CLIENT_SECRET` and `CONVO_ZOOM_REDIRECT_URL`
+   in `server/.env`.
+3. Run `convo-server zoom-login` on the server. It prints a Zoom URL. Open it anywhere,
+   sign in with your own Zoom account and allow the app, then paste the address the
+   browser went to (or just its `code`). It uses PKCE and checks `state`: a pasted address
+   (or query) must carry this sign-in's `state`, and one with `error=` is refused; a bare
+   code has no state to check (PKCE ties it to this sign-in).
+4. The refresh token is saved to `<data dir>/zoom/refresh_token.json` (mode 0600,
+   replaced atomically). `convo-server zoom-login --status` says whether Athena is signed
+   in and which join token the next meeting gets. Delete the file to sign out.
+
+`CONVO_ZOOM_JOIN_TOKEN` picks the join token:
+- `auto` (default): `obf` once signed in, else `none`.
+- `obf`: an on-behalf-of token for the signed-in owner and this meeting number. Athena
+  shows as "Athena" but is admitted only once the owner is in the meeting: until then the
+  bot keeps trying (`starting`/`waiting_for_owner`) and gives up after
+  `CONVO_MEETING_WAITING_ROOM_SECONDS` (`failed`/`owner_not_joined`). Zoom ends the bot's
+  session when the owner leaves (`ended`/`owner_left`).
+- `zak`: join as the signed-in user, whether or not the owner is in the meeting. Meant
+  for a later option, a dedicated Zoom account for Athena signed in with `zoom-login`;
+  whether Zoom accepts a ZAK alone for meetings in other accounts is not settled yet.
+- `none`: no token, only meetings in the app's own account.
+
+A ZAK or OBF token is fetched when the join is requested and lasts about 2 hours (an OBF
+token is for that one meeting). The bot's wait (waiting room, owner) is therefore capped
+at the smaller of `CONVO_MEETING_WAITING_ROOM_SECONDS` and the token's lifetime minus
+5 minutes (`--waiting-room-seconds`), so it gives up with `owner_not_joined` or
+`waiting_room_timeout` rather than trying a dead token; if Zoom still says the token
+expired, the bot fails with `join_token_expired`. Start a new join to get a fresh token.
+
+Only on a join request, the launcher trades the refresh token for an access token, saves
+the new refresh token Zoom hands back (it rotates on every use) before using the access
+token, and asks `GET https://api.zoom.us/v2/users/me/token?type=zak` (or
+`type=onbehalf&meeting_id=<number>`). These are the only network calls, to Zoom's API,
+with a 5 s timeout each; no audio or transcript goes there, nothing refreshes in the
+background, and no token is logged or put on a command line. Zoom expires a refresh token
+that goes unused for a long time: then `POST /v1/meetings` answers 503
+`zoom_signin_needed` ("Athena's Zoom sign-in expired … run convo-server zoom-login") and
+starts nothing; run `convo-server zoom-login` again.
+
+**Bot contract** (lane 1A implements it):
+
+```text
+<CONVO_MEETING_BOT_PATH> --meeting-id <9-11 digits> --session-id zoom-<id>
+    --upload-url http://127.0.0.1:<CONVO_PORT> --name Athena
+    --max-seconds <CONVO_MAX_SESSION_SECONDS> --alone-seconds <CONVO_MEETING_ALONE_SECONDS>
+    --waiting-room-seconds <min(CONVO_MEETING_WAITING_ROOM_SECONDS, 6900 with a join token)>
+    --codec opus|wav --work-dir <data dir>/meetings/<id>
+```
+
+- Environment (secrets never go in argv): `ATHENA_MEETING_JWT` (the SDK join token),
+  `ATHENA_UPLOAD_TOKEN` (bearer for uploads), `ATHENA_MEETING_PASSCODE` (the passcode or
+  the link's `pwd` value; absent when there is none), `ATHENA_ZOOM_JOIN_TOKEN` (ZAK or OBF
+  token from the owner's Zoom sign-in, fetched for this join, valid about 2 h) and `ATHENA_ZOOM_JOIN_TOKEN_KIND` (`zak` or `obf`;
+  both absent when the join token mode is `none`). Plus `PATH`, `HOME`, `LANG`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR`,
+  `DBUS_SESSION_BUS_ADDRESS` from the server, nothing else.
+- stdin is `/dev/null`; the working directory is `--work-dir` (for unsent chunks; removed
+  after exit). stderr: free-form logs, into the server's log.
+- stdout: one line per state change, exactly `STATE <state>` or `STATE <state> <reason>`;
+  `<state>` one of `starting` (the launcher sets it; the bot sends it only with a
+  reason, `waiting_for_owner`), `waiting_room`, `waiting_permission`, `recording`,
+  `ended`, `failed`, `<reason>` `[a-z0-9_]{1,40}`. Other lines are ignored. Flush each line.
+  Ignore SIGPIPE/EPIPE on stdout: after a server restart nobody reads it, and the bot
+  keeps recording.
+- Uploads: `POST <upload-url>/v1/ingest/chunk` with `Authorization: Bearer
+  $ATHENA_UPLOAD_TOKEN`, `device=zoom`, the given `session_id`, `track` (Zoom user id),
+  `track_name` (display name), a sequence per track. Obey `"stop": true` (only for
+  `max_duration` or an ended session: a tracked session never stops on silence) by leaving
+  with `ended server_stop` (or `max_duration`). End with `POST
+  <upload-url>/v1/sessions/<session_id>/end`.
+- Leave on: meeting ended, alone for `--alone-seconds`, removed, SIGTERM, `--max-seconds`
+  after start. Waiting room longer than `--waiting-room-seconds`: `failed
+  waiting_room_timeout`.
+- Recording permission: once fully in the meeting, without host, co-host or recording
+  rights, call the SDK's `RequestLocalRecordingPrivilege` **once** and print `STATE
+  waiting_permission`. Allowed: `STATE recording`. Denied: `STATE waiting_permission
+  denied`, then keep waiting (an Allow later still gives `STATE recording`). Never ask
+  again and never leave over permission; `--waiting-room-seconds` does not apply here
+  (the meeting's end, the alone rule, SIGTERM, `owner_left` and `--max-seconds` still
+  end it). Already host, co-host or allowed: `STATE recording` straight away.
+- With an `obf` token: while Zoom refuses the join because the authorizing user isn't in
+  the meeting yet (SDK `MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING`), retry and print
+  `STATE starting waiting_for_owner` (once); after `--waiting-room-seconds` give up with
+  `STATE failed owner_not_joined`. Zoom ending the session because the owner left is
+  `STATE ended owner_left`. A join token Zoom calls expired: `STATE failed
+  join_token_expired`.
+- SIGTERM: flush the last chunks, end the session, print `STATE ended stopped`, exit 0
+  within 5 s (SIGKILL follows after 10 s).
+- Exit 0 after `STATE ended <reason>`; non-zero after `STATE failed <reason>`. A non-zero
+  exit without a `failed` line becomes `failed`/`bot_crashed`.
+
+### Meeting chat, topic and participants
+
+`POST /v1/sessions/{id}/chat` (JSON, same bearer token; lane 1B's per-meeting bot token
+also works for its own session) is the Zoom bot's one call when a meeting ends, before or
+after `/end`:
+
+```json
+{"lines": [{"at": "2026-10-13T15:00:21Z", "from": "Dana Example",
+            "zoom_user_id": "16782336", "text": "Here's the sheet: https://…/budget-v3.xlsx",
+            "private": false}],
+ "topic": "Q4 budget review",
+ "participants": [{"zoom_user_id": "16782336", "name": "Dana Example",
+                   "joined_at": "2026-10-13T15:00:02Z", "left_at": null}]}
+```
+
+- `at`, `joined_at`, `left_at`: ISO-8601 (naive = UTC) or epoch s/ms, 2000..2100.
+  `zoom_user_id`: the sender's Zoom user id, the same value as the chunk `track`
+  (`[A-Za-z0-9._:-]{1,64}`), optional. `from`, `name`: display names, at most 200
+  characters kept. `text`: control characters and line breaks become spaces, cut at 4,000
+  characters; empty lines are skipped. `private: true` (a message to Athena alone) is
+  dropped unread. Every field but `lines[].at` and `lines[].text` is optional; unknown
+  fields are ignored. `topic` (at most 200 characters) and `participants` replace the
+  stored ones when given; leaving them out keeps them.
+- A chat line becomes a transcript line of kind `chat` at `at` (start = end), from the
+  sender's person: the line is named exactly as the sender's track is (owner included);
+  a sender without a track by their cleaned names, made a person when new. One
+  `zoom_user_id` is one person: every name it uses in the call (chat `from`, then its
+  `participants` name, preferred as Zoom's latest) is matched together and kept as
+  aliases. No VAD, no whisper. A participant who never spoke or typed is only looked up, never made a
+  person.
+- Idempotent: each line is stored once per session (SHA-256 of its cleaned time, sender id,
+  sender name and text), also after `erase_fact` redacted it or retention removed it.
+- Order: before the meeting is processed the lines wait and join its conversation then;
+  during processing the session goes back for one more pass; afterwards they are added to
+  its conversation, which is summarized again on the worker's next pass.
+- Limits: body at most 1,000,000 bytes, at most 2,000 lines and 1,000 participants (413).
+  Errors: 404 unknown session, 409 not a meeting (no tracks and device not `zoom`), 422
+  not JSON or wrong types, 400 a bad time or `zoom_user_id`, 401 no token.
+- Response: `{"ok": true, "session_id", "result": "queued"|"attached"|"unchanged",
+  "added", "duplicates", "private_dropped", "conversation_id"}` (`conversation_id` once
+  the meeting has one; `attached`: added to a processed meeting).
+
+The summary prompt gets "This is a Zoom meeting with the topic …", the participants, and
+chat lines as `[21] Dana Example (chat): …` (links and file names kept as written).
+`GET /v1/conversations/{id}` has `meeting` (`topic`, `participants`) for every
+conversation of a meeting session, a session with tracked chunks (any device) or device
+`zoom`, also when the bot never made the chat call (then `topic` is null and
+`participants` are the speakers heard); any other conversation has `meeting: null`. JSON
+fact and action-item rows say `"source": "meeting"` for exactly those conversations. Each
+transcript segment has `kind` (`speech` or `chat`). `participants` (`name`,
+`person_id`, `is_owner`, `zoom_name`, `joined_at`, `left_at`): the list the bot sent, one
+entry per `zoom_user_id` (two people with one name stay two; entries without an id are
+told apart by join time), each by their person's current name, then everyone else heard
+or seen in the chat, in order of first line. A participant Zoom shows only as a device or
+room ("iPhone", "Zoom user") whose lines are named "Speaker N" (no person) is listed by
+those speakers instead of twice; with one such participant they take its `zoom_name` and
+times. `convo_server/meeting_chat.py`
+is imported on the first chat call (or when a meeting is summarized), never at startup.
 
 ### Written notes
 
@@ -406,7 +717,8 @@ conversation first, with no citation line:
   "conversation_at": "2025-10-09T08:53:20+00:00",
   "created_at": "2025-10-09T08:55:02+00:00", "timezone": "Europe/Berlin",
   "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=0",
-  "with": [{"id": 4, "name": "Greta"}, {"id": null, "name": "Tom"}], "key_points": []}]
+  "with": [{"id": 4, "name": "Greta"}, {"id": null, "name": "Tom"}], "key_points": [],
+  "source": null, "written_by_hand": false, "note_link": null}]
 ```
 
 `key_points` (MCP 0.15.0, additive) is set on a note that is a whole voice note ("Make a
@@ -450,7 +762,7 @@ both formats. `list_facts(format="json")` returns current facts in the text mode
             "conversation_id": "c-…", "quote": "Alice doesn't eat meat, remember?",
             "times_said": 3, "days": 2,
             "first_said": "2025-10-09", "last_said": "2025-10-10",
-            "confirmed": false, "valid_until": null,
+            "confirmed": false, "valid_until": null, "source": null,
             "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
 ```
 
@@ -483,6 +795,15 @@ after that day. `link` is
 the same transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
 program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
 fact id that stops being returned (replaced, retired, or its conversation deleted).
+
+`source` (MCP 0.16.0, additive) is on every JSON fact row and every JSON
+`list_action_items` row: `"meeting"` when the fact or item comes from a Zoom meeting's
+conversation, else null (recordings, voice notes and written notes are told apart by
+`conversation_kind` and `written_by_hand`; other values may be added later, so treat an
+unknown one as null). In the text results a meeting's conversation is marked `(Zoom
+meeting: <topic>)` (`(Zoom meeting)` without a topic) and lists its participants
+(`search_conversations`, `get_conversation` with join and leave times), and chat lines
+read `<name> (chat): …` (`get_transcript`, `search_transcripts`, the `/view` page).
 
 `written_by_hand` and `note_link` (MCP 0.12.0, additive) are on every JSON fact row and
 every JSON `list_action_items` row: true and the note's URL in the hub when the fact or
@@ -623,6 +944,18 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 | `GET /action-items`, `PATCH /action-items/{id}` | the `/v1` routes |
 | `GET /digests/{date}`, `POST /digests/{date}` | the `/v1` routes |
 | `GET /settings/llm`, `PUT /settings/llm` | the `/v1` routes (the hub's settings page: the summary model) |
+| `POST /meetings` | `POST /v1/meetings` (same JSON `{url}` or `{meeting_id, passcode}`, `title?`; same answer: 202, 400, 409 busy with `message` and `active`, 501 meetings off, 500) |
+| `GET /meetings` | `GET /v1/meetings` (only `limit`, bounded to 1–100) |
+| `GET /meetings/{id}`, `DELETE /meetings/{id}` | the `/v1` routes (state; leave, answering once the bot exited) |
+
+The meeting routes are for the hub's "Send Athena to a meeting" box (lane 4B of
+`docs/zoom-meeting-bot-plan.md`). An `{id}` that isn't a meeting id (32 lowercase hex
+characters) gets the API's own 404 `{"detail": "meeting not found"}` without being
+forwarded; `POST /meetings` takes `application/json` only (415 otherwise) and caps its
+body at 16 KB (413). `GET` and `POST` wait up to 15 s for the API, `DELETE` up to 30 s
+(the bot gets SIGTERM, SIGKILL after 10 s, and the answer waits for it to exit); a timeout
+or an API that isn't running is a 502 with a readable `detail`. The relay only forwards
+HTTP: it never imports the meeting code, so `mcp --http` loads and starts nothing new.
 
 The read routes are for the phone relay's T5 sync when it is paired through Odysseus
 (Odysseus forwards them for a token with `sound:read` / `sound:write`); the MCP token can

@@ -125,17 +125,24 @@ meeting ends; the hub, API and worker are the services already running today.
    (background or Docker runner): the same process with `nice` and `RLIMIT_AS`, inside the
    API container for Docker, so no Docker socket is needed.
 3. The bot joins as **Athena**. The host admits it from the waiting room if there is one.
-   Most meetings are hosted by someone else, so the bot asks Zoom for recording permission
-   and the host sees Zoom's own prompt; the bot records once the host allows it (state
-   `waiting_permission` until then). This is Zoom's prompt, not a chat message from Athena.
+   Most meetings are hosted by someone else, and Zoom gives raw audio only to an app that
+   is host, co-host or granted recording permission. So once in the meeting the bot sends
+   Zoom's own recording request **once** (owner's decision); the host sees Zoom's prompt.
+   State `waiting_permission` until the host or a co-host allows it, then `recording`.
+   If nobody allows it, or the host declines, the bot keeps waiting (reason `denied` when
+   declined) and never asks again or leaves over it; the host can still grant it later.
+   A bot that is already host, co-host or allowed (e.g. the owner's own meetings with
+   recording pre-allowed) goes straight to `recording`. Athena posts nothing in chat and
+   never works around Zoom's recording controls.
 4. Every 30 s it uploads one chunk per participant who was in the meeting during that time
    to `POST /v1/ingest/chunk` on loopback, as the watch and call recorder already do, with
    `device=zoom` and the new optional fields `track` (Zoom user id) and `track_name`
    (display name). A participant who joins late starts a new track.
 5. Athena runs VAD per chunk as today, per track. The bot obeys `"stop": true` too.
 6. The bot leaves when the meeting ends, when it has been the only participant for 60 s,
-   when it is removed, when the host refuses recording, on `DELETE`, or at the max duration
-   (and when the owner leaves, if Phase 0 finds Zoom requires the owner to be present). It ends the session, uploads
+   when it is removed, on `DELETE`, at the max duration, or when the owner leaves (with the
+   default on-behalf-of token Zoom drops the bot then). It never leaves because recording
+   permission is missing or declined, or because someone asks it to in chat. It ends the session, uploads
    chat (Phase 3) and exits.
 7. Athena's worker finalizes the session: whisper on each track's speech, lines named by
    track and merged in time order, summary, facts, as for any conversation. With Phase 5D,
@@ -154,7 +161,7 @@ AGENTS.md.
 | Where | Change | Phase |
 | --- | --- | --- |
 | `POST /v1/ingest/chunk` | Optional form fields `track` (≤ 64 chars, `[A-Za-z0-9._:-]`) and `track_name` (≤ 200 chars). Without `track` a session works exactly as today. Idempotent per (session, track, sequence); sequences count per track. | 1 |
-| `POST /v1/meetings` | New. JSON `{url}` or `{meeting_id, passcode}`, optional `title`. Returns `{id, state}`; states `starting`, `waiting_room`, `recording`, `ended`, `failed` (with `reason`). `waiting_permission` sits between `waiting_room` and `recording`. `409 busy` over the bot limit. | 1 |
+| `POST /v1/meetings` | New. JSON `{url}` or `{meeting_id, passcode}`, optional `title`. Returns `{id, state}`; states `starting`, `waiting_room`, `recording`, `ended`, `failed` (with `reason`). `waiting_permission` (reason `denied` once the host declines) sits between `waiting_room` and `recording`; `recording` may carry reason `no_audio` when Zoom delivers no audio. `409 busy` over the bot limit. | 1 |
 | `GET` / `DELETE /v1/meetings/{id}` | New. State, and leave now. | 1 |
 | `POST /v1/sessions/{id}/chat` | New, bot only. Chat lines `{at, from, zoom_user_id, text}`. | 3 |
 | MCP results | Meeting conversations say `(Zoom meeting: <topic>)` and list participants; chat lines show as `<name> (chat): …`. Fact and action-item JSON rows gain `source: "meeting"` where it applies. | 3 |
@@ -206,9 +213,9 @@ Nothing is merged except a short findings doc; this phase decides how Phase 1 is
       model; report the word error rate difference.
 - [ ] Write down: does the SDK need a display, PulseAudio or other helpers in the process;
       SDK disk size; which binding to use and why.
-- [ ] Write down for a meeting in another account: what the host sees, how the bot asks for
-      recording permission, and whether the join needs a token from the owner's Zoom
-      account (and so whether the bot must leave when the owner leaves).
+- [ ] Write down for a meeting in another account: what the host sees when Athena joins;
+      Zoom's prompt when the bot sends its one recording request, how long until audio
+      arrives after Allow, what happens on Deny and on a later grant; and whether the join needs a token from the owner's Zoom account.
 
 **Gate to Phase 1:** joins as "Athena" without a display server; each participant's audio
 arrives with their name; chat events arrive. The measurements are reported, not a gate,
@@ -237,23 +244,30 @@ below are agreed.
 
 **Lane 1B, launcher (`server/convo_server/meetings.py`, `api.py`):**
 
-- [ ] `POST`/`GET`/`DELETE /v1/meetings`, behind the bearer token; `meetings` table; bot
+- [x] `POST`/`GET`/`DELETE /v1/meetings`, behind the bearer token; `meetings` table; bot
       limit; `501` when `CONVO_MEETING_BOT_PATH` is unset.
-- [ ] Start the bot under safety caps (`systemd-run --scope` when available, else `nice` +
+- [x] Start the bot under safety caps (`systemd-run --scope` when available, else `nice` +
       `RLIMIT_AS`); read its state from a status line it prints on stdout. No polling
       thread: state updates come from the bot's output and its exit.
-- [ ] Sign the Meeting SDK join token locally from the key and secret.
-- [ ] If Phase 0 found that joining other accounts' meetings needs a token from the owner's
-      Zoom account: a one-time Zoom sign-in for the owner (OAuth; the refresh token stays in
-      the data dir on the server) and a fresh join token fetched per meeting.
-- [ ] Tests with a fake bot script; a test that importing `convo_server.api` starts no
+- [x] Sign the Meeting SDK join token locally from the key and secret.
+- [x] Zoom sign-in. Since 2026-03-02 Zoom requires a signed-in Zoom user to join meetings
+      in other accounts. **Default (owner's decision): an on-behalf-of (OBF) token from the
+      owner's own Zoom account.** A one-time OAuth sign-in stores the refresh token in the
+      data dir on the server; each join fetches a fresh OBF token for that meeting. Zoom only
+      lets the bot in once the owner is in the meeting (the bot waits and retries, state
+      `starting` with reason `waiting_for_owner`) and drops it when the owner leaves (`ended`
+      with reason `owner_left`). Later option, for meetings the owner skips: a ZAK from a
+      dedicated Athena Zoom account (`CONVO_ZOOM_JOIN_TOKEN=zak`), once Phase 0 Test C shows
+      Zoom accepts it. Tokens are fetched only on a join request; nothing refreshes in the
+      background.
+- [x] Tests with a fake bot script; a test that importing `convo_server.api` starts no
       thread and imports nothing from `meetings.py`.
 
 **Lane 1C, ingest (`api.py`, `pipeline.py`, `store.py`):**
 
-- [ ] Accept and validate `track` and `track_name`; store chunks per track; reassemble each
+- [x] Accept and validate `track` and `track_name`; store chunks per track; reassemble each
       track by its own sequence; idempotent per (session, track, sequence).
-- [ ] Tests: no `track` behaves exactly as today; two tracks with overlapping times are
+- [x] Tests: no `track` behaves exactly as today; two tracks with overlapping times are
       kept apart; a retried chunk is a no-op.
 
 **Deploy (`server/scripts/deploy.sh`):** build the bot only when
@@ -270,25 +284,25 @@ skips pyannote for normal participants. Depends on Phase 1C.
 
 **Lane 2A, per-track transcription (`pipeline.py`, new `meeting_tracks.py`):**
 
-- [ ] Transcribe each track's VAD speech on its own; every line from a track gets that
+- [x] Transcribe each track's VAD speech on its own; every line from a track gets that
       track's participant; merge all lines in time order.
-- [ ] Crosstalk: lines from different tracks may overlap in time and are all kept, ordered
+- [x] Crosstalk: lines from different tracks may overlap in time and are all kept, ordered
       by start time.
-- [ ] Bleed: when two participants share a room, one voice can reach both mics. Drop a line
+- [x] Bleed: when two participants share a room, one voice can reach both mics. Drop a line
       whose text nearly matches a line on another track at the same time, keeping the
       louder track's line.
-- [ ] A track whose display name is a room or device ("Conference Room", "iPhone", "Zoom
+- [x] A track whose display name is a room or device ("Conference Room", "iPhone", "Zoom
       user") can hold several people: pyannote runs on that track only.
-- [ ] Owner: names in `CONVO_ZOOM_OWNER_NAMES` become the owner (`is_owner=true`).
-- [ ] Test asserts a meeting of named tracks never loads or runs pyannote.
+- [x] Owner: names in `CONVO_ZOOM_OWNER_NAMES` become the owner (`is_owner=true`).
+- [x] Test asserts a meeting of named tracks never loads or runs pyannote.
 
 **Lane 2B, names to people (`speakers.py`, `people` table):**
 
-- [ ] Clean display names (drop "(he/him)", "| Company", device suffixes); match against
+- [x] Clean display names (drop "(he/him)", "| Company", device suffixes); match against
       people names and aliases; an unknown name becomes a new named speaker.
-- [ ] Key participants by Zoom user id, so one person who renames mid-meeting stays one
+- [x] Key participants by Zoom user id, so one person who renames mid-meeting stays one
       person.
-- [ ] `rename_speaker_everywhere` keeps working; the Zoom display name is kept as an alias.
+- [x] `rename_speaker_everywhere` keeps working; the Zoom display name is kept as an alias.
 
 **Lane 2C, learning voices (on by default, owner's decision):**
 
@@ -319,13 +333,15 @@ so summaries, facts and search use them. Depends on Phase 1; can run beside Phas
 
 **Lane 3B, server and MCP (`pipeline.py`, `mcp_server.py`):**
 
-- [ ] Chat lines become transcript lines with `kind=chat`, at their real time, from their
-      sender's person; they skip whisper and VAD.
-- [ ] Summary prompt gets chat lines marked as chat; links and file names in chat are kept
+- [x] Chat lines become transcript lines with `kind=chat`, at their real time, from their
+      sender's person; they skip whisper and VAD. (`POST /v1/sessions/{id}/chat` takes the
+      chat, the topic and the participant list in one idempotent call; `/end` is unchanged.)
+- [x] Summary prompt gets chat lines marked as chat; links and file names in chat are kept
       as text.
-- [ ] MCP output as in the Contract section; MCP 0.16.0; update `server/README.md` JSON
+- [x] MCP output as in the Contract section; MCP 0.16.0; update `server/README.md` JSON
       fields.
-- [ ] Bakeoff: add 2 meeting questions with fictional data ("what did Dana post in chat?",
+- [ ] Bakeoff (questions and fictional meeting added; tool-level check in the sandbox,
+      the Odysseus run is left for the owner's test instance, see the 3B PR): add 2 meeting questions with fictional data ("what did Dana post in chat?",
       "who was in the budget meeting?"); run `server/eval/bakeoff.py --frontend odysseus`
       in the sandbox and put the score in the PR.
 
@@ -340,9 +356,9 @@ Phase 1B.
 
 **Lane 4A, Athena relay (`server/convo_server/ingest_relay.py`):**
 
-- [ ] Forward `POST /meetings`, `GET`/`DELETE /meetings/{id}` to the ingest API with
+- [x] Forward `POST /meetings`, `GET`/`DELETE /meetings/{id}` to the ingest API with
       `CONVO_INGEST_TOKEN`, behind `BearerAuth`. Not MCP tools.
-- [ ] Tests next to the existing relay tests.
+- [x] Tests next to the existing relay tests.
 
 **Lane 4B, hub (fork code in new files, hooks listed in `FORK.md`):**
 
@@ -474,11 +490,11 @@ stop and write ESCALATE: <reason>.
 
 | Risk | Effect | Fallback |
 | --- | --- | --- |
-| Zoom requires app review, or joining on behalf of the owner, for meetings in other accounts (the main use) | Bot can't join most meetings until approved | Submit for review in Phase 0; build and test on own meetings meanwhile; add the owner's Zoom sign-in (Phase 1B) if required |
+| Zoom requires app review and a signed-in Zoom user for meetings in other accounts (the main use; enforced since 2026-03-02). Zoom's docs say the Meeting SDK "does not support bots or AI notetakers" and point to RTMS | Bot can't join most meetings until approved; Zoom may refuse a bot account's ZAK join | Submit for review in Phase 0. Default: on-behalf-of the owner (owner's decision; the owner must be in the meeting). Later: Athena's own Zoom account's ZAK for meetings the owner skips, if Phase 0 Test C shows Zoom accepts it. Last resort: RTMS, which needs an always-listening public endpoint and so breaks priority 2; the owner decides |
 | SDK needs a display, PulseAudio or other helpers | More to start per meeting | Start them inside the bot's scope only, so idle cost stays zero |
 | Cold start is slow (over 30 s to join) | Joins late | A small standby process within the idle limit (≤ 50 MB, no CPU while waiting), decided in Phase 0 |
 | Zoom SDK updates force a rebuild | Bot stops joining until updated | `GET /v1/meetings` reports the SDK error; deploy.sh rebuilds when the SDK folder changes |
-| Host denies or ignores the recording prompt (likely more often, since most hosts are other people) | No audio | Bot waits up to `CONVO_MEETING_WAITING_ROOM_SECONDS`, then leaves with reason `recording_denied`; the hub shows it |
+| Zoom delivers no raw audio unless the bot is host, co-host or granted recording permission (Zoom's rule) | No audio until the host allows it | The bot sends Zoom's recording request once and waits in `waiting_permission`; the hub shows "waiting for the host to allow recording". The host (or the owner, if made co-host) clicks Allow. Athena does not work around Zoom's recording controls |
 | Shared room microphone | Several people on one track | Phase 2 runs pyannote on that track only |
 | Two participants in one room | Same words on two tracks | Phase 2 drops the duplicate line, keeping the louder track |
 

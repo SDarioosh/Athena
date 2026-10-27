@@ -356,7 +356,9 @@ def format_transcript(segments: list[Segment], origin: float) -> str:
     lines = []
     for s in segments:
         off = max(0, int(s.started_at - origin))
-        lines.append(f"[{off}] {s.speaker}: {s.text}")
+        # a meeting's chat message: "[73] Dana (chat): see budget-v3.xlsx"
+        who = f"{s.speaker} (chat)" if s.kind == "chat" else s.speaker
+        lines.append(f"[{off}] {who}: {s.text}")
     return "\n".join(lines)
 
 
@@ -470,8 +472,12 @@ class Summarizer:
                                   digest_skip_lists.split(",")) if n}
 
     def summarize(self, segments: list[Segment], kind: str | None = None,
-                  known: KnownFacts | None = None) -> dict[str, Any]:
+                  known: KnownFacts | None = None,
+                  context: str | None = None) -> dict[str, Any]:
         """Return a storage-ready dict (absolute ``source_at`` timestamps).
+
+        ``context`` (optional) is a few lines put before every part of the transcript,
+        e.g. a Zoom meeting's topic and participants (``meeting_chat.summary_context``).
 
         ``known`` (optional) returns the stored facts that may match some candidate facts
         (the pipeline passes the store's): a fact that repeats or updates one of them is
@@ -485,6 +491,8 @@ class Summarizer:
             raise ValueError("no segments to summarize")
         origin = segments[0].started_at
         parts = self._split(segments, origin)
+        if context:  # not a "[n] Name: text" line, so line parsing skips it
+            parts = [f"{context}\n{p}" for p in parts]
         if kind == "note":
             return self._summarize_note(parts, origin, known)
         if sum(len(s.text.split()) for s in segments) < self.min_words:
