@@ -89,3 +89,12 @@ the real build complains, fix them here (and in `sdkstub/h/athena_sdkstub.h`):
 - `EndMeetingReason_JBHTimeOut`
 - Now used for behaviour (the spike only had empty overrides or logged them):
   `IMeetingServiceEvent::onMeetingTopicChanged`, `IChatMsgInfo::IsChatToAll` as the private flag.
+
+## Cost check
+
+`server/scripts/meeting_bot_cost.py` runs the stub-SDK bot through the `fixture` scenario
+(`ATHENA_SDKSTUB_PCM`: a fictional PCM fixture the script generates at run time;
+`ATHENA_SDKSTUB_SECONDS`: when the stub's host ends the meeting) and reports CPU, peak RSS
+and VmPeak; it fails if any process, socket or file of the bot is left after it exits. CI
+runs it after the stub build. With `--watch` it measures the real bot in a real meeting
+(once per release). See `server/README.md` "Meeting bot cost check".

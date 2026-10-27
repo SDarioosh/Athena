@@ -69,6 +69,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends libglib2.0-dev
           cmake -S meeting-bot -B build-bot-stub -DZOOM_SDK_DIR="$PWD/meeting-bot/bot/sdkstub"
           cmake --build build-bot-stub -j && ctest --test-dir build-bot-stub --output-on-failure
+      - name: "Zoom meeting bot: idle and cost check (stub SDK, fictional fixture made at run time)"
+        if: hashFiles('meeting-bot/bot/sdkstub/stub_meetingsdk.cpp') != ''
+        # stdlib only (no server venv): CPU, VmPeak, peak RSS; fails on any process, socket
+        # or file the bot leaves behind (server/README.md "Meeting bot cost check")
+        run: python3 server/scripts/meeting_bot_cost.py build-bot-stub/athena-meeting-bot --seconds 20
 
   firmware-twatch-ultra:
     runs-on: ubuntu-latest
