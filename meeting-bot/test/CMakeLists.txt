@@ -1,0 +1,3 @@
+add_executable(core_smoke_test core_smoke_test.cpp)
+target_link_libraries(core_smoke_test PRIVATE athena_core)
+add_test(NAME core_smoke COMMAND core_smoke_test)
