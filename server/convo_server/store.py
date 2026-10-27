@@ -656,8 +656,11 @@ class Store:
         ``track_name`` is ignored too), and ValueError if the session belongs to another
         device or is of another ``kind``. The session's silence bookkeeping spans all
         tracks: ``last_speech_at`` is the latest speech on any track. Raises
-        MeetingClosed for a new chunk of a meeting that is being or was processed; a
-        session without tracks takes it and goes back for another pass.
+        MeetingClosed for a new chunk of a meeting (a session with tracked chunks) that is
+        being or was processed; a session without tracks takes it and goes back for
+        another pass. A tracked chunk in a session an untracked chunk stopped on silence
+        reopens it ('recording', no stop reason), since a tracked session never stops on
+        silence; other stops stand.
         """
         now = time.time() if now is None else now
         end = started_at + duration
@@ -676,9 +679,9 @@ class Store:
                 raise ValueError(f"session {session_id} is a {sess['kind']} session, "
                                  f"not {kind}")
             if (sess is not None and sess["status"] in MEETING_CLOSED_STATUSES
-                    and (track or c.execute("SELECT 1 FROM chunks WHERE session_id = ? AND"
-                                            " track != '' LIMIT 1",
-                                            (session_id,)).fetchone())
+                    and ((track and sess["stop_reason"] != "silence")
+                         or c.execute("SELECT 1 FROM chunks WHERE session_id = ? AND"
+                                      " track != '' LIMIT 1", (session_id,)).fetchone())
                     and not c.execute("SELECT 1 FROM chunks WHERE session_id = ? AND"
                                       " track = ? AND sequence = ?",
                                       (session_id, track, sequence)).fetchone()):
@@ -702,12 +705,18 @@ class Store:
                     " last_speech_at = CASE WHEN ? IS NULL THEN last_speech_at"
                     "   ELSE MAX(COALESCE(last_speech_at, 0), ?) END,"
                     " received_at = ?,"
+                    # A tracked session never stops on silence: a tracked chunk undoes a
+                    # silence stop an untracked chunk made, and the session records again.
+                    " status = CASE WHEN ? != '' AND stop_reason = 'silence' THEN 'recording'"
                     # A chunk for a session being processed or already processed sends
                     # it back for another pass (store-and-forward relays upload late).
-                    " status = CASE WHEN status IN ('processing','done','failed') THEN 'ended'"
-                    " ELSE status END"
+                    " WHEN status IN ('processing','done','failed') THEN 'ended'"
+                    " ELSE status END,"
+                    " stop_reason = CASE WHEN ? != '' AND stop_reason = 'silence' THEN NULL"
+                    " ELSE stop_reason END"
                     " WHERE id = ?",
-                    (started_at, end, last_speech, last_speech, now, session_id),
+                    (started_at, end, last_speech, last_speech, now, track, track,
+                     session_id),
                 )
             return dict(c.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone())
 
@@ -786,13 +795,16 @@ class Store:
     def tracks(self, session_id: str) -> list[dict[str, Any]]:
         """The session's tracks (chunks without a track are not one), ordered by first
         chunk time: ``{"track", "name", "names", "chunks", "started_at", "ended_at"}``.
-        ``name`` is the display name of the track's latest chunk (highest sequence) that
-        had one, else None; ``names`` every distinct name seen, in order of first use, so
-        a participant who renames mid-meeting stays one track with several names."""
+        ``name`` is the raw display name of the track's latest chunk in time (by
+        ``started_at``, then sequence) that had one, else None; ``names`` every distinct
+        raw name seen, in order of first use in time, so a participant who renames
+        mid-meeting stays one track with several names. Names are stored as sent: a
+        later name replaces an earlier one even if a cleaner would drop it (an emoji,
+        "iPhone"), so callers that clean names should check all of ``names``."""
         out: dict[str, dict[str, Any]] = {}
         for r in self._q(
                 "SELECT track, track_name, sequence, started_at, duration FROM chunks"
-                " WHERE session_id = ? AND track != '' ORDER BY track, sequence",
+                " WHERE session_id = ? AND track != '' ORDER BY track, started_at, sequence",
                 (session_id,)):
             t = out.setdefault(r["track"], {"track": r["track"], "name": None, "names": [],
                                             "chunks": 0, "started_at": r["started_at"],
@@ -2263,7 +2275,14 @@ class Store:
         return rows
 
     def owner_name(self) -> str | None:
+        """The name owner lines are written under: the enrolled owner voice's name; without
+        one, the owner's person (a Zoom track matched by CONVO_ZOOM_OWNER_NAMES makes one),
+        so lines and ``people`` name the owner alike (QA BUG-07). None when neither exists;
+        callers then use CONVO_OWNER_NAME."""
         row = self._one("SELECT name FROM speakers WHERE is_owner = 1")
+        if row is None:
+            row = self._one("SELECT name FROM people WHERE is_owner = 1"
+                            " AND merged_into IS NULL")
         return row["name"] if row else None
 
     # ------------------------------------------------------------------ people

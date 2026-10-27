@@ -272,3 +272,121 @@ def test_api_import_does_not_load_meeting_names():
             "assert 'convo_server.meeting_names' not in sys.modules, 'loaded at startup'")
     subprocess.run([sys.executable, "-c", code], check=True)
 
+
+
+# ------------------------------------------------------------------ QA audit regressions
+# BUG-01: rooms and conference hardware hold several people; they name no person.
+# ``is_room_or_hardware`` is the one rule; ``meeting_tracks.is_shared_room`` calls it.
+@pytest.mark.parametrize("raw", [
+    "Polycom", "Polycom Trio 8800", "Logitech Rally", "Rally Bar", "Logitech MeetUp",
+    "Meetup", "Cisco", "Cisco Webex Room Kit", "Webex", "Crestron", "Neat Bar", "Neat Board",
+    "Meeting Owl 3", "Owl Pro", "Yealink", "Yealink MeetingBar A20", "Jabra Speak 750",
+    "Speakerphone", "ZoomRoom-3F", "Zoom Room", "Poly Studio X50", "Surface Hub 2S",
+    "Huddle 4", "Huddle", "Huddle Space B", "Conf Rm A", "Conf Room 2", "Conference",
+    "Rm 204", "Lobby", "Main Lobby", "Lobby 2", "Main Hall", "Conference Hall", "Town Hall",
+    "Hall 2", "Hall B", "SM-G991B", "Samsung SM-A515F", "Dial-in", "+44 20 7946 0000",
+])
+def test_rooms_and_conference_hardware_clean_to_empty(raw):
+    assert looks_like_device(raw)
+    assert clean_display_name(raw) == ""
+
+
+@pytest.mark.parametrize("raw, clean", [
+    ("Jordan Hall", "Jordan Hall"),  # Hall is a surname
+    ("Hall", "Hall"),  # alone: a surname as likely as a room; no room word, no number
+    ("Annie Hall", "Annie Hall"),
+    ("Neat", "Neat"),  # Neat and Owl alone are no product: Neat Bar, Meeting Owl are
+    ("Owl", "Owl"),
+    ("Cisco Ramirez", "Cisco Ramirez"),  # Cisco as a nickname with a surname
+    ("Rally Okafor", "Rally Okafor"),
+    ("Kath Lobbyist", "Kath Lobbyist"),
+    ("Polly Studio", "Polly Studio"),
+])
+def test_names_that_look_like_rooms_stay_names(raw, clean):
+    assert clean_display_name(raw) == clean
+
+
+def test_room_tracks_make_no_person(store):
+    for i, raw in enumerate(("Polycom", "Logitech Rally", "Huddle 4", "Conf Rm A",
+                             "SM-G991B", "Lobby", "Speakerphone", "Boardroom | Acme HQ")):
+        assert speaker_for_track(store, track(raw, track_id=str(i)), OWNER) == (
+            "Unknown", False), raw
+    assert people_count(store) == 0
+
+
+# BUG-07: the owner matched by CONVO_ZOOM_OWNER_NAMES, no owner voice enrolled
+def test_owner_from_zoom_names_is_one_identity_without_an_enrolled_voice(store):
+    assert store.owner_name() is None
+    name, is_owner = speaker_for_track(store, track("Cleo Example"), ("Cleo Example",))
+    assert (name, is_owner) == ("Cleo Example", True)
+    # lane 2A names owner lines ``store.owner_name() or cfg.owner_name``: the same person
+    assert (store.owner_name() or "Me") == "Cleo Example"
+    conv = _line(store, store.owner_name() or "Me", True, 100.0)
+    people = store.people(("Me", "me"))
+    assert len(people) == 1 and people[0]["is_owner"] and people[0]["name"] == "Cleo Example"
+    assert people[0]["conversations"] == 1 and conv
+    # an enrolled owner voice still wins, and only one owner exists
+    assert store.owner_person_id() == store.person_id("Cleo Example")
+
+
+def test_owner_name_prefers_the_enrolled_owner_voice(store):
+    import numpy as np
+    store.ensure_person("Cleo Example", is_owner=True)
+    assert store.owner_name() == "Cleo Example"
+    store.put_speaker("Cleo", np.ones(4, np.float32), is_owner=True)
+    assert store.owner_name() == "Cleo"
+
+
+# BUG-08: owner Zoom names that clean to nothing ("Me", "iPhone") still find the owner
+def test_owner_named_by_a_raw_name_that_cleans_to_nothing(store):
+    owners = ("Me", "iPhone")
+    assert speaker_for_track(store, track("Me"), owners)[1] is True
+    assert speaker_for_track(store, track("iPhone", track_id="2"), owners)[1] is True
+    tracks = [track("Me", track_id="1"), track("Zoom user", track_id="2")]
+    got = speakers_for_tracks(store, tracks, owners)
+    assert got["1"][1] is True and got["2"] == ("Speaker 1", False)
+    assert people_count(store) == 0  # no person called "Me" or "iPhone"
+
+
+def test_owner_by_raw_name_keeps_the_enrolled_owner_name(store):
+    import numpy as np
+    store.put_speaker("Sam", np.ones(4, np.float32), is_owner=True)
+    assert speaker_for_track(store, track("Sam's iPhone"), ("Sam's iPhone",)) == (
+        "Sam", True)
+
+
+# BUG-09: bare words that are also names stay names; product words stay devices
+@pytest.mark.parametrize("raw, clean", [
+    ("Mac", "Mac"), ("Mac (he/him)", "Mac"), ("Dell", "Dell"), ("MAC", "Mac"),
+    ("Mac Okafor", "Mac Okafor"),
+    ("Mac Pro", ""), ("Mac mini", ""), ("Dell XPS 13", ""), ("Dell Latitude 7420", ""),
+    ("Kath's Mac", "Kath"), ("Apple", ""), ("Google", ""), ("iPhone", ""), ("Galaxy", ""),
+    ("Pixel", ""), ("MacBook", ""), ("Chromebook", ""), ("Laptop", ""), ("Desktop", ""),
+])
+def test_bare_name_like_brand_words(raw, clean):
+    assert clean_display_name(raw) == clean
+
+
+# BUG-10: a pronoun or device before the separator does not hide the name
+@pytest.mark.parametrize("raw, clean", [
+    ("she/her | Kath Dlamini", "Kath Dlamini"),
+    ("he/him - Bo Example", "Bo Example"),
+    ("iPhone | Kath Dlamini", "Kath Dlamini"),
+    ("Guest | Kath Dlamini", "Kath Dlamini"),
+    ("they/them • Rui Tanaka | Acme", "Rui Tanaka"),
+    ("Kath Dlamini | Acme", "Kath Dlamini"),  # unchanged: the first name-like segment
+    ("Conference Room 2 | Acme", ""),  # a room segment: the track is a room
+    ("Kath Dlamini | Boardroom", ""),
+])
+def test_first_segment_with_a_name(raw, clean):
+    assert clean_display_name(raw) == clean
+
+
+# BUG-11: uncased letters (CJK, Arabic, Hebrew) don't stop the case fix
+@pytest.mark.parametrize("raw, clean", [
+    ("王 DANA", "王 Dana"), ("王 dana", "王 Dana"), ("DANA 王", "Dana 王"),
+    ("سارة LEE", "سارة Lee"), ("דנה cohen", "דנה Cohen"),
+    ("王芳", "王芳"), ("王 Dana", "王 Dana"),
+])
+def test_case_fix_ignores_uncased_letters(raw, clean):
+    assert clean_display_name(raw) == clean

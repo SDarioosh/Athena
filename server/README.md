@@ -146,12 +146,18 @@ other's name; two different named speakers stay apart (often a real interruption
   pipeline, never at startup). Each track's display names are cleaned first: pronouns
   ("(she/her)"), bracketed tags, "| Company", " - Company" (spaced dash only, so
   "Smith-Jones" stays), "@ Company", device suffixes ("Kath's iPhone", "(iPad)"), titles
-  and credentials ("Dr.", ", PhD"), emoji and stray punctuation go; ALL-CAPS and
+  and credentials ("Dr.", ", PhD"), emoji and stray punctuation go (of the parts between separators the first that is a
+  name is kept, so "she/her | Kath Dlamini" and "iPhone | Kath Dlamini" are Kath Dlamini; a
+  room part makes the whole name a room); ALL-CAPS and
   all-lowercase names are title-cased ("MARCUS MCDONALD" → "Marcus McDonald"), mixed case
-  is kept ("van der Berg", "O'Neil"). A name that is only a device, a room or a label
-  ("iPhone", "Zoom user", "Conference Room 2") makes no person: the track gets an unnamed
+  is kept ("van der Berg", "O'Neil"). A name that is only a device, a room, conference
+  hardware or a label ("iPhone", "Zoom user", "Conference Room 2", "Huddle 4", "Lobby",
+  "Polycom", "Logitech Rally", "SM-G991B") makes no person ("Jordan Hall" and a bare
+  "Hall", "Mac" or "Dell" are names; "Mac Pro" and "Dell XPS 13" are not): the track gets an unnamed
   label ("Speaker N"), which `name_speaker` can rename. A cleaned name that matches
-  `CONVO_ZOOM_OWNER_NAMES` is the owner. Otherwise it is matched exactly (any case) against
+  `CONVO_ZOOM_OWNER_NAMES` is the owner; with no owner voice enrolled, that person's
+  name is then the owner's name on every owner line (meetings and voice notes alike)
+  instead of `CONVO_OWNER_NAME`, so lines and `list_people` agree. Otherwise it is matched exactly (any case) against
   people names and aliases; an unknown name becomes a new person. There is no first-name
   guessing ("Kath Dlamini" is not merged into "Kath"): a wrong merge mixes two people,
   while `rename_speaker_everywhere("Kath Dlamini", "Kath")` merges them for good. Every
@@ -313,12 +319,14 @@ before tracks. With it, sequences count per track, and a retry of the same
 ignored too). Each track is reassembled by its own sequence and transcribed on its own, so
 two people talking at once stay apart. `track_name` is stored per chunk: a participant who
 renames mid-meeting stays one track, and `GET /v1/sessions/{id}` lists every name seen
-(`tracks`: `track`, `name` (latest), `names`, `chunks`, `started_at`, `ended_at`; each
+(`tracks`: `track`, `name` (of the latest chunk in time, as sent), `names` (every name,
+in order of first use), `chunks`, `started_at`, `ended_at`; each
 chunk also has `track` and `track_name`, null without one). A session with any tracked
 chunk (a meeting) never stops on trailing silence, so a quiet break doesn't end it: it
 stops at `CONVO_MAX_SESSION_SECONDS`, on `POST /v1/sessions/{id}/end`, or after
 `CONVO_SESSION_IDLE_SECONDS` without uploads (the uploader died); once ended, every track
-is told `stop: true`. Errors (400): `track must match
+is told `stop: true`. If an untracked chunk stopped the session on silence first, the
+first tracked chunk reopens it (`recording` again, no stop reason). Errors (400): `track must match
 ^[A-Za-z0-9._:-]{1,64}$`, `track_name is longer than 200 characters`, `track_name needs a
 track`. `POST /v1/ingest/chunk.json` takes the same two fields.
 
