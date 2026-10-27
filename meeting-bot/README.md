@@ -137,3 +137,12 @@ the real build complains, fix them here (and in `sdkstub/h/athena_sdkstub.h`):
   relies on it), whether raw recording must be started again after a reconnect (the bot
   does; a `StartRawRecording` error is then tolerated), and whether participants in
   breakout rooms leave the main room's participant list.
+
+## Cost check
+
+`server/scripts/meeting_bot_cost.py` runs the stub-SDK bot through the `fixture` scenario
+(`ATHENA_SDKSTUB_PCM`: a fictional PCM fixture the script generates at run time;
+`ATHENA_SDKSTUB_SECONDS`: when the stub's host ends the meeting) and reports CPU, peak RSS
+and VmPeak; it fails if any process, socket or file of the bot is left after it exits. CI
+runs it after the stub build. With `--watch` it measures the real bot in a real meeting
+(once per release). See `server/README.md` "Meeting bot cost check".

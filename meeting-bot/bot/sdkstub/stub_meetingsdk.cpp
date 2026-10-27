@@ -28,12 +28,17 @@
 //   waiting_room_back recording; at 2 s the host moves the bot to the waiting room, for good
 //   waiting_room_readmit  as waiting_room_back, let in again at 3 s; ends at 5 s
 //   chat_no_audio     may not record and the request is never answered; chat; ends at 3 s
+//   fixture           as record, but Dana's audio is the raw PCM file ATHENA_SDKSTUB_PCM
+//                     (s16le mono 32 kHz, 10 ms blocks, looped; the tone without it) and
+//                     the host ends the meeting after ATHENA_SDKSTUB_SECONDS (default 20)
+//                     (server/scripts/meeting_bot_cost.py)
 // All names and data are fictional.
 #include <glib.h>
 
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -255,6 +260,44 @@ void schedule_5b(const std::string& s) {
   }
 }
 
+// ---- scenario fixture (lane 5C cost check): PCM file for Dana, host ends after N s ----
+std::vector<int16_t> g_fixture_pcm;
+size_t g_fixture_pos = 0;
+bool g_fixture_loaded = false;
+
+bool fixture_load() {  // the whole file once; false (tone) when unset, unreadable or empty
+  if (g_fixture_loaded) return !g_fixture_pcm.empty();
+  g_fixture_loaded = true;
+  const char* path = std::getenv("ATHENA_SDKSTUB_PCM");
+  if (scenario() != "fixture" || !path || !*path) return false;
+  std::ifstream f(path, std::ios::binary);
+  std::vector<char> raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  if (raw.size() > (64u << 20)) raw.resize(64u << 20);  // a stub: 64 MB is plenty
+  g_fixture_pcm.resize(raw.size() / 2);
+  if (!g_fixture_pcm.empty()) std::memcpy(g_fixture_pcm.data(), raw.data(), g_fixture_pcm.size() * 2);
+  return !g_fixture_pcm.empty();
+}
+
+void fixture_fill(std::vector<int16_t>& block) {  // next 10 ms of the file, looping
+  if (!fixture_load()) return;
+  for (auto& v : block) {
+    v = g_fixture_pcm[g_fixture_pos];
+    g_fixture_pos = (g_fixture_pos + 1) % g_fixture_pcm.size();
+  }
+}
+
+guint fixture_end_ms() {
+  const char* s = std::getenv("ATHENA_SDKSTUB_SECONDS");
+  long n = s && *s ? std::strtol(s, nullptr, 10) : 20;
+  return static_cast<guint>((n < 1 ? 1 : n > 86400 ? 86400 : n) * 1000);
+}
+
+void fixture_start() {  // in the meeting: may record; the host ends it later
+  g_may_record = true;
+  later(fixture_end_ms(), end_cb, GINT_TO_POINTER(EndMeetingReason_EndByHost));
+}
+// ---- end of scenario fixture ----
+
 gboolean in_meeting_cb(gpointer) {
   std::string s = scenario();
   ++g_stays;
@@ -269,6 +312,7 @@ gboolean in_meeting_cb(gpointer) {
                  s == "owner_late" || s == "owner_left" || s == "breakout" ||
                  s.rfind("waiting_room_", 0) == 0 || (drops(s) && g_stays == 1) ||
                  s == "sdk_reconnect";
+  if (s == "fixture") fixture_start();  // before INMEETING: may record at once
   set_status(MEETING_STATUS_INMEETING, 0);
   if (g_stays == 1 && s != "alone") {
     later(1000, chat_cb);
@@ -321,6 +365,7 @@ gboolean audio_cb(gpointer) {
   Block b;
   b.pcm.resize(320);
   for (auto& v : b.pcm) v = static_cast<int16_t>(6000 * std::sin(2 * M_PI * 220 * (g_phase++) / 32000.0));
+  fixture_fill(b.pcm);  // scenario fixture: Dana's audio from ATHENA_SDKSTUB_PCM
   if (dana_here) g_audio_delegate->onOneWayAudioRawDataReceived(&b, g_dana.id);
   g_audio_delegate->onOneWayAudioRawDataReceived(&b, g_self.id);  // the bot hears itself: ignored
   if (g_ghost.id) g_audio_delegate->onOneWayAudioRawDataReceived(&b, g_ghost.id);  // and its old id
