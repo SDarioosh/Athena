@@ -17,6 +17,7 @@ Usage:
         --token "$CONVO_INGEST_TOKEN" --minutes 60 --people 4
     python scripts/meeting_replay.py --token ... --track "Ana Example=ana.wav" \\
         --track "Bo Example=bo.wav"
+    python scripts/meeting_replay.py --token ... --watch <session id>   # a real meeting
 
 ``--speed 4`` replays four times faster than real time (the server then has less time
 per round to keep up, so the end is a little slower than in a real meeting). Needs
@@ -30,7 +31,6 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -104,11 +104,18 @@ def main() -> int:
     ap.add_argument("--track", action="append", default=[], metavar="NAME=FILE")
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--session", default=None)
+    ap.add_argument("--watch", metavar="SESSION_ID",
+                    help="upload nothing: time a real meeting's session from now (its end)")
     ap.add_argument("--lines-only", action="store_true",
                     help="stop when the lines are ready (a server without an LLM)")
     ap.add_argument("--timeout", type=float, default=1800.0,
                     help="seconds to wait for the summary after /end")
     args = ap.parse_args()
+
+    headers = {"Authorization": f"Bearer {args.token}"}
+    if args.watch:  # a real meeting: time from now (its end) to the lines and summary
+        with httpx.Client(base_url=args.url, headers=headers, timeout=120) as http:
+            return wait(http, args.watch, time.time(), args)
 
     if args.track:
         tracks = {}
@@ -127,15 +134,14 @@ def main() -> int:
     ids = {name: str(16778240 + 1024 * i) for i, name in enumerate(tracks)}  # Zoom-like
     session = args.session or f"replay-{uuid.uuid4().hex[:8]}"
     start = time.time()
-    headers = {"Authorization": f"Bearer {args.token}"}
     print(f"session {session}: {len(tracks)} tracks, {rounds} rounds of {CHUNK} s, "
           f"speed {args.speed:g}")
     with httpx.Client(base_url=args.url, headers=headers, timeout=120) as http:
         for seq in range(rounds):
             # round seq's audio is complete at start + (seq + 1) * CHUNK, as for the bot
-            wait = start + (seq + 1) * CHUNK / args.speed - time.time()
-            if wait > 0:
-                time.sleep(wait)
+            pause = start + (seq + 1) * CHUNK / args.speed - time.time()
+            if pause > 0:
+                time.sleep(pause)
             for name, pcm in tracks.items():
                 part = bytes(pcm[seq * step:(seq + 1) * step])
                 r = http.post("/v1/ingest/chunk",
@@ -148,36 +154,40 @@ def main() -> int:
             print(f"round {seq + 1}/{rounds} uploaded", flush=True)
         ended = time.time()
         http.post(f"/v1/sessions/{session}/end").raise_for_status()
-        print("ended; waiting for the lines and the summary ...", flush=True)
-        done_at = summary_at = None
-        conv = None
-        since = datetime.fromtimestamp(start - 60, UTC).isoformat()
-        while time.time() - ended < args.timeout:
-            if done_at is None:
-                status = http.get(f"/v1/sessions/{session}").json()["status"]
-                if status == "failed":
-                    print("processing failed; see the server log")
-                    return 1
-                if status == "done":
-                    done_at = time.time()
-                    print(f"lines ready {done_at - ended:.1f} s after /end", flush=True)
-                    if args.lines_only:
-                        return 0
-            if done_at is not None:
-                convs = http.get("/v1/conversations", params={"since": since}).json()
-                conv = next((c for c in convs["conversations"]
-                             if c.get("device") == "zoom" and c["status"] in
-                             ("summarized", "discarded", "failed")), None)
-                if conv is not None:
-                    summary_at = time.time()
-                    break
-            time.sleep(1.0)
-    if summary_at is None or conv is None:
-        print(f"no summary within {args.timeout:g} s")
-        return 1
-    print(f"summary ({conv['status']}) {summary_at - ended:.1f} s after /end: "
-          f"{conv.get('title')!r}")
-    return 0 if conv["status"] == "summarized" else 1
+        return wait(http, session, ended, args)
+
+
+def wait(http: httpx.Client, session: str, ended: float, args: argparse.Namespace) -> int:
+    """Poll until the session's lines are stored (status done) and its conversation is
+    summarized; print both times from ``ended``."""
+    print(f"session {session} ended; waiting for the lines and the summary ...", flush=True)
+    sess = http.get(f"/v1/sessions/{session}")
+    sess.raise_for_status()
+    since = sess.json()["started_at"]
+    done_at = None
+    while time.time() - ended < args.timeout:
+        if done_at is None:
+            status = http.get(f"/v1/sessions/{session}").json()["status"]
+            if status == "failed":
+                print("processing failed; see the server log")
+                return 1
+            if status == "done":
+                done_at = time.time()
+                print(f"lines ready {done_at - ended:.1f} s after /end", flush=True)
+                if args.lines_only:
+                    return 0
+        if done_at is not None:
+            convs = http.get("/v1/conversations", params={"since": since}).json()
+            zoom = sorted((c for c in convs["conversations"] if c.get("device") == "zoom"),
+                          key=lambda c: c["started_at"])
+            if zoom and zoom[0]["status"] in ("summarized", "discarded", "failed"):
+                conv = zoom[0]
+                print(f"summary ({conv['status']}) {time.time() - ended:.1f} s after /end: "
+                      f"{conv.get('title')!r}")
+                return 0 if conv["status"] == "summarized" else 1
+        time.sleep(1.0)
+    print(f"no summary within {args.timeout:g} s")
+    return 1
 
 
 if __name__ == "__main__":
