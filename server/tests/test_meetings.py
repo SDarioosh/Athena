@@ -629,6 +629,24 @@ def test_already_allowed_goes_straight_to_recording(meeting_settings, client,
 
 
 # ------------------------------------------------- QA regressions (Antigravity audit)
+def test_qa22_bot_token_uploads_conversation_only(meeting_settings, client,
+                                                  tmp_path) -> None:
+    """BUG-22: the per-meeting token can't make the meeting a voice note."""
+    rep = _use(meeting_settings, tmp_path, "record")
+    body = client.post("/v1/meetings", json={"meeting_id": "123456789"}).json()
+    mid, sid = body["id"], body["session_id"]
+    _wait(client, mid, "recording")
+    bot_token = _report(rep)["env"]["ATHENA_UPLOAD_TOKEN"]
+    req = _chunk(bot_token, sid)
+    req["data"]["kind"] = "note"
+    r = client.post("/v1/ingest/chunk", **req)
+    assert r.status_code == 403, r.text
+    assert client.get(f"/v1/sessions/{sid}").status_code == 404  # nothing stored
+    req["data"]["kind"] = "conversation"
+    assert client.post("/v1/ingest/chunk", **req).status_code == 200
+    client.delete(f"/v1/meetings/{mid}")
+
+
 @pytest.mark.parametrize("link, number", [
     ("https://zoom.us/wc/JOIN/85012345678", "85012345678"),
     ("https://zoom.us/WC/85012345678/Join", "85012345678"),

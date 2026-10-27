@@ -275,6 +275,8 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         grant = getattr(request.state, "meeting_session", None)
         if grant is not None and (session_id != grant or device != "zoom"):
             raise HTTPException(403, "a meeting bot's token can only upload to its session")
+        if grant is not None and kind != "conversation":  # a meeting is never a voice note
+            raise HTTPException(403, "a meeting bot's token can only upload kind=conversation")
         if len(audio) > MAX_CHUNK_BYTES:
             raise HTTPException(413, "chunk too large")
         started = parse_ts(timestamp)

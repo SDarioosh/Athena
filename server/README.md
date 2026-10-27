@@ -374,7 +374,8 @@ didn't end it.
 
 **Upload token.** The bot never gets `CONVO_INGEST_TOKEN`. Each meeting gets a random
 token (stored only as a SHA-256 hash, cleared when the bot exits) that is accepted only
-for `POST /v1/ingest/chunk` with that meeting's `session_id` and `device=zoom`, and
+for `POST /v1/ingest/chunk` with that meeting's `session_id`, `device=zoom` and `kind`
+`conversation` (the default; `note` answers 403), and
 `POST /v1/sessions/<that session>/end` and `/chat` (Phase 3). Every other route answers
 403; after the bot exits, 401.
 
