@@ -319,13 +319,15 @@ so summaries, facts and search use them. Depends on Phase 1; can run beside Phas
 
 **Lane 3B, server and MCP (`pipeline.py`, `mcp_server.py`):**
 
-- [ ] Chat lines become transcript lines with `kind=chat`, at their real time, from their
-      sender's person; they skip whisper and VAD.
-- [ ] Summary prompt gets chat lines marked as chat; links and file names in chat are kept
+- [x] Chat lines become transcript lines with `kind=chat`, at their real time, from their
+      sender's person; they skip whisper and VAD. (`POST /v1/sessions/{id}/chat` takes the
+      chat, the topic and the participant list in one idempotent call; `/end` is unchanged.)
+- [x] Summary prompt gets chat lines marked as chat; links and file names in chat are kept
       as text.
-- [ ] MCP output as in the Contract section; MCP 0.16.0; update `server/README.md` JSON
+- [x] MCP output as in the Contract section; MCP 0.16.0; update `server/README.md` JSON
       fields.
-- [ ] Bakeoff: add 2 meeting questions with fictional data ("what did Dana post in chat?",
+- [ ] Bakeoff (questions and fictional meeting added; tool-level check in the sandbox,
+      the Odysseus run is left for the owner's test instance, see the 3B PR): add 2 meeting questions with fictional data ("what did Dana post in chat?",
       "who was in the budget meeting?"); run `server/eval/bakeoff.py --frontend odysseus`
       in the sandbox and put the score in the PR.
 
