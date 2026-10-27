@@ -63,6 +63,12 @@ jobs:
             cmake g++ pkg-config libcurl4-openssl-dev libopus-dev libopusenc-dev libogg-dev \
             ffmpeg opus-tools
           cmake -S meeting-bot -B build-bot && cmake --build build-bot -j && ctest --test-dir build-bot --output-on-failure
+      - name: "Zoom meeting bot: build against the sandbox stub SDK and run its scenarios (not Zoom's SDK)"
+        if: hashFiles('meeting-bot/bot/sdkstub/stub_meetingsdk.cpp') != ''
+        run: |
+          sudo apt-get install -y --no-install-recommends libglib2.0-dev
+          cmake -S meeting-bot -B build-bot-stub -DZOOM_SDK_DIR="$PWD/meeting-bot/bot/sdkstub"
+          cmake --build build-bot-stub -j && ctest --test-dir build-bot-stub --output-on-failure
 
   firmware-twatch-ultra:
     runs-on: ubuntu-latest
