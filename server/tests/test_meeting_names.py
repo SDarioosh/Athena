@@ -317,22 +317,23 @@ def test_room_tracks_make_no_person(store):
 # BUG-07: the owner matched by CONVO_ZOOM_OWNER_NAMES, no owner voice enrolled
 def test_owner_from_zoom_names_is_one_identity_without_an_enrolled_voice(store):
     assert store.owner_name() is None
-    name, is_owner = speaker_for_track(store, track("Cleo Example"), ("Cleo Example",))
-    assert (name, is_owner) == ("Cleo Example", True)
+    name, is_owner = speaker_for_track(store, track("Cleo Example"), ("Cleo Example",),
+                                       owner_display="Shahyah")
+    assert (name, is_owner) == ("Shahyah", True)
     # lane 2A names owner lines ``store.owner_name() or cfg.owner_name``: the same person
-    assert (store.owner_name() or "Me") == "Cleo Example"
-    conv = _line(store, store.owner_name() or "Me", True, 100.0)
+    assert (store.owner_name() or "Shahyah") == "Shahyah"
+    conv = _line(store, store.owner_name() or "Shahyah", True, 100.0)
     people = store.people(("Me", "me"))
-    assert len(people) == 1 and people[0]["is_owner"] and people[0]["name"] == "Cleo Example"
+    assert len(people) == 1 and people[0]["is_owner"] and people[0]["name"] == "Shahyah"
     assert people[0]["conversations"] == 1 and conv
-    # an enrolled owner voice still wins, and only one owner exists
+    # only one owner exists, found by the Zoom name too
     assert store.owner_person_id() == store.person_id("Cleo Example")
 
 
 def test_owner_name_prefers_the_enrolled_owner_voice(store):
     import numpy as np
     store.ensure_person("Cleo Example", is_owner=True)
-    assert store.owner_name() == "Cleo Example"
+    assert store.owner_name() is None
     store.put_speaker("Cleo", np.ones(4, np.float32), is_owner=True)
     assert store.owner_name() == "Cleo"
 
@@ -390,3 +391,67 @@ def test_first_segment_with_a_name(raw, clean):
 ])
 def test_case_fix_ignores_uncased_letters(raw, clean):
     assert clean_display_name(raw) == clean
+
+
+# Owner request (QA BUG-07 follow-up): the owner keeps CONVO_OWNER_NAME (or the enrolled
+# owner voice's name); the Zoom display names become aliases of the owner person
+def test_owner_track_keeps_convo_owner_name_and_zoom_names_become_aliases(store):
+    zoom = track("Cleo Example (she/her)", "Cleo Example")
+    got = speaker_for_track(store, zoom, ("Cleo Example",), owner_display="Shahyah")
+    assert got == ("Shahyah", True)
+    owner = store.owner_person_id()
+    assert owner == store.person_id("Shahyah") == store.person_id("Cleo Example")
+    assert {"Cleo Example", "Cleo Example (she/her)"} <= aliases(store, owner)
+    assert people_count(store) == 1
+    # no enrolled voice: owner lines are named ``store.owner_name() or CONVO_OWNER_NAME``
+    assert store.owner_name() is None
+    conv = _line(store, "Shahyah", True, 100.0)
+    (person,) = store.people(("Me", "me"))
+    assert person["name"] == "Shahyah" and person["is_owner"] and person["conversations"] == 1
+    assert conv
+    # the next meeting still finds the owner by the Zoom name (now an alias)
+    again = speaker_for_track(store, track("Cleo Example", track_id="2"), ("Cleo Example",),
+                              owner_display="Shahyah")
+    assert again == ("Shahyah", True) and people_count(store) == 1
+
+
+def test_owner_named_by_zoom_before_the_fix_is_renamed_to_convo_owner_name(store):
+    # a store from before the fix: the owner person is called by the Zoom name, and a
+    # meeting's owner lines were written under it
+    pid = store.ensure_person("Cleo Example", is_owner=True)
+    conv = _line(store, "Cleo Example", True, 100.0)
+    got = speaker_for_track(store, track("Cleo Example", track_id="3"), ("Cleo Example",),
+                            owner_display="Shahyah")
+    assert got == ("Shahyah", True)
+    assert store.owner_person_id() == pid  # same id, renamed
+    assert store.person_id("Shahyah") == pid and "Cleo Example" in aliases(store, pid)
+    assert people_count(store) == 1
+    assert {s.speaker for s in store.conversation_segments(conv)} == {"Shahyah"}
+    (person,) = store.people(("Me", "me"))
+    assert person["name"] == "Shahyah" and person["conversations"] == 1
+
+
+def test_owner_track_merges_into_an_existing_convo_owner_person(store):
+    shahyah = store.ensure_person("Shahyah")
+    store.ensure_person("Cleo Example", is_owner=True)
+    got = speaker_for_track(store, track("Cleo Example"), ("Cleo Example",),
+                            owner_display="Shahyah")
+    assert got == ("Shahyah", True)
+    assert store.owner_person_id() == shahyah == store.person_id("Cleo Example")
+    assert people_count(store) == 1
+
+
+def test_enrolled_owner_voice_name_wins_over_convo_owner_name(store):
+    import numpy as np
+    store.put_speaker("Shahyah Voice", np.ones(4, np.float32), is_owner=True)
+    got = speaker_for_track(store, track("Cleo Example"), ("Cleo Example",),
+                            owner_display="Shahyah")
+    assert got == ("Shahyah Voice", True)
+    owner = store.owner_person_id()
+    assert owner == store.person_id("Shahyah Voice") == store.person_id("Cleo Example")
+    assert store.owner_name() == "Shahyah Voice" and people_count(store) == 1
+
+
+def test_owner_name_is_the_enrolled_voice_only(store):
+    store.ensure_person("Cleo Example", is_owner=True)
+    assert store.owner_name() is None  # a people row never names the owner's lines
