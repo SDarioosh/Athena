@@ -1528,6 +1528,19 @@ class Store:
     def written_note(self, source_id: str) -> dict[str, Any] | None:
         return self._one("SELECT * FROM written_notes WHERE source_id = ?", (source_id,))
 
+    def summaries_for(self, conv_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """``{conversation_id: {"summary", "key_points"}}`` for ``conv_ids`` (a summary
+        that erase_fact took down is None, its key points ``[]``)."""
+        ids = list(dict.fromkeys(conv_ids))
+        out: dict[str, dict[str, Any]] = {}
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            for r in self._q("SELECT id, summary, key_points FROM conversations"
+                             f" WHERE id IN ({','.join('?' * len(part))})", part):
+                out[r["id"]] = {"summary": r["summary"],
+                                "key_points": json.loads(r["key_points"] or "[]")}
+        return out
+
     def written_notes_for(self, conv_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
         """``{conversation_id: {"source_id", "link", "title"}}`` for the written notes
         among ``conv_ids`` (others are left out)."""

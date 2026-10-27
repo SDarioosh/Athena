@@ -100,7 +100,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.14.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.15.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -248,7 +248,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
 
     def item_json(r: dict[str, Any], mine_names: set[str],
                   participants: dict[str, list[dict[str, Any]]],
-                  written: dict[str, dict[str, Any]]) -> dict[str, Any]:
+                  written: dict[str, dict[str, Any]],
+                  summaries: dict[str, dict[str, Any]]) -> dict[str, Any]:
         owner = (r["owner"] or "").strip().lower()
         kind = r.get("kind") or "task"
         others = [] if kind == "note" else _with(r["text"], participants.get(
@@ -268,6 +269,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                 "conversation_at": _iso(r["conversation_at"]),
                 "created_at": _iso(r.get("created_at") or r["conversation_at"]),
                 "timezone": settings.timezone, "link": item_link(r), "with": others,
+                "key_points": _note_key_points(r, summaries.get(r["conversation_id"])),
                 **_written_json(written.get(r["conversation_id"]))}
 
     @mcp.tool(annotations=ro)
@@ -311,8 +313,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if fmt == "json":
             mine_names = store.known_names()[0] | _OWNER_WORDS | {
                 settings.owner_name.strip().lower()} - {""}
-            return json.dumps([item_json(r, mine_names, participants, written) for r in rows],
-                              ensure_ascii=False)
+            summaries = store.summaries_for(
+                r["conversation_id"] for r in rows if r.get("kind") == "note")
+            return json.dumps([item_json(r, mine_names, participants, written, summaries)
+                               for r in rows], ensure_ascii=False)
         lines = [header(len(rows), f"{st} action items")]
         for r in rows:
             lines.append(f"- #{r['id']} [{r['status']}] {_kind_word(r)}{r['text']}"
@@ -755,6 +759,19 @@ def _note(kind: str | None, written: dict[str, Any] | None = None) -> str:
     if written:
         return written_label(written)
     return " (voice note)" if kind == "note" else ""
+
+
+def _note_key_points(r: dict[str, Any], summary: dict[str, Any] | None) -> list[str]:
+    """JSON rows' ``key_points`` (MCP 0.15.0): for a note that is a whole voice note (its
+    text is the voice note's summary, see ``_lone_note`` in llm.py), the voice note's key
+    points, so the hub's note holds what was said ("Screen: 49 mm x 60 mm"), not only the
+    summary; ``[]`` for every other item."""
+    if r.get("kind") != "note" or r.get("list_name") or not summary:
+        return []
+    said = " ".join((summary.get("summary") or "").split())
+    if not said or said != " ".join((r.get("text") or "").split()):
+        return []
+    return [str(k).strip() for k in summary.get("key_points") or [] if str(k).strip()]
 
 
 def _written_json(written: dict[str, Any] | None) -> dict[str, Any]:
