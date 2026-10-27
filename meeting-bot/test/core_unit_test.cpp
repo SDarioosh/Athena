@@ -424,6 +424,19 @@ void test_chat_log() {
     CHECK(!std::filesystem::exists(dir / "chat.jsonl"));
     CHECK(!std::filesystem::exists(dir / "participants.json"));
   }
+  {  // breakout rooms: open then closed, a second time still open at the end
+    ChatLog chat(dir.string());
+    CHECK(chat.body().find("breakouts") == std::string::npos);  // none: no field
+    chat.on_breakouts(true, kT0 + 60000);
+    chat.on_breakouts(true, kT0 + 61000);  // already open: ignored
+    chat.on_breakouts(false, kT0 + 600000);
+    chat.on_breakouts(false, kT0 + 601000);  // already closed: ignored
+    chat.on_breakouts(true, kT0 + 900000);
+    CHECK(chat.body() == "{\"lines\": [], \"breakouts\": [{\"from\": \"2025-10-13T15:01:00.000Z\", "
+                         "\"until\": \"2025-10-13T15:10:00.000Z\"}, {\"from\": "
+                         "\"2025-10-13T15:15:00.000Z\", \"until\": null}]}");
+    chat.remove_files();
+  }
   {  // caps: 2,000 messages
     ChatLog chat(dir.string());
     for (int i = 0; i < 2100; ++i)

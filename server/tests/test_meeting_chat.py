@@ -433,6 +433,38 @@ def test_seed_demo_budget_meeting_has_chat_and_participants(pipeline):
     assert pipeline.summarize_conversation(conv)
 
 
+def test_bot_silent_start_makes_a_session_for_chat_only(pipeline, client):
+    """The meeting bot with chat but no audio (no recording permission) first uploads one
+    second of silence without a track (meeting-bot/core, Core::finish), so its chat call
+    finds the session. The silence adds no transcript line; the chat lines become the
+    meeting's conversation."""
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(32000)
+        w.writeframes(b"\0\0" * 32000)
+    r = client.post("/v1/ingest/chunk", data={
+        "device": "zoom", "session_id": "z-chat", "sequence": "0", "timestamp": str(T0),
+        "codec": "wav"}, files={"audio": ("session-start.wav", buf.getvalue(), "audio/wav")})
+    assert r.status_code == 200 and r.json()["ok"] and not r.json()["stop"], r.text
+    body = {"topic": "Q4 budget review", "lines": CHAT_BODY["lines"][:1],
+            "participants": CHAT_BODY["participants"][3:4]}
+    r = chat(client, body, session="z-chat")
+    assert r.status_code == 200 and r.json()["added"] == 1, r.text
+    assert client.post("/v1/sessions/z-chat/end").status_code == 200
+    pipeline.process_session("z-chat")
+    segs = pipeline.store.session_segments("z-chat")
+    assert [(s.kind, s.text) for s in segs] == [(CHAT, f"Here is the sheet: {LINK}")]
+    conv_id = pipeline.store.meeting_conversation("z-chat")
+    assert conv_id is not None
+    conv = pipeline.store.get_conversation(conv_id)
+    assert conv["meeting"]["topic"] == "Q4 budget review"
+
+
 def test_meeting_label_names_no_platform():
     # MCP 0.17.0: meetings may come from other platforms than Zoom later, so the mark
     # after a title says "Online meeting", never the platform.

@@ -180,6 +180,13 @@ class IMeetingRecordingController {
   virtual SDKError RequestLocalRecordingPrivilege() = 0;
 };
 
+// ---- breakout rooms (meeting_service_components/meeting_breakout_rooms_interface_v2.h) ----
+class IMeetingBOController {
+ public:
+  virtual ~IMeetingBOController() {}
+  virtual bool IsBOStarted() = 0;
+};
+
 // ---- meeting service ----
 enum MeetingStatus {
   MEETING_STATUS_IDLE = 0,
@@ -267,6 +274,7 @@ class IMeetingService {
   virtual IMeetingRecordingController* GetMeetingRecordingController() = 0;
   virtual IMeetingChatController* GetMeetingChatController() = 0;
   virtual IMeetingAudioController* GetMeetingAudioController() = 0;
+  virtual IMeetingBOController* GetMeetingBOController() = 0;
 };
 
 // ---- raw audio ----

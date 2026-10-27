@@ -703,7 +703,7 @@ convo-server zoom-login") and starts nothing; sign in again either way.
   after exit). stderr: free-form logs, into the server's log.
 - stdout: one line per state change, exactly `STATE <state>` or `STATE <state> <reason>`;
   `<state>` one of `starting` (the launcher sets it; the bot sends it only with a
-  reason, `waiting_for_owner`), `waiting_room`, `waiting_permission`, `recording`,
+  reason, `waiting_for_owner`, `waiting_for_host` or `reconnecting`), `waiting_room`, `waiting_permission`, `recording`,
   `ended`, `failed`, `<reason>` `[a-z0-9_]{1,40}`. Other lines are ignored. Flush each line.
   Ignore SIGPIPE/EPIPE on stdout: after a server restart nobody reads it, and the bot
   keeps recording.
@@ -715,10 +715,19 @@ convo-server zoom-login") and starts nothing; sign in again either way.
   <upload-url>/v1/sessions/<session_id>/end`.
 - Leave on: meeting ended, alone for `--alone-seconds`, removed, SIGTERM, `--max-seconds`
   after start. Waiting room longer than `--waiting-room-seconds`: `failed
-  waiting_room_timeout`.
+  waiting_room_timeout`, or `ended waiting_room_timeout` when the host moved the bot back
+  to the waiting room after it was in the meeting (let in again: back to `recording` or
+  `waiting_permission`, same session, same per-track sequences). While breakout rooms are
+  open the alone rule waits (the bot stays in the main room).
+- Network drop after joining (lane 5B): `STATE starting reconnecting` while the SDK
+  reconnects or the bot rejoins (up to 3 tries within 2 minutes of the drop); back in:
+  `recording` or `waiting_permission` again, same session id, same per-track sequences
+  (chunks of a track continue, never restart at 0). Given up: `STATE ended
+  connection_lost`; the meeting gone meanwhile: `ended meeting_ended`.
 - Recording permission: once fully in the meeting, without host, co-host or recording
   rights, call the SDK's `RequestLocalRecordingPrivilege` **once** and print `STATE
-  waiting_permission`. Allowed: `STATE recording`. Denied: `STATE waiting_permission
+  waiting_permission` (once more after a rejoin, only if the host had allowed it before:
+  Zoom forgets it when the bot rejoins). Allowed: `STATE recording`. Denied: `STATE waiting_permission
   denied`, then keep waiting (an Allow later still gives `STATE recording`). Never ask
   again and never leave over permission; `--waiting-room-seconds` does not apply here
   (the meeting's end, the alone rule, SIGTERM, `owner_left` and `--max-seconds` still
@@ -727,10 +736,15 @@ convo-server zoom-login") and starts nothing; sign in again either way.
   the meeting yet (SDK `MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING`), retry and print
   `STATE starting waiting_for_owner` (once); after `--waiting-room-seconds` give up with
   `STATE failed owner_not_joined`. Zoom ending the session because the owner left is
-  `STATE ended owner_left`. A join token Zoom calls expired: `STATE failed
+  `STATE ended owner_left` (also when a rejoin after a network drop is refused because
+  the owner is no longer in the meeting). A join token Zoom calls expired: `STATE failed
   join_token_expired`.
 - SIGTERM: flush the last chunks, end the session, print `STATE ended stopped`, exit 0
-  within 5 s (SIGKILL follows after 10 s).
+  within 5 s (SIGKILL follows after 10 s), in every phase, also while rejoining.
+- Chat but no chunk ever uploaded (no recording permission): before the chat call the bot
+  uploads one second of silence without a `track` (sequence 0), so the session exists;
+  being silent it adds no transcript line, and a `zoom` session without tracks is a
+  meeting.
 - Exit 0 after `STATE ended <reason>`; non-zero after `STATE failed <reason>`. A non-zero
   exit without a `failed` line becomes `failed`/`bot_crashed`.
 

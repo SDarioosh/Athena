@@ -289,10 +289,10 @@ void test_owner_wait() {
   r5.joined(s(10));
   d = r5.meeting_ended(EndKind::Removed);
   CHECK(d.reason == "removed");
-  Rules r6(cfg(false), T0);  // no obf: a dropped session is a lost connection
+  Rules r6(cfg(false), T0);  // no obf: a dropped session is a drop: rejoin
   r6.joined(s(10));
-  d = r6.join_failed(JoinFail::Other, s(500));
-  CHECK(d.outcome == Outcome::Ended && d.reason == "connection_lost");
+  CHECK(!r6.join_failed(JoinFail::Other, s(500)));
+  CHECK_EQ(r6.status().line(), "starting reconnecting");
   Rules r7(cfg(false), T0);
   r7.joined(s(10));
   d = r7.meeting_ended(EndKind::Other);
@@ -316,6 +316,203 @@ void test_participants() {
   CHECK(t.name_of(1).empty());
 }
 
+// Network drop, the SDK gives up, the bot rejoins: same Rules, recording again.
+void test_drop_rejoin() {
+  Rules r(cfg(), T0);
+  r.joined(s(1));
+  r.recording(s(2));
+  r.others(2, s(2));
+  r.reconnecting(s(100));
+  CHECK_EQ(r.status().line(), "starting reconnecting");
+  CHECK(!r.is_recording());
+  CHECK(!r.rejoin_due(s(110)));  // the SDK reconnects on its own: no Join from us
+  CHECK(!r.tick(s(110), s(99), false, false));
+  CHECK(!r.join_failed(JoinFail::Other, s(130)));  // the SDK gave up
+  CHECK(r.rejoin_due(s(130)));  // 30 s after the drop: past the first try's 2 s
+  r.rejoin_started(s(130));
+  CHECK_EQ(r.rejoin_tries(), 1);
+  CHECK(!r.rejoin_due(s(131)));  // one try at a time
+  r.joined(s(133));
+  CHECK_EQ(r.status().line(), "waiting_permission");  // recording must start again
+  r.recording(s(134));
+  CHECK_EQ(r.status().line(), "recording");
+  CHECK(!r.tick(s(150), s(150), false, false));
+  CHECK(r.ever_recorded());
+  // the alone timer starts over after the rejoin: others unknown until the next poll
+  CHECK(!r.tick(s(300), s(300), false, false));
+  // a second drop gets a new budget
+  r.reconnecting(s(1000));
+  CHECK(!r.join_failed(JoinFail::Other, s(1001)));
+  CHECK(!r.rejoin_due(s(1001)));
+  CHECK(r.rejoin_due(s(1002)));
+}
+
+void test_drop_lost() {
+  Rules r(cfg(), T0);
+  r.joined(s(1));
+  r.recording(s(1));
+  CHECK(!r.join_failed(JoinFail::Other, s(10)));  // dropped, no SDK reconnect
+  CHECK(!r.rejoin_due(s(11)));
+  CHECK(r.rejoin_due(s(12)));     // try 1 at +2 s
+  r.rejoin_started(s(12));
+  CHECK(!r.join_failed(JoinFail::Other, s(13)));
+  CHECK(!r.rejoin_due(s(29)));
+  CHECK(r.rejoin_due(s(30)));     // try 2 at +20 s
+  r.rejoin_started(s(30));
+  CHECK(!r.join_failed(JoinFail::Other, s(31)));
+  CHECK(!r.rejoin_due(s(69)));
+  CHECK(r.rejoin_due(s(70)));     // try 3 at +60 s
+  r.rejoin_started(s(70));
+  auto d = r.join_failed(JoinFail::Other, s(72));
+  CHECK(d.outcome == Outcome::Ended && d.reason == "connection_lost");
+
+  Rules r2(cfg(), T0);  // a try that never answers: 2 minutes after the drop
+  r2.joined(s(1));
+  r2.join_failed(JoinFail::Other, s(10));
+  r2.rejoin_started(s(12));
+  CHECK(!r2.tick(s(129), 0, false, false));
+  d = r2.tick(s(130), 0, false, false);
+  CHECK(d.outcome == Outcome::Ended && d.reason == "connection_lost");
+
+  Rules r3(cfg(), T0);  // the SDK reconnects for over 2 minutes
+  r3.joined(s(1));
+  r3.reconnecting(s(10));
+  d = r3.tick(s(130), 0, false, false);
+  CHECK(d.reason == "connection_lost");
+
+  Rules r4(cfg(), T0);  // a rejoin finds the meeting gone
+  r4.joined(s(1));
+  r4.join_failed(JoinFail::Other, s(10));
+  r4.rejoin_started(s(12));
+  d = r4.join_failed(JoinFail::NotFound, s(13));
+  CHECK(d.outcome == Outcome::Ended && d.reason == "meeting_ended");
+
+  Rules r5(cfg(), T0);  // a passcode that no longer works: no point in trying again
+  r5.joined(s(1));
+  r5.join_failed(JoinFail::Other, s(10));
+  r5.rejoin_started(s(12));
+  d = r5.join_failed(JoinFail::WrongPasscode, s(13));
+  CHECK(d.reason == "connection_lost");
+
+  Rules r6(cfg(), T0);  // the host ends the meeting while the bot reconnects
+  r6.joined(s(1));
+  r6.reconnecting(s(10));
+  d = r6.meeting_ended(EndKind::ByHost);
+  CHECK(d.reason == "meeting_ended");
+
+  Rules r7(cfg(), T0);  // Zoom closes the session (no host reason) while reconnecting
+  r7.joined(s(1));
+  r7.reconnecting(s(10));
+  CHECK(!r7.meeting_ended(EndKind::Other));
+  CHECK(r7.rejoin_due(s(12)));
+  r7.rejoin_started(s(12));
+  CHECK(!r7.meeting_ended(EndKind::Other));  // a try ended that way counts as failed
+  CHECK(!r7.rejoin_due(s(29)));
+  CHECK(r7.rejoin_due(s(30)));
+
+  Rules r8(cfg(), T0);  // SIGTERM while waiting to rejoin
+  r8.joined(s(1));
+  r8.join_failed(JoinFail::Other, s(10));
+  d = r8.stop_signal();
+  CHECK(d.reason == "stopped");
+  CHECK(!r8.rejoin_due(s(100)));
+
+  Rules r9(cfg(), T0);  // max duration also while reconnecting
+  r9.joined(s(1));
+  r9.reconnecting(s(3590));
+  d = r9.tick(s(3600), 0, false, false);
+  CHECK(d.reason == "max_duration");
+
+  Rules r10(cfg(), T0);  // a rejoin try lands in the waiting room: connected again
+  r10.joined(s(1));
+  r10.join_failed(JoinFail::Other, s(10));
+  r10.rejoin_started(s(12));
+  r10.waiting_room(s(14));
+  CHECK_EQ(r10.status().line(), "waiting_room");
+  CHECK(!r10.tick(s(200), 0, false, false));  // no 2-minute give-up there
+  d = r10.tick(s(614), 0, false, false);
+  CHECK(d.outcome == Outcome::Ended && d.reason == "waiting_room_timeout");
+}
+
+void test_obf_drop() {
+  Rules r(cfg(true), T0);  // obf, network drop, owner still in: rejoin
+  r.joined(s(1));
+  r.reconnecting(s(10));
+  CHECK(!r.join_failed(JoinFail::Other, s(20)));
+  r.rejoin_started(s(20));
+  r.joined(s(22));
+  CHECK_EQ(r.status().line(), "waiting_permission");
+
+  Rules r2(cfg(true), T0);  // obf, network drop, the owner left meanwhile
+  r2.joined(s(1));
+  r2.reconnecting(s(10));
+  r2.join_failed(JoinFail::Other, s(20));
+  r2.rejoin_started(s(20));
+  auto d = r2.join_failed(JoinFail::OwnerNotIn, s(21));
+  CHECK(d.outcome == Outcome::Ended && d.reason == "owner_left");
+
+  Rules r3(cfg(true), T0);  // obf, Zoom ends the session with no reconnect: owner left
+  r3.joined(s(1));
+  d = r3.join_failed(JoinFail::Other, s(20));
+  CHECK(d.reason == "owner_left");
+}
+
+void test_waiting_room_after_joining() {
+  Rules r(cfg(), T0);
+  r.joined(s(1));
+  r.recording(s(1));
+  r.others(1, s(1));
+  r.waiting_room(s(100));  // the host moved Athena back to the waiting room
+  CHECK_EQ(r.status().line(), "waiting_room");
+  CHECK(!r.tick(s(699), 0, false, false));
+  auto d = r.tick(s(700), 0, false, false);
+  CHECK(d.outcome == Outcome::Ended && d.reason == "waiting_room_timeout");
+
+  Rules r2(cfg(), T0);  // let in again: same Rules, recording again
+  r2.joined(s(1));
+  r2.recording(s(1));
+  r2.waiting_room(s(100));
+  r2.joined(s(200));
+  CHECK_EQ(r2.status().line(), "waiting_permission");
+  r2.recording(s(201));
+  CHECK_EQ(r2.status().line(), "recording");
+  CHECK(!r2.tick(s(250), s(250), false, false));
+
+  Rules r3(cfg(), T0);  // never in the meeting: still a failure
+  r3.waiting_room(s(1));
+  d = r3.tick(s(601), 0, false, false);
+  CHECK(d.outcome == Outcome::Failed && d.reason == "waiting_room_timeout");
+}
+
+void test_breakouts() {
+  Rules r(cfg(), T0);
+  r.joined(s(1));
+  r.recording(s(1));
+  CHECK(r.others(4, s(2), false) == Breakouts::None);
+  CHECK(r.others(4, s(3), true) == Breakouts::None);  // open, nobody moved yet
+  CHECK(r.others(2, s(4), true) == Breakouts::None);  // half left: not most
+  CHECK(r.others(0, s(5), true) == Breakouts::MostLeft);
+  CHECK_EQ(r.breakouts_since(), s(3));
+  CHECK(r.others(0, s(6), true) == Breakouts::None);  // noted once
+  CHECK(!r.tick(s(600), s(600), false, false));  // alone, but rooms are open: stays
+  CHECK(r.others(0, s(900), false) == Breakouts::Over);
+  CHECK(!r.tick(s(959), s(959), false, false));  // alone counts from the close
+  CHECK(r.others(0, s(960), false) == Breakouts::None);
+  auto d = r.tick(s(1020), s(1020), false, false);
+  CHECK(d.reason == "alone");
+
+  Rules r2(cfg(), T0);  // rooms open, most stay: nothing noted, nothing at the close
+  r2.joined(s(1));
+  r2.others(3, s(2));
+  CHECK(r2.others(2, s(3), true) == Breakouts::None);
+  CHECK(r2.others(3, s(4), false) == Breakouts::None);
+
+  Rules r3(cfg(), T0);  // already alone when rooms open (before=1): one left of one
+  r3.joined(s(1));
+  r3.others(1, s(2));
+  CHECK(r3.others(0, s(3), true) == Breakouts::MostLeft);
+}
+
 }  // namespace
 
 int main() {
@@ -330,6 +527,11 @@ int main() {
   test_join_failures();
   test_owner_wait();
   test_participants();
+  test_drop_rejoin();
+  test_drop_lost();
+  test_obf_drop();
+  test_waiting_room_after_joining();
+  test_breakouts();
   if (g_failures) {
     std::fprintf(stderr, "%d check(s) failed\n", g_failures);
     return 1;

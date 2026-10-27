@@ -266,6 +266,34 @@ class CoreUploadTests(unittest.TestCase):
         data = Path(chunks[0]["files"][0]["path"]).read_bytes()
         self.assertAlmostEqual(opus_seconds(data), 29.5, delta=0.002)
 
+    def test_chat_without_audio_makes_the_session(self):
+        """No chunk ever (no recording permission): one second of silence without a track
+        goes first, so the chat call finds the session instead of a 404."""
+        for codec in ("opus", "wav"):
+            run = self.run_core("strict", "--pattern", "chat", "--codec", codec)
+            self.assertEqual(run.num("finish"), 1, run.stderr)
+            chunks = run.chunks()
+            self.assertEqual(len(chunks), 1)
+            f = chunks[0]["fields"]
+            self.assertEqual(set(f), {"device", "session_id", "sequence", "timestamp", "codec"})
+            self.assertEqual((f["device"], f["session_id"], f["sequence"], f["codec"]),
+                             ("zoom", SESSION, "0", codec))
+            data = Path(chunks[0]["files"][0]["path"]).read_bytes()
+            dur = opus_seconds(data) if codec == "opus" else wav_seconds(data)
+            self.assertAlmostEqual(dur, 1.0, delta=0.002)
+            chat, end = run.calls("chat"), run.calls("end")
+            self.assertEqual([r["status"] for r in chat], [200])
+            self.assertEqual([r["status"] for r in end], [200])
+            order = [r["path"].rsplit("/", 1)[-1] for r in run.requests]
+            self.assertEqual(order, ["chunk", "chat", "end"])
+
+    def test_no_silent_chunk_when_audio_was_uploaded(self):
+        run = self.run_core("strict", "--pattern", "tail")
+        self.assertEqual(run.num("finish"), 1, run.stderr)
+        self.assertTrue(run.chunks())
+        self.assertTrue(all(c["fields"].get("track") for c in run.chunks()))
+        self.assertEqual([r["status"] for r in run.calls("end")], [200])
+
     def test_chat_cap_and_private_drop(self):
         run = self.run_core("ok", "--chat-flood")
         self.assertEqual(run.num("chat_lines_before_finish"), 2000)

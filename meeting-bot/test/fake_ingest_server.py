@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Fake Athena ingest API for the core's host tests (stdlib only, loopback, fictional data).
 
-    fake_ingest_server.py --mode ok|503xN|503always|401|stop|hang|400first --log DIR
+    fake_ingest_server.py --mode ok|strict|503xN|503always|401|stop|hang|400first --log DIR
                           [--token test-token]
 
+strict: as Athena's API, /chat and /end answer 404 for a session no chunk made yet.
 Prints the port on its first stdout line. Every request is appended to DIR/requests.jsonl
 (chunk audio saved next to it); the routes and answers mimic server/convo_server/api.py.
 """
@@ -21,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 LOCK = threading.Lock()
-STATE = {"chunk_calls": 0, "n": 0}
+STATE = {"chunk_calls": 0, "n": 0, "sessions": set()}
 
 
 def parse_multipart(content_type: str, body: bytes) -> tuple[dict[str, str], list[dict]]:
@@ -77,6 +78,7 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 STATE["chunk_calls"] += 1
                 calls = STATE["chunk_calls"]
+                STATE["sessions"].add(fields.get("session_id"))
         else:
             entry["body"] = body.decode("utf-8", "replace")
             calls = 0
@@ -96,6 +98,8 @@ class Handler(BaseHTTPRequestHandler):
             return -1, {}
         m = re.fullmatch(r"/v1/sessions/([^/]+)/(end|chat)", self.path)
         if m:
+            if mode == "strict" and m.group(1) not in STATE["sessions"]:
+                return 404, {"detail": "session not found"}
             if m.group(2) == "end":
                 return 200, {"ok": True, "stop": True}
             return 200, {"ok": True, "session_id": m.group(1), "result": "queued"}

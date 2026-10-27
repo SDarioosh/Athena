@@ -26,6 +26,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -46,11 +47,18 @@
 #include "rawdata/rawdata_audio_helper_interface.h"
 #include "rawdata/zoom_rawdata_api.h"
 #include "zoom_sdk_raw_data_def.h"
+// Breakout rooms: only to keep the alone rule from ending the meeting while everyone is in
+// a breakout room, and to note it. Without this header the bot builds and runs without it.
+#if __has_include("meeting_service_components/meeting_breakout_rooms_interface_v2.h")
+#include "meeting_service_components/meeting_breakout_rooms_interface_v2.h"
+#define ATHENA_HAVE_BREAKOUTS 1
+#endif
 
 USING_ZOOM_SDK_NAMESPACE
 
 namespace {
 
+using athena::bot::Breakouts;
 using athena::bot::Decision;
 using athena::bot::EndKind;
 using athena::bot::JoinFail;
@@ -62,6 +70,9 @@ constexpr int kPermissionRetrySeconds = 15; // CanStartRawRecording fallback (sp
 constexpr auto kSignalBudget = std::chrono::milliseconds(4000);   // finish() on SIGTERM
 constexpr auto kNormalBudget = std::chrono::seconds(20);          // finish() after a meeting
 constexpr auto kEarlyBudget = std::chrono::seconds(3);            // finish() if never joined
+// Rejoin after a drop: tries not before 2 s, 20 s and 60 s after it; give up after 2 min.
+constexpr int64_t kRejoinWindowMs = 120000;
+constexpr int64_t kRejoinAtMs[athena::bot::kRejoinTries] = {2000, 20000, 60000};
 
 athena::bot::Options g_opt;
 std::unique_ptr<athena::bot::Rules> g_rules;
@@ -80,14 +91,18 @@ bool g_finished = false;
 bool g_from_signal = false;
 Decision g_final;
 std::chrono::steady_clock::time_point g_deadline;
-bool g_raw_started = false;
-bool g_permission_requested = false;
+bool g_raw_started = false;       // raw audio subscribed in this stay in the meeting
+bool g_had_raw = false;           // ... in any earlier one (the host allowed recording)
+int g_asks_left = 1;              // recording requests left for this stay in the meeting
+guint g_permission_timer = 0;     // the CanStartRawRecording retry, at most one
 bool g_joined_once = false;
+bool g_in_meeting = false;        // INMEETING and not left since (drop, waiting room)
 std::atomic<bool> g_audio_on{false};
 std::atomic<long long> g_last_audio_ms{0};
 
 std::mutex g_names_mu;  // user id -> display name, read on the SDK's audio thread
 std::map<unsigned int, std::string> g_names;
+std::set<unsigned int> g_self_ids;  // every user id the bot had (it changes on a rejoin)
 
 long long now_ms() {
   using namespace std::chrono;
@@ -133,6 +148,11 @@ unsigned int my_user_id() {
   return me ? me->GetUserID() : 0;
 }
 
+bool is_self(unsigned int user_id) {
+  std::lock_guard<std::mutex> lock(g_names_mu);
+  return g_self_ids.count(user_id) != 0;
+}
+
 void conclude(const Decision& d, bool from_signal);
 
 // ---- raw audio -----------------------------------------------------------------------
@@ -141,7 +161,7 @@ class AudioDelegate : public IZoomSDKAudioRawDataDelegate {
  public:
   void onMixedAudioRawDataReceived(AudioRawData*) override {}  // mixed audio: not used
   void onOneWayAudioRawDataReceived(AudioRawData* data, uint32_t user_id) override {
-    if (!data || !g_audio_on || user_id == self_ || !g_core) return;
+    if (!data || !g_audio_on || user_id == self_.load() || !g_core) return;
     const long long t = now_ms();
     g_last_audio_ms = t;
     const unsigned int rate = data->GetSampleRate();
@@ -161,26 +181,34 @@ class AudioDelegate : public IZoomSDKAudioRawDataDelegate {
       pcm = mono.data();
     }
     const long long start = t - static_cast<long long>(frames) * 1000 / rate;
-    g_core->on_audio(std::to_string(user_id), track_name(user_id), pcm, frames,
-                     static_cast<int>(rate), start);
+    std::string name;
+    if (!track_name(user_id, &name)) return;  // an earlier id of the bot (before a rejoin)
+    g_core->on_audio(std::to_string(user_id), name, pcm, frames, static_cast<int>(rate),
+                     start);
   }
   void onShareAudioRawDataReceived(AudioRawData*, uint32_t) override {}  // never share audio
   void onOneWayInterpreterAudioRawDataReceived(AudioRawData*, const zchar_t*) override {}
-  unsigned int self_ = 0;
+  std::atomic<unsigned int> self_{0};  // written on the loop, read on the audio thread
 
  private:
-  static std::string track_name(unsigned int user_id) {
+  // false: the user id was the bot's own (before a rejoin): never recorded.
+  static bool track_name(unsigned int user_id, std::string* out) {
     {
       std::lock_guard<std::mutex> lock(g_names_mu);
+      if (g_self_ids.count(user_id)) return false;
       auto it = g_names.find(user_id);
-      if (it != g_names.end()) return it->second;
+      if (it != g_names.end()) {
+        *out = it->second;
+        return true;
+      }
     }
     std::string n = sdk_user_name(user_id);  // a new speaker before the next poll (as the spike)
     if (!n.empty()) {
       std::lock_guard<std::mutex> lock(g_names_mu);
       g_names.emplace(user_id, n);
     }
-    return n;
+    *out = n;
+    return true;
   }
 };
 
@@ -248,7 +276,7 @@ RecordingEvents g_recording_events;
 
 bool try_start_raw_audio() {
   if (g_raw_started) return true;
-  if (!g_meeting || g_concluding) return false;
+  if (!g_meeting || g_concluding || !g_in_meeting) return false;
   auto* rec = g_meeting->GetMeetingRecordingController();
   if (!rec) return false;
   SDKError can = rec->CanStartRawRecording();
@@ -263,7 +291,8 @@ bool try_start_raw_audio() {
   SDKError err = rec->StartRawRecording();
   if (err != SDKERR_SUCCESS) {
     log("StartRawRecording failed: " + std::to_string(err));
-    return false;
+    // Back in after a drop the SDK may still hold the earlier raw recording: subscribe.
+    if (!g_had_raw) return false;
   }
   g_audio_helper = GetAudioRawdataHelper();
   if (!g_audio_helper) {
@@ -279,6 +308,7 @@ bool try_start_raw_audio() {
     return false;
   }
   g_raw_started = true;
+  g_had_raw = true;
   log("raw audio subscribed");
   g_rules->recording(now_ms());
   show();
@@ -286,23 +316,53 @@ bool try_start_raw_audio() {
 }
 
 gboolean permission_retry(gpointer) {
-  if (g_concluding || try_start_raw_audio()) return G_SOURCE_REMOVE;
-  return G_SOURCE_CONTINUE;
+  if (g_concluding || try_start_raw_audio()) {
+    g_permission_timer = 0;
+    return G_SOURCE_REMOVE;
+  }
+  return G_SOURCE_CONTINUE;  // also while out of the meeting: tries again once back in
 }
 
+// Ask the host at most once per stay in the meeting: once at the first join, and once
+// more after a rejoin only if the host had allowed recording before (Zoom forgets it when
+// the bot rejoins). A host who declined or never answered is not asked again.
 void start_or_ask() {
   if (try_start_raw_audio()) return;
   auto* rec = g_meeting->GetMeetingRecordingController();
-  if (!g_permission_requested && rec) {
-    g_permission_requested = true;  // never asked again, whatever the answer
+  if (g_asks_left > 0 && rec) {
+    g_asks_left = 0;
     SDKError e = rec->RequestLocalRecordingPrivilege();
     log("recording request sent: " + std::to_string(e));
   }
   show();  // waiting_permission
-  g_timeout_add_seconds(kPermissionRetrySeconds, permission_retry, nullptr);
+  if (!g_permission_timer)
+    g_permission_timer = g_timeout_add_seconds(kPermissionRetrySeconds, permission_retry, nullptr);
+}
+
+// The bot is out of the meeting for now (a drop, or the host moved it to the waiting
+// room): stop taking audio and upload what was recorded. Core, its session id and the
+// tracks' sequences stay; the same Core goes on when the bot is back in.
+void left_meeting(const char* why) {
+  if (!g_in_meeting) return;
+  g_in_meeting = false;
+  log(std::string("out of the meeting: ") + why);
+  g_audio_on = false;
+  if (g_raw_started && g_audio_helper) g_audio_helper->unSubscribe();
+  g_raw_started = false;
+  if (g_core) g_core->close_chunks();
 }
 
 // ---- participants and topic ----------------------------------------------------------
+
+// Are breakout rooms open? The bot is never assigned to one and stays in the main room.
+bool breakouts_open() {
+#ifdef ATHENA_HAVE_BREAKOUTS
+  auto* bo = g_meeting ? g_meeting->GetMeetingBOController() : nullptr;
+  return bo && bo->IsBOStarted();
+#else
+  return false;
+#endif
+}
 
 void poll_participants(long long t) {
   auto* pc = g_meeting ? g_meeting->GetMeetingParticipantsController() : nullptr;
@@ -314,7 +374,7 @@ void poll_participants(long long t) {
   int others = 0;
   for (int i = 0; i < lst->GetCount(); ++i) {
     unsigned int id = lst->GetItem(i);
-    if (id == self) continue;
+    if (id == self || is_self(id)) continue;  // also the bot's own entry before a rejoin
     ++others;
     IUserInfo* u = pc->GetUserByUserID(id);
     std::string n = u && u->GetUserName() ? u->GetUserName() : "";
@@ -328,7 +388,18 @@ void poll_participants(long long t) {
       g_names[static_cast<unsigned int>(std::stoul(c.track_id))] = c.name;
     }
   }
-  g_rules->others(others, t);
+  switch (g_rules->others(others, t, breakouts_open())) {
+    case Breakouts::MostLeft:
+      log("breakout rooms are open and most participants left the main room; staying");
+      if (g_core) g_core->on_breakouts(true, g_rules->breakouts_since());
+      break;
+    case Breakouts::Over:
+      log("breakout rooms closed");
+      if (g_core) g_core->on_breakouts(false, t);
+      break;
+    case Breakouts::None:
+      break;
+  }
 }
 
 void set_topic(const zchar_t* topic) {
@@ -360,7 +431,8 @@ void conclude(const Decision& d, bool from_signal) {
   g_deadline = std::chrono::steady_clock::now() + budget;
   log("leaving: " + d.reason);
   g_audio_on = false;
-  if (g_audio_helper) g_audio_helper->unSubscribe();
+  if (g_raw_started && g_audio_helper) g_audio_helper->unSubscribe();
+  g_raw_started = false;
   MeetingStatus st = g_meeting ? g_meeting->GetMeetingStatus() : MEETING_STATUS_IDLE;
   if (st != MEETING_STATUS_IDLE && st != MEETING_STATUS_ENDED && st != MEETING_STATUS_FAILED) {
     g_meeting->Leave(LEAVE_MEETING);
@@ -387,31 +459,50 @@ gboolean on_signal(gpointer) {
   return G_SOURCE_CONTINUE;
 }
 
+void join();
+
 gboolean tick(gpointer) {
   if (g_concluding) return G_SOURCE_REMOVE;
   const long long t = now_ms();
   if (g_rules->phase() == athena::bot::Phase::InMeeting) poll_participants(t);
   act(g_rules->tick(t, g_last_audio_ms.load(), g_core && g_core->stop_requested(),
                     g_core && g_core->upload_rejected()));
+  if (!g_concluding && g_rules->rejoin_due(t)) {
+    g_rules->rejoin_started(t);
+    log("rejoining, try " + std::to_string(g_rules->rejoin_tries()) + " of " +
+        std::to_string(athena::bot::kRejoinTries));
+    join();
+  }
   return g_concluding ? G_SOURCE_REMOVE : G_SOURCE_CONTINUE;
 }
 
 // ---- joining -------------------------------------------------------------------------
-
-void join();
 
 gboolean retry_join(gpointer) {
   if (!g_concluding) join();
   return G_SOURCE_REMOVE;
 }
 
+// In the meeting: the first time, after a rejoin or the SDK's own reconnect, or let in
+// from the waiting room again. Each time: events set again, our (maybe new) user id, the
+// topic, computer audio and raw audio, as a fresh join needs them.
 void on_joined() {
-  g_rules->joined(now_ms());
-  if (g_joined_once) {  // back in after a reconnect: events and timers already set
-    show();
-    return;
-  }
+  if (g_in_meeting) return;
+  const bool back = g_joined_once;
   g_joined_once = true;
+  g_in_meeting = true;
+  g_rules->joined(now_ms());
+  const unsigned int self = my_user_id();
+  g_audio.self_ = self;
+  if (self) {
+    std::lock_guard<std::mutex> lock(g_names_mu);
+    g_self_ids.insert(self);
+    g_names.erase(self);
+  }
+  if (back) {
+    log("back in the meeting");
+    if (g_had_raw) g_asks_left = 1;  // Zoom forgets the permission when the bot rejoins
+  }
   if (auto* chat = g_meeting->GetMeetingChatController()) chat->SetEvent(&g_chat);
   if (auto* rec = g_meeting->GetMeetingRecordingController()) rec->SetEvent(&g_recording_events);
   if (IMeetingInfo* info = g_meeting->GetMeetingInfo()) set_topic(info->GetMeetingTopic());
@@ -460,13 +551,20 @@ class MeetingEvents : public IMeetingServiceEvent {
         show();
         break;
       case MEETING_STATUS_IN_WAITING_ROOM:
+        left_meeting("moved to the waiting room");  // if the host moved us back there
         g_rules->waiting_room(t);
+        show();
+        break;
+      case MEETING_STATUS_RECONNECTING:  // the SDK lost the connection, reconnects itself
+        left_meeting("connection lost, the SDK reconnects");
+        g_rules->reconnecting(t);
         show();
         break;
       case MEETING_STATUS_INMEETING:
         on_joined();
         break;
       case MEETING_STATUS_FAILED: {
+        left_meeting("session failed");
         Decision d = g_rules->join_failed(map_fail(result), t);
         if (!d && g_rules->phase() == athena::bot::Phase::WaitingForOwner) {
           show();  // starting waiting_for_owner
@@ -477,7 +575,9 @@ class MeetingEvents : public IMeetingServiceEvent {
         break;
       }
       case MEETING_STATUS_ENDED:
-        // EndMeetingReason; with OBF a non-host end is taken as the owner leaving (spike)
+        // EndMeetingReason; with OBF a non-host end is taken as the owner leaving (spike);
+        // while reconnecting, a non-host end is still a drop (rejoin)
+        left_meeting("session ended");
         act(g_rules->meeting_ended(map_end(result)));
         break;
       default:
@@ -518,7 +618,9 @@ void join() {
   SDKError err = g_meeting->Join(jp);
   if (err != SDKERR_SUCCESS) {
     log("Join call failed: " + std::to_string(err));
-    act(Decision::failed("join_failed"));
+    // a rejoin try: counts as a failed try; the first join: failed join_failed
+    act(g_rules->ever_joined() ? g_rules->join_failed(JoinFail::Other, now_ms())
+                               : Decision::failed("join_failed"));
   }
 }
 
@@ -579,6 +681,16 @@ int main(int argc, char** argv) {
   rc.alone_ms = g_opt.alone_seconds * 1000LL;
   rc.wait_ms = g_opt.waiting_room_seconds * 1000LL;
   rc.obf = g_opt.obf();
+  rc.rejoin_window_ms = kRejoinWindowMs;
+  for (int i = 0; i < athena::bot::kRejoinTries; ++i) rc.rejoin_at_ms[i] = kRejoinAtMs[i];
+#ifdef ATHENA_ZOOM_SDK_STUB
+  // Sandbox stub builds only (never the real SDK): the scenario tests shrink the rejoin
+  // times tenfold, so a 2-minute give-up runs in 12 s.
+  if (const char* f = std::getenv("ATHENA_SDKSTUB_FAST_REJOIN"); f && *f == '1') {
+    rc.rejoin_window_ms /= 10;
+    for (auto& at : rc.rejoin_at_ms) at /= 10;
+  }
+#endif
   g_rules = std::make_unique<athena::bot::Rules>(rc, start);
 
   athena::CoreConfig cc;
@@ -628,7 +740,7 @@ int main(int argc, char** argv) {
     std::fflush(stderr);
     _exit(failed ? 1 : 0);
   }
-  if (g_audio_helper) g_audio_helper->unSubscribe();
+  if (g_raw_started && g_audio_helper) g_audio_helper->unSubscribe();
   g_core.reset();
   DestroyAuthService(g_auth);
   DestroySettingService(g_settings);
