@@ -29,7 +29,14 @@ Bot contract (lane 1A codes against it; also in ``server/README.md``)::
             owner is in the meeting, ``STATE failed owner_not_joined`` after the wait,
             ``STATE ended owner_left`` when Zoom drops the bot as the owner leaves;
             ``STATE waiting_permission [denied]`` after asking the host once for
-            recording permission (it waits; never asks again, never leaves over it)
+            recording permission (it waits; never asks again, never leaves over it;
+            after a rejoin it asks once more only if the host had allowed it);
+            ``STATE starting reconnecting`` after a network drop while the SDK
+            reconnects or the bot rejoins (3 tries within 2 minutes, same session and
+            per-track sequences), then ``recording`` / ``waiting_permission`` again or
+            ``STATE ended connection_lost``; ``STATE ended waiting_room_timeout`` when
+            the host moved the bot back to the waiting room after it was in (``failed``
+            only if it never got in)
     stderr: free-form logs (go to the server's log)
 
 Secrets never go on the command line (``ps`` shows it to every user), and the bot never
