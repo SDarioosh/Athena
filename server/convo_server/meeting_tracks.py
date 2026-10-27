@@ -20,8 +20,12 @@ participant's: no diarizer, no speaker embedder. Then:
   (``Settings.zoom_owner_name_list``) is the owner's (``is_owner=true``), named as the
   owner is everywhere else (enrolled owner voice, else CONVO_OWNER_NAME).
 
-Imported only by ``Pipeline._transcribe_session`` for a session that has tracks, so a
-server that never sees a meeting never loads this module.
+A person's track is finished from what ``meeting_live`` (lane 5D) transcribed while the
+meeting ran, plus the windows left; it gives the same lines as transcribing it here.
+
+Imported only by ``Pipeline._transcribe_session`` for a session that has tracks and by
+``meeting_live`` while a meeting records, so a server that never sees a meeting never
+loads this module.
 """
 
 from __future__ import annotations
@@ -118,6 +122,16 @@ def _room_track(info: dict[str, Any], owner_names: Sequence[str]) -> bool:
                for n in names)
 
 
+def is_room_track(info: dict[str, Any], owner_names: Sequence[str]) -> bool:
+    """The one rule for a shared-room track, the end pass's and live work's: any display
+    name it ever had is a room or a device (``_room_track``), and it isn't the owner's
+    track (one of its names is one of ``owner_names``)."""
+    from .meeting_names import _is_owner_track, _track_names
+
+    return _room_track(info, owner_names) and not _is_owner_track(_track_names(info),
+                                                                  owner_names)
+
+
 @dataclass
 class Line:
     start: float  # epoch seconds
@@ -208,14 +222,21 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str, chunks: list[dict[st
     """Lines of a tracked session: each track transcribed on its own and named by its
     track (shared-room tracks by the diarizer), bleed dropped, merged in time order.
 
+    A track of a person is finished from what ``meeting_live`` transcribed while the
+    meeting ran (the same windows, context and pieces this pass would make), plus the
+    windows left; without live work it is transcribed here from the start. Shared-room
+    tracks and chunks without a track are always transcribed here, whole.
+
     ``kept``, when given, is filled with each named (not shared-room) track's kept lines
     as (start, end) epoch seconds, after bleed is dropped and before lines are joined:
     the only speech lane 2C learns a voice from (QA BUG-05)."""
-    from .pipeline import MAX_PROMPT_NAMES
+    from . import meeting_live
 
     store, cfg = pipeline.store, pipeline.settings
     owner_names = cfg.zoom_owner_name_list
-    infos = {t["track"]: t for t in store.tracks(session_id)}
+    track_list = store.tracks(session_id)
+    infos = {t["track"]: t for t in track_list}
+    states = store.live_states(session_id)
     by_track: dict[str, list[dict[str, Any]]] = {}
     for c in chunks:
         by_track.setdefault(c.get("track") or "", []).append(c)
@@ -228,45 +249,55 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str, chunks: list[dict[st
     who = {t: track_speaker(store, infos.get(t, {"track": t, "name": None}), owner_names,
                             owner_display=owner_display)
            for t in order if t}
-    prompt = pipeline.whisper_prompt()
-    if cfg.whisper_prompt_names:
-        prompt = meeting_prompt(prompt, [n for t, (n, _) in who.items()
-                                         if n and not is_shared_room(n)], MAX_PROMPT_NAMES)
+    prompt = meeting_live.meeting_whisper_prompt(pipeline, track_list)
 
-    runs: list[np.ndarray] = []
     lines: list[Line] = []
-    shared_tracks: set[str] = set()
+    shared_tracks: set[str] = set()  # not learned from (lane 2C)
+    loud: list[float] = []  # dBFS of each line on its own track, for the bleed check
     candidates: dict[str, np.ndarray] = {}
     unnamed = 0  # "Speaker N" numbering across the meeting
     voices_loaded = False
     for track in order:
-        first_run = len(runs)
+        name, owner = who.get(track, ("", False))
+        # a shared room: any display name the track ever had is a room or a device
+        # ("Conference Room 2", "iPhone", "Zoom user"), other than the owner's own names
+        raw = infos.get(track, {}).get("name")
+        shared = not track or (not owner and is_room_track(infos.get(track, {}), owner_names))
+        if shared:
+            shared_tracks.add(track)
+        else:
+            got = meeting_live.finish_track(pipeline, session_id, track, by_track[track],
+                                            states.get(track), lambda: prompt)
+            if not got:
+                continue
+            if owner:
+                name = owner_display or name
+            elif not name:
+                unnamed += 1
+                name = f"Speaker {unnamed}"
+            label = SpeakerLabel(name, owner)
+            lines += [Line(s, e, text, ref, track, label) for (s, e, text, ref), _ in got]
+            loud += [db for _, db in got]
+            continue
+        runs: list[np.ndarray] = []
         pieces: list[tuple[float, float, str, PieceRef]] = []
         words: list[list[tuple[float, float, str]]] = []
         context = ""  # whisper's context starts again on every track
         for run_start, audio, speech in pipeline._runs(by_track[track]):
             runs.append(audio)
-            got, got_words, context = pipeline._whisper_run(len(runs) - 1, run_start, audio,
-                                                            speech, prompt, context)
-            pieces += got
+            got_pieces, got_words, context = pipeline._whisper_run(
+                len(runs) - 1, run_start, audio, speech, prompt, context)
+            pieces += got_pieces
             words += got_words
         if not pieces:
             continue
         idx = sorted(range(len(pieces)), key=lambda i: pieces[i][0])
         pieces, words = [pieces[i] for i in idx], [words[i] for i in idx]
-        name, owner = who.get(track, ("", False))
-        # a shared room: any display name the track ever had is a room or a device
-        # ("Conference Room 2", "iPhone", "Zoom user"), other than the owner's own names
-        raw = infos.get(track, {}).get("name")
-        shared = not track or (not owner and _room_track(infos.get(track, {}), owner_names))
-        if shared:
-            shared_tracks.add(track)
-        if shared and pipeline.diarizer is not None:
+        if pipeline.diarizer is not None:
             if not voices_loaded:
                 pipeline.diarizer.voices = load_voices(store)
                 voices_loaded = True
-            labels, found, pieces = _diarize_track(pipeline, runs[first_run:], first_run,
-                                                   pieces, words)
+            labels, found, pieces = _diarize_track(pipeline, runs, 0, pieces, words)
             renumber: dict[str, str] = {}
             for lab in labels:
                 if _UNNAMED.match(lab.name) and lab.name not in renumber:
@@ -276,24 +307,22 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str, chunks: list[dict[st
                       for lab in labels]
             candidates.update({renumber[k]: v for k, v in found.items() if k in renumber})
         else:
-            if owner:
-                name = owner_display or name
-            elif shared and not name and raw:  # a room, diarization off: the room's name
+            if not name and raw:  # a room, diarization off: the room's name
                 name = " ".join(raw.split())
             elif not name:
                 unnamed += 1
                 name = f"Speaker {unnamed}"
-            labels = [SpeakerLabel(name, owner)] * len(pieces)
-        lines += [Line(s, e, text, ref, track, lab)
-                  for (s, e, text, ref), lab in zip(pieces, labels, strict=True)]
+            labels = [SpeakerLabel(name, False)] * len(pieces)
+        # Bleed is decided on whisper's own pieces, before any joining: a joined line
+        # spans its speaker's pauses, so another track's words said in such a pause would
+        # look simultaneous, and the pause's silence would lower the line's loudness.
+        for (s, e, text, ref), lab in zip(pieces, labels, strict=True):
+            lines.append(Line(s, e, text, ref, track, lab))
+            loud.append(rms_db(runs[ref.run][int(ref.start * SAMPLE_RATE):
+                                             int(ref.end * SAMPLE_RATE)]))
     if pipeline.diarizer is not None and voices_loaded:
         store.put_speaker_candidates(session_id, candidates)
 
-    # Bleed is decided on whisper's own pieces, before any joining: a joined line spans
-    # its speaker's pauses, so another track's words said in such a pause would look
-    # simultaneous, and the pause's silence would lower the line's loudness.
-    loud = [rms_db(runs[ln.ref.run][int(ln.ref.start * SAMPLE_RATE):
-                                    int(ln.ref.end * SAMPLE_RATE)]) for ln in lines]
     drop = find_bleed(lines, loud)
     kept_lines = [ln for i, ln in enumerate(lines) if i not in drop]
     if kept is not None:
@@ -305,9 +334,9 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str, chunks: list[dict[st
                       for j in _join_track([ln for ln in kept_lines if ln.track == track],
                                            cfg.join_gap_seconds, cfg.join_max_seconds)]
     rank = {t: i for i, t in enumerate(order)}
-    kept = sorted(kept_lines, key=lambda ln: (ln.start, rank[ln.track], ln.end))
+    ordered = sorted(kept_lines, key=lambda ln: (ln.start, rank[ln.track], ln.end))
     return [Segment(started_at=ln.start, ended_at=ln.end, text=ln.text,
-                    speaker=ln.label.name, is_owner=ln.label.is_owner) for ln in kept]
+                    speaker=ln.label.name, is_owner=ln.label.is_owner) for ln in ordered]
 
 
 def _join_track(lines: list[Line], gap: float, max_seconds: float) -> list[Line]:
