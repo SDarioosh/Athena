@@ -27,7 +27,9 @@ Bot contract (lane 1A codes against it; also in ``server/README.md``)::
     stdout: one status line per change: ``STATE <state> [<reason>]``; with an OBF token,
             ``STATE starting waiting_for_owner`` while Zoom refuses the join until the
             owner is in the meeting, ``STATE failed owner_not_joined`` after the wait,
-            ``STATE ended owner_left`` when Zoom drops the bot as the owner leaves
+            ``STATE ended owner_left`` when Zoom drops the bot as the owner leaves;
+            ``STATE waiting_permission [denied]`` after asking the host once for
+            recording permission (it waits; never asks again, never leaves over it)
     stderr: free-form logs (go to the server's log)
 
 Secrets never go on the command line (``ps`` shows it to every user), and the bot never
@@ -62,7 +64,7 @@ from .store import MEETING_ACTIVE, Store
 
 log = logging.getLogger(__name__)
 
-STATES = ("starting", "waiting_room", "recording", "ended", "failed")
+STATES = ("starting", "waiting_room", "waiting_permission", "recording", "ended", "failed")
 TERMINAL = ("ended", "failed")
 DEVICE = "zoom"  # the device name the bot uploads with
 BOT_NAME = "Athena"
@@ -73,7 +75,8 @@ MAX_PASSCODE_CHARS = 128
 JOIN_TOKEN_SECONDS = 7200  # a ZAK or OBF token lasts about 2 h (zoom_signin.py)
 JOIN_TOKEN_MARGIN_SECONDS = 300  # the wait ends this long before the token does
 
-_STATE_LINE = re.compile(r"^STATE (starting|waiting_room|recording|ended|failed)"
+_STATE_LINE = re.compile(r"^STATE (starting|waiting_room|waiting_permission|recording|ended|"
+                         r"failed)"
                          r"(?: ([a-z0-9_]{1,40}))?$")
 _MEETING_NUMBER = re.compile(r"^\d{9,11}$")
 _ZOOM_HOST = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*zoom\.us$")
