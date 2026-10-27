@@ -125,17 +125,18 @@ meeting ends; the hub, API and worker are the services already running today.
    (background or Docker runner): the same process with `nice` and `RLIMIT_AS`, inside the
    API container for Docker, so no Docker socket is needed.
 3. The bot joins as **Athena**. The host admits it from the waiting room if there is one.
-   Most meetings are hosted by someone else, so the bot asks Zoom for recording permission
-   and the host sees Zoom's own prompt; the bot records once the host allows it (state
-   `waiting_permission` until then). This is Zoom's prompt, not a chat message from Athena.
+   Most meetings are hosted by someone else. The bot asks for nothing and posts nothing: it
+   joins and records whatever audio Zoom delivers to it (owner's decision). If Zoom delivers
+   no audio (Phase 0 finds out when that happens), the bot stays in the meeting and its state
+   says `recording` with reason `no_audio`, so the hub can show it.
 4. Every 30 s it uploads one chunk per participant who was in the meeting during that time
    to `POST /v1/ingest/chunk` on loopback, as the watch and call recorder already do, with
    `device=zoom` and the new optional fields `track` (Zoom user id) and `track_name`
    (display name). A participant who joins late starts a new track.
 5. Athena runs VAD per chunk as today, per track. The bot obeys `"stop": true` too.
 6. The bot leaves when the meeting ends, when it has been the only participant for 60 s,
-   when it is removed, when the host refuses recording, on `DELETE`, or at the max duration
-   (and when the owner leaves, if Phase 0 finds Zoom requires the owner to be present). It ends the session, uploads
+   when it is removed, on `DELETE`, or at the max duration. It never leaves because of
+   recording permission or because someone asks it to in chat. It ends the session, uploads
    chat (Phase 3) and exits.
 7. Athena's worker finalizes the session: whisper on each track's speech, lines named by
    track and merged in time order, summary, facts, as for any conversation. With Phase 5D,
@@ -154,7 +155,7 @@ AGENTS.md.
 | Where | Change | Phase |
 | --- | --- | --- |
 | `POST /v1/ingest/chunk` | Optional form fields `track` (≤ 64 chars, `[A-Za-z0-9._:-]`) and `track_name` (≤ 200 chars). Without `track` a session works exactly as today. Idempotent per (session, track, sequence); sequences count per track. | 1 |
-| `POST /v1/meetings` | New. JSON `{url}` or `{meeting_id, passcode}`, optional `title`. Returns `{id, state}`; states `starting`, `waiting_room`, `recording`, `ended`, `failed` (with `reason`). `waiting_permission` sits between `waiting_room` and `recording`. `409 busy` over the bot limit. | 1 |
+| `POST /v1/meetings` | New. JSON `{url}` or `{meeting_id, passcode}`, optional `title`. Returns `{id, state}`; states `starting`, `waiting_room`, `recording`, `ended`, `failed` (with `reason`). `recording` may carry reason `no_audio` when Zoom delivers no audio. `409 busy` over the bot limit. | 1 |
 | `GET` / `DELETE /v1/meetings/{id}` | New. State, and leave now. | 1 |
 | `POST /v1/sessions/{id}/chat` | New, bot only. Chat lines `{at, from, zoom_user_id, text}`. | 3 |
 | MCP results | Meeting conversations say `(Zoom meeting: <topic>)` and list participants; chat lines show as `<name> (chat): …`. Fact and action-item JSON rows gain `source: "meeting"` where it applies. | 3 |
@@ -206,9 +207,9 @@ Nothing is merged except a short findings doc; this phase decides how Phase 1 is
       model; report the word error rate difference.
 - [ ] Write down: does the SDK need a display, PulseAudio or other helpers in the process;
       SDK disk size; which binding to use and why.
-- [ ] Write down for a meeting in another account: what the host sees, how the bot asks for
-      recording permission, and whether the join needs a token from the owner's Zoom
-      account (and so whether the bot must leave when the owner leaves).
+- [ ] Write down for a meeting in another account: what the host sees when Athena joins;
+      whether Zoom delivers raw audio without recording permission (the bot never asks for
+      it); and whether the join needs a token from the owner's Zoom account.
 
 **Gate to Phase 1:** joins as "Athena" without a display server; each participant's audio
 arrives with their name; chat events arrive. The measurements are reported, not a gate,
@@ -478,7 +479,7 @@ stop and write ESCALATE: <reason>.
 | SDK needs a display, PulseAudio or other helpers | More to start per meeting | Start them inside the bot's scope only, so idle cost stays zero |
 | Cold start is slow (over 30 s to join) | Joins late | A small standby process within the idle limit (≤ 50 MB, no CPU while waiting), decided in Phase 0 |
 | Zoom SDK updates force a rebuild | Bot stops joining until updated | `GET /v1/meetings` reports the SDK error; deploy.sh rebuilds when the SDK folder changes |
-| Host denies or ignores the recording prompt (likely more often, since most hosts are other people) | No audio | Bot waits up to `CONVO_MEETING_WAITING_ROOM_SECONDS`, then leaves with reason `recording_denied`; the hub shows it |
+| Zoom delivers no raw audio unless the meeting allows the bot to record (Zoom's rule, not ours; the bot never asks) | No audio in some meetings | Bot stays and reports `no_audio`; the hub shows it. Phase 0 finds which meetings are affected. Athena does not work around Zoom's recording controls |
 | Shared room microphone | Several people on one track | Phase 2 runs pyannote on that track only |
 | Two participants in one room | Same words on two tracks | Phase 2 drops the duplicate line, keeping the louder track |
 
