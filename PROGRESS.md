@@ -555,6 +555,19 @@ today) now orders each group by it.
   `weights` from the hub's test instance (and keep the last table when the route fails or
   the hub is old); the phone keeps the table across an app restart.
 
+## Done on 2026-10-27: whisper vocabulary set in the hub's settings
+
+- `GET`/`PUT /v1/settings/vocabulary` (and the same paths on the MCP HTTP app, for the
+  hub): comma-separated words ("RokTalk, Meshtastic, Rokland") stored in `convo.db` and
+  put into whisper's prompt from the next recording on, after `CONVO_WHISPER_PROMPT` and
+  before known speakers' names (a word that is also a name is sent once). At most 50
+  words of 60 characters (`server/convo_server/vocabulary.py`).
+- Hub side: Settings → AI Defaults → "Transcription vocabulary" (SDarioosh/odysseus-expanded).
+- Caveat: on AMI a 12-word prompt list hurt timestamps; a short list of names was neutral.
+- Needs owner verification: set a few words in the hub, record a fictional voice note
+  that says them, check the spelling in the transcript, and run `eval/recognition.py`
+  with the list set if it is longer than a handful of words.
+
 ## Done on 2026-10-22: summary model chosen in the hub's settings
 
 - `GET`/`PUT /v1/settings/llm` (and the same paths on the MCP HTTP app, for the hub):

@@ -171,7 +171,8 @@ server. **Nothing in the data path touches the cloud.**
   `DELETE /ingest/text/{source_id}`, MCP 0.12.0) and the few API reads the relay's T5
   sync uses (`READ_ROUTES`: `/health`, conversations, transcript, action items, digests), plus
   `GET`/`PUT /settings/llm` for the hub's settings page (which model writes summaries;
-  only the model name, never `CONVO_LLM_BASE_URL`), and the meeting bot's
+  only the model name, never `CONVO_LLM_BASE_URL`) and `GET`/`PUT /settings/vocabulary`
+  (words whisper is nudged toward, `{"words": "a, b"}`), and the meeting bot's
   `POST /meetings`, `GET /meetings`, `GET`/`DELETE /meetings/{id}` for the hub's "Send
   Athena to a meeting" box (same JSON and status as `/v1/meetings`, including the 409's
   `message` and `active`; ids checked before forwarding; `DELETE` waits up to 30 s for the

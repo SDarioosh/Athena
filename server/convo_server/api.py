@@ -17,6 +17,7 @@ Read API (used by the knowledge-layer/MCP integration and for debugging):
     POST /v1/speakers/enroll
 Settings (the hub's settings page):
     GET  /v1/settings/llm, PUT /v1/settings/llm {"model": name | null}
+    GET  /v1/settings/vocabulary, PUT /v1/settings/vocabulary {"words": "a, b" | [..] | null}
 Meeting bot (convo_server/meetings.py, imported on the first meeting request):
     POST   /v1/meetings            JSON {url} or {meeting_id, passcode}, title? -> {id, state}
     GET    /v1/meetings, /v1/meetings/{id}
@@ -59,7 +60,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from . import audio as audio_mod
-from . import llm_settings
+from . import llm_settings, vocabulary
 from .config import Settings
 from .diarize import enroll_voice, load_voices
 from .links import render_conversation, transcript_link, verify
@@ -161,6 +162,11 @@ class EnrollJson(BaseModel):
 
 class LlmSettingsPut(BaseModel):
     model: str | None = Field(default=None, max_length=llm_settings.MAX_NAME)
+
+
+class VocabularyPut(BaseModel):
+    """Words for whisper: comma-separated text or a list (null or "": none)."""
+    words: str | list[str] | None = Field(default=None)
 
 
 class MeetingJoin(BaseModel):
@@ -595,6 +601,19 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         """Use another model for summaries from the next one on (null: the .env default)."""
         try:
             return llm_settings.set_model(summary_llm(), store, settings, body.model)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+
+    @v1.get("/settings/vocabulary")
+    def get_vocabulary() -> dict[str, Any]:
+        """The words whisper is nudged toward and the prompt it gets now."""
+        return vocabulary.describe(pipeline)
+
+    @v1.put("/settings/vocabulary")
+    def put_vocabulary(body: VocabularyPut) -> dict[str, Any]:
+        """Set the words (comma-separated), used from the next recording on."""
+        try:
+            return vocabulary.set_words(pipeline, body.words)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
 

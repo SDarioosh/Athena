@@ -11,7 +11,8 @@ second URL and token, the MCP HTTP app gets two plain HTTP routes:
 
 The phone relay's T5 sync, paired through Odysseus, also reads a few API routes the same
 way (:data:`READ_ROUTES`): the same paths without ``/v1``, same query, same JSON. The
-hub's settings page reads and sets the summary model through ``/settings/llm``.
+hub's settings page reads and sets the summary model through ``/settings/llm`` and
+whisper's vocabulary through ``/settings/vocabulary``.
 
 The hub's "Send Athena to a meeting" box starts and stops the Zoom bot the same way:
 
@@ -87,6 +88,9 @@ READ_ROUTES = [
     # the hub's settings page: which model writes summaries
     ("GET", "/settings/llm"),
     ("PUT", "/settings/llm"),
+    # the hub's settings page: words whisper is nudged toward
+    ("GET", "/settings/vocabulary"),
+    ("PUT", "/settings/vocabulary"),
 ]
 
 
