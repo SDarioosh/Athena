@@ -244,13 +244,13 @@ below are agreed.
 
 **Lane 1B, launcher (`server/convo_server/meetings.py`, `api.py`):**
 
-- [ ] `POST`/`GET`/`DELETE /v1/meetings`, behind the bearer token; `meetings` table; bot
+- [x] `POST`/`GET`/`DELETE /v1/meetings`, behind the bearer token; `meetings` table; bot
       limit; `501` when `CONVO_MEETING_BOT_PATH` is unset.
-- [ ] Start the bot under safety caps (`systemd-run --scope` when available, else `nice` +
+- [x] Start the bot under safety caps (`systemd-run --scope` when available, else `nice` +
       `RLIMIT_AS`); read its state from a status line it prints on stdout. No polling
       thread: state updates come from the bot's output and its exit.
-- [ ] Sign the Meeting SDK join token locally from the key and secret.
-- [ ] Zoom sign-in. Since 2026-03-02 Zoom requires a signed-in Zoom user to join meetings
+- [x] Sign the Meeting SDK join token locally from the key and secret.
+- [x] Zoom sign-in. Since 2026-03-02 Zoom requires a signed-in Zoom user to join meetings
       in other accounts. **Default (owner's decision): an on-behalf-of (OBF) token from the
       owner's own Zoom account.** A one-time OAuth sign-in stores the refresh token in the
       data dir on the server; each join fetches a fresh OBF token for that meeting. Zoom only
@@ -260,7 +260,7 @@ below are agreed.
       dedicated Athena Zoom account (`CONVO_ZOOM_JOIN_TOKEN=zak`), once Phase 0 Test C shows
       Zoom accepts it. Tokens are fetched only on a join request; nothing refreshes in the
       background.
-- [ ] Tests with a fake bot script; a test that importing `convo_server.api` starts no
+- [x] Tests with a fake bot script; a test that importing `convo_server.api` starts no
       thread and imports nothing from `meetings.py`.
 
 **Lane 1C, ingest (`api.py`, `pipeline.py`, `store.py`):**
