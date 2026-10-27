@@ -313,6 +313,103 @@ Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client
 
 `POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
 
+### Meeting bot
+
+Athena can join a Zoom meeting as a participant named "Athena" and record one track per
+participant (the bot itself, `athena-meeting-bot`, is lane 1A of
+`docs/zoom-meeting-bot-plan.md`). The launcher (`convo_server/meetings.py`) is imported
+on the first meeting request; nothing about it runs between meetings: no service, thread,
+timer or poller. Same bearer token as every route.
+
+| route | answer |
+|---|---|
+| `POST /v1/meetings` JSON `{"url": "<Zoom link>"}` or `{"meeting_id": "123 4567 8901", "passcode": "…"}`, optional `"title"` (≤ 200) | `202 {"id", "state": "starting", "session_id"}`; `400 {"detail"}` for a link that isn't a Zoom meeting (the message says why); `409 {"detail": "busy", "message", "active": "<meeting id>"}` when `CONVO_MEETING_BOT_MAX` bots are active; `501 {"detail"}` when meetings are off (`CONVO_MEETING_BOT_PATH` unset or not executable, no SDK key/secret, a bad meeting setting); `500` when the bot can't be started |
+| `GET /v1/meetings/{id}` | `{"id", "state", "reason", "active", "session_id", "meeting_id", "title", "created_at", "started_at", "ended_at"}` (ISO-8601; `started_at` = first recording); 404 |
+| `GET /v1/meetings?limit=20` | `{"meetings": [...]}`, newest first (the current one, if any, is first) |
+| `DELETE /v1/meetings/{id}` | the bot leaves: SIGTERM, it flushes and ends the session; SIGKILL after 10 s. Answers once it exited, with the row (`ended`, `stopped`). Idempotent; 404 |
+
+States: `starting` → `waiting_room` → `recording` → `ended` or `failed`, each with a
+`reason` where it helps. `recording` may carry `no_audio` (Zoom delivers no audio).
+`ended` reasons: `meeting_ended`, `alone` (only participant for
+`CONVO_MEETING_ALONE_SECONDS`), `removed`, `stopped` (DELETE), `max_duration`,
+`server_stop`, `exited`. `failed` reasons come from the bot (`wrong_passcode`,
+`meeting_not_started`, `waiting_room_timeout`, `join_failed`, `auth_failed`, `sdk_error`,
+…) or the launcher (`bot_not_started`, `bot_crashed`, `server_restarted`). The bot never
+asks for recording permission and never leaves because someone asks it to.
+
+**Links** accepted: `https://zoom.us/j/<number>?pwd=…` and any subdomain of `zoom.us`
+(`us06web.zoom.us`, vanity `acme.zoom.us`; `http` or no scheme is read too),
+`/wc/join/<number>` and `/wc/<number>/join`, and `zoommtg://` / `zoomus://` links with
+`confno`. The number has 9-11 digits; `pwd` is optional. Refused with a message: personal
+links `/my/<name>` (no number in them), webinars `/w/` (not yet), registration and host
+start (`/s/`) links, any other host (also `zoomgov.com`). `parse_zoom_link` holds the
+rules; the hub mirrors them.
+
+**Safety caps.** With `CONVO_MEETING_BOT_RUNNER=auto` (default) the first join checks once
+whether `systemd-run --user --scope` works. If so: `systemd-run --user --scope --quiet
+--collect --unit=athena-meeting-<id> -p CPUQuota=$CONVO_MEETING_BOT_CPU -p
+MemoryMax=$CONVO_MEETING_BOT_MEMORY -p RuntimeMaxSec=<CONVO_MAX_SESSION_SECONDS + 60> nice
+-n 10 <bot> …`. Else (Docker, background runner) the bot runs in its own process group at
+`nice 10` with `RLIMIT_AS` = `CONVO_MEETING_BOT_MEMORY` (no CPU cap), and the launcher
+stops it at the same lifetime. When the bot exits, anything it left in its process group
+(and the scope) is killed and its work dir is removed.
+
+**State, no polling.** The launcher starts the bot from the request's event loop and keeps
+one asyncio task per running bot: it reads the bot's status lines and waits for its exit
+on a pidfd (no thread). The task ends with the bot. After a server restart, active rows
+are checked on the next meeting request: if the pid is no longer that bot, the row
+becomes `failed`/`server_restarted`; a bot still running counts as busy and `DELETE`
+stops it. On exit the session is ended (`stop_reason` `meeting_<reason>`) if the bot
+didn't end it.
+
+**Upload token.** The bot never gets `CONVO_INGEST_TOKEN`. Each meeting gets a random
+token (stored only as a SHA-256 hash, cleared when the bot exits) that is accepted only
+for `POST /v1/ingest/chunk` with that meeting's `session_id` and `device=zoom`, and
+`POST /v1/sessions/<that session>/end` and `/chat` (Phase 3). Every other route answers
+403; after the bot exits, 401.
+
+**Join token.** The Meeting SDK signature is signed locally (HS256) from
+`CONVO_ZOOM_SDK_KEY` / `CONVO_ZOOM_SDK_SECRET`: `appKey`, `mn`, `role` 0, `iat`, `exp` and
+`tokenExp` (Zoom: 30 min to 48 h; here `CONVO_MAX_SESSION_SECONDS` + 1 h). A sign-in to the
+owner's Zoom account for meetings that need one waits on Phase 0; `join_token_provider`
+is the hook (returns None today).
+
+**Bot contract** (lane 1A implements it):
+
+```text
+<CONVO_MEETING_BOT_PATH> --meeting-id <9-11 digits> --session-id zoom-<id>
+    --upload-url http://127.0.0.1:<CONVO_PORT> --name Athena
+    --max-seconds <CONVO_MAX_SESSION_SECONDS> --alone-seconds <CONVO_MEETING_ALONE_SECONDS>
+    --waiting-room-seconds <CONVO_MEETING_WAITING_ROOM_SECONDS>
+    --codec opus|wav --work-dir <data dir>/meetings/<id>
+```
+
+- Environment (secrets never go in argv): `ATHENA_MEETING_JWT` (the SDK join token),
+  `ATHENA_UPLOAD_TOKEN` (bearer for uploads), `ATHENA_MEETING_PASSCODE` (the passcode or
+  the link's `pwd` value; absent when there is none), `ATHENA_ZOOM_JOIN_TOKEN` (reserved,
+  absent today). Plus `PATH`, `HOME`, `LANG`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR`,
+  `DBUS_SESSION_BUS_ADDRESS` from the server, nothing else.
+- stdin is `/dev/null`; the working directory is `--work-dir` (for unsent chunks; removed
+  after exit). stderr: free-form logs, into the server's log.
+- stdout: one line per state change, exactly `STATE <state>` or `STATE <state> <reason>`;
+  `<state>` one of `waiting_room`, `recording`, `ended`, `failed` (`starting` is set by
+  the launcher), `<reason>` `[a-z0-9_]{1,40}`. Other lines are ignored. Flush each line.
+  Ignore SIGPIPE/EPIPE on stdout: after a server restart nobody reads it, and the bot
+  keeps recording.
+- Uploads: `POST <upload-url>/v1/ingest/chunk` with `Authorization: Bearer
+  $ATHENA_UPLOAD_TOKEN`, `device=zoom`, the given `session_id`, `track` (Zoom user id),
+  `track_name` (display name), a sequence per track. Obey `"stop": true` (only for
+  `max_duration` or an ended session: a tracked session never stops on silence) by leaving
+  with `ended server_stop` (or `max_duration`). End with `POST
+  <upload-url>/v1/sessions/<session_id>/end`.
+- Leave on: meeting ended, alone for `--alone-seconds`, removed, SIGTERM, `--max-seconds`
+  after start. Waiting room longer than `--waiting-room-seconds`: `failed
+  waiting_room_timeout`.
+- SIGTERM: flush the last chunks, end the session, print `STATE ended stopped`, exit 0
+  within 5 s (SIGKILL follows after 10 s).
+- Exit 0 after `STATE ended <reason>`; non-zero after `STATE failed <reason>`. A non-zero
+  exit without a `failed` line becomes `failed`/`bot_crashed`.
+
 ### Written notes
 
 `POST /v1/ingest/text` (JSON, same bearer token) takes a note the owner wrote by hand in

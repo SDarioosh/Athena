@@ -237,16 +237,17 @@ below are agreed.
 
 **Lane 1B, launcher (`server/convo_server/meetings.py`, `api.py`):**
 
-- [ ] `POST`/`GET`/`DELETE /v1/meetings`, behind the bearer token; `meetings` table; bot
+- [x] `POST`/`GET`/`DELETE /v1/meetings`, behind the bearer token; `meetings` table; bot
       limit; `501` when `CONVO_MEETING_BOT_PATH` is unset.
-- [ ] Start the bot under safety caps (`systemd-run --scope` when available, else `nice` +
+- [x] Start the bot under safety caps (`systemd-run --scope` when available, else `nice` +
       `RLIMIT_AS`); read its state from a status line it prints on stdout. No polling
       thread: state updates come from the bot's output and its exit.
-- [ ] Sign the Meeting SDK join token locally from the key and secret.
+- [x] Sign the Meeting SDK join token locally from the key and secret.
 - [ ] If Phase 0 found that joining other accounts' meetings needs a token from the owner's
       Zoom account: a one-time Zoom sign-in for the owner (OAuth; the refresh token stays in
       the data dir on the server) and a fresh join token fetched per meeting.
-- [ ] Tests with a fake bot script; a test that importing `convo_server.api` starts no
+      Hook only (`join_token_provider` in `meetings.py`, returns None), waits on Phase 0.
+- [x] Tests with a fake bot script; a test that importing `convo_server.api` starts no
       thread and imports nothing from `meetings.py`.
 
 **Lane 1C, ingest (`api.py`, `pipeline.py`, `store.py`):**
