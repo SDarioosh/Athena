@@ -12,9 +12,12 @@
 // video or screen share; records whatever per-participant raw audio Zoom delivers, one
 // PCM file per Zoom user id plus participants.json (user id -> display name); logs chat
 // messages to chat.jsonl; leaves after --minutes, when the meeting ends, when removed, or
-// on SIGINT/SIGTERM. It never asks for recording permission, posts nothing in chat and
-// takes no commands from participants (owner's rule). If Zoom delivers no raw audio it
-// stays in the meeting and says `STATE recording no_audio`. Meetings in other accounts:
+// on SIGINT/SIGTERM. Recording permission (owner's decision): unless it may record
+// already (host, co-host, allowed), it sends Zoom's recording request ONCE, says `STATE
+// waiting_permission` and keeps waiting: `STATE waiting_permission denied` on a decline,
+// `STATE recording` as soon as the host allows it, now or later. It never asks again and
+// never leaves over it. It posts nothing in chat and takes no commands. `STATE recording
+// no_audio` means recording is allowed but no audio frames arrive. Meetings in other accounts:
 // ATHENA_ZOOM_JOIN_TOKEN holds an on-behalf-of token from the owner's account
 // (ATHENA_ZOOM_JOIN_TOKEN_KIND=obf, the default: Zoom admits the bot only while the owner
 // is in the meeting; it prints `STATE starting waiting_for_owner` while it retries, `STATE
@@ -22,8 +25,8 @@
 // drops it because he left) or, as a later option, a separate Athena account's ZAK (zak).
 //
 // Status lines on stdout, one per change (measure.sh and later the launcher read them):
-//   STATE starting | starting waiting_for_owner | waiting_room | recording |
-//         recording no_audio | ended <reason> |
+//   STATE starting | starting waiting_for_owner | waiting_room | waiting_permission |
+//         waiting_permission denied | recording | recording no_audio | ended <reason> |
 //         failed <reason>
 // Other output is prefixed `LOG`.
 
@@ -96,6 +99,9 @@ std::atomic<bool> g_leaving{false};
 std::atomic<bool> g_failed{false};
 std::atomic<long long> g_last_audio_ms{0};
 bool g_raw_started = false;
+long long g_raw_started_ms = 0;
+bool g_permission_requested = false;
+bool g_permission_denied = false;
 long long g_joined_ms = 0;
 
 long long now_ms() {
@@ -275,21 +281,34 @@ private:
 
 std::unique_ptr<ChatEvents> g_chat;
 
-// --- raw audio: only what Zoom allows ---------------------------------------------------
+// --- raw audio: ask Zoom once, then wait -------------------------------------------------
 
-void try_start_raw_audio();
+bool try_start_raw_audio();
 
-// Listens only. The bot never calls RequestLocalRecordingPrivilege (owner's rule): if the
-// host or Zoom grants recording on their own, this starts the audio.
+void waiting_permission_state() {
+    state(g_permission_denied ? "waiting_permission denied" : "waiting_permission");
+}
+
 class RecordingEvents : public IMeetingRecordingCtrlEvent {
 public:
     void onRecordingStatus(RecordingStatus) override {}
     void onCloudRecordingStatus(RecordingStatus) override {}
+    // Fires when the host grants (or takes back) recording, also later from the
+    // participant menu. Zoom's forum reports it may not fire: the slow retry covers that.
     void onRecordPrivilegeChanged(bool can_record) override {
         log(std::string("record privilege changed: ") + (can_record ? "yes" : "no"));
         if (can_record) try_start_raw_audio();
     }
-    void onLocalRecordingPrivilegeRequestStatus(RequestLocalRecordingStatus) override {}
+    // The host's answer to our one request.
+    void onLocalRecordingPrivilegeRequestStatus(RequestLocalRecordingStatus status) override {
+        log("recording request answer: " + std::to_string(status));
+        if (status == RequestLocalRecording_Granted) {
+            try_start_raw_audio();
+        } else if (status == RequestLocalRecording_Denied && !g_raw_started) {
+            g_permission_denied = true;
+            waiting_permission_state();  // keep waiting: the host may still allow it later
+        }  // RequestLocalRecording_Timeout: no answer; keep waiting, never ask again
+    }
     void onRequestCloudRecordingResponse(RequestStartCloudRecordingStatus) override {}
     void onLocalRecordingPrivilegeRequested(IRequestLocalRecordingPrivilegeHandler*) override {}
     void onStartCloudRecordingRequested(IRequestStartCloudRecordingHandler*) override {}
@@ -301,38 +320,62 @@ public:
 
 RecordingEvents g_recording_events;
 
-void try_start_raw_audio() {
-    if (g_raw_started || !g_meeting) return;
+// Starts raw audio if Zoom allows it now. Returns true once recording.
+bool try_start_raw_audio() {
+    if (g_raw_started) return true;
+    if (!g_meeting || g_leaving) return false;
     auto* rec = g_meeting->GetMeetingRecordingController();
-    if (!rec) return;
+    if (!rec) return false;
     SDKError can = rec->CanStartRawRecording();
     if (can != SDKERR_SUCCESS) {
-        static int logged = -1;  // log each new answer once, not every 5 s
+        static int logged = -1;  // log each new answer once, not on every retry
         if (logged != can) {
             logged = can;
-            log("raw audio not allowed by Zoom (CanStartRawRecording=" + std::to_string(can) +
-                "); staying in the meeting without asking");
+            log("raw audio not allowed yet (CanStartRawRecording=" + std::to_string(can) + ")");
         }
-        return;
+        return false;
     }
     SDKError err = rec->StartRawRecording();
     if (err != SDKERR_SUCCESS) {
         log("StartRawRecording failed: " + std::to_string(err));
-        return;
+        return false;
     }
     g_audio_helper = GetAudioRawdataHelper();
     if (!g_audio_helper) {
         log("GetAudioRawdataHelper returned null");
-        return;
+        return false;
     }
     g_audio.self_ = my_user_id();
     err = g_audio_helper->subscribe(&g_audio);
     if (err != SDKERR_SUCCESS) {
         log("audio subscribe failed: " + std::to_string(err));
-        return;
+        return false;
     }
     g_raw_started = true;
+    g_raw_started_ms = now_ms();
     log("raw audio subscribed");
+    state("recording");
+    return true;
+}
+
+// Fallback while waiting for permission, in case the privilege callback never fires: try
+// again every 15 s. Only runs during a meeting (the bot exists only then).
+gboolean permission_retry(gpointer) {
+    if (g_leaving || try_start_raw_audio()) return G_SOURCE_REMOVE;
+    return G_SOURCE_CONTINUE;
+}
+
+// Once fully in the meeting: record now if allowed, else ask Zoom once and wait.
+void start_or_ask() {
+    if (try_start_raw_audio()) return;
+    auto* rec = g_meeting->GetMeetingRecordingController();
+    if (!g_permission_requested && rec) {
+        g_permission_requested = true;  // never asked again, whatever the answer
+        SDKError e = rec->RequestLocalRecordingPrivilege();
+        log("recording request sent: " + std::to_string(e));
+    }
+    waiting_permission_state();
+    g_timeout_add_seconds(15, permission_retry, nullptr);
 }
 
 // --- leaving ------------------------------------------------------------------------------
@@ -370,24 +413,22 @@ gboolean on_signal(gpointer) {
     return G_SOURCE_REMOVE;
 }
 
-// Checks every 5 s, only while in the meeting, whether Zoom is delivering audio.
+// Checks every 5 s, only while recording, whether audio frames arrive.
 gboolean audio_watch(gpointer) {
     if (g_leaving) return G_SOURCE_REMOVE;
+    if (!g_raw_started) return G_SOURCE_CONTINUE;  // still waiting for permission
     long long last = g_last_audio_ms.load();
-    long long quiet = now_ms() - (last ? last : g_joined_ms);
-    if (quiet >= g_opt.no_audio_seconds * 1000LL) {
-        state("recording no_audio");
-        try_start_raw_audio();  // Zoom may have allowed it meanwhile (no request is sent)
-    } else if (last) {
-        state("recording");
-    }
+    long long quiet = now_ms() - (last > g_raw_started_ms ? last : g_raw_started_ms);
+    state(quiet >= g_opt.no_audio_seconds * 1000LL ? "recording no_audio" : "recording");
     return G_SOURCE_CONTINUE;
 }
 
 void on_joined() {
     g_in_meeting = true;
-    state("recording");
-    if (g_joined_ms) return;  // back in after a reconnect: timers and events already set
+    if (g_joined_ms) {  // back in after a reconnect: timers and events already set
+        if (g_raw_started) state("recording"); else waiting_permission_state();
+        return;
+    }
     g_joined_ms = now_ms();
     auto* chat = g_meeting->GetMeetingChatController();
     if (chat) {
@@ -400,7 +441,7 @@ void on_joined() {
         SDKError e = audio->JoinVoip();
         log("JoinVoip: " + std::to_string(e));
     }
-    try_start_raw_audio();
+    start_or_ask();
     g_timeout_add_seconds(5, audio_watch, nullptr);
     g_timeout_add_seconds(static_cast<guint>(g_opt.minutes) * 60, on_duration_over, nullptr);
 }

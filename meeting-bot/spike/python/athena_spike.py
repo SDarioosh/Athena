@@ -14,8 +14,10 @@ a copy of Zoom's proprietary libmeetingsdk, not the one from the owner's account
 Same behaviour as the C++ spike: joins as "Athena" with video off, never subscribes to
 video or share, records whatever per-participant raw audio Zoom delivers (one PCM file
 per Zoom user id plus participants.json), logs chat to chat.jsonl, leaves after
---minutes, when the meeting ends, when removed, or on SIGINT/SIGTERM. Never asks for
-recording permission and never posts in chat. Prints the same STATE lines.
+--minutes, when the meeting ends, when removed, or on SIGINT/SIGTERM. Sends Zoom's
+recording request once and waits (`STATE waiting_permission`, `waiting_permission
+denied`, then `recording` on a grant, now or later); never asks again, never leaves over
+it, never posts in chat. Prints the same STATE lines.
 
     ATHENA_SPIKE_JWT=$(python3 ../sign_jwt.py) python3 athena_spike.py \
         --meeting-id 81234567890 --passcode xxxxxx --minutes 30 --out out-py
@@ -78,7 +80,10 @@ class Bot:
         self.rate = 0
         self.channels = 1
         self.self_id = 0
-        self.raw_started = False
+        self.raw_started = 0.0  # time recording started; 0 while waiting for permission
+        self.requested = False
+        self.denied = False
+        self.last_can = None
         self.leaving = False
         self.failed = False
         self.end_reason = "left"
@@ -194,59 +199,87 @@ class Bot:
 
     def on_joined(self) -> None:
         self.in_meeting = True
-        say("recording")
         if self.joined_at:  # back in after a reconnect: timers and events already set
-            return
+            return say("recording") if self.raw_started else self.say_waiting()
         self.joined_at = time.time()
         self.participants = self.meeting.GetMeetingParticipantsController()
         self.self_id = self.participants.GetMySelfUser().GetUserID()
         self.chat_file = open(self.out / "chat.jsonl", "a", encoding="utf-8")  # noqa: SIM115
         chat_ev = zoom.MeetingChatEventCallbacks(onChatMsgNotificationCallback=self.on_chat)
         self.meeting.GetMeetingChatController().SetEvent(chat_ev)
-        # Listen only: no RequestLocalRecordingPrivilege (owner's rule).
         rec_ev = zoom.MeetingRecordingCtrlEventCallbacks(
-            onRecordPrivilegeChangedCallback=self.on_privilege)
+            onRecordPrivilegeChangedCallback=self.on_privilege,
+            onLocalRecordingPrivilegeRequestStatusCallback=self.on_request_answer)
         self.meeting.GetMeetingRecordingController().SetEvent(rec_ev)
         self.keep += [chat_ev, rec_ev]
         log(f"JoinVoip: {self.meeting.GetMeetingAudioController().JoinVoip()}")
-        self.try_start_raw_audio()
+        self.start_or_ask()
         GLib.timeout_add_seconds(5, self.audio_watch)
         GLib.timeout_add_seconds(self.args.minutes * 60, self.leave, "duration")
+
+    # Recording permission (owner's decision): ask Zoom ONCE, then wait; never ask again
+    # and never leave over it.
+    def say_waiting(self) -> None:
+        say("waiting_permission denied" if self.denied else "waiting_permission")
+
+    def start_or_ask(self) -> None:
+        if self.try_start_raw_audio():
+            return
+        if not self.requested:
+            self.requested = True
+            rec = self.meeting.GetMeetingRecordingController()
+            log(f"recording request sent: {rec.RequestLocalRecordingPrivilege()}")
+        self.say_waiting()
+        # fallback in case the privilege callback never fires (reported on Zoom's forum)
+        GLib.timeout_add_seconds(15, lambda: not (self.leaving or self.try_start_raw_audio()))
 
     def on_privilege(self, can_record: bool) -> None:
         log(f"record privilege changed: {can_record}")
         if can_record:
             self.try_start_raw_audio()
 
-    def try_start_raw_audio(self) -> None:
+    def on_request_answer(self, status) -> None:
+        log(f"recording request answer: {status}")
+        if status == zoom.RequestLocalRecordingStatus.RequestLocalRecording_Granted:
+            self.try_start_raw_audio()
+        elif (status == zoom.RequestLocalRecordingStatus.RequestLocalRecording_Denied
+              and not self.raw_started):
+            self.denied = True
+            self.say_waiting()  # keep waiting: the host may still allow it later
+
+    def try_start_raw_audio(self) -> bool:
         if self.raw_started:
-            return
+            return True
+        if self.leaving:
+            return False
         rec = self.meeting.GetMeetingRecordingController()
         can = rec.CanStartRawRecording()
         if can != zoom.SDKERR_SUCCESS:
-            log(f"raw audio not allowed by Zoom yet ({can}); staying without asking")
-            return
+            if can != self.last_can:
+                self.last_can = can
+                log(f"raw audio not allowed yet ({can})")
+            return False
         if (err := rec.StartRawRecording()) != zoom.SDKERR_SUCCESS:
             log(f"StartRawRecording failed: {err}")
-            return
+            return False
         self.audio_helper = zoom.GetAudioRawdataHelper()
         self.audio_delegate = zoom.ZoomSDKAudioRawDataDelegateCallbacks(
             onOneWayAudioRawDataReceivedCallback=self.on_audio)
         if (err := self.audio_helper.subscribe(self.audio_delegate, False)) != zoom.SDKERR_SUCCESS:
             log(f"audio subscribe failed: {err}")
-            return
-        self.raw_started = True
+            return False
+        self.raw_started = time.time()
         log("raw audio subscribed")
+        say("recording")
+        return True
 
     def audio_watch(self) -> bool:
+        """Every 5 s while in the meeting: are audio frames arriving once recording?"""
         if self.leaving:
             return False
-        quiet = time.time() - (self.last_audio or self.joined_at)
-        if quiet >= self.args.no_audio_seconds:
-            say("recording no_audio")
-            self.try_start_raw_audio()
-        elif self.last_audio:
-            say("recording")
+        if self.raw_started:
+            quiet = time.time() - max(self.last_audio, self.raw_started)
+            say("recording no_audio" if quiet >= self.args.no_audio_seconds else "recording")
         return True
 
     # --- data ------------------------------------------------------------------------
