@@ -3,96 +3,100 @@
 As of 2026-10-27. Status: plan, nothing built yet. Each lane below is sized for one Claude
 subagent, one branch and one PR.
 
-## Goal and hard constraints
+## Goal and priorities
 
 Build a Zoom bot that joins a meeting as **Athena**. It records what each person says under
-their Zoom name, plus the meeting chat, and hands it to Athena's existing pipeline. The bot
-runs on the owner's server and costs nothing while no meeting is on.
+their Zoom name, plus the meeting chat, and hands it to Athena's existing pipeline.
 
-Athena is idle more than 99% of the time, so resource use drives every decision below, ahead
-of features:
+Priorities, in order:
 
-1. **Zero idle cost.** No new always-on process, container, poller or open socket. The bot
-   exists only while it is in a meeting, then exits.
-2. **Low active cost.** Audio only: the bot never receives, decodes or renders video. It runs
-   under hard CPU and memory caps the OS enforces.
-3. **Less work for Athena, not more.** Zoom's speaker labels replace pyannote diarization for
-   meeting audio. pyannote runs over the whole recording, so skipping it makes a Zoom meeting
-   cost the server less than the same call recorded today.
-4. **Privacy rules still hold.** No third-party bot service (Recall.ai, MeetingBaaS, Otter)
-   and no Zoom cloud transcripts. Audio goes Zoom → owner's server only; whisper transcribes
-   locally.
-5. **Clear name, no announcements.** The bot shows in the participant list as "Athena". It
-   posts nothing in chat and takes no commands from participants; it leaves on its own
-   (Phase 1 leave rules) or when the owner stops it from Odysseus.
+1. **It works well and is easy to use.** Right names on every line, even when people talk
+   over each other; the chat and participant list kept; one paste in Odysseus to send it.
+2. **Nothing runs when no meeting is on.** Athena is idle more than 99% of the time, so the
+   bot is not a service: it starts on request and exits after the meeting. If Phase 0 shows
+   a cold start is too slow, a small standby process is allowed (≤ 50 MB RAM, no CPU while
+   waiting), but the default is start on demand.
+3. **Optimized where it costs no function.** During a meeting quality wins: the server's
+   Ryzen 7 3700X (8 cores, 16 threads) has room, so the bot records each participant on
+   their own track. Work that adds nothing is left out: no video, no screen share, no
+   pyannote for meeting audio.
+
+Hard rules that stay:
+
+- **Privacy.** No third-party bot service (Recall.ai, MeetingBaaS, Otter) and no Zoom cloud
+  transcripts. Audio goes Zoom → owner's server only; whisper transcribes locally.
+- **No announcements.** The bot shows in the participant list as "Athena". It posts nothing
+  in chat and takes no commands from participants; it leaves on its own (Phase 1 leave
+  rules) or when the owner stops it from Odysseus.
 
 Not in scope: Google Meet and Teams (Phase 5 leaves room for them), video, screen-share
-capture, live captions during the meeting.
+capture.
 
-## Resource budget
+## Resource rules
 
-Every phase must stay inside these limits and prove it in its PR. The active numbers are
-targets; Phase 0 measures the real ones and this table is updated with them before Phase 1
-starts.
+Idle cost is the hard limit; meeting cost is measured and kept sensible, not squeezed.
 
-| State | CPU | Memory | Disk | Network | How it is checked |
-| --- | --- | --- | --- | --- | --- |
-| Idle (no meeting) | 0 new processes | 0 MB added | Bot binary + Zoom SDK only (Phase 0 measures, target < 400 MB) | No sockets, no polling | `ps`, `ss -tlnp` and `systemd-cgtop` show nothing new; test asserts no thread or timer is started at import |
-| In a meeting (bot) | ≤ 0.25 core average, hard cap 0.5 core | ≤ 300 MB, hard cap 512 MB | ≤ 2 MB per minute of chunks, deleted after transcription | Audio only, no video subscriptions | `systemd-run` scope (or cgroup) caps; Phase 0 reports `pidstat` and peak RSS over a 30-minute test meeting |
-| In a meeting (Athena) | Per-chunk VAD only, as today | No change | No change | Loopback uploads | Existing tests; no new worker thread |
-| After the meeting | Whisper on speech regions only; no pyannote diarization for labeled meetings | No change | Audio deleted after success (`CONVO_KEEP_AUDIO`) | None | Pipeline test: meeting session never loads or runs pyannote |
+| State | CPU | Memory | Disk | How it is checked |
+| --- | --- | --- | --- | --- |
+| Idle (no meeting) | 0 new processes | 0 MB added | Bot + Zoom SDK files only | `ps`, `ss -tlnp` and `systemd-cgtop` show nothing new; a test asserts importing the API starts no thread or timer |
+| In a meeting (bot) | Expected well under 1 core; safety cap 2 cores | Safety cap 2 GB | Up to ~0.25 MB per minute per speaking participant (Opus 32 kbps), deleted after transcription | Phase 0 reports `pidstat` and peak RSS over a 30-minute meeting; caps only stop a runaway bot |
+| In a meeting (Athena) | Per-chunk VAD per track, as today | No change | No change | Existing tests |
+| After the meeting | Whisper on each track's speech only; no pyannote except for shared-room tracks | No change | Audio deleted after success (`CONVO_KEEP_AUDIO`) | Pipeline test: a meeting of named tracks never loads pyannote |
 
-Rules that keep it there:
+Per-track transcription costs about the same whisper time as one mixed recording: only
+speech is transcribed, and people mostly take turns, so the tracks together hold about as
+much speech as the meeting did.
+
+Rules:
 
 - The bot runs at `nice 10`, so a meeting never slows the owner's other services.
-- At most one bot at a time by default (`CONVO_MEETING_BOT_MAX=1`); a second join request
-  gets a clear "busy" answer.
-- Every bot has a hard lifetime: `CONVO_MAX_SESSION_SECONDS` (4 h today) plus leave rules in
-  Phase 1. A stuck bot is killed by its scope's runtime limit, not by a watchdog process.
-- No new dependency is imported by `convo-server` at startup. Meeting code is imported only
-  when a join request arrives.
+- One bot at a time by default (`CONVO_MEETING_BOT_MAX=1`, can be raised; a 3700X can run
+  several). A request over the limit gets a clear "busy" answer.
+- Every bot has a hard lifetime: `CONVO_MAX_SESSION_SECONDS` (4 h today) plus the leave
+  rules. A stuck bot is killed by its scope's runtime limit, not by a watchdog process.
+- `convo-server` imports no meeting code at startup; it is imported on the first join
+  request.
 
-## Approach: Zoom Meeting SDK, audio only
+## Approach: Zoom Meeting SDK, one track per participant
 
-Use the Zoom Meeting SDK for Linux, run headless and audio-only. It is the cheapest of the
-three options and the only one that gives each participant's audio with their name. Cost
-figures here are estimates from how each option works; Phase 0 measures the chosen one.
+Use the Zoom Meeting SDK for Linux, run headless. It is the only option that gives each
+participant's own audio with their name and the chat, and it has no idle cost.
 
-| Option | Idle cost | Cost in a meeting (estimate) | Speaker names | Chat | Main risk |
-| --- | --- | --- | --- | --- | --- |
-| **Meeting SDK bot (chosen)** | None (process exits) | Low: a native process decoding audio only | Per-participant audio tagged with user id and display name | Yes, SDK chat events | Zoom app setup and approval rules; SDK is a closed binary |
-| Headless browser bot | None (process exits) | High: a full Chromium plus the Zoom web client, typically over 1 core and 1 GB | Only from the page's active-speaker indicator | Scraped from the page | Breaks whenever Zoom changes its web page |
-| Zoom RTMS (Zoom streams to us) | A public HTTPS endpoint that must always listen | Low | Per-participant streams | Depends on plan | Needs an always-on public endpoint and a supported Zoom plan, which breaks the zero-idle rule |
+| Option | Idle cost | Speaker names | Chat | Main risk |
+| --- | --- | --- | --- | --- |
+| **Meeting SDK bot (chosen)** | None (process exits) | Each participant's own audio, with user id and display name | Yes, SDK chat events | Zoom app setup and approval rules; SDK is a closed binary |
+| Headless browser bot | None (process exits) | Only the page's active-speaker indicator; one mixed track | Scraped from the page | Breaks whenever Zoom changes its web page; much worse names in crosstalk |
+| Zoom RTMS (Zoom streams to us) | A public HTTPS endpoint that must always listen | Per-participant streams | Depends on plan | Always-on public endpoint and a supported Zoom plan |
 
-How the SDK bot stays cheap:
+What the bot does with the SDK:
 
-- Join with video off and never subscribe to any video stream or screen share.
-- Use the SDK's raw-audio callbacks: one mixed stream for the recording, plus per-participant
-  frames used only to measure who is talking (an energy level per 20 ms frame). No extra
-  decoding or model runs in the bot.
-- Encode the mixed stream to 16 kHz mono Opus, the format Athena already takes, so Athena
-  does no extra conversion.
-- Write the audio hot path in C++ against the SDK directly. A Python wrapper is allowed only
-  if Phase 0 shows it stays under the CPU budget.
+- Joins with video off and never subscribes to video or screen share: they add nothing to a
+  transcript.
+- Takes each participant's one-way raw audio from the SDK and encodes it to its own 16 kHz
+  mono Opus track at 32 kbps (near-transparent for speech, small on disk). A switch sends
+  WAV instead (`CONVO_MEETING_TRACK_CODEC=wav`) if Phase 0 finds Opus costs accuracy.
+- Language: Phase 0 tries the SDK from C++ and through a Python binding (for example
+  `py-zoom-meeting-sdk`; check its license). Pick the one that is more reliable and easier
+  to maintain; both are light enough on the 3700X.
 
 The Zoom SDK is proprietary. It is never committed: the owner downloads it from their Zoom
 developer account, and the build points at that folder.
 
 ## Architecture
 
-The bot is a short-lived child process that Athena starts on request. It is not a service.
-Nothing about it runs between meetings.
+The bot is a short-lived child process that Athena starts on request. Nothing about it runs
+between meetings.
 
 ```mermaid
 flowchart LR
     hub["Odysseus (hub)<br/>join link or calendar"] -- "Zoom link" --> api["Athena API<br/>launcher: /v1/meetings"]
-    api -- "session ends" --> worker["Athena worker<br/>whisper, no pyannote"]
-    worker -- "lines named" --> db[("convo.db<br/>read over MCP")]
+    api -- "session ends" --> worker["Athena worker<br/>whisper per track"]
+    worker -- "lines named by track" --> db[("convo.db<br/>read over MCP")]
     subgraph only["exists only during a meeting"]
-        bot["athena-meeting-bot<br/>≤0.5 core, ≤512 MB, nice 10"]
+        bot["athena-meeting-bot<br/>one track per person"]
     end
-    api -- "starts it, capped" --> bot
-    bot -- "30 s chunks + speaker timeline" --> api
+    api -- "starts it" --> bot
+    bot -- "30 s chunks per participant" --> api
     zoom["Zoom meeting<br/>shows Athena as a guest"] <-- "audio, chat" --> bot
 ```
 
@@ -101,40 +105,41 @@ meeting ends; the hub, API and worker are the services already running today.
 
 **Parts (all in the Athena repo):**
 
-- `meeting-bot/`: the C++ bot (`athena-meeting-bot`). Arguments: meeting link or id +
-  passcode, Athena session id, a short-lived upload token. It joins as "Athena", records,
-  uploads and exits.
+- `meeting-bot/`: the bot (`athena-meeting-bot`). Arguments: meeting link or id + passcode,
+  Athena session id, a short-lived upload token. It joins as "Athena", records, uploads and
+  exits.
 - `server/convo_server/meetings.py`: the launcher, imported lazily by the API. It checks the
-  request, enforces the one-bot limit, starts the bot under resource caps, and tracks its
-  state in SQLite (`meetings` table).
+  request, enforces the bot limit, starts the bot under safety caps, and tracks its state in
+  SQLite (`meetings` table).
 - New API routes on the existing ingest API: `POST /v1/meetings` (join),
   `GET /v1/meetings/{id}` (state), `DELETE /v1/meetings/{id}` (leave).
-- Pipeline change: sessions with a speaker timeline are labeled from it instead of pyannote
-  diarization.
+- Pipeline change: a meeting session holds one track per participant; each track is
+  transcribed on its own and its lines carry that participant's name.
 
 **How a meeting flows:**
 
 1. The owner pastes a Zoom link in Odysseus (Phase 4), or a calendar event triggers it
    (Phase 5). Odysseus calls the relay route, which forwards to `POST /v1/meetings`.
-2. The launcher starts the bot. With systemd: `systemd-run --user --scope -p CPUQuota=50%
-   -p MemoryMax=512M -p RuntimeMaxSec=<max> nice -n 10 athena-meeting-bot …`. Without
-   systemd (background or Docker runner): the same process with `nice` and `RLIMIT_AS`,
-   inside the API container for Docker, so no Docker socket is needed.
+2. The launcher starts the bot. With systemd: `systemd-run --user --scope -p CPUQuota=200%
+   -p MemoryMax=2G -p RuntimeMaxSec=<max> nice -n 10 athena-meeting-bot …`. Without systemd
+   (background or Docker runner): the same process with `nice` and `RLIMIT_AS`, inside the
+   API container for Docker, so no Docker socket is needed.
 3. The bot joins as **Athena**. The host admits it from the waiting room if there is one.
-4. Every 30 s it uploads a chunk to `POST /v1/ingest/chunk` on loopback, as the watch and
-   call recorder already do, with `device=zoom` and the new optional `speaker_timeline`
-   field: who spoke when in that chunk, by Zoom user id and name.
-5. Athena runs VAD per chunk as today. The bot obeys `"stop": true` too.
+4. Every 30 s it uploads one chunk per participant who was in the meeting during that time
+   to `POST /v1/ingest/chunk` on loopback, as the watch and call recorder already do, with
+   `device=zoom` and the new optional fields `track` (Zoom user id) and `track_name`
+   (display name). A participant who joins late starts a new track.
+5. Athena runs VAD per chunk as today, per track. The bot obeys `"stop": true` too.
 6. The bot leaves when the meeting ends, when it has been the only participant for 60 s,
    when it is removed, on `DELETE`, or at the max duration. It ends the session, uploads
-   chat (Phase 3) and exits. Its memory and CPU return to zero.
-7. Athena's worker finalizes the session: whisper on speech regions, lines labeled from the
-   timeline, summary, facts, as for any conversation.
+   chat (Phase 3) and exits.
+7. Athena's worker finalizes the session: whisper on each track's speech, lines named by
+   track and merged in time order, summary, facts, as for any conversation. With Phase 5D,
+   most of this already happened during the meeting.
 
-**Why the timeline is enough:** the bot already has each person's audio, so it only needs a
-20 ms energy check per person to mark who is speaking. Athena transcribes the mixed audio
-once, then gives each line the name of whoever spoke most during it. Transcribing each
-person separately would multiply whisper's work, so it is not done.
+**Why tracks:** each line comes from one person's own microphone, so the name is right even
+when two people talk at once, and whisper hears one clean voice instead of a mix. No
+diarization model is needed for normal participants.
 
 ## Contract and interface changes
 
@@ -144,8 +149,8 @@ AGENTS.md.
 
 | Where | Change | Phase |
 | --- | --- | --- |
-| `POST /v1/ingest/chunk` | Optional form field `speaker_timeline`: JSON list of `{start, end, zoom_user_id, name}`, times in seconds from chunk start. Ignored by older callers. Same idempotency per (session, sequence). | 1 |
-| `POST /v1/meetings` | New. JSON `{url}` or `{meeting_id, passcode}`, optional `title`. Returns `{id, state}`; states `starting`, `waiting_room`, `recording`, `ended`, `failed` (with `reason`). `409 busy` when a bot is already running. | 1 |
+| `POST /v1/ingest/chunk` | Optional form fields `track` (≤ 64 chars, `[A-Za-z0-9._:-]`) and `track_name` (≤ 200 chars). Without `track` a session works exactly as today. Idempotent per (session, track, sequence); sequences count per track. | 1 |
+| `POST /v1/meetings` | New. JSON `{url}` or `{meeting_id, passcode}`, optional `title`. Returns `{id, state}`; states `starting`, `waiting_room`, `recording`, `ended`, `failed` (with `reason`). `409 busy` over the bot limit. | 1 |
 | `GET` / `DELETE /v1/meetings/{id}` | New. State, and leave now. | 1 |
 | `POST /v1/sessions/{id}/chat` | New, bot only. Chat lines `{at, from, zoom_user_id, text}`. | 3 |
 | MCP results | Meeting conversations say `(Zoom meeting: <topic>)` and list participants; chat lines show as `<name> (chat): …`. Fact and action-item JSON rows gain `source: "meeting"` where it applies. | 3 |
@@ -157,21 +162,20 @@ The names below use today's `CONVO_` prefix. If step 7 of `docs/athena-rename-pl
 landed by the time a lane starts, use `ATHENA_` instead (and `ATHENA_*` for the deploy.sh
 variable in Phase 1), following that plan's rules.
 
-
 - `CONVO_MEETING_BOT_PATH`: the bot binary. Unset means meetings are off and
   `POST /v1/meetings` answers `501`.
 - `CONVO_ZOOM_SDK_KEY`, `CONVO_ZOOM_SDK_SECRET`: the owner's Meeting SDK app credentials.
   The launcher signs the SDK join token locally.
-- `CONVO_MEETING_BOT_MAX` (1), `CONVO_MEETING_BOT_CPU` (50%), `CONVO_MEETING_BOT_MEMORY`
-  (512M), `CONVO_MEETING_ALONE_SECONDS` (60), `CONVO_MEETING_WAITING_ROOM_SECONDS` (600).
+- `CONVO_MEETING_BOT_MAX` (1), `CONVO_MEETING_BOT_CPU` (200%), `CONVO_MEETING_BOT_MEMORY`
+  (2G), `CONVO_MEETING_ALONE_SECONDS` (60), `CONVO_MEETING_WAITING_ROOM_SECONDS` (600),
+  `CONVO_MEETING_TRACK_CODEC` (`opus`).
 - `CONVO_ZOOM_OWNER_NAMES`: the owner's Zoom display names, so their lines are marked as the
   owner.
 
-## Phase 0: Zoom app and cost spike
+## Phase 0: Zoom app and spike
 
-Prove the SDK bot can join as Athena, get per-person audio, and stay inside the budget.
-Nothing is merged except a short findings doc; this phase decides whether the plan goes
-ahead as written.
+Prove the SDK bot can join as Athena and deliver each participant's audio, names and chat.
+Nothing is merged except a short findings doc; this phase decides how Phase 1 is built.
 
 **Owner does (an agent can't):**
 
@@ -186,43 +190,47 @@ ahead as written.
 
 **Agent does (lane 0A, `docs/meeting-bot-spike.md` + throwaway code on a branch):**
 
-- [ ] Minimal C++ program: join by id + passcode, name "Athena", video off, audio raw-data
-      on; write the mixed PCM and per-user energy to files; leave after N minutes.
+- [ ] Minimal bot, in C++ and through a Python binding: join by id + passcode, name
+      "Athena", video off; write each participant's audio to its own file and log chat
+      events; leave after N minutes.
 - [ ] Docker build that takes the SDK folder as a build input and never copies it into git.
-- [ ] Script that records CPU (`pidstat 5`), peak RSS and network for a 30-minute meeting.
-- [ ] Write down: does the SDK need a display, PulseAudio or other daemons in the process
-      (each costs memory); SDK disk size; join time.
+- [ ] Measure for a 30-minute meeting: CPU (`pidstat 5`), peak RSS, time from start to
+      "in meeting".
+- [ ] Transcribe the fixture tracks as Opus 32 kbps and as WAV with the server's whisper
+      model; report the word error rate difference.
+- [ ] Write down: does the SDK need a display, PulseAudio or other helpers in the process;
+      SDK disk size; which binding to use and why.
 
-**Gate to Phase 1:** joins as "Athena" without a display server, separate audio per
-participant arrives with names, and the 30-minute test shows ≤ 0.25 core average and
-≤ 300 MB peak. If the SDK needs a fake audio device, run PulseAudio inside the bot's own
-scope, started and stopped with it, never as a system service. If the budget is missed by
-more than 2×, stop and decide with the owner before more work (see Risks).
+**Gate to Phase 1:** joins as "Athena" without a display server; each participant's audio
+arrives with their name; chat events arrive. The measurements are reported, not a gate,
+unless the bot needs more than 2 cores sustained. If start-to-joined is over 30 s, the
+findings propose a small standby process within the idle limit in priority 2. If the SDK
+needs a fake audio device, run PulseAudio inside the bot's own scope, started and stopped
+with it, never as a system service.
 
 ## Phase 1: Athena joins and uploads
 
-The owner can start a bot with one API call; it joins as Athena, uploads 30 s chunks with a
-speaker timeline, and leaves on its own. Three lanes run in parallel once the timeline format
-below is agreed.
+The owner can start a bot with one API call; it joins as Athena, uploads one track per
+participant, and leaves on its own. Three lanes run in parallel once the `track` fields
+below are agreed.
 
 **Lane 1A, bot (`meeting-bot/`):**
 
 - [ ] Join from a link or id + passcode as "Athena", video off; handle waiting room, wrong
       passcode, meeting not started (each ends with a clear `failed` reason).
-- [ ] Mix to 16 kHz mono, encode Opus with libopus, cut 30 s Ogg chunks; upload with retry
-      and backoff; keep at most 3 unsent chunks on disk.
-- [ ] Per participant, mark speaking when the frame's energy is over a threshold for
-      ≥ 200 ms; merge gaps < 300 ms; emit the chunk's `speaker_timeline`.
-- [ ] Leave rules from the Architecture section; on SIGTERM, flush the last chunk, end the
+- [ ] One track per participant: Opus 32 kbps (or WAV per setting), 30 s chunks, a sequence
+      per track; a participant who leaves and rejoins keeps their track (same Zoom user id).
+- [ ] Upload with retry and backoff; keep unsent chunks on disk until accepted, up to
+      `CONVO_MAX_SESSION_SECONDS` of audio.
+- [ ] Leave rules from the Architecture section; on SIGTERM, flush the last chunks, end the
       session and exit within 5 s.
-- [ ] Host tests for the timeline builder and chunker with recorded PCM fixtures (no SDK
-      needed in CI).
+- [ ] Host tests for the track chunker with recorded PCM fixtures (no SDK needed in CI).
 
 **Lane 1B, launcher (`server/convo_server/meetings.py`, `api.py`):**
 
-- [ ] `POST`/`GET`/`DELETE /v1/meetings`, behind the bearer token; `meetings` table;
-      one-bot limit; `501` when `CONVO_MEETING_BOT_PATH` is unset.
-- [ ] Start the bot under caps (`systemd-run --scope` when available, else `nice` +
+- [ ] `POST`/`GET`/`DELETE /v1/meetings`, behind the bearer token; `meetings` table; bot
+      limit; `501` when `CONVO_MEETING_BOT_PATH` is unset.
+- [ ] Start the bot under safety caps (`systemd-run --scope` when available, else `nice` +
       `RLIMIT_AS`); read its state from a status line it prints on stdout. No polling
       thread: state updates come from the bot's output and its exit.
 - [ ] Sign the Meeting SDK join token locally from the key and secret.
@@ -231,54 +239,56 @@ below is agreed.
 
 **Lane 1C, ingest (`api.py`, `pipeline.py`, `store.py`):**
 
-- [ ] Accept and validate `speaker_timeline` (bounded size, times inside the chunk); store
-      it per chunk; idempotent on retry.
-- [ ] Tests: missing field behaves exactly as today; malformed field rejected with 422.
+- [ ] Accept and validate `track` and `track_name`; store chunks per track; reassemble each
+      track by its own sequence; idempotent per (session, track, sequence).
+- [ ] Tests: no `track` behaves exactly as today; two tracks with overlapping times are
+      kept apart; a retried chunk is a no-op.
 
 **Deploy (`server/scripts/deploy.sh`):** build the bot only when
 `BARVIS_SOUND_ZOOM_SDK_DIR` is set; no new service or unit is installed.
 
 **Done when:** in a real meeting the bot shows as "Athena", the session appears in Athena
-with `device=zoom`, and the Phase 0 cost numbers still hold. Server verification lists the
-commands and the meeting test.
+with `device=zoom` and one track per participant, and nothing is left running after the
+meeting. Server verification lists the commands and the meeting test.
 
-## Phase 2: Names from Zoom instead of pyannote
+## Phase 2: Names from Zoom tracks
 
-Meeting lines carry the speaker's Zoom name, and the server skips pyannote diarization for
-them, so a Zoom meeting is cheaper to process than a recorded call. Depends on Phase 1C.
+Each line carries the name of the participant whose track it came from, and the server
+skips pyannote for normal participants. Depends on Phase 1C.
 
-**Lane 2A, labeling (`pipeline.py`, new `meeting_speakers.py`):**
+**Lane 2A, per-track transcription (`pipeline.py`, new `meeting_tracks.py`):**
 
-- [ ] For each transcript line, give it the participant who was speaking for most of the
-      line's time. A line nobody overlaps stays unnamed ("Speaker 1"). pyannote runs on the
-      whole recording, as today, only when more than 20% of the speech has no timeline.
-- [ ] Overlapping speech: the participant with the most speaking time wins; a tie keeps the
-      line unlabeled.
-- [ ] A participant whose display name is a room or device ("Conference Room", "iPhone",
-      "Zoom user") counts as several possible people: pyannote runs only on the stretches
-      where that participant spoke.
+- [ ] Transcribe each track's VAD speech on its own; every line from a track gets that
+      track's participant; merge all lines in time order.
+- [ ] Crosstalk: lines from different tracks may overlap in time and are all kept, ordered
+      by start time.
+- [ ] Bleed: when two participants share a room, one voice can reach both mics. Drop a line
+      whose text nearly matches a line on another track at the same time, keeping the
+      louder track's line.
+- [ ] A track whose display name is a room or device ("Conference Room", "iPhone", "Zoom
+      user") can hold several people: pyannote runs on that track only.
 - [ ] Owner: names in `CONVO_ZOOM_OWNER_NAMES` become the owner (`is_owner=true`).
-- [ ] Test asserts a fully labeled meeting never loads or runs pyannote.
+- [ ] Test asserts a meeting of named tracks never loads or runs pyannote.
 
 **Lane 2B, names to people (`speakers.py`, `people` table):**
 
 - [ ] Clean display names (drop "(he/him)", "| Company", device suffixes); match against
       people names and aliases; an unknown name becomes a new named speaker.
-- [ ] Store the Zoom user id per meeting so one person who renames mid-meeting stays one
+- [ ] Key participants by Zoom user id, so one person who renames mid-meeting stays one
       person.
 - [ ] `rename_speaker_everywhere` keeps working; the Zoom display name is kept as an alias.
 
 **Lane 2C, learning voices (optional, off by default):**
 
-- [ ] When `CONVO_LEARN_MEETING_VOICES=true`, take at most 3 windows of 3 s per named
-      participant, only where they spoke alone, and save them as voice samples. That is at
-      most 3 embeddings per person per meeting, so the cost stays small.
+- [ ] When `CONVO_LEARN_MEETING_VOICES=true`, take up to 3 windows of 3 s from each named
+      participant's own track and save them as voice samples, so Athena recognizes them in
+      later in-person recordings.
 - [ ] Off by default because it stores other people's voiceprints; the owner decides
       (Risks).
 
-**Done when:** the sandbox stack, fed a fictional 3-person meeting fixture (`seed_demo.py`
-extended), shows every line named and pyannote never loaded; the bakeoff score is no lower
-than today's sandbox score.
+**Done when:** the sandbox stack, fed a fictional 3-person meeting fixture with crosstalk
+(`seed_demo.py` extended), names every line right and never loads pyannote; the bakeoff
+score is no lower than today's sandbox score.
 
 ## Phase 3: Chat, participants and meeting title
 
@@ -287,8 +297,9 @@ so summaries, facts and search use them. Depends on Phase 1; can run beside Phas
 
 **Lane 3A, bot:**
 
-- [ ] Keep chat messages in memory (cap 2,000 messages, 1 MB) and send them in one call to
-      `POST /v1/sessions/{id}/chat` when the meeting ends. No per-message uploads.
+- [ ] Write chat messages to a small file in the bot's temp folder as they arrive (cap
+      2,000 messages, 1 MB), and send them in one call to `POST /v1/sessions/{id}/chat`
+      when the meeting ends, so a crash loses nothing.
 - [ ] Send the meeting topic and the participant list (Zoom user id, display name, join and
       leave times) with the session end.
 - [ ] Private messages sent to Athena are not stored, and Athena never replies.
@@ -325,10 +336,10 @@ Phase 1B.
 - [ ] `src/meeting_bot.py`: calls the relay routes through the `convo` MCP server's URL and
       token, like `src/call_recorder.py`.
 - [ ] On `static/call-recorder.html`: a "Send Athena to a meeting" box (link field, Join,
-      Leave, state text). State is fetched when the page is open and when Join or Leave is
-      pressed. No background polling in the hub when the page is closed.
-- [ ] Accept only `zoom.us` meeting links (and Zoom's vanity subdomains); reject anything
-      else before calling the module.
+      Leave, state text: waiting room, recording, ended, or why it failed). State is
+      fetched while the page is open; nothing polls when it is closed.
+- [ ] Accept Zoom meeting links as pasted from an invite (including vanity subdomains and
+      `zoommtg://` links); reject anything else before calling the module.
 - [ ] Update `docs/fork/modules/odysseus-sound.md` and `FORK.md`.
 - [ ] Tests: `tests/test_meeting_bot.py`; `node --check` on changed JS.
 
@@ -336,10 +347,10 @@ Phase 1B.
 Leave makes it exit; Server verification lists the steps. Production is changed only by the
 owner with `scripts/fork_deploy.sh deploy` after merge.
 
-## Phase 5: Calendar auto-join and hardening
+## Phase 5: Calendar auto-join, hardening, faster results
 
-Athena joins opted-in calendar meetings by itself, using the hub's existing calendar sync
-and task scheduler; nothing new runs in the background. Depends on Phase 4.
+Athena joins opted-in calendar meetings by itself, survives network drops, and has the
+summary ready soon after the meeting. Nothing new runs in the background between meetings.
 
 **Lane 5A, hub auto-join (`src/meeting_auto_join.py`, hook in the calendar sync):**
 
@@ -349,27 +360,32 @@ and task scheduler; nothing new runs in the background. Depends on Phase 4.
       cancels that task. No polling loop is added.
 - [ ] Opt-in: off by default; per event (a "Send Athena" toggle on the event) or a rule
       ("all events with a Zoom link").
-- [ ] Two overlapping meetings: the one that starts first wins; the other gets a
-      notification that Athena was busy.
+- [ ] Overlapping meetings: join both if `CONVO_MEETING_BOT_MAX` allows, else the earlier
+      one, with a notification that Athena was busy.
 
 **Lane 5B, bot hardening:**
 
-- [ ] Rejoin once after a network drop within 60 s, keeping the same session id and
-      sequence.
+- [ ] Rejoin after a network drop (up to 3 tries within 2 minutes), keeping the same session
+      id and track sequences.
 - [ ] Breakout rooms: stay in the main room; note in the session when most participants
       left for breakouts.
 - [ ] Host ends the meeting for all, or removes Athena: end the session cleanly.
-- [ ] Write chat to a small file in the bot's temp folder as it arrives, so a crash doesn't
-      lose it (bounded by the Phase 3 caps).
 
-**Lane 5C, cost regression check:**
+**Lane 5C, idle and cost check:**
 
 - [ ] A script (`server/scripts/meeting_bot_cost.py`) that runs the bot against a recorded
-      fixture and fails if CPU or memory pass the budget. CI runs it on the fixture-only
-      path; the owner runs it once per release in a real meeting.
+      fixture, reports CPU and memory, and fails if any bot process, socket or temp file is
+      left after it exits. CI runs the fixture path; the owner runs it once per release in a
+      real meeting.
 
-**Later, not planned here:** Google Meet and Teams. The upload format (`speaker_timeline`,
-chat route) stays the same, so only a new bot is needed.
+**Lane 5D, results ready sooner (optional):**
+
+- [ ] Transcribe each track's chunks while the meeting runs, so only the last chunk and the
+      summary are left when it ends. Uses the existing worker and whisper-server; no new
+      process. Target: summary within 2 minutes of the meeting ending.
+
+**Later, not planned here:** Google Meet and Teams. The upload format (`track` fields, chat
+route) stays the same, so only a new bot is needed.
 
 ## Handing lanes to Claude subagents
 
@@ -382,13 +398,15 @@ flowchart LR
     s0A --> s1C["1C Ingest"]
     s0A --> s1B["1B Launcher"]
     s1A --> s3A["3A Chat: bot"]
-    s1A --> s5C["5C Cost check"]
+    s1A --> s5C["5C Idle check"]
     s3A --> s5B["5B Hardening"]
     s3A --> s3B["3B Chat: MCP"]
-    s1C --> s2A["2A Labeling"]
+    s1C --> s2A["2A Tracks"]
     s1C --> s2B["2B Names"]
     s2A --> s2C["2C Voices"]
     s2B --> s2C
+    s2A --> s5D["5D Faster results"]
+    s2B --> s5D
     s1B --> s4A["4A Relay"]
     s4A --> s4B["4B Hub button"]
     s4B --> s5A["5A Auto-join"]
@@ -402,34 +420,36 @@ which lanes need the owner.
 | 0A Spike | Athena | Owner's Phase 0 setup | — | Zoom app, SDK download, test meeting |
 | 1A Bot | Athena | 0A gate | 1B, 1C | Real-meeting test |
 | 1B Launcher | Athena | 0A gate | 1A, 1C | — |
-| 1C Ingest field | Athena | 0A gate | 1A, 1B | — |
-| 2A Labeling | Athena | 1C | 2B, 3A | — |
+| 1C Ingest tracks | Athena | 0A gate | 1A, 1B | — |
+| 2A Per-track transcription | Athena | 1C | 2B, 3A | — |
 | 2B Names to people | Athena | 1C | 2A, 3A | — |
-| 2C Voice learning | Athena | 2A, 2B | 3B | Decide on voiceprints |
+| 2C Voice learning | Athena | 2A, 2B | 3B, 5D | Decide on voiceprints |
 | 3A Chat in bot | Athena | 1A | 2A, 2B | Real-meeting test |
 | 3B Chat in server and MCP | Athena + hub doc | 3A | 2C | Bakeoff on the server |
 | 4A Relay routes | Athena | 1B | 2x, 3x | — |
 | 4B Hub button | odysseus-expanded | 4A | 2x, 3x | Test instance check |
-| 5A Auto-join | odysseus-expanded | 4B | 5B, 5C | Opt-in rule |
-| 5B Hardening | Athena | 3A | 5A, 5C | Real-meeting test |
-| 5C Cost check | Athena | 1A | 5A, 5B | One real run |
+| 5A Auto-join | odysseus-expanded | 4B | 5B, 5C, 5D | Opt-in rule |
+| 5B Hardening | Athena | 3A | 5A, 5C, 5D | Real-meeting test |
+| 5C Idle and cost check | Athena | 1A | 5A, 5B | One real run |
+| 5D Faster results | Athena | 2A, 2B | 2C, 5A, 5B | One real meeting |
 
-Agree the `speaker_timeline` JSON shape in the 1C PR first; 1A and 2A both code against it.
+Agree the `track` and `track_name` fields in the 1C PR first; 1A and 2A both code against
+them.
 
 **Prompt template for each subagent** (fill in the lane):
 
 ```markdown
 You are working on lane <ID> of the Athena Zoom bot plan: docs/zoom-meeting-bot-plan.md.
-Read AGENTS.md first and follow it. Read the plan's "Goal and hard constraints",
-"Resource budget", "Architecture", "Contract" sections and your lane.
+Read AGENTS.md first and follow it. Read the plan's "Goal and priorities",
+"Resource rules", "Architecture", "Contract" sections and your lane.
 
 Scope: only the checklist of lane <ID>. Don't touch other lanes' files beyond
 what the plan names. Branch: feature/meeting-bot-<id>. Open a draft PR into main.
 
-Resource rules you must prove in the PR:
-- nothing new runs, listens or polls when no meeting is on;
-- meeting code is imported only on a join request;
-- the bot stays under its CPU and memory caps.
+Priorities: it works well and is easy to use first; nothing runs, listens or
+polls when no meeting is on; then optimize where it costs no function. Show in
+the PR that meeting code is imported only on a join request and that nothing
+is left running after a meeting.
 
 Use fictional data only. Run ruff and pytest in server/. Add a Server
 verification section with exact commands for anything you can't run in the
@@ -442,11 +462,12 @@ stop and write ESCALATE: <reason>.
 | Risk | Effect | Fallback |
 | --- | --- | --- |
 | Zoom requires app review before the bot can join meetings outside the owner's account | Bot works only in the owner's own meetings until approved | Start with own meetings; submit for review in parallel |
-| SDK needs a display, PulseAudio or other helpers | Higher memory in a meeting | Start them inside the bot's scope only, so idle cost stays zero; re-measure against the budget |
-| SDK cost over budget by more than 2× | Breaks the low-power goal | Lower the Opus bitrate, drop per-person energy to every 40 ms; last resort is the browser bot, which is far heavier and only worth it if the owner accepts the cost |
+| SDK needs a display, PulseAudio or other helpers | More to start per meeting | Start them inside the bot's scope only, so idle cost stays zero |
+| Cold start is slow (over 30 s to join) | Joins late | A small standby process within the idle limit (≤ 50 MB, no CPU while waiting), decided in Phase 0 |
 | Zoom SDK updates force a rebuild | Bot stops joining until updated | `GET /v1/meetings` reports the SDK error; deploy.sh rebuilds when the SDK folder changes |
 | Host denies recording permission | No audio | Bot leaves with reason `recording_denied` and the hub shows it |
-| Shared room microphone | Several people under one name | Phase 2 runs pyannote on that participant's stretches only |
+| Shared room microphone | Several people on one track | Phase 2 runs pyannote on that track only |
+| Two participants in one room | Same words on two tracks | Phase 2 drops the duplicate line, keeping the louder track |
 
 **Open questions for the owner:**
 
@@ -455,4 +476,4 @@ stop and write ESCALATE: <reason>.
 - [ ] Should Athena store voiceprints of other meeting participants (Phase 2C), or only
       label them by Zoom name?
 - [ ] Auto-join: per event, or every event with a Zoom link?
-- [ ] Is one bot at a time enough, or do you need two overlapping meetings?
+- [ ] Is one bot at a time enough, or should it join overlapping meetings?
