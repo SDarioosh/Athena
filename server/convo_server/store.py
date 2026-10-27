@@ -291,6 +291,16 @@ class DuplicateChunk(Exception):
     pass
 
 
+class MeetingClosed(Exception):
+    """A new chunk for a meeting (a session with tracks) that is being or has been
+    processed: storing it would make the next pass replace the other tracks' lines in
+    its time range, whose audio is gone."""
+
+
+# A meeting in one of these statuses takes no new chunk (``MeetingClosed``).
+MEETING_CLOSED_STATUSES = ("processing", "done")
+
+
 @dataclass
 class Segment:
     started_at: float
@@ -613,9 +623,12 @@ class Store:
         (session, track, sequence) so device retries are idempotent (the retry's
         ``track_name`` is ignored too), and ValueError if the session belongs to another
         device or is of another ``kind``. The session's silence bookkeeping spans all
-        tracks: ``last_speech_at`` is the latest speech on any track. A tracked chunk in
-        a session an untracked chunk stopped on silence reopens it ('recording', no stop
-        reason), since a tracked session never stops on silence; other stops stand.
+        tracks: ``last_speech_at`` is the latest speech on any track. Raises
+        MeetingClosed for a new chunk of a meeting (a session with tracked chunks) that is
+        being or was processed; a session without tracks takes it and goes back for
+        another pass. A tracked chunk in a session an untracked chunk stopped on silence
+        reopens it ('recording', no stop reason), since a tracked session never stops on
+        silence; other stops stand.
         """
         now = time.time() if now is None else now
         end = started_at + duration
@@ -633,6 +646,14 @@ class Store:
             elif sess["kind"] != kind:
                 raise ValueError(f"session {session_id} is a {sess['kind']} session, "
                                  f"not {kind}")
+            if (sess is not None and sess["status"] in MEETING_CLOSED_STATUSES
+                    and ((track and sess["stop_reason"] != "silence")
+                         or c.execute("SELECT 1 FROM chunks WHERE session_id = ? AND"
+                                      " track != '' LIMIT 1", (session_id,)).fetchone())
+                    and not c.execute("SELECT 1 FROM chunks WHERE session_id = ? AND"
+                                      " track = ? AND sequence = ?",
+                                      (session_id, track, sequence)).fetchone()):
+                raise MeetingClosed(session_id)
             try:
                 c.execute(
                     "INSERT INTO chunks (session_id, sequence, started_at, duration, codec,"
@@ -723,6 +744,21 @@ class Store:
         """Whether the session has any chunk with a track (a meeting)."""
         return self._one("SELECT 1 AS x FROM chunks WHERE session_id = ? AND track != ''"
                          " LIMIT 1", (session_id,)) is not None
+
+    def has_chunk(self, session_id: str, track: str, sequence: int) -> bool:
+        """Whether (session, track, sequence) is already stored ('' = no track)."""
+        return self._one("SELECT 1 AS x FROM chunks WHERE session_id = ? AND track = ?"
+                         " AND sequence = ?", (session_id, track, sequence)) is not None
+
+    def meeting_conversations(self, conv_ids: Iterable[str]) -> set[str]:
+        """Those of ``conv_ids`` that hold lines of a session with tracks (a meeting)."""
+        ids = list(conv_ids)
+        if not ids:
+            return set()
+        return {r["conversation_id"] for r in self._q(
+            "SELECT DISTINCT s.conversation_id FROM segments s WHERE s.conversation_id IN"
+            f" ({','.join('?' * len(ids))}) AND EXISTS (SELECT 1 FROM chunks k"
+            " WHERE k.session_id = s.session_id AND k.track != '')", ids)}
 
     def tracks(self, session_id: str) -> list[dict[str, Any]]:
         """The session's tracks (chunks without a track are not one), ordered by first

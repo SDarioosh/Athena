@@ -101,6 +101,48 @@ CONVERSATIONS: list[tuple[str, str, str, list[tuple[str, str]]]] = [
     ]),
 ]
 
+# Zoom meetings (device "zoom"): (key, start UTC, [(speaker, text, at seconds, length)]).
+# Each line is one participant's own track, named by their Zoom name, so lines may
+# overlap: at 0:30 Omar talks over Lena (crosstalk), and both lines are kept.
+MEETINGS: list[tuple[str, str, list[tuple[str, str, float, float]]]] = [
+    ("zoom-newsletter", "2026-10-09T16:00", [
+        ("Priya Example", "Thanks for joining. Today is about relaunching the community "
+         "newsletter.", 0, 6),
+        (ME, "Great. I looked at the numbers: only twenty percent of readers open it now.", 8, 6),
+        ("Lena Example", "I think the problem is the length, nobody reads twelve sections.", 16, 6),
+        ("Priya Example", "Agreed. Let's cut it down to three sections and a photo of "
+         "the month.", 24, 6),
+        ("Lena Example", "And we could send it on Sunday mornings instead of Tuesdays, "
+         "people have more time then.", 30, 7),
+        ("Omar Example", "Sorry to jump in, Sunday works for me, I can write the welcome "
+         "email for new readers.", 33, 6),
+        (ME, "Good. I'll set up the new template in the mailing tool.", 41, 5),
+        ("Priya Example", "Then the first new issue goes out on Sunday, November "
+         "fifteenth.", 48, 5),
+        ("Omar Example", "I'll have the welcome email ready a week before that.", 55, 5),
+    ]),
+]
+
+
+def insert_meeting(store: Store, pipeline: Pipeline, key: str, start: str,
+                   lines: list[tuple[str, str, float, float]]) -> list[str]:
+    """Insert one demo meeting's lines as the per-track pipeline stores them; returns
+    its conversation ids."""
+    sid, device = f"demo-{key}", "zoom"
+    t0 = datetime.fromisoformat(start).replace(tzinfo=UTC).timestamp()
+    segs = sorted((Segment(t0 + at, t0 + at + length, text, speaker, speaker == ME)
+                   for speaker, text, at, length in lines), key=lambda s: s.started_at)
+    end = max(s.ended_at for s in segs)
+    with store.tx() as c:
+        c.execute("INSERT INTO sessions (id, device, started_at, last_chunk_at,"
+                  " last_speech_at, received_at, status, stop_reason, kind)"
+                  " VALUES (?, ?, ?, ?, ?, ?, 'processing', 'demo', ?)",
+                  (sid, device, t0, end, end, time.time(), CONVERSATION))
+    store.replace_segments(sid, device, segs, [(t0, end + 1)])
+    conv_ids = pipeline._assign_conversations(sid, device)
+    store.set_session_status(sid, "done")
+    return conv_ids
+
 
 def main() -> int:
     settings = get_settings()
@@ -111,7 +153,9 @@ def main() -> int:
                         summarizer=Summarizer(llm, ME, timezone=settings.timezone,
                                                       digest_skip_lists=settings.digest_skip_lists))
     failed = 0
-    for key, start, device, lines in CONVERSATIONS:
+    meetings = {key: (start, lines) for key, start, lines in MEETINGS}
+    entries = [*CONVERSATIONS, *((key, start, "zoom", []) for key, start, _ in MEETINGS)]
+    for key, start, device, lines in entries:
         sid = f"demo-{key}"
         if store.get_session(sid):
             # Already inserted; only retry summaries that failed on an earlier run.
@@ -122,6 +166,8 @@ def main() -> int:
             if not conv_ids:
                 print("exists:", sid)
                 continue
+        elif key in meetings:
+            conv_ids = insert_meeting(store, pipeline, key, *meetings[key])
         else:
             t0 = datetime.fromisoformat(start).replace(tzinfo=UTC).timestamp()
             segs = [Segment(t0 + 8 * i, t0 + 8 * i + 7, text, speaker, speaker == ME)
