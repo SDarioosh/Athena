@@ -331,14 +331,23 @@ prints `True`.
 ### Meeting bot in Docker
 
 The Zoom meeting bot ([Meeting bot](#meeting-bot), source in `meeting-bot/`) is built
-only when `server/.env` names the unpacked Zoom Meeting SDK for Linux (the folder with
-`h/`, `libmeetingsdk.so` and `qt_libs/`; proprietary, so it stays outside the repo):
+only when `deploy.sh` finds the unpacked Zoom Meeting SDK for Linux (the folder with
+`h/`, `libmeetingsdk.so` and `qt_libs/`; proprietary, so it stays outside the repo).
+Unpack it to `~/zoom-sdk` and that's all: with `BARVIS_SOUND_ZOOM_SDK_DIR` unset (neither
+in the environment nor in `server/.env`), `deploy.sh` uses `$HOME/zoom-sdk` when
+`$HOME/zoom-sdk/h/zoom_sdk.h` exists and says so in one line (`$HOME` of the user running
+`deploy.sh`; with `sudo docker` the folder is passed to compose on sudo's command line).
+Elsewhere, or to turn the bot off:
 
 ```bash
-BARVIS_SOUND_ZOOM_SDK_DIR=/home/you/zoom-sdk   # ~ and $HOME work too
+BARVIS_SOUND_ZOOM_SDK_DIR=/home/you/zoom-sdk   # another folder; ~ and $HOME work too
+BARVIS_SOUND_ZOOM_SDK_DIR=off                  # no meeting bot even with ~/zoom-sdk (empty works too)
 CONVO_ZOOM_SDK_KEY=...                         # the Meeting SDK app's credentials
 CONVO_ZOOM_SDK_SECRET=...
 ```
+
+Without `CONVO_ZOOM_SDK_KEY` / `CONVO_ZOOM_SDK_SECRET` the deploy warns and goes on: the
+bot is built, but joins answer 501 until they are set.
 
 `deploy.sh` then adds `compose.meeting.yml` (after `compose.gpu.yml` if that is on). It
 builds the Dockerfile's `meeting` target for `sound-api` only: `meeting-bot/` compiled
@@ -359,7 +368,7 @@ there, so the `auto` runner picks `plain` (`nice 10`, `RLIMIT_AS` =
 SDK and its bundled Qt on the library path, keeps glibc's malloc arenas few (two, so
 `RLIMIT_AS` measures what the bot uses) and `exec`s the bot, so the launcher's pid,
 signals and limits are the bot's own. `--ldd` lists the bot's libraries as a run sees
-them. Without `BARVIS_SOUND_ZOOM_SDK_DIR` the image is exactly as before (no SDK, no extra
+them. Without an SDK (none found, or `off`) the image is exactly as before (no SDK, no extra
 libraries) and meetings answer 501.
 
 ```bash
@@ -370,7 +379,7 @@ BARVIS_SOUND_ZOOM_SDK_DIR=$HOME/zoom-sdk docker compose -f compose.yml \
 docker compose exec sound-api /opt/athena-meeting-bot/athena-meeting-bot-run --ldd
 ```
 
-Native runners (`systemd`, `background`): with `BARVIS_SOUND_ZOOM_SDK_DIR` set, `deploy.sh`
+Native runners (`systemd`, `background`): with the SDK found (as above), `deploy.sh`
 builds the bot in `$CONVO_DATA_DIR/meeting-bot/build` (outside git; log in
 `data/logs/meeting-bot-build.log`), puts the same start script there with a `zoomsdk`
 link to the SDK, and adds `CONVO_MEETING_BOT_PATH=<that dir>/athena-meeting-bot-run` to
@@ -512,7 +521,7 @@ timer or poller. Same bearer token as every route.
 
 | route | answer |
 |---|---|
-| `POST /v1/meetings` JSON `{"url": "<Zoom link>"}` or `{"meeting_id": "123 4567 8901", "passcode": "…"}`, optional `"title"` (≤ 200) | `202 {"id", "state": "starting", "session_id"}`; `503 {"detail": "zoom_signin_needed", "message"}` when the join token mode needs Athena's Zoom sign-in and it is missing or expired (the message says to run `convo-server zoom-login`); `502 {"detail": "zoom_unavailable", "message"}` when Zoom's API can't be reached; `400 {"detail"}` for a link that isn't a Zoom meeting or a bad body (`detail` is always a message string, e.g. `title is longer than 200 characters`; a title is stripped first); `413 {"detail"}` for a body over 16 KB; `409 {"detail": "busy", "message", "active": "<meeting id>"}` when `CONVO_MEETING_BOT_MAX` bots are active; `501 {"detail"}` when meetings are off (`CONVO_MEETING_BOT_PATH` unset or not executable, no SDK key/secret, a bad meeting setting); `500` when the bot can't be started |
+| `POST /v1/meetings` JSON `{"url": "<Zoom link>"}` or `{"meeting_id": "123 4567 8901", "passcode": "…"}`, optional `"title"` (≤ 200) | `202 {"id", "state": "starting", "session_id"}`; `503 {"detail": "zoom_signin_needed", "message"}` when the join token mode needs Athena's Zoom sign-in and it is missing or expired (the message says to sign in from Odysseus or run `convo-server zoom-login`); `502 {"detail": "zoom_unavailable", "message"}` when Zoom's API can't be reached; `400 {"detail"}` for a link that isn't a Zoom meeting or a bad body (`detail` is always a message string, e.g. `title is longer than 200 characters`; a title is stripped first); `413 {"detail"}` for a body over 16 KB; `409 {"detail": "busy", "message", "active": "<meeting id>"}` when `CONVO_MEETING_BOT_MAX` bots are active; `501 {"detail"}` when meetings are off (`CONVO_MEETING_BOT_PATH` unset or not executable, no SDK key/secret, a bad meeting setting); `500` when the bot can't be started |
 | `GET /v1/meetings/{id}` | `{"id", "state", "reason", "active", "session_id", "meeting_id", "title", "join_token_kind" (`zak`, `obf` or `none`), "created_at", "started_at", "ended_at"}` (ISO-8601; `started_at` = first recording); 404 |
 | `GET /v1/meetings?limit=20` | `{"meetings": [...]}`, newest first (the current one, if any, is first) |
 | `DELETE /v1/meetings/{id}` | the bot leaves: SIGTERM, it flushes and ends the session; SIGKILL after 10 s. Answers once it exited, with the final row (`ended`, `stopped`; never `active` for a bot that exited), within about 15 s. Idempotent; 404 |
@@ -584,14 +593,29 @@ app join a meeting hosted by another Zoom account only on behalf of a signed-in 
    `user:read:token` and a redirect URL. Nothing needs to answer at that URL.
 2. Set `CONVO_ZOOM_CLIENT_ID`, `CONVO_ZOOM_CLIENT_SECRET` and `CONVO_ZOOM_REDIRECT_URL`
    in `server/.env`.
-3. Run `convo-server zoom-login` on the server. It prints a Zoom URL. Open it anywhere,
-   sign in with your own Zoom account and allow the app, then paste the address the
-   browser went to (or just its `code`). It uses PKCE and checks `state`: a pasted address
-   (or query) must carry this sign-in's `state`, and one with `error=` is refused; a bare
-   code has no state to check (PKCE ties it to this sign-in).
+3. Sign in **from Odysseus**: Record a call → **Sign in to Zoom**. Odysseus opens a Zoom
+   page; sign in with your own Zoom account and allow the app, then paste the address the
+   browser went to (or just its `code`) into Odysseus. No terminal needed. Or, on the
+   server, run `convo-server zoom-login`: it prints the Zoom URL and asks for the address
+   the same way. Both use PKCE and check `state`: a pasted address (or query) must carry
+   this sign-in's `state`, and one with `error=` is refused; a bare code has no state to
+   check (PKCE ties it to this sign-in).
 4. The refresh token is saved to `<data dir>/zoom/refresh_token.json` (mode 0600,
-   replaced atomically). `convo-server zoom-login --status` says whether Athena is signed
-   in and which join token the next meeting gets. Delete the file to sign out.
+   replaced atomically). `convo-server zoom-login --status` (or Odysseus) says whether
+   Athena is signed in and which join token the next meeting gets. Delete the file to
+   sign out.
+
+The routes behind Odysseus's button (`convo_server/zoom_signin.py`, imported on the first
+sign-in request; bearer `CONVO_INGEST_TOKEN` like every `/v1` route). The MCP HTTP app
+forwards `GET /zoom/signin`, `POST /zoom/signin/start` and `POST /zoom/signin/finish`
+unchanged (status and JSON) with the ingest token, behind the MCP token, like `/meetings`;
+they are not MCP tools.
+
+| Route | Answer |
+|---|---|
+| `GET /v1/zoom/signin` | `200 {"configured": bool, "signed_in": bool, "join_token": "obf" \| "zak" \| "none", "missing": [...]}`. `configured`: client id, secret and redirect URL all set; `missing` names the unset ones (`CONVO_ZOOM_CLIENT_ID`, `CONVO_ZOOM_CLIENT_SECRET`, `CONVO_ZOOM_REDIRECT_URL`); `join_token` is what the next join uses (an invalid `CONVO_ZOOM_JOIN_TOKEN` shows as `none`; joins then answer 501). No network. |
+| `POST /v1/zoom/signin/start` (no body) | `200 {"url": "<Zoom authorize URL>", "expires_in": 600}`: open the URL, sign in, allow. The attempt (state, PKCE verifier, time) waits in `<data dir>/zoom/pending_login.json` (0600, replaced atomically) for 600 s; a new start replaces it. The verifier is never returned. `501 {"detail"}` naming the missing settings when not configured. |
+| `POST /v1/zoom/signin/finish` JSON `{"pasted": "<the address the browser went to, or its code>"}` | `200 {"ok": true, "signed_in": true, "join_token"}`, the refresh token saved and the attempt removed. `400 {"detail"}` (plain words) for no attempt waiting or one older than 10 minutes ("start the sign-in again"), a bad paste (another attempt's `state`, no `state`, `error=`, nothing pasted, more than 4096 characters) or Zoom refusing the code or the client; a bad paste or a refused code keeps the attempt until it expires, so the owner can paste again. `502 {"detail"}` when Zoom can't be reached; `501` when not configured; `413` for a body over 8 KB. The pasted text and tokens are never logged. |
 
 `CONVO_ZOOM_JOIN_TOKEN` picks the join token:
 - `auto` (default): `obf` once signed in, else `none`.
@@ -618,9 +642,11 @@ token, and asks `GET https://api.zoom.us/v2/users/me/token?type=zak` (or
 `type=onbehalf&meeting_id=<number>`). These are the only network calls, to Zoom's API,
 with a 5 s timeout each; no audio or transcript goes there, nothing refreshes in the
 background, and no token is logged or put on a command line. Zoom expires a refresh token
-that goes unused for a long time: then `POST /v1/meetings` answers 503
-`zoom_signin_needed` ("Athena's Zoom sign-in expired … run convo-server zoom-login") and
-starts nothing; run `convo-server zoom-login` again.
+that goes unused for a long time, and the owner can revoke it: when Zoom refuses it, the
+file is moved aside to `refresh_token.expired.json` (so `GET /v1/zoom/signin` says
+`signed_in: false`), `POST /v1/meetings` answers 503 `zoom_signin_needed` ("Athena's Zoom
+sign-in expired … sign in from Odysseus (Record a call → Sign in to Zoom) or run
+convo-server zoom-login") and starts nothing; sign in again either way.
 
 **Bot contract** (lane 1A implements it):
 

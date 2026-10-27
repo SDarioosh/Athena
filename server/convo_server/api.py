@@ -21,6 +21,11 @@ Meeting bot (convo_server/meetings.py, imported on the first meeting request):
     POST   /v1/meetings            JSON {url} or {meeting_id, passcode}, title? -> {id, state}
     GET    /v1/meetings, /v1/meetings/{id}
     DELETE /v1/meetings/{id}       the bot leaves
+Zoom sign-in (convo_server/zoom_signin.py, imported on the first sign-in request; the hub's
+"Sign in to Zoom" button):
+    GET  /v1/zoom/signin           {configured, signed_in, join_token, missing}
+    POST /v1/zoom/signin/start     -> {url, expires_in}
+    POST /v1/zoom/signin/finish    JSON {pasted} -> {ok, signed_in, join_token}
 Every /v1 route requires ``Authorization: Bearer <CONVO_INGEST_TOKEN>``. A running meeting
 bot's own upload token is accepted only for its session's chunk uploads, end and chat.
 """
@@ -168,6 +173,7 @@ class MeetingJoin(BaseModel):
     title: str | None = None
 
 
+MAX_SIGNIN_BODY = 8 * 1024  # POST /v1/zoom/signin/finish: a pasted redirect address
 MAX_MEETING_BODY = 16 * 1024  # POST /v1/meetings: far above any real link and title
 
 
@@ -659,6 +665,58 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
             return await launcher().leave(meeting_id)
         except MeetingError as e:
             return meeting_error(e)
+
+    # ---------------------------------------------------------- Zoom sign-in
+    @v1.get("/zoom/signin")
+    def zoom_signin_status() -> dict[str, Any]:
+        from . import zoom_signin
+
+        return zoom_signin.signin_status(settings)
+
+    @v1.post("/zoom/signin/start")
+    def zoom_signin_start() -> Any:
+        """A Zoom authorize URL for the owner to open; 501 when the OAuth client is not
+        set up. Replaces any sign-in already waiting."""
+        from . import zoom_signin
+
+        try:
+            return zoom_signin.begin_signin(settings)
+        except zoom_signin.SigninNotConfigured as e:
+            return JSONResponse({"detail": str(e)}, status_code=501)
+
+    @v1.post("/zoom/signin/finish")
+    async def zoom_signin_finish(request: Request) -> Any:
+        """JSON ``{"pasted": "<the address the browser went to, or its code>"}``: 200
+        {ok, signed_in, join_token}; 400 nothing waiting, expired, a bad paste or Zoom
+        refused; 413 body over MAX_SIGNIN_BODY; 501 not set up; 502 Zoom unreachable.
+        The pasted text and the tokens are never logged."""
+        import json
+
+        from . import zoom_signin
+
+        raw = b""
+        async for part in request.stream():
+            raw += part
+            if len(raw) > MAX_SIGNIN_BODY:
+                return JSONResponse({"detail": "request body too large"}, status_code=413)
+        try:
+            body = json.loads(raw or b"{}")
+        except ValueError:
+            body = None
+        pasted = body.get("pasted") if isinstance(body, dict) else None
+        if not isinstance(pasted, str):
+            return JSONResponse({"detail": 'send JSON {"pasted": "<the address the '
+                                           'browser went to, or its code>"}'},
+                                status_code=400)
+        transport = getattr(app.state, "zoom_transport", None)  # tests: a fake Zoom
+        try:
+            return await zoom_signin.complete_signin(settings, pasted, transport=transport)
+        except zoom_signin.SigninNotConfigured as e:
+            return JSONResponse({"detail": str(e)}, status_code=501)
+        except zoom_signin.ZoomUnavailable as e:
+            return JSONResponse({"detail": str(e)}, status_code=502)
+        except (ValueError, zoom_signin.SigninNeeded) as e:
+            return JSONResponse({"detail": str(e)}, status_code=400)
 
     app.include_router(v1)
     return app
