@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .audio import SAMPLE_RATE
-from .diarize import UNSURE_LABEL, PieceRef, SpeakerLabel, load_voices, rms_db
+from .diarize import PieceRef, SpeakerLabel, load_voices, rms_db
 from .lines import join_lines
 from .store import Segment
 
@@ -44,14 +44,18 @@ if TYPE_CHECKING:  # pragma: no cover
 
 log = logging.getLogger(__name__)
 
-# Bleed: a line is a copy of a line on another track when ...
-# ... its words match that line's this well (``text_similarity``: the better of
-# SequenceMatcher's ratio over words and, when the shorter line has at least
-# BLEED_CONTAINED_MIN_WORDS words, the share of its words found in the other line in
-# order). 0.85 keeps "I'll send the notes after lunch" / "I'll send the slides after
-# lunch" (5 of 6 words, 0.83) apart while whisper's small slips on the quieter copy
-# still match.
-BLEED_MIN_SIMILARITY = 0.85
+# Bleed: a line is a copy of a line on another track when its words match that line's
+# (``text_similarity``: the better of SequenceMatcher's ratio over words and, when the
+# shorter line has at least BLEED_CONTAINED_MIN_WORDS words, the share of its words
+# found in the other line in order) ...
+# ... at least this well, however loud the two are (a word or so off);
+BLEED_SURE_SIMILARITY = 0.9
+# ... or at least this well when it is also BLEED_MIN_DB quieter than the other line.
+# The quieter mic hears the voice from across the room, so whisper often slips a word
+# there ("ship the release of Friday"); two people saying nearly the same sentence at
+# the same moment are about as loud as each other, and both lines stay.
+BLEED_MIN_SIMILARITY = 0.7
+BLEED_MIN_DB = 6.0
 BLEED_CONTAINED_MIN_WORDS = 4
 # ... and the two lines overlap in time by at least this share of the shorter line
 # (whisper's line edges differ a little between the two copies). A line shorter than
@@ -75,7 +79,7 @@ _ROOM_WORDS = (
     r"macbook(?:\s*(?:pro|air))?", r"imac", r"laptop", r"desktop", r"chromebook",
     r"surface\s*(?:pro|hub|laptop)", r"phone", r"speakerphone", r"dial-?in", r"call-?in",
 )
-_ROOM = re.compile(r"(?<![\w-])(?:" + "|".join(_ROOM_WORDS) + r")(?![\w-])", re.IGNORECASE)
+_ROOM = re.compile(r"(?<!\w)(?:" + "|".join(_ROOM_WORDS) + r")(?!\w)", re.IGNORECASE)
 # A dial-in caller shows as their phone number.
 _PHONE_NUMBER = re.compile(r"^[\s+()\d.-]{6,}$")
 
@@ -126,7 +130,7 @@ def words_of(text: str) -> list[str]:
 
 
 def text_similarity(a: str, b: str) -> float:
-    """How nearly two lines say the same words, 0..1 (see BLEED_MIN_SIMILARITY)."""
+    """How nearly two lines say the same words, 0..1 (see ``find_bleed``)."""
     wa, wb = words_of(a), words_of(b)
     if not wa or not wb:
         return 0.0
@@ -148,10 +152,11 @@ def find_bleed(lines: Sequence[Line], loudness: Sequence[float]) -> set[int]:
     """Indexes of lines that are another track's voice picked up by this track's mic.
 
     Two lines on different tracks that overlap in time (``same_time``) and say nearly
-    the same words (``text_similarity`` >= BLEED_MIN_SIMILARITY): the quieter one is
-    dropped (``loudness``: dBFS of each line's audio on its own track; a tie keeps the
-    line with more words). Best matches are decided first, and a dropped line never
-    causes another drop.
+    the same words: similarity >= BLEED_SURE_SIMILARITY, or >= BLEED_MIN_SIMILARITY
+    with one line at least BLEED_MIN_DB quieter. The quieter one is dropped
+    (``loudness``: dBFS of each line's audio on its own track; a tie keeps the line with
+    more words). Best matches are decided first, and a dropped line never causes
+    another drop.
     """
     order = sorted(range(len(lines)), key=lambda i: lines[i].start)
     pairs: list[tuple[float, int, int]] = []
@@ -164,7 +169,9 @@ def find_bleed(lines: Sequence[Line], loudness: Sequence[float]) -> set[int]:
             if a.track == b.track or not same_time(a, b):
                 continue
             sim = text_similarity(a.text, b.text)
-            if sim >= BLEED_MIN_SIMILARITY:
+            if sim >= BLEED_SURE_SIMILARITY or (
+                    sim >= BLEED_MIN_SIMILARITY
+                    and abs(loudness[i] - loudness[j]) >= BLEED_MIN_DB):
                 pairs.append((sim, i, j))
     dropped: set[int] = set()
     for sim, i, j in sorted(pairs, key=lambda p: (-p[0], p[1], p[2])):
@@ -296,6 +303,3 @@ def _diarize_track(pipeline: Pipeline, runs: list[np.ndarray], first_run: int,
     back = [(s, e, t, PieceRef(r.run + first_run, r.start, r.end)) for s, e, t, r in local]
     return list(labels), found, back
 
-
-__all__ = ["BLEED_MIN_OVERLAP", "BLEED_MIN_SIMILARITY", "UNSURE_LABEL", "find_bleed",
-           "is_shared_room", "text_similarity", "track_speaker", "transcribe_meeting"]
