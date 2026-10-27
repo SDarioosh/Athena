@@ -140,3 +140,43 @@ def test_odysseus_deploy_runs_from_the_odysseus_checkout(tmp_path):
     r = run("odysseus", BARVIS_SOUND_ODYSSEUS_DIR=str(hub))
     assert r.returncode == 0, r.stderr
     assert calls.read_text().strip() == str(hub)
+
+
+# Docker runner: compose files and the checks before building.
+
+def fake_docker(tmp_path: Path) -> tuple[Path, Path]:
+    calls = tmp_path / "docker-calls"
+    docker = tmp_path / "docker"
+    docker.write_text(f'#!/usr/bin/env bash\necho "$*" >> {calls}\n')
+    docker.chmod(0o755)
+    return docker, calls
+
+
+def test_docker_gpu_api_adds_the_gpu_compose_file(tmp_path):
+    docker, calls = fake_docker(tmp_path)
+    assert run("units", BARVIS_SOUND_RUNNER="docker", DOCKER=str(docker),
+               CONVO_DOCKER_API_GPU="True").returncode == 0
+    assert f"-f {SERVER}/compose.yml -f {SERVER}/compose.gpu.yml config" in calls.read_text()
+
+
+def test_docker_cpu_api_by_default(tmp_path):
+    docker, calls = fake_docker(tmp_path)
+    assert run("units", BARVIS_SOUND_RUNNER="docker", DOCKER=str(docker),
+               CONVO_DOCKER_API_GPU="").returncode == 0
+    assert "compose.gpu.yml" not in calls.read_text()
+
+
+def test_docker_refuses_pyannote_without_its_extra(tmp_path):
+    docker, calls = fake_docker(tmp_path)
+    r = run("start", BARVIS_SOUND_RUNNER="docker", DOCKER=str(docker),
+            CONVO_DIARIZER="pyannote", CONVO_DOCKER_EXTRAS="vad,diarization")
+    assert r.returncode == 1
+    assert "CONVO_DOCKER_EXTRAS=vad,diarization,pyannote" in r.stderr
+    assert not calls.exists()  # nothing built or started
+
+
+def test_docker_pyannote_with_its_extra_starts(tmp_path):
+    docker, calls = fake_docker(tmp_path)
+    run("start", BARVIS_SOUND_RUNNER="docker", DOCKER=str(docker),
+        CONVO_DIARIZER="pyannote", CONVO_DOCKER_EXTRAS="vad,diarization,pyannote")
+    assert " up -d --build" in calls.read_text()

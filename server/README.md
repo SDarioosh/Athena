@@ -305,8 +305,28 @@ are rewritten: `docker compose exec sound-api convo-entrypoint process` (or `dig
 Not in the containers yet: `whisper-cli` mode (`CONVO_WHISPER_CLI`; use whisper-server),
 and paths outside the data dir (put a Parakeet model under `data/` and set
 `CONVO_PARAKEET_MODEL_DIR=/data/...`). pyannote needs `CONVO_DOCKER_EXTRAS=vad,diarization,pyannote`
-and runs on CPU there. A stdio MCP client (Hermes) still uses the native `.venv`; it can
+(`deploy.sh` refuses to build without it when `CONVO_DIARIZER=pyannote`) and runs on CPU
+unless the API has the GPU, below. A stdio MCP client (Hermes) still uses the native `.venv`; it can
 read the same data dir next to the containers.
+
+### pyannote on the GPU
+
+The server image has CPU PyTorch by default. With pyannote (`CONVO_DIARIZER=pyannote`),
+give the API container the GPU too, in `server/.env`:
+
+```bash
+CONVO_DOCKER_EXTRAS=vad,diarization,pyannote
+CONVO_DOCKER_API_GPU=true        # deploy.sh adds compose.gpu.yml
+# CONVO_DOCKER_TORCH_CUDA=cu126  # PyTorch CUDA wheels; cu126 runs on any CUDA 12+ driver
+```
+
+`compose.gpu.yml` builds the image with CUDA PyTorch (`odysseus-sound:current-cuda`,
+about 3 GB more) and gives `sound-api` the NVIDIA GPU (the NVIDIA Container Toolkit,
+as for `whisper-gpu`); `CONVO_PYANNOTE_DEVICE=auto` then picks it. It shares the GPU's memory with whisper
+and llama-server.
+By hand: `docker compose -f compose.yml -f compose.gpu.yml up -d --build --wait`.
+Check: `docker compose exec sound-api python -c "import torch; print(torch.cuda.is_available())"`
+prints `True`.
 
 ## Run by hand
 
