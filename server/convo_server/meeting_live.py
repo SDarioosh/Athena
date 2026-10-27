@@ -1,0 +1,412 @@
+"""Transcribe a meeting while it runs (Zoom bot plan, lane 5D).
+
+A meeting's tracks (one per participant, ``meeting_tracks``) are transcribed window by
+window on the worker's existing ticks while the bot is still uploading, so when the
+meeting ends only the last window of each track and the summary are left.
+
+Nothing new runs for it: no process, thread, timer or poller. ``Worker.tick`` calls
+``Pipeline.transcribe_live``, which asks the store one indexed question (is a meeting
+being recorded?) and imports this module only when the answer is yes.
+
+**Same result as transcribing at the end.** The end-of-meeting pass
+(``meeting_tracks.transcribe_meeting``) runs the same code: it finishes each track's
+state here, starting from nothing when there is none (``CONVO_MEETING_LIVE_TRANSCRIBE``
+off). Live work only does what that pass would do, earlier:
+
+* **Runs** are a track's contiguous chunks, as in ``Pipeline._runs``. While recording,
+  only the gap-free sequence prefix counts (a missing chunk may still arrive). A run is
+  closed once the next chunk of the track has arrived and doesn't continue it.
+* **Windows** are planned from the stored VAD spans and chunk lengths with
+  ``Pipeline._plan_windows``, without decoding audio. Planning is greedy, so every window
+  but the last of an open run is final: a window is cut only when the next speech region
+  doesn't fit, and audio that arrives later can only make that region longer. Those
+  windows are exactly the ones the end-of-meeting plan has, so whisper hears the same
+  clips (sliced at the same run samples, ``RunAudio``) with the same context: a word that
+  crosses a chunk boundary is in one window, never cut. The last window of an open run
+  waits for more audio or for the end.
+* **Context**: whisper's context words carry on per track across windows and runs.
+* **Joining** (``CONVO_JOIN_LINES``) is a left fold, so it continues from the last line,
+  which stays open until the next line can't join it.
+* **Loudness** of each line (dBFS on its own track, for the bleed check) is measured
+  from the same samples the end pass would read, and stored with the line. Bleed is
+  decided at the end over all lines of all tracks (text and stored loudness only).
+* **Prompt**: the participants' names whisper is given are those of the tracks known at
+  the time. Someone who joins late is only in the prompt of later windows; that is the
+  one way a live result can differ from an end-only one (spelling of a name).
+
+**Deferred to the end**: shared-room tracks ("Conference Room", a phone: diarized over
+the whole track so its "Speaker N" numbering is consistent) and chunks without a track.
+
+**Crash-safe**: each window's result is saved (``meeting_live`` table) with how far the
+track got; a restart redoes at most the window in flight. The state names the runs and
+the window it covers and is checked against the chunks before use: anything that no
+longer matches (a late chunk changed a run) is thrown away and that track is
+transcribed again from its audio, which is kept until the end-of-meeting pass succeeds.
+
+Imported only when a meeting is being recorded or processed.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from collections.abc import Callable, Iterator
+from dataclasses import asdict, dataclass, field
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+from .audio import SAMPLE_RATE
+from .clips import Window
+from .diarize import PieceRef, rms_db
+from .lines import join_lines
+from .meeting_names import clean_display_name
+from .meeting_tracks import is_shared_room, meeting_prompt
+from .vad import Span
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .pipeline import Pipeline
+
+log = logging.getLogger(__name__)
+
+# A line: (epoch start, epoch end, text, PieceRef(run = first sequence of its run, run
+# time start, run time end)) plus its loudness in dBFS.
+Piece = tuple[float, float, str, PieceRef]
+
+
+class LiveMismatch(Exception):
+    """A chunk's audio is not as long as its stored duration."""
+
+
+@dataclass
+class Run:
+    """Contiguous chunks of one track (``Pipeline._runs``); ``closed`` when no later chunk
+    can extend it."""
+    chunks: list[dict[str, Any]]
+    closed: bool
+
+    @property
+    def first(self) -> int:
+        return self.chunks[0]["sequence"]
+
+    @property
+    def last(self) -> int:
+        return self.chunks[-1]["sequence"]
+
+    @property
+    def sizes(self) -> list[int]:
+        """Samples per chunk (the stored duration is the decoded size / SAMPLE_RATE)."""
+        return [round(c["duration"] * SAMPLE_RATE) for c in self.chunks]
+
+    def windows(self, pipeline: Pipeline) -> list[Window]:
+        """All whisper windows of the run so far, planned as ``Pipeline._whisper_run``
+        plans them (same spans, same offsets, same run length)."""
+        spans: list[Span] = []
+        offset = 0.0
+        for c, n in zip(self.chunks, self.sizes, strict=True):
+            spans += [Span(offset + s, offset + e) for s, e in c["speech"]]
+            offset += n / SAMPLE_RATE
+        return pipeline._plan_windows(spans, sum(self.sizes) / SAMPLE_RATE)
+
+    def final_windows(self, pipeline: Pipeline) -> list[Window]:
+        """The windows no later audio can change: all of a closed run, all but the last
+        of an open one."""
+        ws = self.windows(pipeline)
+        return ws if self.closed else ws[:-1]
+
+
+def plan_runs(chunks: list[dict[str, Any]], *, final: bool) -> list[Run]:
+    """A track's runs of contiguous chunks, as ``Pipeline._runs`` cuts them. While the
+    meeting records (``final`` false) only the gap-free sequence prefix is used and the
+    last run stays open."""
+    from .pipeline import CONTIGUOUS_TOLERANCE
+
+    ordered = sorted((c for c in chunks if c["audio_path"]), key=lambda c: c["sequence"])
+    if not final:
+        for i in range(1, len(ordered)):
+            if ordered[i]["sequence"] != ordered[i - 1]["sequence"] + 1:
+                ordered = ordered[:i]
+                break
+    runs: list[Run] = []
+    cur: list[dict[str, Any]] = []
+    for c in ordered:
+        if cur:
+            prev = cur[-1]
+            gap = c["started_at"] - (prev["started_at"] + prev["duration"])
+            if abs(gap) > CONTIGUOUS_TOLERANCE or c["sequence"] != prev["sequence"] + 1:
+                runs.append(Run(cur, closed=True))
+                cur = []
+        cur.append(c)
+    if cur:
+        runs.append(Run(cur, closed=final))
+    return runs
+
+
+class RunAudio:
+    """A run's audio, decoded chunk by chunk only where it is read. ``slice(a, b)`` equals
+    ``run_audio[a:b]`` of the whole decoded run, sample for sample."""
+
+    def __init__(self, pipeline: Pipeline, run: Run) -> None:
+        self.pipeline = pipeline
+        self.run = run
+        self.sizes = run.sizes
+        self.offsets = [0]
+        for n in self.sizes:
+            self.offsets.append(self.offsets[-1] + n)
+        self._pcm: dict[int, np.ndarray] = {}
+
+    def _chunk(self, i: int) -> np.ndarray:
+        if i not in self._pcm:
+            pcm = self.pipeline._load_chunk(self.run.chunks[i])
+            if pcm.size != self.sizes[i]:
+                raise LiveMismatch(f"chunk {self.run.chunks[i]['sequence']}: "
+                                   f"{pcm.size} samples, expected {self.sizes[i]}")
+            self._pcm[i] = pcm
+        return self._pcm[i]
+
+    def slice(self, a: int, b: int) -> np.ndarray:
+        parts = []
+        for i, n in enumerate(self.sizes):
+            off = self.offsets[i]
+            lo, hi = max(a, off), min(b, off + n)
+            if lo < hi:
+                parts.append(self._chunk(i)[lo - off:hi - off])
+        if not parts:
+            return np.zeros(0, np.float32)
+        return parts[0] if len(parts) == 1 else np.concatenate(parts)
+
+    def extract(self, w: Window) -> np.ndarray:
+        """``w.extract(run_audio)``."""
+        slices = [self.slice(int(a * SAMPLE_RATE), int(b * SAMPLE_RATE)) for a, b in w.parts]
+        return slices[0] if len(slices) == 1 else np.concatenate(slices)
+
+    def loudness(self, ref: PieceRef) -> float:
+        """dBFS of a line's audio, as ``meeting_tracks`` measures it on the whole run."""
+        return rms_db(self.slice(int(ref.start * SAMPLE_RATE), int(ref.end * SAMPLE_RATE)))
+
+
+@dataclass
+class TrackState:
+    """How far a track is transcribed. ``runs_done``: [first, last] sequence of each run
+    finished; ``run`` / ``windows`` / ``until``: the run in progress (its first
+    sequence), how many of its windows are done and where the last one ends (run time,
+    a check); ``lines`` final lines and ``open`` the last one, which may still join the
+    next, each [start, end, text, run, ref_start, ref_end, loudness]."""
+    runs_done: list[list[int]] = field(default_factory=list)
+    run: int | None = None
+    windows: int = 0
+    until: float = 0.0
+    context: str = ""
+    lines: list[list[Any]] = field(default_factory=list)
+    open: list[Any] | None = None
+
+    @classmethod
+    def load(cls, raw: str | None) -> TrackState | None:
+        if not raw:
+            return None
+        try:
+            return cls(**json.loads(raw))
+        except (TypeError, ValueError):
+            return None
+
+    def dump(self) -> str:
+        return json.dumps(asdict(self), separators=(",", ":"))
+
+    def empty(self) -> bool:
+        return not (self.runs_done or self.run is not None or self.lines or self.open)
+
+    def matches(self, runs: list[Run], pipeline: Pipeline) -> bool:
+        """Whether this state still describes ``runs``: the same finished runs, and the
+        run in progress starts where it did with the same windows done."""
+        k = len(self.runs_done)
+        if k > len(runs):
+            return False
+        for (first, last), r in zip(self.runs_done, runs, strict=False):
+            if (first, last) != (r.first, r.last) or not r.closed:
+                return False
+        if self.run is None:
+            return self.windows == 0
+        if k >= len(runs) or runs[k].first != self.run:
+            return False
+        if self.windows:
+            done = runs[k].final_windows(pipeline)
+            if len(done) < self.windows or done[self.windows - 1].parts[-1][1] != self.until:
+                return False
+        return True
+
+    def all_lines(self) -> list[tuple[Piece, float]]:
+        rows = self.lines + ([self.open] if self.open else [])
+        return [((r[0], r[1], r[2], PieceRef(r[3], r[4], r[5])), r[6]) for r in rows]
+
+
+def _row(p: Piece, loud: float) -> list[Any]:
+    s, e, text, ref = p
+    return [s, e, text, ref.run, ref.start, ref.end, loud]
+
+
+def track_steps(pipeline: Pipeline, session_id: str, track: str, runs: list[Run],
+                st: TrackState, prompt: Callable[[], str]) -> Iterator[None]:
+    """Transcribe the track's final windows not done yet, one window per step, saving
+    the state after each; ``prompt`` gives whisper's prompt (asked once, when needed)."""
+    cfg = pipeline.settings
+    store = pipeline.store
+    text_prompt: str | None = None
+    for run in runs[len(st.runs_done):]:
+        if st.run != run.first:
+            st.run, st.windows, st.until = run.first, 0, 0.0
+        todo = run.final_windows(pipeline)
+        audio = RunAudio(pipeline, run)
+        start = run.chunks[0]["started_at"]
+        while st.windows < len(todo):
+            w = todo[st.windows]
+            if text_prompt is None:
+                text_prompt = prompt()
+            got, _, context = pipeline._whisper_window(run.first, start, w, audio.extract(w),
+                                                       text_prompt, st.context)
+            got.sort(key=lambda p: p[0])  # as the end pass sorts the track's pieces
+            if got:
+                _fold(st, got, audio, cfg)
+            st.windows, st.until, st.context = st.windows + 1, w.parts[-1][1], context
+            store.put_live_state(session_id, track, st.dump())
+            yield
+        if not run.closed:
+            return  # its last window waits for more audio or the end of the meeting
+        st.runs_done.append([run.first, run.last])
+        st.run, st.windows, st.until = None, 0, 0.0
+        store.put_live_state(session_id, track, st.dump())
+
+
+def _fold(st: TrackState, got: list[Piece], audio: RunAudio, cfg: Any) -> None:
+    """Add a window's pieces (in time order) to the lines: joined as ``join_lines`` joins
+    the whole track, the last line kept open; each new or changed line measured."""
+    prev = None
+    pieces: list[Piece] = []
+    if st.open is not None:
+        prev = ((st.open[0], st.open[1], st.open[2],
+                 PieceRef(st.open[3], st.open[4], st.open[5])), st.open[6])
+        pieces.append(prev[0])
+    pieces += got
+    if cfg.join_lines:
+        out, _ = join_lines(pieces, None, cfg.join_gap_seconds, cfg.join_max_seconds)
+    else:
+        out = pieces
+
+    def row(p: Piece) -> list[Any]:
+        if prev is not None and p is prev[0]:  # the open line, unchanged
+            return _row(p, prev[1])
+        return _row(p, audio.loudness(p[3]))
+
+    rows = [row(p) for p in out]
+    if cfg.join_lines:
+        st.lines += rows[:-1]
+        st.open = rows[-1]
+    else:
+        st.lines += rows
+        st.open = None
+
+
+def deferred(info: dict[str, Any]) -> bool:
+    """A track left to the end-of-meeting pass: no person's name in any of its display
+    names and the latest one is a room or a device (``meeting_tracks`` diarizes it over
+    the whole track, so its "Speaker N" numbering stays consistent)."""
+    names = [n for n in (info.get("names") or []) if n] or [info.get("name") or ""]
+    return is_shared_room(info.get("name")) and not any(clean_display_name(n) for n in names)
+
+
+def meeting_whisper_prompt(pipeline: Pipeline, infos: list[dict[str, Any]]) -> str:
+    """Whisper's prompt for a meeting: the usual one plus the participants' display names
+    (cleaned, rooms and devices left out), in track order. Read-only, so it is the same
+    while the meeting runs and at its end."""
+    from .pipeline import MAX_PROMPT_NAMES
+
+    prompt = pipeline.whisper_prompt()
+    if not pipeline.settings.whisper_prompt_names:
+        return prompt
+    names = []
+    for t in infos:
+        c = clean_display_name(t.get("name") or "")
+        if c and not is_shared_room(c):
+            names.append(c)
+    return meeting_prompt(prompt, names, MAX_PROMPT_NAMES)
+
+
+def finish_track(pipeline: Pipeline, session_id: str, track: str,
+                 chunks: list[dict[str, Any]], raw_state: str | None,
+                 prompt: Callable[[], str]) -> list[tuple[Piece, float]]:
+    """The end-of-meeting pass for one track: what live transcription did, plus the
+    windows left. Without a usable state the whole track is transcribed here."""
+    runs = plan_runs(chunks, final=True)
+    st = TrackState.load(raw_state) or TrackState()
+    if not st.matches(runs, pipeline):
+        log.warning("meeting %s track %s: live transcript no longer matches its chunks; "
+                    "transcribing the track again", session_id, track)
+        st = TrackState()
+    for _ in track_steps(pipeline, session_id, track, runs, st, prompt):
+        pass
+    return st.all_lines()
+
+
+def step(pipeline: Pipeline, session_ids: list[str], budget_seconds: float,
+         clock: Callable[[], float] = time.monotonic) -> int:
+    """One worker tick of live work on the meetings being recorded: windows of their
+    tracks one at a time, round robin over tracks, until nothing is ready or about
+    ``budget_seconds`` have passed (at least one window). Returns windows done."""
+    deadline = clock() + max(0.0, budget_seconds)
+    steps: list[Iterator[None]] = []
+    for sid in session_ids:
+        steps += _session_steps(pipeline, sid)
+    done = 0
+    try:
+        while steps:
+            for it in list(steps):
+                if done and clock() >= deadline:
+                    return done
+                try:
+                    next(it)
+                    done += 1
+                except StopIteration:
+                    steps.remove(it)
+                except (OSError, LiveMismatch) as e:
+                    # e.g. a chunk whose file is still being moved in place: next tick
+                    log.info("live transcription paused for a track: %s", e)
+                    steps.remove(it)
+        return done
+    finally:
+        for it in steps:
+            it.close()
+
+
+def _session_steps(pipeline: Pipeline, session_id: str) -> list[Iterator[None]]:
+    store = pipeline.store
+    sess = store.get_session(session_id)
+    if sess is None or sess["status"] != "recording":
+        return []
+    infos = store.tracks(session_id)
+    states = store.live_states(session_id)
+    by_track: dict[str, list[dict[str, Any]]] = {}
+    for c in store.chunks(session_id):
+        if c["track"]:
+            by_track.setdefault(c["track"], []).append(c)
+    cache: list[str] = []
+
+    def prompt() -> str:
+        if not cache:
+            cache.append(meeting_whisper_prompt(pipeline, infos))
+        return cache[0]
+
+    out = []
+    for info in infos:
+        track = info["track"]
+        if deferred(info) or track not in by_track:
+            continue
+        runs = plan_runs(by_track[track], final=False)
+        st = TrackState.load(states.get(track)) or TrackState()
+        if not st.matches(runs, pipeline):
+            if not st.empty():
+                log.info("meeting %s track %s: chunks changed; live transcript restarted",
+                         session_id, track)
+            st = TrackState()
+            store.put_live_state(session_id, track, st.dump())
+        out.append(track_steps(pipeline, session_id, track, runs, st, prompt))
+    return out
