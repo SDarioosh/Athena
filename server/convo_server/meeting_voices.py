@@ -8,7 +8,9 @@ person, so the diarizer recognizes them later in in-person recordings
 How samples are chosen, per track:
 
 * Only a named participant's own track: not a shared room or device ("Conference Room",
-  "iPhone": several voices), not an unnamed "Speaker N" track. The owner's track counts
+  "iPhone": several voices), decided exactly as transcription does
+  (``meeting_tracks._room_track``: any display name the track ever had), and not an
+  unnamed "Speaker N" track. The owner's track counts
   only when the owner has an enrolled voice (``is_owner``); its samples go to that voice,
   so a meeting never makes a second owner or a non-owner speaker with the owner's name.
 * The track needs at least ``MIN_SPEECH_SECONDS`` of VAD speech in total.
@@ -201,7 +203,8 @@ def learn_from_meeting(pipeline: Pipeline, session_id: str,
     """Save voice samples of the meeting's named participants (see the module doc) and
     relabel matching unnamed speakers in other recordings. Call after the meeting's
     lines are stored and before its audio is deleted."""
-    from .meeting_tracks import track_speaker
+    from .meeting_names import PLACEHOLDER
+    from .meeting_tracks import _UNNAMED, _room_track, track_speaker
     from .speakers import relabel_matches
 
     store, cfg = pipeline.store, pipeline.settings
@@ -215,15 +218,20 @@ def learn_from_meeting(pipeline: Pipeline, session_id: str,
         track = info["track"]
         if track not in by_track:
             continue
-        name, owner = track_speaker(store, info, cfg.zoom_owner_name_list)
+        owner_names = cfg.zoom_owner_name_list
+        name, owner = track_speaker(store, info, owner_names)
+        if not owner and _room_track(info, owner_names):
+            # transcription's own decision (any name the track ever had is a room or a
+            # device): it was diarized, so several voices may be on it (QA BUG-01)
+            continue
         if owner:
             if not owner_voice:
                 log.info("meeting %s: owner's track not learned (no enrolled owner voice; "
                          "enroll with POST /v1/speakers/enroll is_owner=true)", session_id)
                 continue
             name = owner_voice
-        elif not name:
-            continue  # a room, a device or an unnamed "Speaker N": several or unknown voices
+        elif not name or name == PLACEHOLDER or _UNNAMED.match(name):
+            continue  # an unnamed "Speaker N" or "Unknown": nobody to learn for
         plan.append((track, name))
     if not plan:
         return []

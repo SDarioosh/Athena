@@ -265,3 +265,33 @@ def test_room_voice_of_the_same_meeting_is_not_relabeled(pipeline, rec):
     speakers = sorted({s.speaker for s in pipeline.store.session_segments("m1")})
     assert speakers == ["Alice Example", "Speaker 1"]
     assert sources(pipeline.store, "Alice Example") == ["meeting"] * 3
+
+
+# ------------------------------------------------- QA fixes (Antigravity audit)
+
+
+def test_track_that_was_ever_a_room_is_never_learned(pipeline, rec):
+    # QA BUG-01: a room track renamed to a person stays a room for transcription
+    # (diarized); learning must take the same decision and never save its voices
+    pipeline.settings.zoom_owner_names = ""
+    for seq, name in enumerate(["Conference Room 2", "Alice Example"]):
+        pipeline.ingest_chunk(device="zoom", session_id="m1", sequence=seq,
+                              started_at=T0 + 30 * seq, codec="wav",
+                              data=track((0, 14, 300)), track="r", track_name=name)
+    pipeline.end_session("m1")
+    pipeline.process_session("m1")
+    assert meeting_samples(pipeline.store) == 0  # (rec also sees the diarizer's windows)
+
+
+@pytest.mark.parametrize("name", ["Polycom", "Logitech Rally", "Huddle 4", "Conf Rm A",
+                                  "ZoomRoom-3F", "SM-G991B", "Lobby", "Speakerphone"])
+def test_room_and_hardware_names_are_never_learned(pipeline, rec, name):
+    # QA BUG-01 (pinning: the merged room rule already makes these rooms)
+    meeting(pipeline, [("r", name, track((0, 14, 300)))])
+    assert meeting_samples(pipeline.store) == 0  # (rec also sees the diarizer's windows)
+
+
+@pytest.mark.parametrize("name", ["Speaker 3", "Unknown", "Zoom user"])
+def test_placeholder_tracks_are_never_learned(pipeline, rec, name):
+    meeting(pipeline, [("p", name, track((0, 14, 300)))])
+    assert meeting_samples(pipeline.store) == 0  # (rec also sees the diarizer's windows)
