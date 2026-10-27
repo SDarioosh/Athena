@@ -3,11 +3,13 @@ BUG-02, BUG-12, BUG-13, BUG-14 and the server side of BUG-27."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from conftest import silence, wav
 from test_mcp import call
 from test_meeting_chat import chat, process, upload
-from test_meeting_tracks import ALICE, T0, ScriptedWhisper
+from test_meeting_tracks import ALICE, BO, T0, ScriptedWhisper
 
 from convo_server.mcp_server import build_mcp
 from convo_server.store import CHAT
@@ -162,3 +164,50 @@ def test_bug14_late_participants_refresh_search(pipeline, client):
     conv_id = process(pipeline)[0].conversation_id
     chat(client, {"participants": [{"name": "Rafael Quintero", "zoom_user_id": "16799999"}]})
     assert conv_id in {h["conversation_id"] for h in pipeline.store.fts_search("Quintero")}
+
+
+# ------------------------------------------------------------------ BUG-27
+
+
+def conv_json(client, conv_id):
+    r = client.get(f"/v1/conversations/{conv_id}")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_bug27_meeting_without_chat_call_has_a_meeting_block(pipeline, client, mcp):
+    upload(pipeline, tracks=(ALICE, BO))
+    conv_id = process(pipeline)[0].conversation_id
+    m = conv_json(client, conv_id)["meeting"]
+    assert m["topic"] is None
+    assert [p["name"] for p in m["participants"]] == [ALICE[1], BO[1]]
+    assert "(Zoom meeting)" in call(mcp, "get_conversation", conversation_id=conv_id)
+
+
+def test_bug27_untracked_zoom_session_without_chat_call(pipeline, client, mcp):
+    pipeline.transcriber = ScriptedWhisper()
+    pipeline.ingest_chunk(device="zoom", session_id="z1", sequence=0, started_at=T0,
+                          codec="wav", data=ALICE[2])
+    conv_id = process(pipeline, "z1")[0].conversation_id
+    m = conv_json(client, conv_id).get("meeting")
+    assert m is not None and m["topic"] is None and m["participants"]
+    assert "(Zoom meeting)" in call(mcp, "get_conversation", conversation_id=conv_id)
+    facts = json.loads(call(mcp, "list_facts", format="json"))["facts"]
+    assert {f["source"] for f in facts if f["conversation_id"] == conv_id} <= {"meeting"}
+
+
+def test_bug27_tracked_non_zoom_session_is_a_meeting(pipeline, client):
+    pipeline.transcriber = ScriptedWhisper()
+    pipeline.ingest_chunk(device="bot-test", session_id="t1", sequence=0, started_at=T0,
+                          codec="wav", data=ALICE[2], track=ALICE[0], track_name=ALICE[1])
+    assert chat(client, {"topic": "Test"}, session="t1").status_code == 200
+    conv_id = process(pipeline, "t1")[0].conversation_id
+    assert conv_json(client, conv_id)["meeting"]["topic"] == "Test"
+
+
+def test_bug27_plain_recording_has_no_meeting_block(pipeline, client):
+    pipeline.transcriber = ScriptedWhisper()
+    pipeline.ingest_chunk(device="omi", session_id="s1", sequence=0, started_at=T0,
+                          codec="wav", data=ALICE[2])
+    conv_id = process(pipeline, "s1")[0].conversation_id
+    assert conv_json(client, conv_id).get("meeting") is None

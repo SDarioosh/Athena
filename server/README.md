@@ -416,8 +416,12 @@ after `/end`:
 
 The summary prompt gets "This is a Zoom meeting with the topic …", the participants, and
 chat lines as `[21] Dana Example (chat): …` (links and file names kept as written).
-`GET /v1/conversations/{id}` has `meeting` (`topic`, `participants`) for a meeting, and
-each transcript segment has `kind` (`speech` or `chat`). `participants` (`name`,
+`GET /v1/conversations/{id}` has `meeting` (`topic`, `participants`) for every
+conversation of a meeting session, a session with tracked chunks (any device) or device
+`zoom`, also when the bot never made the chat call (then `topic` is null and
+`participants` are the speakers heard); any other conversation has `meeting: null`. JSON
+fact and action-item rows say `"source": "meeting"` for exactly those conversations. Each
+transcript segment has `kind` (`speech` or `chat`). `participants` (`name`,
 `person_id`, `is_owner`, `zoom_name`, `joined_at`, `left_at`): the list the bot sent, one
 entry per `zoom_user_id` (two people with one name stay two; entries without an id are
 told apart by join time), each by their person's current name, then everyone else heard

@@ -38,6 +38,7 @@ from .store import (
     SESSION_KINDS,
     WRITTEN_DEVICE,
     WRITTEN_SESSION_PREFIX,
+    ZOOM_DEVICE,
     Segment,
     Store,
 )
@@ -624,7 +625,9 @@ class Pipeline:
                                                    [s.id for s in group if s.id is not None],
                                                    absorb=near[1:])
             touched = [t for t in touched if t not in near] + [conv_id]
-        if touched and self.store.has_meeting_info(session_id):  # Zoom without tracks
+        # a Zoom session without tracks is a meeting too, with or without a chat call
+        # (QA BUG-27): its conversation gets the meeting block
+        if touched and (device == ZOOM_DEVICE or self.store.has_meeting_info(session_id)):
             self.store.link_meeting(session_id, touched[0])
         return touched
 
