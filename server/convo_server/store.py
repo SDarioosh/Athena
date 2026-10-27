@@ -264,6 +264,19 @@ CREATE TABLE IF NOT EXISTS meeting_chat (
     PRIMARY KEY (session_id, line_key)
 );
 
+-- Live transcription of a meeting while it runs (Zoom bot lane 5D, meeting_live.py): per
+-- track, JSON of what is transcribed so far (lines, whisper context, how far). Work in
+-- progress only: deleted once the meeting is processed, so the lines live in segments.
+CREATE TABLE IF NOT EXISTS meeting_live (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    track TEXT NOT NULL,
+    state TEXT NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (session_id, track)
+);
+-- The worker's per-tick lookups by status (idle sessions, a meeting in progress).
+CREATE INDEX IF NOT EXISTS sessions_status ON sessions(status);
+
 -- Line-level full-text index for "what did X say about Y" (kept in sync by triggers).
 CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
     text, content='segments', content_rowid='id', tokenize = 'porter unicode61'
@@ -808,6 +821,31 @@ class Store:
         return sorted(out.values(), key=lambda t: (t["started_at"], t["track"]))
 
     # ---------------------------------------------------------------- meetings
+    def live_meetings(self) -> list[str]:
+        """Meetings being recorded (status 'recording' with a tracked chunk), oldest first.
+        The worker asks this on every tick (meeting_live.py): one query on the status
+        index, and each candidate's tracked chunk is found on the chunks key."""
+        return [r["id"] for r in self._q(
+            "SELECT s.id FROM sessions s WHERE s.status = 'recording' AND EXISTS"
+            " (SELECT 1 FROM chunks k WHERE k.session_id = s.id AND k.track > '')"
+            " ORDER BY s.started_at")]
+
+    def live_states(self, session_id: str) -> dict[str, str]:
+        """The live transcription state (JSON) of each track of a meeting."""
+        return {r["track"]: r["state"] for r in self._q(
+            "SELECT track, state FROM meeting_live WHERE session_id = ?", (session_id,))}
+
+    def put_live_state(self, session_id: str, track: str, state: str) -> None:
+        with self.tx() as c:
+            c.execute("INSERT INTO meeting_live (session_id, track, state, updated_at)"
+                      " VALUES (?, ?, ?, ?) ON CONFLICT(session_id, track) DO UPDATE SET"
+                      " state = excluded.state, updated_at = excluded.updated_at",
+                      (session_id, track, state, time.time()))
+
+    def drop_live_states(self, session_id: str) -> None:
+        with self.tx() as c:
+            c.execute("DELETE FROM meeting_live WHERE session_id = ?", (session_id,))
+
     def put_meeting_chat(self, session_id: str, lines: list[tuple[str, Segment]],
                          topic: str | None = None,
                          participants: list[dict[str, Any]] | None = None,
