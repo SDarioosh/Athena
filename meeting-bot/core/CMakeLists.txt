@@ -1,5 +1,10 @@
 add_library(athena_core STATIC
+  src/chat.cpp
+  src/chunker.cpp
   src/core.cpp
+  src/encoder.cpp
+  src/http.cpp
+  src/util.cpp
 )
 target_include_directories(athena_core
   PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
