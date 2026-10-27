@@ -194,6 +194,9 @@ class Settings(BaseSettings):
     # unless it is the default "Me"), comma-separated (any case), e.g. "Shahyah (phone)":
     # that track's lines are the owner's (is_owner=true), named by the owner's name.
     zoom_owner_names: str = ""
+    # Save up to 3 voice samples of 3 s from each named participant's own track, so they
+    # are recognized in later recordings (convo_server/meeting_voices.py). false = off.
+    learn_meeting_voices: bool = True
     # Where downloaded model weights are cached (speaker models). Default: <data_dir>/models.
     models_dir: Path | None = None
 

@@ -385,13 +385,21 @@ class Pipeline:
             self.store.set_session_status(session_id, "processing")
             note = sess.get("kind") == NOTE
             try:
-                segments, ranges, done = self._transcribe_session(session_id, note=note)
+                kept: dict[str, list[tuple[float, float]]] = {}  # meeting tracks' lines
+                segments, ranges, done = self._transcribe_session(session_id, note=note,
+                                                                  kept=kept)
             except Exception as e:  # keep audio so the session can be retried
                 log.exception("transcription failed for %s", session_id)
                 self.store.set_session_status(session_id, "failed", f"{type(e).__name__}: {e}",
                                               only_if="processing")
                 return
             self.store.replace_segments(session_id, sess["device"], segments, ranges)
+            if (self.settings.learn_meeting_voices and not note and segments
+                    and self.store.has_tracks(session_id)):
+                # Lane 2C: voice samples from named meeting tracks, while audio is here
+                from .meeting_voices import learn_from_meeting
+
+                learn_from_meeting(self, session_id, done, kept)
             if not self.settings.keep_audio:
                 # Only the chunks transcribed here: one uploaded meanwhile waits for the
                 # next pass (add_chunk set the session back to 'ended').
@@ -406,12 +414,14 @@ class Pipeline:
             self.summarize_conversation(conv_id)
 
     def _transcribe_session(
-        self, session_id: str, *, note: bool = False
+        self, session_id: str, *, note: bool = False,
+        kept: dict[str, list[tuple[float, float]]] | None = None,
     ) -> tuple[list[Segment], list[tuple[float, float]], list[dict[str, Any]]]:
         """Transcribe chunks that still have audio.
 
         Returns segments, the covered time ranges and the chunks that were transcribed.
-        A voice note (``note``) skips the diarizer: every line is the owner's.
+        A voice note (``note``) skips the diarizer: every line is the owner's. For a
+        meeting, ``kept`` gets each named track's kept lines (``transcribe_meeting``).
         """
         chunks = [c for c in self.store.chunks(session_id) if c["audio_path"]]
         ranges = [(c["started_at"], c["started_at"] + c["duration"]) for c in chunks]
@@ -424,7 +434,8 @@ class Pipeline:
             # by its track. Imported only here, so sessions without tracks never load it.
             from . import meeting_tracks
 
-            return meeting_tracks.transcribe_meeting(self, session_id, chunks), ranges, chunks
+            return (meeting_tracks.transcribe_meeting(self, session_id, chunks, kept),
+                    ranges, chunks)
         prompt = self.whisper_prompt()
         runs: list[np.ndarray] = []
         pieces: list[tuple[float, float, str, PieceRef]] = []

@@ -404,6 +404,11 @@ def test_meeting_chat_is_imported_only_on_a_chat_call(tmp_path):
             assert c.post("/v1/sessions/x/chat", json={{}}).status_code == 404
             assert "convo_server.meeting_chat" in sys.modules
         import threading
+        # AnyIO's worker threads are told to stop when the loop closes but may take a
+        # moment to exit; wait for them so only a thread left behind for good counts
+        for t in threading.enumerate():
+            if t.name == "AnyIO worker thread":
+                t.join(timeout=10)
         print(sorted(t.name for t in threading.enumerate()))
     """)
     r = subprocess.run([sys.executable, "-c", script], cwd=SERVER, capture_output=True,

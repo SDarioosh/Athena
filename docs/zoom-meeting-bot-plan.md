@@ -306,12 +306,12 @@ skips pyannote for normal participants. Depends on Phase 1C.
 
 **Lane 2C, learning voices (on by default, owner's decision):**
 
-- [ ] Take up to 3 windows of 3 s from each named participant's own track and save them as
+- [x] Take up to 3 windows of 3 s from each named participant's own track and save them as
       voice samples, so Athena recognizes them in later in-person recordings
       (`CONVO_LEARN_MEETING_VOICES`, default `true`; `false` turns it off).
-- [ ] Skip shared-room tracks (several voices) and tracks with under 10 s of speech; replace
+- [x] Skip shared-room tracks (several voices) and tracks with under 10 s of speech; replace
       a person's oldest meeting samples first so the set stays small.
-- [ ] Voiceprints stay in `convo.db` on the server, like enrolled voices today.
+- [x] Voiceprints stay in `convo.db` on the server, like enrolled voices today.
 
 **Done when:** the sandbox stack, fed a fictional 3-person meeting fixture with crosstalk
 (`seed_demo.py` extended), names every line right and never loads pyannote; the bakeoff
