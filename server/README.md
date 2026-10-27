@@ -379,6 +379,37 @@ libglib2.0-dev libcurl4-openssl-dev libopus-dev libopusenc-dev libogg-dev` plus 
 libraries (`SDK_LIBS` in the Dockerfile; Ubuntu 24.04 has the same names). A missing
 tool or a failed build is a warning: Athena is deployed anyway, without a new bot.
 
+### Meeting bot cost check
+
+`scripts/meeting_bot_cost.py` (standard library only) measures what one bot costs and
+checks that nothing of it is left afterwards: CPU (average, and peak over 1 s windows;
+100 % = one core), peak RSS (`VmHWM`), `VmPeak` (peak address space: what the plain
+runner's `RLIMIT_AS` caps), threads, sockets and the work dir's peak size. It fails (exit
+1) when, after the bot exited, a process of its session or a descendant is still alive, a
+socket it had is still open, a file is left in its work dir (the bot empties it after a
+successful finish: chunks, `queue/`, `chat.jsonl` and `participants.json` are removed),
+or `VmPeak` is over `CONVO_MEETING_BOT_MEMORY` (from the environment or `server/.env`,
+else 2G); it warns above 75 % and names the value to set, with headroom.
+
+- **Fixture run** (CI, sandbox): `python3 server/scripts/meeting_bot_cost.py
+  build-bot-stub/athena-meeting-bot [--seconds 20] [--json]` runs the bot built against
+  the stub SDK (scenario `fixture`) with a fictional PCM fixture it generates at run time,
+  a fake upload API (checks Dana's chunks, one chat call, one `/end`), a private `TMPDIR`
+  and `HOME` (any file left there fails too) and the launcher's `nice 10` + `RLIMIT_AS`.
+  The stub's numbers say nothing about the real SDK and its Qt, which are much bigger.
+- **Real meeting** (the owner, once per release): start `--watch` before or during a test
+  meeting; it finds the running `athena-meeting-bot` (or `--pid`), samples it until it
+  leaves, then checks for leftovers: processes, sockets, the meeting's dir under
+  `<CONVO_DATA_DIR>/meetings/` (the launcher removes it; another dir there is a warning),
+  files the bot had open under its `TMPDIR` or `HOME`. In Docker:
+  `docker compose exec sound-api python3 /app/scripts/meeting_bot_cost.py --watch`
+  (from `server/`). With the systemd runner the scope's `memory.peak` (`MemoryMax`) is
+  judged instead of `VmPeak`.
+
+If it says to raise the cap, set `CONVO_MEETING_BOT_MEMORY=<value>` in `server/.env` and
+deploy (`server/scripts/deploy.sh deploy`). The script never prints a token or the
+bot's environment (it reads only `TMPDIR` and `HOME` from it).
+
 ## Run by hand
 
 ```bash
