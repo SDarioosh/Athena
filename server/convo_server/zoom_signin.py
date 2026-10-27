@@ -4,9 +4,16 @@ Since 2026-03-02 a Meeting SDK app may join a meeting hosted by another Zoom acc
 on behalf of a signed-in Zoom user (developers.zoom.us/docs/meeting-sdk/obf-faq/). The
 owner signs Athena in once with their own Zoom account (a dedicated Athena account with a
 ZAK is a later option) through the Marketplace app's OAuth client
-(``convo-server zoom-login``, authorization code with PKCE; the server listens for
-nothing) and keeps only the refresh token, in ``<data dir>/zoom/refresh_token.json``
-(mode 0600, replaced atomically).
+(authorization code with PKCE; the server listens for nothing) and keeps only the
+refresh token, in ``<data dir>/zoom/refresh_token.json`` (mode 0600, replaced atomically).
+Two ways in, the same flow: Odysseus's "Sign in to Zoom" button (``/v1/zoom/signin``:
+``signin_status``, ``begin_signin``, ``complete_signin``; the pending attempt waits in
+``<data dir>/zoom/pending_login.json`` for up to PENDING_SECONDS) or ``convo-server
+zoom-login`` in a terminal (the attempt stays in memory).
+
+When Zoom refuses the refresh token (expired or revoked), the file is moved aside to
+``refresh_token.expired.json``, so the status says "not signed in" until the owner signs in
+again.
 
 On a join request, and only then, the launcher calls ``join_token``: it trades the refresh
 token for an access token (Zoom rotates the refresh token on every use, so the new one is
@@ -40,7 +47,11 @@ TOKEN_URL = "https://zoom.us/oauth/token"
 API_URL = "https://api.zoom.us/v2"
 TIMEOUT = httpx.Timeout(5.0)  # per call; two calls stay under the relay's 15 s
 MODES = ("auto", "zak", "obf", "none")
-LOGIN_HINT = "run convo-server zoom-login"
+LOGIN_HINT = ("sign in from Odysseus (Record a call → Sign in to Zoom) or run "
+              "convo-server zoom-login")
+PENDING_SECONDS = 600  # a sign-in started from Odysseus must be finished within this
+MAX_PASTE_CHARS = 4096
+JOIN_KINDS = ("zak", "obf", "none")
 # How long a ZAK or OBF token lasts (Zoom: about 2 hours); the bot must join within it.
 JOIN_TOKEN_SECONDS = 7200
 
@@ -49,12 +60,20 @@ class SigninNeeded(Exception):
     """No usable sign-in: missing, expired or revoked (HTTP 503 zoom_signin_needed)."""
 
 
+class SigninExpired(SigninNeeded):
+    """Zoom refused the saved refresh token (expired or revoked): the file is set aside."""
+
+
 class ZoomUnavailable(Exception):
     """Zoom could not be reached or refused for another reason (HTTP 502)."""
 
 
 def token_file(settings: Settings) -> Path:
     return settings.data_dir / "zoom" / "refresh_token.json"
+
+
+def pending_file(settings: Settings) -> Path:
+    return settings.data_dir / "zoom" / "pending_login.json"
 
 
 def signed_in(settings: Settings) -> bool:
@@ -85,12 +104,25 @@ def _basic(client_id: str, secret: str) -> dict[str, str]:
 
 def save_refresh_token(settings: Settings, token: str, scope: str | None = None) -> None:
     """Write the refresh token atomically, readable by this user only."""
+    _write_private(token_file(settings),
+                   {"refresh_token": token, "scope": scope, "saved_at": time.time()})
+
+
+def _set_aside(settings: Settings) -> None:
+    """Zoom refused the refresh token: keep it (for the owner to look at) under another
+    name, so ``signed_in`` is false until the owner signs in again."""
     path = token_file(settings)
+    with contextlib.suppress(FileNotFoundError):
+        os.replace(path, path.with_name("refresh_token.expired.json"))
+
+
+def _write_private(path: Path, payload: dict[str, Any]) -> None:
+    """Write ``payload`` as JSON atomically (temp file + rename), mode 0600."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(OSError):
         os.chmod(path.parent, 0o700)
     tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    data = json.dumps({"refresh_token": token, "scope": scope, "saved_at": time.time()})
+    data = json.dumps(payload)
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "w") as f:
@@ -182,6 +214,87 @@ async def finish_login(settings: Settings, login: LoginRequest, code: str, *,
     return str(data.get("scope") or "")
 
 
+# ------------------------------------------------- sign-in from Odysseus (API)
+class SigninNotConfigured(Exception):
+    """Client id, secret or redirect URL missing (HTTP 501)."""
+
+
+def missing_settings(settings: Settings) -> list[str]:
+    """The settings a sign-in needs that are not set, by their env names."""
+    need = (("CONVO_ZOOM_CLIENT_ID", settings.zoom_client_id),
+            ("CONVO_ZOOM_CLIENT_SECRET", settings.zoom_client_secret),
+            ("CONVO_ZOOM_REDIRECT_URL", settings.zoom_redirect_url))
+    return [name for name, value in need if not (value or "").strip()]
+
+
+def _not_configured(missing: list[str]) -> SigninNotConfigured:
+    return SigninNotConfigured(
+        f"Zoom sign-in is not set up: {', '.join(missing)} missing in server/.env (the "
+        "Zoom Marketplace app's OAuth client id, secret and redirect URL)")
+
+
+def signin_status(settings: Settings) -> dict[str, Any]:
+    """``GET /v1/zoom/signin``. Reads two settings and checks one file; no network."""
+    missing = missing_settings(settings)
+    mode = join_mode(settings)
+    return {"configured": not missing, "signed_in": signed_in(settings),
+            "join_token": mode if mode in JOIN_KINDS else "none", "missing": missing}
+
+
+def begin_signin(settings: Settings) -> dict[str, Any]:
+    """``POST /v1/zoom/signin/start``: a new attempt (replacing any pending one), kept in
+    ``pending_login.json`` (0600) for PENDING_SECONDS. The verifier never leaves it."""
+    missing = missing_settings(settings)
+    if missing:
+        raise _not_configured(missing)
+    login = start_login(settings)
+    _write_private(pending_file(settings), {"state": login.state, "verifier": login.verifier,
+                                            "created_at": time.time()})
+    return {"url": login.url, "expires_in": PENDING_SECONDS}
+
+
+def _pending(settings: Settings) -> LoginRequest:
+    path = pending_file(settings)
+    try:
+        data = json.loads(path.read_text())
+        state, verifier = str(data["state"]), str(data["verifier"])
+        age = time.time() - float(data["created_at"])
+    except FileNotFoundError:
+        raise ValueError("no Zoom sign-in is waiting: start the sign-in again") from None
+    except (ValueError, KeyError, TypeError):
+        path.unlink(missing_ok=True)
+        raise ValueError("the waiting Zoom sign-in is damaged: start the sign-in "
+                         "again") from None
+    if not 0 <= age <= PENDING_SECONDS:
+        path.unlink(missing_ok=True)
+        raise ValueError(f"the Zoom sign-in waited more than {PENDING_SECONDS // 60} "
+                         "minutes: start the sign-in again")
+    return LoginRequest("", state, verifier)
+
+
+async def complete_signin(settings: Settings, pasted: str, *,
+                          transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
+    """``POST /v1/zoom/signin/finish``: trade the pasted code with the pending attempt's
+    verifier, save the refresh token, drop the pending attempt.
+
+    Raises SigninNotConfigured (501); ValueError (400: nothing waiting, expired, a bad
+    paste); SigninNeeded (400: Zoom refused the code or the client); ZoomUnavailable
+    (502). A bad paste or a refused code keeps the attempt, so the owner can paste
+    again until it expires."""
+    missing = missing_settings(settings)
+    if missing:
+        raise _not_configured(missing)
+    if len(pasted) > MAX_PASTE_CHARS:
+        raise ValueError("that is too long for a Zoom address: paste the address the "
+                         "browser went to, or its code")
+    login = _pending(settings)
+    code = code_from_paste(pasted, login.state)
+    await finish_login(settings, login, code, transport=transport)
+    pending_file(settings).unlink(missing_ok=True)
+    return {"ok": True, "signed_in": signed_in(settings),
+            "join_token": signin_status(settings)["join_token"]}
+
+
 # ---------------------------------------------------------------- join token
 async def join_token(settings: Settings, kind: str, meeting_id: str, *,
                      transport: httpx.AsyncBaseTransport | None = None) -> str:
@@ -190,9 +303,13 @@ async def join_token(settings: Settings, kind: str, meeting_id: str, *,
     Raises SigninNeeded (missing or expired sign-in) or ZoomUnavailable."""
     client_id, secret = _client(settings)
     refresh = load_refresh_token(settings)
-    data = await _token_call(client_id, secret,
-                             {"grant_type": "refresh_token", "refresh_token": refresh},
-                             transport)
+    try:
+        data = await _token_call(client_id, secret,
+                                 {"grant_type": "refresh_token", "refresh_token": refresh},
+                                 transport)
+    except SigninExpired:
+        _set_aside(settings)  # the status now says "not signed in"
+        raise
     # Zoom rotates the refresh token: keep the new one before anything else can fail
     save_refresh_token(settings, data["refresh_token"], data.get("scope"))
     params = {"type": "zak"} if kind == "zak" else \
@@ -227,8 +344,10 @@ async def _token_call(client_id: str, secret: str, form: dict[str, str],
     if data.get("error") == "invalid_client":
         raise SigninNeeded("Zoom rejected CONVO_ZOOM_CLIENT_ID / CONVO_ZOOM_CLIENT_SECRET")
     if r.status_code in (400, 401):
-        what = "sign-in" if form["grant_type"] == "authorization_code" else "sign-in expired"
-        raise SigninNeeded(f"Athena's Zoom {what}{_zoom_reason(r)}: {LOGIN_HINT}")
+        if form["grant_type"] == "authorization_code":
+            raise SigninNeeded(f"Zoom refused the sign-in code{_zoom_reason(r)}: "
+                               "start the sign-in again")
+        raise SigninExpired(f"Athena's Zoom sign-in expired{_zoom_reason(r)}: {LOGIN_HINT}")
     raise ZoomUnavailable(f"Zoom's token service answered HTTP {r.status_code}"
                           f"{_zoom_reason(r)}")
 

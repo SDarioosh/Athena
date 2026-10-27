@@ -253,7 +253,10 @@ def test_expired_signin(zsettings, zoom) -> None:
     with pytest.raises(zoom_signin.SigninNeeded, match="sign-in expired.*zoom-login"):
         asyncio.run(zoom_signin.join_token(zsettings, "zak", "123456789",
                                            transport=zoom.transport))
-    assert _stored(zsettings) == "refresh-old"  # left for the owner to replace
+    # set aside, so the status is honest: not signed in until the owner signs in again
+    assert not zoom_signin.signed_in(zsettings)
+    aside = zoom_signin.token_file(zsettings).with_name("refresh_token.expired.json")
+    assert json.loads(aside.read_text())["refresh_token"] == "refresh-old"
 
 
 def test_missing_signin_and_zoom_down(zsettings, zoom) -> None:
