@@ -73,7 +73,7 @@
     <string name="crash_close">Close</string>
     <string name="two_lines">%1$s\n%2$s</string>
     <string name="pair_heading">Pair with Odysseus</string>
-    <string name="pair_intro">In Odysseus open Conversations → Pair a phone and scan the code (here, or with the phone\'s camera app and open the link). The phone then uploads the watch\'s recordings and syncs the T5 through Odysseus: no server URLs or tokens to type.</string>
+    <string name="pair_intro">In Odysseus open Settings → Integrations → Pair a phone and scan the code (here, or with the phone\'s camera app and open the link). The phone then uploads the watch\'s recordings and syncs the T5 through Odysseus: no server URLs or tokens to type.</string>
     <string name="pair_scan">Scan pairing code</string>
     <string name="pair_link">Or paste the pairing link</string>
     <string name="pair_with_link">Pair with this link</string>
