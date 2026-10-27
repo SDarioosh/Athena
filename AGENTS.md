@@ -192,6 +192,11 @@ server. **Nothing in the data path touches the cloud.**
   also has `valid_until` (MCP 0.13.0, additive): the last day a fact about one occasion
   ("has a meeting with X on Tuesday at 11 a.m.") is worth keeping, else null; the hub
   ends the belief after it. JSON fields are listed in `server/README.md`.
+- `search_conversations(kind=…)`: `note` (voice notes and notes written by hand),
+  `conversation`, or empty for everything; from MCP 0.14.0 (additive) also `voice` (voice
+  notes only) and `written` (notes written by hand only), and the result header says
+  "notes" for `note`. Loose spellings are read too: "voice_note" and "memo" mean `voice`,
+  "handwritten" means `written`.
 - Each `list_action_items` JSON row has `title` (≤ 60 characters, for the hub's to-do or
   note) and `explicit` (true when the item has a date or time, a named list, kind
   reminder/event/note, or the voice note used a command word such as "remind me" or "add a

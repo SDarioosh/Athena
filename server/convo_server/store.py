@@ -277,6 +277,10 @@ NOTE = "note"
 SESSION_KINDS = (CONVERSATION, NOTE)
 # The device of written notes (POST /v1/ingest/text); no recorder uploads as it.
 WRITTEN_DEVICE = "handwriting"
+# list_conversations' ``kind`` beyond the session kinds: the two sorts of NOTE
+# (MCP 0.14.0). NOTE itself is both.
+VOICE = "voice"      # notes recorded out loud
+WRITTEN = "written"  # notes written by hand in the hub (WRITTEN_DEVICE)
 # A written note's session id is this prefix plus its source id.
 WRITTEN_SESSION_PREFIX = "written:"
 
@@ -1712,12 +1716,19 @@ class Store:
     def list_conversations(self, *, since: float | None = None, until: float | None = None,
                            person: str | None = None, kind: str | None = None,
                            limit: int = 50) -> list[dict[str, Any]]:
-        """Newest first. ``kind``: NOTE = only voice notes, CONVERSATION = everything else."""
+        """Newest first. ``kind``: NOTE = notes (voice and written), VOICE = only voice
+        notes, WRITTEN = only notes written by hand, CONVERSATION = everything else."""
         sql = "SELECT * FROM conversations WHERE 1=1"
         params: list[Any] = []
         if kind == NOTE:
             sql += " AND kind = ?"
             params.append(NOTE)
+        elif kind == VOICE:
+            sql += " AND kind = ? AND device IS NOT ?"
+            params += [NOTE, WRITTEN_DEVICE]
+        elif kind == WRITTEN:
+            sql += " AND device = ?"
+            params.append(WRITTEN_DEVICE)
         elif kind == CONVERSATION:
             sql += " AND kind IS NOT ?"
             params.append(NOTE)

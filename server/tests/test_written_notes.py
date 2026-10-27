@@ -542,3 +542,39 @@ def test_text_routes_are_not_mcp_tools(pipeline):
             return {t.name for t in (await client.list_tools()).tools}
 
     assert not {n for n in asyncio.run(names()) if "text" in n or "ingest" in n}
+
+
+# ------------------------------------------------------------- kind filter (MCP 0.14.0)
+def test_kind_filter_tells_voice_and_written_notes_apart(api, pipeline):
+    from test_voice_notes import record
+
+    send(api)
+    record(pipeline, "c1", T0 + 3600)
+    record(pipeline, "n1", T0 + 7200, "note")
+    summarize(pipeline)
+    store = pipeline.store
+    devices = {c["id"]: c["device"] for c in store.list_conversations()}
+    written = next(i for i, d in devices.items() if d == WRITTEN_DEVICE)
+    voice = next(c["id"] for c in store.list_conversations(kind="note") if c["id"] != written)
+    talk = next(i for i in devices if i not in (written, voice))
+    ids = lambda kind: {c["id"] for c in store.list_conversations(kind=kind)}  # noqa: E731
+    assert ids("note") == {written, voice}
+    assert ids("voice") == {voice}
+    assert ids("written") == {written}
+    assert ids("conversation") == {talk}
+    assert ids(None) == {written, voice, talk}
+
+    mcp = build_mcp(store, pipeline.settings)
+    out = call(mcp, "search_conversations", kind="written")
+    assert out.startswith("1 written notes") and f"id {written}" in out
+    assert f"(written by hand: {LINK})" in out
+    out = call(mcp, "search_conversations", kind="voice")
+    assert out.startswith("1 voice notes") and f"(voice note) id {voice}" in out
+    assert written not in out
+    assert call(mcp, "search_conversations", kind="note").startswith("2 notes")
+    assert call(mcp, "search_conversations", kind="handwritten") == call(
+        mcp, "search_conversations", kind="written")
+    # with a query the kind still filters: the written note's words
+    assert written in call(mcp, "search_conversations", query="Porto", kind="written")
+    assert "No voice notes" in call(mcp, "search_conversations", query="Porto", kind="voice")
+    assert "bad kind" in call(mcp, "search_conversations", kind="podcast")
