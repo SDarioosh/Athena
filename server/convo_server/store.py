@@ -2070,6 +2070,28 @@ class Store:
         with self.tx() as c:
             return _ensure_person(c, name, speaker_id, is_owner)
 
+    def link_person(self, names: Iterable[str], aliases: Iterable[str] = (),
+                    is_owner: bool = False) -> tuple[int, str] | None:
+        """The first of ``names`` that is a person (name or alias, any case, following
+        merges), else a new person called the first usable one; ``aliases`` are added to
+        that person (its own name and unnamed labels are skipped). Returns (id, current
+        name), or None when no name is usable. One transaction (meeting_names.py)."""
+        names = [n.strip() for n in names if n and n.strip()
+                 and not _PLACEHOLDER_SPEAKER.match(n.strip())]
+        if not names:
+            return None
+        with self.tx() as c:
+            pid = next((p for p in (_person_id(c, n) for n in names) if p is not None),
+                       None)
+            if pid is None:
+                pid = _ensure_person(c, names[0])
+            if is_owner:
+                c.execute("UPDATE people SET is_owner = (id = ?)", (pid,))
+            for alias in aliases:
+                _add_alias(c, pid, alias)
+            return pid, c.execute("SELECT name FROM people WHERE id = ?",
+                                  (pid,)).fetchone()["name"]
+
     def person_id(self, name: str, owner_names: Iterable[str] = ()) -> int | None:
         """The id of the person with this name or alias (any case), following merges.
 
