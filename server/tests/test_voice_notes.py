@@ -127,7 +127,8 @@ def test_note_is_one_owner_conversation_without_diarizer(pipeline, llm_log, monk
 
 
 def test_note_owner_name_falls_back_to_settings(pipeline):
-    pipeline.store._conn.execute("DELETE FROM speakers")
+    pipeline.store._conn.execute("DELETE FROM speakers")  # no owner voice and no owner
+    pipeline.store._conn.execute("UPDATE people SET is_owner = 0")  # person (BUG-07)
     pipeline.settings.owner_name = "Sam"
     record(pipeline, "n1", T0, "note", freq=600)
     segs = pipeline.store.session_segments("n1")

@@ -146,7 +146,8 @@ def test_ingest_makes_one_owner_note_with_a_line_per_second(api, pipeline):
 
 
 def test_owner_line_name_falls_back_to_settings(api, pipeline):
-    pipeline.store._conn.execute("DELETE FROM speakers")
+    pipeline.store._conn.execute("DELETE FROM speakers")  # no owner voice and no owner
+    pipeline.store._conn.execute("UPDATE people SET is_owner = 0")  # person (BUG-07)
     pipeline.settings.owner_name = "Sam"
     send(api)
     assert {s[1] for s in lines(pipeline, note(pipeline)["id"])} == {"Sam"}

@@ -2056,7 +2056,14 @@ class Store:
         return rows
 
     def owner_name(self) -> str | None:
+        """The name owner lines are written under: the enrolled owner voice's name; without
+        one, the owner's person (a Zoom track matched by CONVO_ZOOM_OWNER_NAMES makes one),
+        so lines and ``people`` name the owner alike (QA BUG-07). None when neither exists;
+        callers then use CONVO_OWNER_NAME."""
         row = self._one("SELECT name FROM speakers WHERE is_owner = 1")
+        if row is None:
+            row = self._one("SELECT name FROM people WHERE is_owner = 1"
+                            " AND merged_into IS NULL")
         return row["name"] if row else None
 
     # ------------------------------------------------------------------ people

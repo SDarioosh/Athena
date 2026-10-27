@@ -312,3 +312,26 @@ def test_room_tracks_make_no_person(store):
         assert speaker_for_track(store, track(raw, track_id=str(i)), OWNER) == (
             "Unknown", False), raw
     assert people_count(store) == 0
+
+
+# BUG-07: the owner matched by CONVO_ZOOM_OWNER_NAMES, no owner voice enrolled
+def test_owner_from_zoom_names_is_one_identity_without_an_enrolled_voice(store):
+    assert store.owner_name() is None
+    name, is_owner = speaker_for_track(store, track("Cleo Example"), ("Cleo Example",))
+    assert (name, is_owner) == ("Cleo Example", True)
+    # lane 2A names owner lines ``store.owner_name() or cfg.owner_name``: the same person
+    assert (store.owner_name() or "Me") == "Cleo Example"
+    conv = _line(store, store.owner_name() or "Me", True, 100.0)
+    people = store.people(("Me", "me"))
+    assert len(people) == 1 and people[0]["is_owner"] and people[0]["name"] == "Cleo Example"
+    assert people[0]["conversations"] == 1 and conv
+    # an enrolled owner voice still wins, and only one owner exists
+    assert store.owner_person_id() == store.person_id("Cleo Example")
+
+
+def test_owner_name_prefers_the_enrolled_owner_voice(store):
+    import numpy as np
+    store.ensure_person("Cleo Example", is_owner=True)
+    assert store.owner_name() == "Cleo Example"
+    store.put_speaker("Cleo", np.ones(4, np.float32), is_owner=True)
+    assert store.owner_name() == "Cleo"
