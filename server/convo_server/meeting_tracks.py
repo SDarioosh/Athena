@@ -265,23 +265,39 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
                 unnamed += 1
                 name = f"Speaker {unnamed}"
             labels = [SpeakerLabel(name, owner)] * len(pieces)
-        if cfg.join_lines:  # within this track only: never joins two participants
-            pieces, joined = join_lines(pieces, labels, cfg.join_gap_seconds,
-                                        cfg.join_max_seconds)
-            labels = joined if joined is not None else labels
         lines += [Line(s, e, text, ref, track, lab)
                   for (s, e, text, ref), lab in zip(pieces, labels, strict=True)]
     if pipeline.diarizer is not None and voices_loaded:
         store.put_speaker_candidates(session_id, candidates)
 
+    # Bleed is decided on whisper's own pieces, before any joining: a joined line spans
+    # its speaker's pauses, so another track's words said in such a pause would look
+    # simultaneous, and the pause's silence would lower the line's loudness.
     loud = [rms_db(runs[ln.ref.run][int(ln.ref.start * SAMPLE_RATE):
                                     int(ln.ref.end * SAMPLE_RATE)]) for ln in lines]
     drop = find_bleed(lines, loud)
+    kept_lines = [ln for i, ln in enumerate(lines) if i not in drop]
+    if cfg.join_lines:  # then join, within each track only: never two participants
+        kept_lines = [j for track in order
+                      for j in _join_track([ln for ln in kept_lines if ln.track == track],
+                                           cfg.join_gap_seconds, cfg.join_max_seconds)]
     rank = {t: i for i, t in enumerate(order)}
-    kept = sorted((ln for i, ln in enumerate(lines) if i not in drop),
-                  key=lambda ln: (ln.start, rank[ln.track], ln.end))
+    kept = sorted(kept_lines, key=lambda ln: (ln.start, rank[ln.track], ln.end))
     return [Segment(started_at=ln.start, ended_at=ln.end, text=ln.text,
                     speaker=ln.label.name, is_owner=ln.label.is_owner) for ln in kept]
+
+
+def _join_track(lines: list[Line], gap: float, max_seconds: float) -> list[Line]:
+    """``join_lines`` over one track's kept lines (in time order); a joined line spans
+    from its first piece's start to its last piece's end."""
+    if not lines:
+        return lines
+    track = lines[0].track
+    pieces, labels = join_lines([(ln.start, ln.end, ln.text, ln.ref) for ln in lines],
+                                [ln.label for ln in lines], gap, max_seconds)
+    assert labels is not None
+    return [Line(s, e, text, ref, track, lab)
+            for (s, e, text, ref), lab in zip(pieces, labels, strict=True)]
 
 
 def _diarize_track(pipeline: Pipeline, runs: list[np.ndarray], first_run: int,

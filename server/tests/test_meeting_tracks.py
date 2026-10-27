@@ -447,3 +447,49 @@ def test_a_chunk_racing_the_worker_is_refused(pipeline, settings):
     assert pipeline.store.get_session("m1")["status"] == "processing"
     # only the first chunk's file: the refused upload left no file behind
     assert len(list((settings.audio_dir / "zoom" / "m1").iterdir())) == 1
+
+
+# ------------------------------------------- QA: bleed before joining (BUG-04)
+
+
+def _with_script(extra, fn):
+    original = dict(SCRIPT)
+    SCRIPT.update(extra)
+    try:
+        return fn()
+    finally:
+        SCRIPT.clear()
+        SCRIPT.update(original)
+
+
+def test_bleed_runs_on_unjoined_pieces_agreement_in_a_pause_is_kept(pipeline):
+    """QA BUG-04: Alice says "Let's ship the release", pauses, then "before Friday
+    afternoon"; Bo agrees "Let's ship the release" in her silent pause. Joined first,
+    her line spanned his and the same words read as bleed. Bleed is decided on the
+    pieces whisper heard, then lines join: everyone's words stay."""
+    pipeline.settings.join_gap_seconds = 3.0
+    words = {300: "Let's ship the release", 400: "before Friday afternoon.",
+             500: "Let's ship the release!"}
+    alice = ("a", "Alice Example", track_audio((0, tone(300, 2)), (4.5, tone(400, 2))))
+    bo = ("b", "Bo Example", track_audio((2.2, tone(500, 1.6))))
+    segs = _with_script(words, lambda: meeting(pipeline, [alice, bo]))
+    assert rows(segs) == [
+        ("Alice Example", False, "Let's ship the release before Friday afternoon."),
+        ("Bo Example", False, "Let's ship the release!"),
+    ]
+    alice_line = segs[0]
+    assert alice_line.started_at == pytest.approx(T0, abs=0.5)
+    assert alice_line.ended_at == pytest.approx(T0 + 6.5, abs=0.5)
+
+
+def test_true_bleed_is_still_dropped_and_never_joined_back(pipeline):
+    """Bo's sentence reaches Alice's mic (quiet copy); Alice's own unfinished line
+    right before it must not pull the dropped copy back in by joining."""
+    pipeline.settings.join_gap_seconds = 3.0
+    words = {300: "so I think", 600: "Let's ship the release on Friday."}
+    alice = ("a", "Alice Example",
+             track_audio((0, tone(300, 2)), (4.5, tone(600, 4, amp=0.05))))
+    bo = ("b", "Bo Example", track_audio((4.5, tone(600, 4))))
+    segs = _with_script(words, lambda: meeting(pipeline, [alice, bo]))
+    assert rows(segs) == [("Alice Example", False, "so I think"),
+                          ("Bo Example", False, "Let's ship the release on Friday.")]
