@@ -357,6 +357,27 @@ spelling), and every line from a track is that participant's:
   of the round that reached `CONVO_MAX_SESSION_SECONDS` are kept. A retry of a stored
   chunk is `duplicate: true` as before. Sessions without tracks still take late chunks
   and transcribe them on the next pass.
+- Live transcription (`convo_server/meeting_live.py`, `CONVO_MEETING_LIVE_TRANSCRIBE`,
+  default true): while a meeting records, the worker's existing 15 s tick transcribes each
+  person's track window by window, so when it ends only the last window of each track (and
+  any shared-room track) is left before the summary, which starts in the same tick. No
+  process, thread or timer is added: with no meeting the tick asks one indexed query
+  (`sessions_status`) and imports nothing; `false` skips even that and transcribes the
+  meeting at its end. Each tick spends at most about `CONVO_MEETING_LIVE_BUDGET_SECONDS`
+  (20) on it, one whisper request at a time, round robin over tracks, continuing next tick.
+  The result is the end-of-meeting result: windows are planned from the stored VAD spans
+  exactly as at the end, and only windows no later audio can change are sent (a window
+  is closed once the next speech region didn't fit in it, or its run ended), so a word
+  across a chunk boundary is never cut and whisper hears the same clips with the same
+  per-track context. Line joining continues from the track's last line, and each line's
+  loudness is stored for the bleed check, which runs at the end over all tracks. The
+  participants' names in whisper's prompt are those known at the time, so a late
+  joiner's name only reaches later windows (the one possible difference, spelling only).
+  Shared-room tracks wait for the end (diarized over the whole track). Progress is saved
+  per window (`meeting_live` table) and checked against the chunks before use: a restart
+  redoes at most one window, and a late chunk that changes a run restarts that track.
+  Audio is kept until the end pass succeeds (`CONVO_KEEP_AUDIO` rules unchanged), and
+  the live transcript is deleted once it is in the meeting's lines.
 
 Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client"|"idle"|null,
 "duplicate": bool, "speech_seconds", "trailing_silence_seconds", "session_seconds"}`, plus
