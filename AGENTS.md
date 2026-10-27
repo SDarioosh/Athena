@@ -68,6 +68,8 @@ server. **Nothing in the data path touches the cloud.**
   Milestone 1 of the T-Watch Ultra is implemented in `firmware/recorder/`, and so is the BLE
   upload path; `twatch-ble-protocol.md`: the watch ↔ relay protocol;
   `t5-pda-plan.md`: a T5 E-Paper Pro PDA synced over BLE through the phone, planned;
+  `zoom-meeting-bot-plan.md`: a Zoom bot that joins meetings as "Athena", planned in lanes
+  for subagents;
   `athena-rename-plan.md`: the work order for renaming the old names, planned).
 - `hermes/`: Hermes profile snippet used by the orchestrator.
 - `orchestrator/`: optional build loop. Leave it alone.
