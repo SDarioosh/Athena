@@ -136,7 +136,7 @@ def test_what_did_x_say_on_date(pipeline, mcp):
     process_two_speakers(pipeline)
     out = call(mcp, "search_transcripts", speaker="me", since=DAY, until=DAY)
     assert "Me: \"words at 200 hz\"" in out and "/view/" in out and "sig=" in out
-    assert "600" not in out  # only the requested speaker's lines
+    assert "600 hz" not in out  # only the requested speaker; links carry random hex
     assert call(mcp, "search_transcripts", speaker="Me", since="2025-10-10").startswith("No lines")
     assert "Known speakers: " in call(mcp, "search_transcripts", speaker="Alice")
     # text query within a speaker's lines
