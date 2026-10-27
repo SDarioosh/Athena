@@ -91,9 +91,35 @@ void ChatLog::set_topic(const std::string& topic) {
   write_participants_locked();
 }
 
+constexpr size_t kMaxBreakouts = 100;
+
+void ChatLog::on_breakouts(bool open, int64_t at_ms) {
+  std::lock_guard<std::mutex> lock(mu_);
+  const int64_t at = sane_time(at_ms);
+  if (open) {
+    if (!breakouts_.empty() && breakouts_.back().until_ms == 0) return;  // already open
+    if (breakouts_.size() >= kMaxBreakouts) return;
+    breakouts_.push_back(Breakout{at, 0});
+  } else if (!breakouts_.empty() && breakouts_.back().until_ms == 0) {
+    breakouts_.back().until_ms = std::max(at, breakouts_.back().from_ms);
+  }
+  write_participants_locked();
+}
+
 std::string ChatLog::tail_locked() const {
   std::string o;
   if (!topic_.empty()) o += ", \"topic\": " + util::json_str(topic_);
+  if (!breakouts_.empty()) {
+    o += ", \"breakouts\": [";
+    for (size_t i = 0; i < breakouts_.size(); ++i) {
+      const auto& b = breakouts_[i];
+      o += i ? ", {\"from\": " : "{\"from\": ";
+      o += util::json_str(util::iso_utc_ms(b.from_ms)) + ", \"until\": ";
+      o += b.until_ms ? util::json_str(util::iso_utc_ms(b.until_ms)) : "null";
+      o += "}";
+    }
+    o += "]";
+  }
   if (participants_.empty()) return o;
   o += ", \"participants\": [";
   bool first_entry = true;

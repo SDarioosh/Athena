@@ -31,6 +31,7 @@ class ChatLog {
   void on_participant(const std::string& track_id, const std::string& name, bool joined,
                       int64_t at_ms);
   void set_topic(const std::string& topic);
+  void on_breakouts(bool open, int64_t at_ms);
 
   // The JSON body of the chat call: {"lines": [...], "topic": ..., "participants": [...]}
   // (topic and participants left out when unknown, so the server keeps what it has).
@@ -56,6 +57,10 @@ class ChatLog {
   size_t lines_ = 0, bytes_ = 0, dropped_ = 0, private_dropped_ = 0;
   std::string topic_;
   std::vector<Participant> participants_;  // order of first join
+  struct Breakout {
+    int64_t from_ms = 0, until_ms = 0;  // until 0 = still open
+  };
+  std::vector<Breakout> breakouts_;
 };
 
 }  // namespace athena

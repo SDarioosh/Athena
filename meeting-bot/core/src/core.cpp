@@ -14,6 +14,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "chat.h"
 #include "chunker.h"
@@ -248,6 +249,37 @@ struct Core::Impl {
     q_cv.notify_all();
   }
 
+  // finish() only, after the uploader thread was joined (it owns `http` until then).
+  bool upload_silence(Clock::time_point cutoff) {
+    constexpr int kRate = 32000;
+    auto enc = make_encoder(cfg.codec, kRate);
+    if (!enc) return false;
+    const std::vector<int16_t> zeros(kRate, 0);
+    if (!enc->write(zeros.data(), zeros.size())) return false;
+    std::string data = enc->finish();
+    if (data.empty()) return false;
+    const int64_t start_ms = util::wall_now_ms() - 1000;
+    std::vector<std::pair<std::string, std::string>> fields = {
+        {"device", cfg.device},
+        {"session_id", cfg.session_id},
+        {"sequence", "0"},
+        {"timestamp", util::epoch_seconds(start_ms)},
+        {"codec", cfg.codec},
+    };
+    Http::FilePart file{"audio", std::string("session-start.") + codec_extension(cfg.codec),
+                        codec_mime(cfg.codec), std::move(data)};
+    const HttpResponse r = http.post_multipart(
+        join_url(cfg.upload_url, "/v1/ingest/chunk"), cfg.upload_token, fields, file,
+        ms_until(cutoff), [cutoff] { return Clock::now() >= cutoff; });
+    const bool ok = r.status == 200 && r.json_true("ok");
+    if (ok)
+      logf("no audio was uploaded: sent 1 s of silence so the chat has a session");
+    else
+      logf("could not make the session for the chat (%s)",
+           r.status ? ("HTTP " + std::to_string(r.status)).c_str() : r.error.c_str());
+    return ok;
+  }
+
   CoreConfig cfg;
   std::string queue_dir;
   ChatLog chat;
@@ -332,6 +364,16 @@ void Core::on_chat(int64_t at_ms, const std::string& from_name,
 
 void Core::set_topic(const std::string& topic) { impl_->chat.set_topic(topic); }
 
+void Core::on_breakouts(bool open, int64_t at_ms) { impl_->chat.on_breakouts(open, at_ms); }
+
+void Core::close_chunks() {
+  Impl& d = *impl_;
+  std::lock_guard<std::mutex> lock(d.chunk_mu);
+  if (d.closed) return;
+  d.chunker.flush();
+  d.note_open_locked();
+}
+
 bool Core::stop_requested() const { return impl_->stop_requested.load(); }
 bool Core::upload_rejected() const { return impl_->rejected.load(); }
 
@@ -385,6 +427,11 @@ bool Core::finish(std::chrono::steady_clock::time_point deadline) {
   const std::string sid = util::url_escape(d.cfg.session_id);
   bool chat_ok = true;
   const std::string body = d.chat.body();
+  if (uploaded == 0 && unsent == 0 && d.chat.lines() > 0 && Clock::now() < chunk_cutoff) {
+    // Chat but no audio ever uploaded: the server has no session for the chat call yet.
+    // One second of silence, no track: it makes the session and no transcript line.
+    if (d.upload_silence(chunk_cutoff)) uploaded = 1;
+  }
   if (body != "{\"lines\": []}") {
     const HttpResponse r = d.http.post_json(
         join_url(d.cfg.upload_url, "/v1/sessions/" + sid + "/chat"), d.cfg.upload_token,

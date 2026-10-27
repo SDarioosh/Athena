@@ -8,6 +8,7 @@
 //   meeting: Dana talks throughout, Lee 5..15 s and 40..45 s (leaves in between)
 //   bursts:  Dana alone, 1 s of speech every 10 s
 //   tail:    Dana alone, 0..29.5 s, then silence (the uploader's tick closes the chunk)
+//   chat:    no audio at all (no recording permission), one chat line
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -84,7 +85,12 @@ int main(int argc, char** argv) {
     dana[i] = static_cast<int16_t>(6000 * std::sin(2 * M_PI * 220 * i / kRate));
     lee[i] = static_cast<int16_t>(6000 * std::sin(2 * M_PI * 330 * i / kRate));
   }
-  const int64_t total_ms = pattern == "tail" ? 29500 : int64_t(audio_seconds) * 1000;
+  int64_t total_ms = pattern == "tail" ? 29500 : int64_t(audio_seconds) * 1000;
+  if (pattern == "chat") {
+    total_ms = 0;
+    core.on_chat(kT0 + 21000, "Dana Example", kDana,
+                 "Here's the sheet: https://example.invalid/budget-v3.xlsx", false);
+  }
   const bool meeting = pattern == "meeting";
   for (int64_t t = 0; t < total_ms; t += 10) {
     const int64_t now = kT0 + t;
