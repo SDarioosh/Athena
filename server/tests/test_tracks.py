@@ -404,3 +404,35 @@ def test_track_name_is_latest_by_time_not_sequence(client, pipeline):
     t2 = pipeline.store.tracks("m1")[1]
     assert t2["name"] == "iPhone"  # raw names at the store level; cleaning is downstream
     assert t2["names"] == ["Conference Room 2", "iPhone"]
+
+
+def test_tracked_chunk_reopens_a_session_stopped_on_silence(client, pipeline):
+    # QA BUG-16: an untracked chunk stopped the session on silence, then the meeting's
+    # tracked chunks arrive. A tracked session never stops on silence, so the silence
+    # stop doesn't stand: the session records again and the bot isn't told to stop.
+    r = upload(client, 0, wav(silence(90)), track="").json()
+    assert r["stop"] is True and r["reason"] == "silence"
+    r = upload(client, 0, wav(tone(300, 30)), ts=T0 + 90, track="t1").json()
+    assert r["stop"] is False, r
+    sess = client.get("/v1/sessions/m1").json()
+    assert sess["status"] == "recording" and sess["stop_reason"] is None
+    assert upload(client, 1, wav(silence(30)), ts=T0 + 120,
+                  track="t1").json()["stop"] is False
+    # the same once the worker already processed the stopped session
+    upload(client, 0, wav(silence(90)), session="m2", track="")
+    pipeline.process_pending()
+    assert client.get("/v1/sessions/m2").json()["status"] == "done"
+    r = upload(client, 0, wav(tone(300, 30)), session="m2", ts=T0 + 90, track="t1").json()
+    assert r["stop"] is False, r
+    assert client.get("/v1/sessions/m2").json()["status"] == "recording"
+
+
+def test_other_stops_stand_for_tracked_chunks(client, settings):
+    # QA BUG-16: only a silence stop is undone; an untracked late chunk changes nothing.
+    upload(client, 0, wav(silence(90)), session="s1", device="trex3pro")
+    r = upload(client, 1, wav(silence(30)), session="s1", device="trex3pro").json()
+    assert r["stop"] is True and r["reason"] == "silence"
+    upload(client, 0, wav(silence(30)), track="a")
+    client.post("/v1/sessions/m1/end")
+    r = upload(client, 1, wav(silence(30)), track="a").json()
+    assert r["stop"] is True and r["reason"] == "client"

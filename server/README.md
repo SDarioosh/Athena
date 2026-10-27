@@ -304,7 +304,8 @@ chunk also has `track` and `track_name`, null without one). A session with any t
 chunk (a meeting) never stops on trailing silence, so a quiet break doesn't end it: it
 stops at `CONVO_MAX_SESSION_SECONDS`, on `POST /v1/sessions/{id}/end`, or after
 `CONVO_SESSION_IDLE_SECONDS` without uploads (the uploader died); once ended, every track
-is told `stop: true`. Errors (400): `track must match
+is told `stop: true`. If an untracked chunk stopped the session on silence first, the
+first tracked chunk reopens it (`recording` again, no stop reason). Errors (400): `track must match
 ^[A-Za-z0-9._:-]{1,64}$`, `track_name is longer than 200 characters`, `track_name needs a
 track`. `POST /v1/ingest/chunk.json` takes the same two fields.
 

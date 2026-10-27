@@ -613,7 +613,9 @@ class Store:
         (session, track, sequence) so device retries are idempotent (the retry's
         ``track_name`` is ignored too), and ValueError if the session belongs to another
         device or is of another ``kind``. The session's silence bookkeeping spans all
-        tracks: ``last_speech_at`` is the latest speech on any track.
+        tracks: ``last_speech_at`` is the latest speech on any track. A tracked chunk in
+        a session an untracked chunk stopped on silence reopens it ('recording', no stop
+        reason), since a tracked session never stops on silence; other stops stand.
         """
         now = time.time() if now is None else now
         end = started_at + duration
@@ -650,12 +652,18 @@ class Store:
                     " last_speech_at = CASE WHEN ? IS NULL THEN last_speech_at"
                     "   ELSE MAX(COALESCE(last_speech_at, 0), ?) END,"
                     " received_at = ?,"
+                    # A tracked session never stops on silence: a tracked chunk undoes a
+                    # silence stop an untracked chunk made, and the session records again.
+                    " status = CASE WHEN ? != '' AND stop_reason = 'silence' THEN 'recording'"
                     # A chunk for a session being processed or already processed sends
                     # it back for another pass (store-and-forward relays upload late).
-                    " status = CASE WHEN status IN ('processing','done','failed') THEN 'ended'"
-                    " ELSE status END"
+                    " WHEN status IN ('processing','done','failed') THEN 'ended'"
+                    " ELSE status END,"
+                    " stop_reason = CASE WHEN ? != '' AND stop_reason = 'silence' THEN NULL"
+                    " ELSE stop_reason END"
                     " WHERE id = ?",
-                    (started_at, end, last_speech, last_speech, now, session_id),
+                    (started_at, end, last_speech, last_speech, now, track, track,
+                     session_id),
                 )
             return dict(c.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone())
 
