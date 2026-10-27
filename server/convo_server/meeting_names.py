@@ -69,7 +69,7 @@ _ROOM_RE = re.compile(r"\b(?:conference|meeting|board|huddle|zoom|focus|team)\s*
                       r"^rooms?\b|\brooms?\s*[a-z]?\d|\b(?:boardroom|auditorium)\b",
                       re.IGNORECASE)
 # Rooms and conference hardware (QA BUG-01): a track that can hold several people, never
-# one person. Agrees with lane 2A's ``meeting_tracks.is_shared_room`` on the clear cases.
+# one person. ``is_room_or_hardware`` (and so ``meeting_tracks.is_shared_room``) uses it.
 # Product words with no use as a name match anywhere in the name ("Polycom Trio 8800").
 _HARDWARE_RE = re.compile(r"\b(?:polycom|crestron|logitech|yealink|webex|speakerphone|meetup|"
                           r"zoom\s*rooms?|dial-?in)\b", re.IGNORECASE)
@@ -115,8 +115,7 @@ def looks_like_device(name: str) -> bool:
     """Whether a display name names a device, a room or a generic label instead of a
     person: "iPhone", "Galaxy S21", "DESKTOP-4KQ2", "Conference Room 2", "Zoom user".
 
-    Used for cleaning only. Lane 2A's shared-room detector (``meeting_tracks.py``) decides
-    which tracks get diarized; the two should become one helper once both have landed.
+    Used for cleaning only; which tracks get diarized is ``is_room_or_hardware``.
     """
     n = re.sub(r"\s+", " ", _strip_symbols(name)).strip(_EDGE_PUNCT).lower()
     if not n:
@@ -133,6 +132,25 @@ def looks_like_room(name: str) -> bool:
     n = re.sub(r"\s+", " ", _strip_symbols(name)).strip(_EDGE_PUNCT).lower()
     return bool(n and (_ROOM_RE.search(n) or _HARDWARE_RE.search(n)
                        or _ROOM_ONLY_RE.fullmatch(n)))
+
+
+def is_room_or_hardware(name: str | None) -> bool:
+    """Whether a Zoom display name may stand for several people, so the track is diarized
+    instead of named: a room or conference hardware (``looks_like_room``: "Huddle 4",
+    "Polycom", "Rally Bar", "Rm 204"), or a name with no person in it at all (it cleans to
+    "": a bare device such as "iPhone" or "Galaxy S23", a dial-in number, "Zoom user").
+    A personal device is its person ("Kath's iPhone" is Kath), and a person whose name
+    holds a room word is a person ("Jordan Hall", "Cisco Ramirez"). An empty name says
+    nothing and is not a room.
+
+    The one room rule of the meeting pipeline: ``meeting_tracks.is_shared_room`` is this
+    function. A bare device counts as shared because nobody on it is known; diarizing is
+    the safe side (the diarizer still names enrolled voices, while a wrong name would put
+    several people's words on one person). The owner's own Zoom names are never rooms;
+    ``meeting_tracks`` checks those before calling this.
+    """
+    n = " ".join((name or "").split())
+    return bool(n) and (looks_like_room(n) or not clean_display_name(n))
 
 
 def clean_display_name(raw: str) -> str:

@@ -242,7 +242,7 @@ def test_sessions_without_tracks_are_unchanged(pipeline):
 
 @pytest.mark.parametrize("name", [
     "Conference Room", "Boardroom", "Meeting Room 2", "Zoom Rooms", "ZoomRoom-3F",
-    "iPhone", "Anna's iPhone", "Galaxy S23", "Zoom user", "Polycom", "Logitech Rally",
+    "iPhone", "Galaxy S23", "Zoom user", "Polycom", "Logitech Rally",
     "Huddle 4", "Pixel 8", "SM-G991B", "+1 555 0100", "Conf Rm A", "Cisco Webex Room",
     "Dial-in user", "MacBook Pro",
 ])
@@ -253,6 +253,7 @@ def test_rooms_and_devices(name):
 @pytest.mark.parametrize("name", [
     "Alice Example", "Bo Example (he/him)", "Roomi Example", "Hallie Example",
     "Max Pixelton", "Mac Example", "Owen Polyakov", "", None, "Dr. Cleo Example | Acme",
+    "Anna's iPhone",  # a personal phone is Anna (one room rule with lane 2B, QA BUG-01)
 ])
 def test_people_are_not_rooms(name):
     assert not is_shared_room(name)

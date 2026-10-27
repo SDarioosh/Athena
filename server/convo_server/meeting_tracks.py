@@ -10,8 +10,9 @@ participant's: no diarizer, no speaker embedder. Then:
 * **Bleed**: two participants in one room hear each other, so one voice can reach two
   microphones. A line whose words nearly match a line on another track at about the
   same time is dropped, keeping the louder track's line (``find_bleed``).
-* **Shared rooms and devices**: a track whose display name is, or ever was, a room or
-  a device ("Conference Room", "iPhone", "Zoom user", ``is_shared_room``) can hold
+* **Shared rooms and devices**: a track whose display name is, or ever was, a room,
+  conference hardware or a bare device with no person ("Conference Room", "Polycom",
+  "iPhone", "Zoom user", ``is_shared_room``; "Kath's iPhone" is Kath) can hold
   several people. The configured diarizer runs on that track only; its unnamed voices become
   "Speaker N" (numbered across the meeting) with stored voices, so ``name_speaker`` and
   ``list_unnamed_speakers`` work on them as on any recording.
@@ -66,32 +67,16 @@ BLEED_MIN_SECONDS = 0.5
 _UNNAMED = re.compile(r"^Speaker \d+$")
 _WORD = re.compile(r"[\w']+")
 
-# Display names that are a room or a device rather than one person (lowercase; matched
-# as whole words). Zoom shows a Zoom Rooms system or a conference phone by its room or
-# product name, a phone by its model, and a guest who never set a name as "Zoom user".
-_ROOM_WORDS = (
-    r"room", r"rooms", r"boardroom", r"conference", r"conf", r"meeting\s*room",
-    r"huddle", r"auditorium", r"lobby", r"hall", r"zoom\s*user", r"zoomroom",
-    r"polycom", r"poly\s+studio", r"logitech", r"cisco", r"webex", r"crestron",
-    r"yealink", r"jabra", r"neat\s*(?:bar|board|pad)", r"meeting\s*owl", r"owl\s*pro",
-    r"iphone", r"ipad", r"android", r"galaxy", r"pixel", r"samsung", r"oneplus",
-    r"huawei", r"xiaomi", r"redmi", r"motorola", r"moto\s*g", r"sm-[a-z]?\d+\w*",
-    r"macbook(?:\s*(?:pro|air))?", r"imac", r"laptop", r"desktop", r"chromebook",
-    r"surface\s*(?:pro|hub|laptop)", r"phone", r"speakerphone", r"dial-?in", r"call-?in",
-)
-_ROOM = re.compile(r"(?<!\w)(?:" + "|".join(_ROOM_WORDS) + r")(?!\w)", re.IGNORECASE)
-# A dial-in caller shows as their phone number.
-_PHONE_NUMBER = re.compile(r"^[\s+()\d.-]{6,}$")
-
-
 def is_shared_room(name: str | None) -> bool:
-    """True when a Zoom display name looks like a room or a device, which can hold
-    several people ("Conference Room", "Boardroom", "Meeting Room 2", "Anna's iPhone",
-    "Galaxy S23", "Zoom user", "Polycom", a dial-in number), not one person's name."""
-    n = " ".join((name or "").split())
-    if not n:
-        return False
-    return bool(_ROOM.search(n) or _PHONE_NUMBER.match(n))
+    """True when a Zoom display name can stand for several people: a room or conference
+    hardware ("Conference Room", "Polycom", "Huddle 4", "Rally Bar"), a bare device with
+    no person on it ("iPhone", "Galaxy S23"), a dial-in number or "Zoom user". Not a
+    person whose name holds such a word ("Jordan Hall", "Cisco Ramirez") or a personal
+    device ("Kath's iPhone" is Kath). Lane 2B's ``meeting_names.is_room_or_hardware`` is
+    the one rule; this name stays for callers of lane 2A's API."""
+    from .meeting_names import is_room_or_hardware
+
+    return is_room_or_hardware(name)
 
 
 def _same_name(a: str, b: str) -> bool:
