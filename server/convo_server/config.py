@@ -213,6 +213,23 @@ class Settings(BaseSettings):
     fact_min_score: int = Field(default=4, ge=1, le=5)
     max_facts_per_conversation: int = Field(default=3, ge=0)
 
+    # --- meeting bot (POST /v1/meetings; convo_server/meetings.py) ---
+    # Read only when a join request arrives; nothing runs between meetings.
+    # The bot program (athena-meeting-bot). Unset = meetings are off (501).
+    meeting_bot_path: Path | None = None
+    # How the bot is started: "systemd" (systemd-run --user --scope with CPU, memory and
+    # lifetime caps), "plain" (nice 10 + RLIMIT_AS) or "auto" (systemd when it works).
+    meeting_bot_runner: str = "auto"
+    meeting_bot_max: int = Field(default=1, ge=1)  # bots at a time; more answers 409 busy
+    meeting_bot_cpu: str = "200%"  # systemd CPUQuota (safety cap, systemd runner only)
+    meeting_bot_memory: str = "2G"  # systemd MemoryMax, or RLIMIT_AS with the plain runner
+    meeting_alone_seconds: float = 60.0  # leave after being the only participant this long
+    meeting_waiting_room_seconds: float = 600.0  # give up in the waiting room after this
+    meeting_track_codec: str = "opus"  # per-participant tracks: "opus" (32 kbps) or "wav"
+    # The owner's Zoom Meeting SDK app credentials; the join token is signed locally.
+    zoom_sdk_key: str | None = None
+    zoom_sdk_secret: str | None = None
+
     @property
     def base_url(self) -> str:
         return (self.public_url or f"http://{self.host}:{self.port}").rstrip("/")
