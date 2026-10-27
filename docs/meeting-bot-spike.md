@@ -3,8 +3,9 @@
 Status: **template, prepared by lane 0A; the owner's run fills it in.** Fields to fill are
 marked `____`. Plan: [zoom-meeting-bot-plan.md](zoom-meeting-bot-plan.md), Phase 0, as
 updated in PR #118 (the bot is mainly for other people's meetings) and PR #119 (the bot
-never asks for recording permission and leaves when the meeting ends). Owner's decision
-(2026-10-27): for meetings in other accounts the bot joins **on behalf of the owner (OBF,
+leaves when the meeting ends). Owner's decisions (2026-10-27): the bot sends Zoom's
+recording request **once** and keeps waiting for a grant, never asking again and never
+leaving over it; and for meetings in other accounts it joins **on behalf of the owner (OBF,
 his own Zoom account), so only while he is in the meeting**; a separate Athena Zoom account
 (ZAK, owner absent) is a later option, tested only in the optional
 [Later](#later-optional-athenas-own-zoom-account) section.
@@ -30,9 +31,14 @@ never subscribes to video or screen share. It records whatever per-participant r
 Zoom delivers: one raw PCM file per Zoom user id (`track-<id>.pcm`, s16le mono) and
 `participants.json` (user id → display name, sample rate, bytes). Chat messages go to
 `chat.jsonl` (`{at, from, zoom_user_id, text, to_all}`). It leaves after `--minutes`, when
-the meeting ends, when removed, or on SIGINT/SIGTERM. It never asks for recording
-permission, posts nothing in chat and takes no commands. If Zoom delivers no raw audio it
-stays and says so. The join token comes from `ATHENA_ZOOM_JOIN_TOKEN` (the name lane 1B's
+the meeting ends, when removed, or on SIGINT/SIGTERM. Once in the meeting it records at
+once if it may (host, co-host, already allowed); otherwise it sends Zoom's recording
+request **once** (`RequestLocalRecordingPrivilege`; the host sees Zoom's own prompt) and
+waits: on Allow it starts recording, on Deny it keeps waiting for a later grant (for
+example from the host's participant menu). It never asks again and never leaves over it.
+Zoom's forum reports the privilege callback may not fire, so while waiting it also retries
+every 15 s (only during a meeting; the process doesn't exist otherwise). It posts nothing in
+chat and takes no commands. The join token comes from `ATHENA_ZOOM_JOIN_TOKEN` (the name lane 1B's
 launcher passes) with `ATHENA_ZOOM_JOIN_TOKEN_KIND=obf` (on behalf of the owner, the
 default) or `zak` (a separate Athena account, later option); without a token it joins with
 the JWT only. With OBF, while Zoom refuses because the owner isn't in the meeting yet, it
@@ -42,8 +48,10 @@ retries every 3 s for up to `--owner-wait-seconds` (600). Status lines on stdout
 STATE starting
 STATE starting waiting_for_owner  (OBF: Zoom refuses until the owner is in; retrying)
 STATE waiting_room
+STATE waiting_permission      (in the meeting, recording request sent once, waiting)
+STATE waiting_permission denied   (the host declined; still waiting for a later grant)
 STATE recording
-STATE recording no_audio      (in the meeting, but no raw audio for --no-audio-seconds)
+STATE recording no_audio      (recording allowed, but no audio frames for --no-audio-seconds)
 STATE ended <reason>          (duration | stopped | meeting_ended | removed | owner_left |
                               meeting_ended_<MeetingEndReason>)
 STATE failed <reason>         (owner_not_joined | sdk_auth_<n> | join_failed_<MeetingFailCode> | ...)
@@ -133,8 +141,9 @@ What lane 0A found on 2026-10-27 (public pages, not legal advice; recheck, they 
   host, co-host, with the host's recording permission, or with a host-issued
   local-recording join token
   ([forum](https://devforum.zoom.us/t/pricing-feasibility-validation-rtms-vs-linux-sdk-for-external-meeting-capture/141332)).
-  The bot never asks (owner's rule), so in other people's meetings expect `STATE recording
-  no_audio` unless the host grants recording on their own. Verify on the real run.
+  The bot asks once (owner's decision) and waits in `STATE waiting_permission` until the
+  host allows it. Test B records the prompt, Deny, a later grant and whether the owner as
+  co-host can grant.
 
 To fill in (date and where each answer came from):
 
@@ -145,7 +154,8 @@ To fill in (date and where each answer came from):
 | OBF: joins another account's meeting while the owner is in it? (test B) | ____ | ____ |
 | OBF: SDK error while the owner isn't in yet (`LOG meeting status ... result N`), and the API answer when fetching a token before he joins | ____ | ____ |
 | OBF: dropped when the owner leaves? after how many seconds, which end code? (test B) | ____ | ____ |
-| Does Zoom deliver raw audio to the bot without any recording permission? (test B) | ____ | ____ |
+| Recording request: the prompt the host sees; Allow → first audio in seconds; Deny then a later grant works? Can the owner as co-host grant? (test B) | ____ | ____ |
+| Does the privilege callback fire on a grant, or did the 15 s retry start the recording? (`LOG record privilege changed` / `LOG recording request answer`) | ____ | ____ |
 | Own-account meetings: JWT only, no token? (test A) | ____ | ____ |
 | "Only authenticated users can join": OBF joins? (test D; ZAK only if Later was done) | ____ | ____ |
 | Domain-restricted authentication: OBF joins? (test D, if it could be set) | ____ | ____ |
@@ -165,9 +175,14 @@ hosted from a second Zoom account (not the owner's), the bot joining on behalf o
 | Owner joins: bot joins within how many seconds? | ____ |
 | How "Athena" shows in the host's participant list (name, any "app" / "on behalf of <owner>" label, avatar) | ____ |
 | Any banner, notice or prompt the host or participants see when Athena joins | ____ |
-| Any recording prompt shown to the host (the bot never requests one; expect none) | ____ |
-| Did raw audio arrive? (`participants.json` bytes > 0 / `STATE recording no_audio`) | ____ |
-| `CanStartRawRecording` result logged (`LOG raw audio not allowed by Zoom (...=N)`) | ____ |
+| `CanStartRawRecording` result when in (`LOG raw audio not allowed yet (...=N)`), then `STATE waiting_permission` | ____ |
+| Zoom's recording prompt on the host's screen: exact text and buttons | ____ |
+| Host clicks Allow: seconds from the click to `STATE recording` and to the first audio (`first_audio` in `participants.json`) | ____ |
+| Which callback fired: `LOG recording request answer: N` / `LOG record privilege changed: yes`, or only the 15 s retry | ____ |
+| Host clicks Deny (second run): `STATE waiting_permission denied`, the bot stays? | ____ |
+| After Deny, the host allows Athena from the participant menu: `STATE recording`? how found in the menu | ____ |
+| Owner made co-host, host ignores the prompt (third run): does the owner see the prompt, can he allow it? | ____ |
+| Audio arrived once recording? (`participants.json` bytes > 0, not `STATE recording no_audio`) | ____ |
 | Waiting room: did the host have to admit Athena? | ____ |
 | Chat events arrived (`chat.jsonl` lines)? | ____ |
 | Owner leaves: `STATE ended owner_left`? after how many seconds? end code in `LOG session ended by Zoom, code N` | ____ |
@@ -253,7 +268,7 @@ reliable. Decision: ____
 recording = process start to the first `STATE recording` line). Test A: own meeting, 2–3
 fictional participants talking most of the time.
 
-| Run | Duration (min) | CPU avg % | CPU peak % | Peak RSS MB | Start → recording s | Left behind |
+| Run | Duration (min) | CPU avg % | CPU peak % | Peak RSS MB | Start → in meeting s | Left behind |
 | --- | --- | --- | --- | --- | --- | --- |
 | cpp, test A | ____ | ____ | ____ | ____ | ____ | ____ |
 | python, test A | ____ | ____ | ____ | ____ | ____ | ____ |
@@ -292,6 +307,8 @@ reading fictional lines, whisper.cpp `base.en` on CPU, jiwer: WAV 6.5 %, Opus 32
 - [ ] Joins another account's meeting via OBF while the owner is in it (test B), waits
       while he isn't yet, and ends with `owner_left` when he leaves: ____
 - [ ] Test D: authenticated-only meetings work with OBF: ____
+- [ ] Recording request: sent once, Allow → recording, Deny → keeps waiting, a later grant
+      → recording; the fallback retry catches a grant if the callback doesn't fire: ____
 - [ ] Known limit accepted: registration-required meetings need a registration link for Athena: ____
 
 ## 9. Decision
@@ -420,7 +437,9 @@ docker rm athena-spike; docker ps; ss -tlnp | grep -c athena || true
 cat ~/athena-spike/out/participants.json; wc -l ~/athena-spike/out/chat.jsonl
 ```
 
-Expected: `STATE recording` within seconds of the host admitting Athena, a
+Expected: `STATE waiting_permission` within seconds of admitting Athena (you are the
+host, the bot a guest): Zoom shows you the recording prompt; click Allow, then `STATE
+recording`. Then a
 `track-<id>.pcm` per participant with their names in `participants.json`, the chat lines
 someone typed in `chat.jsonl`, `STATE ended duration` after 30 minutes, a row in
 `results/measurements.md` with "Left behind: none", and no container or socket left. If
@@ -479,21 +498,29 @@ run_obf test-b --minutes 15 --owner-wait-seconds 300
 
 Expected: `LOG joining with obf`, then `STATE starting waiting_for_owner` while you are out
 (note the `LOG meeting status ... result N` code). Within a few seconds of your rejoining:
-`STATE waiting_room` until the host admits Athena, then `STATE recording` (or `STATE
-recording no_audio` if Zoom delivers no audio without recording rights). Fill § 2: what
-the host sees (name, any "on behalf of" label, banners, prompts; don't grant recording, the
-bot never asks), whether `participants.json` shows bytes, chat lines. After a few minutes
+`STATE waiting_room` until the host admits Athena, then `STATE waiting_permission`: the
+host sees Zoom's recording prompt (the bot asks once). Note the prompt's text and the clock
+time, have the host click **Allow**, and note the time again: expect `STATE recording`.
+Fill § 2: what the host sees (name, any "on behalf of" label, banners, the prompt), the
+seconds from Allow to `STATE recording` and to `first_audio` in `participants.json`, which
+`LOG` line started the recording (callback or 15 s retry), chat lines. After a few minutes
 leave the meeting again: expect `STATE ended owner_left` (note how many seconds it took and
 the `LOG session ended by Zoom, code N` line; Phase 1 matches that code exactly). If the
 bot couldn't join after you rejoined, the token may have died when you left: fetch a fresh
 one while in the meeting and rerun, and note it in § 2.
 
-Then two short runs in a new meeting from the same host account:
+Then shorter runs in a new meeting from the same host account:
 
 ```bash
 MID=<new meeting id>; PW=<passcode>
-# you in the meeting, fresh token; then the HOST ends the meeting: expect STATE ended meeting_ended
 export ATHENA_ZOOM_JOIN_TOKEN=$(obf_token "$MID" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+# Deny, then a later grant: the host clicks Deny (expect `STATE waiting_permission denied`,
+# the bot stays), waits a minute, then allows Athena from the participant list (Athena →
+# More → allow record; note where it was): expect `STATE recording`. No second prompt.
+run_obf test-b-deny --minutes 6
+# co-host: the host makes you co-host and ignores the prompt; do you see it, can you allow?
+run_obf test-b-cohost --minutes 4
+# you in the meeting; then the HOST ends the meeting: expect STATE ended meeting_ended
 run_obf test-b-end --minutes 10
 # you leave and stay out: expect STATE failed owner_not_joined after 60 s
 run_obf test-b-wait --minutes 5 --owner-wait-seconds 60
@@ -581,7 +608,8 @@ docker run --rm --init -e CONVO_ZOOM_SDK_KEY -e CONVO_ZOOM_SDK_SECRET \
   | tee ~/athena-spike/out/test-c.log
 ```
 
-Record whether it joins, what the host sees, whether audio arrives and any error code;
+Record whether it joins, what the host sees (including the recording prompt, as in step
+9; have the host allow it), whether audio arrives and any error code;
 then end the meeting from the host (expect `STATE ended meeting_ended`).
 
 **L3. Test D with ZAK.** On the authenticated-only meeting of step 10, owner absent, run the
