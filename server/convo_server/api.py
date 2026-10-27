@@ -4,6 +4,7 @@ Device ingestion:
     POST /v1/ingest/chunk          multipart audio chunk -> {"ok", "stop", ...}
                                    (optional track, track_name: one participant's audio)
     POST /v1/sessions/{id}/end     device pressed Stop
+    POST /v1/sessions/{id}/chat    a meeting's chat, topic and participants (Zoom bot)
 Written notes (the hub's handwritten notes, reviewed text):
     POST   /v1/ingest/text         JSON {source_id, text, written_at, link, title?}
     DELETE /v1/ingest/text/{source_id}
@@ -32,7 +33,17 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import numpy as np
-from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Query
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+)
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -93,6 +104,10 @@ def _conv_out(c: dict[str, Any], settings: Settings) -> dict[str, Any]:
             item["source_at"] = iso(src)
             if src is not None:
                 item["source_url"] = transcript_link(settings, c["id"], src - c["started_at"])
+    if out.get("meeting"):
+        out["meeting"] = {**out["meeting"], "participants": [
+            {**p, "joined_at": iso(p["joined_at"]), "left_at": iso(p["left_at"])}
+            for p in out["meeting"]["participants"]]}
     for item in out.get("action_items", []):
         item["created_at"] = iso(item.get("created_at"))
         item["time_unclear"] = bool(item.get("time_unclear"))
@@ -293,6 +308,45 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
             raise HTTPException(404, "session not found")
         return {"ok": True, "stop": True}
 
+    @v1.post("/sessions/{session_id}/chat")
+    async def session_chat(session_id: str, request: Request) -> dict[str, Any]:
+        """A meeting's chat lines, topic and participants, sent by the Zoom bot when the
+        meeting ends (``convo_server/meeting_chat.py``, imported on the first call).
+        Idempotent: resent lines are not added twice."""
+        import json
+
+        from pydantic import ValidationError
+
+        from . import meeting_chat as mc
+
+        if int(request.headers.get("content-length") or 0) > mc.MAX_CHAT_BYTES:
+            raise HTTPException(413, f"body is larger than {mc.MAX_CHAT_BYTES} bytes")
+        body = bytearray()
+        async for part in request.stream():
+            body += part
+            if len(body) > mc.MAX_CHAT_BYTES:
+                raise HTTPException(413, f"body is larger than {mc.MAX_CHAT_BYTES} bytes")
+        try:
+            raw = json.loads(body or b"{}")
+            mc.check_size(raw)
+            payload = mc.ChatIn.model_validate(raw)
+        except mc.TooLarge as e:
+            raise HTTPException(413, str(e)) from e
+        except ValueError as e:  # bad JSON, or a ValidationError
+            detail = e.errors(include_url=False) if isinstance(e, ValidationError) \
+                else "body must be JSON"
+            raise HTTPException(422, detail) from e
+        try:
+            out = await run_in_threadpool(mc.ingest_chat, pipeline, session_id, payload)
+        except KeyError as e:
+            raise HTTPException(404, "session not found") from e
+        except mc.NotAMeeting as e:
+            raise HTTPException(409, "not a meeting: the session has no tracks and its "
+                                     "device is not zoom") from e
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, "session_id": session_id, **out}
+
     @v1.get("/sessions")
     def list_sessions(limit: int = 50) -> dict[str, Any]:
         rows = store.list_sessions(limit)
@@ -347,7 +401,8 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
             if (start is not None and off < start) or (end is not None and off > end):
                 continue
             segs.append({"offset": round(off, 1), "at": iso(s.started_at),
-                         "speaker": s.speaker, "is_owner": s.is_owner, "text": s.text})
+                         "speaker": s.speaker, "is_owner": s.is_owner, "text": s.text,
+                         "kind": s.kind})
         return {"conversation_id": conv_id, "title": c["title"],
                 "started_at": iso(origin), "segments": segs}
 
