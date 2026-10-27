@@ -14,7 +14,9 @@
 // messages to chat.jsonl; leaves after --minutes, when the meeting ends, when removed, or
 // on SIGINT/SIGTERM. It never asks for recording permission, posts nothing in chat and
 // takes no commands from participants (owner's rule). If Zoom delivers no raw audio it
-// stays in the meeting and says `STATE recording no_audio`.
+// stays in the meeting and says `STATE recording no_audio`. Meetings in other accounts:
+// ATHENA_ZOOM_JOIN_TOKEN holds Athena's own account's ZAK (ATHENA_ZOOM_JOIN_TOKEN_KIND=zak,
+// default) or an on-behalf-of token from the owner (kind obf, only while he is there).
 //
 // Status lines on stdout, one per change (measure.sh and later the launcher read them):
 //   STATE starting | waiting_room | recording | recording no_audio | ended <reason> |
@@ -61,8 +63,13 @@ struct Options {
     std::string name = "Athena";
     std::string out_dir = "out";
     std::string jwt;              // env ATHENA_SPIKE_JWT (from sign_jwt.py)
-    std::string obf_token;        // env ATHENA_SPIKE_OBF_TOKEN: on-behalf-of token (other accounts)
-    std::string zak;              // env ATHENA_SPIKE_ZAK: join as the signed-in owner (optional)
+    // env ATHENA_ZOOM_JOIN_TOKEN (the name lane 1B's launcher passes) with
+    // ATHENA_ZOOM_JOIN_TOKEN_KIND: "zak" (default) = ZAK of Athena's own Zoom account, the
+    // primary path for other accounts' meetings, no one else needs to be there; "obf" =
+    // on-behalf-of token from the owner's account, fallback, works only while the owner is
+    // in the meeting. Empty: JWT only (meetings in the app owner's own account).
+    std::string join_token;
+    std::string join_token_kind = "zak";
     std::string recording_token;  // env ATHENA_SPIKE_RECORDING_TOKEN: host-issued local-recording
                                   // join token, only if the host chose to give one
     int minutes = 30;
@@ -398,7 +405,8 @@ public:
             case MEETING_STATUS_INMEETING: on_joined(); break;
             case MEETING_STATUS_FAILED:
                 // result is a MeetingFailCode, e.g. MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING
-                // when an OBF token's user is not in the meeting (SDK >= 6.6.10).
+                // when an OBF token's user is not in the meeting (SDK >= 6.6.10), or an
+                // auth error when Zoom refuses the ZAK (what test C finds out).
                 fail("join_failed_" + std::to_string(result));
                 break;
             case MEETING_STATUS_ENDED:
@@ -433,9 +441,11 @@ void join() {
     p.webinarToken = nullptr;
     p.isVideoOff = true;   // never send video
     p.isAudioOff = false;  // audio must be on to receive raw audio
-    p.userZAK = g_opt.zak.empty() ? nullptr : g_opt.zak.c_str();
+    bool has_token = !g_opt.join_token.empty();
+    p.userZAK = has_token && g_opt.join_token_kind == "zak" ? g_opt.join_token.c_str() : nullptr;
     p.app_privilege_token = g_opt.recording_token.empty() ? nullptr : g_opt.recording_token.c_str();
-    p.onBehalfToken = g_opt.obf_token.empty() ? nullptr : g_opt.obf_token.c_str();
+    p.onBehalfToken = has_token && g_opt.join_token_kind == "obf" ? g_opt.join_token.c_str() : nullptr;
+    log(std::string("joining with ") + (has_token ? g_opt.join_token_kind : "jwt only"));
     // Newer SDKs also have p.eAudioRawdataSamplingRate (32 kHz default); left as is. The
     // real rate is written to participants.json from each packet.
     if (g_settings) {
@@ -472,8 +482,9 @@ const char* env_or(const char* name, const char* def) {
 void usage() {
     std::cerr << "usage: athena-meeting-spike --meeting-id ID --passcode PW [--name Athena]\n"
                  "         [--minutes 30] [--out DIR] [--no-audio-seconds 60]\n"
-                 "env: ATHENA_SPIKE_JWT (required, from sign_jwt.py), ATHENA_SPIKE_OBF_TOKEN,\n"
-                 "     ATHENA_SPIKE_ZAK, ATHENA_SPIKE_RECORDING_TOKEN (all optional)\n";
+                 "env: ATHENA_SPIKE_JWT (required, from sign_jwt.py)\n"
+                 "     ATHENA_ZOOM_JOIN_TOKEN + ATHENA_ZOOM_JOIN_TOKEN_KIND=zak|obf (default zak)\n"
+                 "     ATHENA_SPIKE_RECORDING_TOKEN (host-issued, optional)\n";
 }
 
 bool parse(int argc, char** argv) {
@@ -489,8 +500,9 @@ bool parse(int argc, char** argv) {
         else return false;
     }
     g_opt.jwt = env_or("ATHENA_SPIKE_JWT", "");
-    g_opt.obf_token = env_or("ATHENA_SPIKE_OBF_TOKEN", "");
-    g_opt.zak = env_or("ATHENA_SPIKE_ZAK", "");
+    g_opt.join_token = env_or("ATHENA_ZOOM_JOIN_TOKEN", "");
+    g_opt.join_token_kind = env_or("ATHENA_ZOOM_JOIN_TOKEN_KIND", "zak");
+    if (g_opt.join_token_kind != "zak" && g_opt.join_token_kind != "obf") return false;
     g_opt.recording_token = env_or("ATHENA_SPIKE_RECORDING_TOKEN", "");
     return !g_opt.meeting_id.empty() && !g_opt.jwt.empty() && g_opt.minutes > 0 &&
            g_opt.no_audio_seconds > 0;

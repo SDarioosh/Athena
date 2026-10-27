@@ -19,6 +19,10 @@ recording permission and never posts in chat. Prints the same STATE lines.
 
     ATHENA_SPIKE_JWT=$(python3 ../sign_jwt.py) python3 athena_spike.py \
         --meeting-id 81234567890 --passcode xxxxxx --minutes 30 --out out-py
+
+Meetings in other accounts: set ATHENA_ZOOM_JOIN_TOKEN to Athena's own account's ZAK
+(ATHENA_ZOOM_JOIN_TOKEN_KIND=zak, the default) or to an on-behalf-of token from the owner's
+account (ATHENA_ZOOM_JOIN_TOKEN_KIND=obf, works only while the owner is in the meeting).
 """
 
 from __future__ import annotations
@@ -47,6 +51,13 @@ def say(state: str, _last: list[str] = [""]) -> None:  # noqa: B006 (deliberate 
 
 def log(msg: str) -> None:
     print(f"LOG {msg}", flush=True)
+
+
+def join_token() -> tuple[str, str]:
+    kind = os.environ.get("ATHENA_ZOOM_JOIN_TOKEN_KIND", "zak") or "zak"
+    if kind not in ("zak", "obf"):
+        raise SystemExit("ATHENA_ZOOM_JOIN_TOKEN_KIND must be zak or obf")
+    return os.environ.get("ATHENA_ZOOM_JOIN_TOKEN", ""), kind
 
 
 def iso(ts: float) -> str:
@@ -112,11 +123,15 @@ class Bot:
         p.isAudioOff = False
         p.isAudioRawDataStereo = False
         p.isMyVoiceInMix = False
-        for env, field in (("ATHENA_SPIKE_OBF_TOKEN", "onBehalfToken"),
-                           ("ATHENA_SPIKE_ZAK", "userZAK"),
-                           ("ATHENA_SPIKE_RECORDING_TOKEN", "app_privilege_token")):
-            if os.environ.get(env):
-                setattr(p, field, os.environ[env])
+        # ATHENA_ZOOM_JOIN_TOKEN (lane 1B's name): kind "zak" (default) = Athena's own Zoom
+        # account, primary for other accounts' meetings; "obf" = on behalf of the owner,
+        # fallback, only while the owner is in the meeting. Empty: JWT only.
+        token, kind = join_token()
+        if token:
+            setattr(p, "userZAK" if kind == "zak" else "onBehalfToken", token)
+        log(f"joining with {kind if token else 'jwt only'}")
+        if os.environ.get("ATHENA_SPIKE_RECORDING_TOKEN"):  # host-issued, optional
+            p.app_privilege_token = os.environ["ATHENA_SPIKE_RECORDING_TOKEN"]
         self.settings.GetAudioSettings().EnableAutoJoinAudio(True)
         err = self.meeting.Join(jp)
         if err != zoom.SDKERR_SUCCESS:
@@ -282,6 +297,7 @@ def main() -> int:
     ap.add_argument("--out", default="out-py")
     ap.add_argument("--no-audio-seconds", type=int, default=60)
     args = ap.parse_args()
+    join_token()  # fail early on a bad kind
     if not os.environ.get("ATHENA_SPIKE_JWT"):
         print("set ATHENA_SPIKE_JWT (python3 ../sign_jwt.py)", file=sys.stderr)
         return 2
