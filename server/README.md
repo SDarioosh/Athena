@@ -326,7 +326,7 @@ timer or poller. Same bearer token as every route.
 | `POST /v1/meetings` JSON `{"url": "<Zoom link>"}` or `{"meeting_id": "123 4567 8901", "passcode": "…"}`, optional `"title"` (≤ 200) | `202 {"id", "state": "starting", "session_id"}`; `503 {"detail": "zoom_signin_needed", "message"}` when the join token mode needs Athena's Zoom sign-in and it is missing or expired (the message says to run `convo-server zoom-login`); `502 {"detail": "zoom_unavailable", "message"}` when Zoom's API can't be reached; `400 {"detail"}` for a link that isn't a Zoom meeting or a bad body (`detail` is always a message string, e.g. `title is longer than 200 characters`; a title is stripped first); `413 {"detail"}` for a body over 16 KB; `409 {"detail": "busy", "message", "active": "<meeting id>"}` when `CONVO_MEETING_BOT_MAX` bots are active; `501 {"detail"}` when meetings are off (`CONVO_MEETING_BOT_PATH` unset or not executable, no SDK key/secret, a bad meeting setting); `500` when the bot can't be started |
 | `GET /v1/meetings/{id}` | `{"id", "state", "reason", "active", "session_id", "meeting_id", "title", "join_token_kind" (`zak`, `obf` or `none`), "created_at", "started_at", "ended_at"}` (ISO-8601; `started_at` = first recording); 404 |
 | `GET /v1/meetings?limit=20` | `{"meetings": [...]}`, newest first (the current one, if any, is first) |
-| `DELETE /v1/meetings/{id}` | the bot leaves: SIGTERM, it flushes and ends the session; SIGKILL after 10 s. Answers once it exited, with the row (`ended`, `stopped`). Idempotent; 404 |
+| `DELETE /v1/meetings/{id}` | the bot leaves: SIGTERM, it flushes and ends the session; SIGKILL after 10 s. Answers once it exited, with the final row (`ended`, `stopped`; never `active` for a bot that exited), within about 15 s. Idempotent; 404 |
 
 States: `starting` → `waiting_room` → `waiting_permission` → `recording` → `ended` or
 `failed`, each with a `reason` where it helps. `waiting_permission`: Zoom gives raw audio
@@ -358,8 +358,11 @@ webinars `/w/` (not yet), registration and host start (`/s/`) links, Zoom for Go
 **Safety caps.** With `CONVO_MEETING_BOT_RUNNER=auto` (default) the first join checks once
 whether `systemd-run --user --scope` works. If so: `systemd-run --user --scope --quiet
 --collect --unit=athena-meeting-<id> -p CPUQuota=$CONVO_MEETING_BOT_CPU -p
-MemoryMax=$CONVO_MEETING_BOT_MEMORY -p RuntimeMaxSec=<CONVO_MAX_SESSION_SECONDS + 60> nice
--n 10 <bot> …`. Else (Docker, background runner) the bot runs in its own process group at
+MemoryMax=$CONVO_MEETING_BOT_MEMORY -p RuntimeMaxSec=<CONVO_MAX_SESSION_SECONDS + 90> nice
+-n 10 <bot> …`. The launcher itself stops the bot at `CONVO_MAX_SESSION_SECONDS` + 60 s
+(SIGTERM, SIGKILL 10 s later, `ended`/`max_duration`); systemd's limit, 30 s after that,
+is only a backstop, and a bot it kills after its max duration is `max_duration` too, not
+`bot_crashed`. Else (Docker, background runner) the bot runs in its own process group at
 `nice 10` with `RLIMIT_AS` = `CONVO_MEETING_BOT_MEMORY` (no CPU cap), and the launcher
 stops it at the same lifetime. When the bot exits, anything it left in its process group
 (and the scope) is killed and its work dir is removed.

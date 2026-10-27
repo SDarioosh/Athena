@@ -54,6 +54,12 @@ def main() -> int:
         wait_for_term()
         say("ended stopped")
         return 0
+    if mode == "longline":  # an over-long log line, its tail written a moment later
+        sys.stdout.write("INFO " + "x" * 5000)
+        sys.stdout.flush()
+        time.sleep(0.3)
+        sys.stdout.write("STATE failed injected\n")
+        sys.stdout.flush()
     print("SDK: hello, this line is not a status line", flush=True)
     say("waiting_room")
     time.sleep(0.1)
