@@ -172,6 +172,21 @@ def test_owner_chat_is_the_owners_line(pipeline, client):
     assert (line.speaker, line.is_owner) == ("Me", True)
 
 
+def test_owner_chat_without_a_voice_keeps_convo_owner_name(pipeline, client):
+    # owner request (QA BUG-07 follow-up): no owner voice; owner chat (with and without a
+    # track) is named CONVO_OWNER_NAME, the owner person too, the Zoom name an alias
+    pipeline.store._conn.execute("DELETE FROM speakers")
+    pipeline.store._conn.execute("DELETE FROM people")
+    pipeline.settings.owner_name = "Shahyah"
+    upload(pipeline, tracks=(ALICE, BO))
+    chat(client, {"lines": [{"at": T0 + 3, "from": "Cleo Example", "zoom_user_id": CLEO[0],
+                             "text": "Agenda is in the doc"}]})
+    line = next(s for s in process(pipeline) if s.kind == CHAT)
+    assert (line.speaker, line.is_owner) == ("Shahyah", True)
+    owners = [p for p in pipeline.store.people() if p["is_owner"]]
+    assert [p["name"] for p in owners] == ["Shahyah"] and "Cleo Example" in owners[0]["aliases"]
+
+
 def test_chat_after_processing_is_attached_and_resummarized(pipeline, client, llm_log):
     upload(pipeline)
     process(pipeline)
