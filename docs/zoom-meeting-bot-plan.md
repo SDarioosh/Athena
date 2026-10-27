@@ -298,11 +298,11 @@ skips pyannote for normal participants. Depends on Phase 1C.
 
 **Lane 2B, names to people (`speakers.py`, `people` table):**
 
-- [ ] Clean display names (drop "(he/him)", "| Company", device suffixes); match against
+- [x] Clean display names (drop "(he/him)", "| Company", device suffixes); match against
       people names and aliases; an unknown name becomes a new named speaker.
-- [ ] Key participants by Zoom user id, so one person who renames mid-meeting stays one
+- [x] Key participants by Zoom user id, so one person who renames mid-meeting stays one
       person.
-- [ ] `rename_speaker_everywhere` keeps working; the Zoom display name is kept as an alias.
+- [x] `rename_speaker_everywhere` keeps working; the Zoom display name is kept as an alias.
 
 **Lane 2C, learning voices (on by default, owner's decision):**
 
