@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import stat
+import time
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -154,7 +155,7 @@ def test_login_stores_refresh_token_0600(zsettings, zoom) -> None:
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
     assert _stored(zsettings) == "refresh-1"
     assert list(path.parent.iterdir()) == [path]  # no temp file left
-    assert zoom_signin.join_mode(zsettings) == "zak"  # auto: zak once signed in
+    assert zoom_signin.join_mode(zsettings) == "obf"  # auto: obf once signed in
 
 
 def test_login_bad_code(zsettings, zoom) -> None:
@@ -264,7 +265,7 @@ def _join(client, tmp_path, settings, mode: str = "record"):
 
 
 @pytest.mark.parametrize("mode, kind, token", [
-    ("auto", "zak", "fictional-zak"), ("zak", "zak", "fictional-zak"),
+    ("auto", "obf", "fictional-obf-81234567890"), ("zak", "zak", "fictional-zak"),
     ("obf", "obf", "fictional-obf-81234567890")])
 def test_join_passes_token_by_env(zclient, zsettings, zoom, tmp_path, mode, kind,
                                   token) -> None:
@@ -349,3 +350,56 @@ def test_no_network_without_a_meeting(zclient, zsettings, zoom) -> None:
     for path in ("/v1/meetings", "/v1/sessions", "/health"):
         zclient.get(path)
     assert zoom.calls == []
+
+
+def test_auto_is_obf_once_signed_in(zsettings) -> None:
+    assert zsettings.zoom_join_token == "auto"
+    assert zoom_signin.join_mode(zsettings) == "none"
+    _signed_in(zsettings)
+    assert zoom_signin.join_mode(zsettings) == "obf"
+    zsettings.zoom_join_token = "zak"  # still selectable
+    assert zoom_signin.join_mode(zsettings) == "zak"
+
+
+def test_waiting_for_owner_then_leave(zclient, zsettings, tmp_path) -> None:
+    _signed_in(zsettings)
+    r, rep = _join(zclient, tmp_path, zsettings, "owner")
+    mid = r.json()["id"]
+    _report(rep)
+    row = _wait(zclient, mid, "starting")
+    deadline = time.monotonic() + 5
+    while row["reason"] != "waiting_for_owner":
+        assert time.monotonic() < deadline, row
+        row = zclient.get(f"/v1/meetings/{mid}").json()
+    assert row["state"] == "starting" and row["active"] and row["join_token_kind"] == "obf"
+    out = zclient.delete(f"/v1/meetings/{mid}").json()
+    assert (out["state"], out["reason"]) == ("ended", "stopped")
+
+
+def test_owner_never_joined(zclient, zsettings, tmp_path) -> None:
+    _signed_in(zsettings)
+    r, _ = _join(zclient, tmp_path, zsettings, "noowner")
+    row = _wait(zclient, r.json()["id"], "failed", "ended")
+    assert (row["state"], row["reason"]) == ("failed", "owner_not_joined")
+    assert row["started_at"] is None
+
+
+def test_owner_left(zclient, zsettings, tmp_path) -> None:
+    _signed_in(zsettings)
+    r, _ = _join(zclient, tmp_path, zsettings, "ownerleft")
+    row = _wait(zclient, r.json()["id"], "failed", "ended")
+    assert (row["state"], row["reason"]) == ("ended", "owner_left")
+
+
+@pytest.mark.parametrize("mode, wait", [("obf", 7200 - 300), ("zak", 7200 - 300),
+                                        ("none", 10_000)])
+def test_wait_capped_below_token_lifetime(zclient, zsettings, tmp_path, mode,
+                                          wait) -> None:
+    """A join token lasts about 2 h: the bot's wait (waiting room, owner) ends before."""
+    _signed_in(zsettings)
+    zsettings.zoom_join_token = mode
+    zsettings.meeting_waiting_room_seconds = 10_000
+    r, rep = _join(zclient, tmp_path, zsettings)
+    argv = _report(rep)["argv"]
+    assert argv[argv.index("--waiting-room-seconds") + 1] == str(wait)
+    zclient.delete(f"/v1/meetings/{r.json()['id']}")
