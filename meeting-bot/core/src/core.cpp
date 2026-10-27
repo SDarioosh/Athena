@@ -138,7 +138,6 @@ struct Core::Impl {
 
   void upload_loop() {
     auto backoff = std::chrono::duration_cast<Clock::duration>(kBackoffFirst);
-    Clock::time_point next_try{};
     std::unique_lock<std::mutex> lk(q_mu);
     for (;;) {
       while (!must_stop() && (queue.empty() || Clock::now() < next_try)) {
@@ -233,6 +232,7 @@ struct Core::Impl {
   size_t uploaded = 0, dropped = 0;
   std::map<std::string, int> chunks_per_track;
   bool uploader_done = false;
+  Clock::time_point next_try{};  // backoff: no upload before this; finish() resets it
 
   std::atomic<bool> stop{false};
   std::atomic<int64_t> cutoff_ns{0};  // steady clock; 0 = none
@@ -317,6 +317,7 @@ bool Core::finish(std::chrono::steady_clock::time_point deadline) {
   {
     std::unique_lock<std::mutex> lk(d.q_mu);
     d.cutoff_ns.store(std::max<int64_t>(1, chunk_cutoff.time_since_epoch().count()));
+    d.next_try = {};  // one more try now, not after a long backoff
     d.q_cv.notify_all();
     d.q_cv.wait_until(lk, chunk_cutoff,
                       [&] { return d.queue.empty() || d.uploader_done; });
@@ -346,7 +347,8 @@ bool Core::finish(std::chrono::steady_clock::time_point deadline) {
     const HttpResponse r = d.http.post_json(
         join_url(d.cfg.upload_url, "/v1/sessions/" + sid + "/chat"), d.cfg.upload_token,
         body, ms_until(chat_cutoff), [&] { return Clock::now() >= chat_cutoff; });
-    chat_ok = r.status == 200;
+    // Nothing was ever uploaded: the server has no such session (404), nothing to add to.
+    chat_ok = r.status == 200 || (r.status == 404 && uploaded == 0);
     if (!chat_ok)
       logf("chat call failed: %s %s",
            r.status ? ("HTTP " + std::to_string(r.status)).c_str() : r.error.c_str(),
@@ -355,7 +357,6 @@ bool Core::finish(std::chrono::steady_clock::time_point deadline) {
   const HttpResponse r = d.http.post_json(
       join_url(d.cfg.upload_url, "/v1/sessions/" + sid + "/end"), d.cfg.upload_token, "",
       ms_until(deadline), [&] { return Clock::now() >= deadline; });
-  // Nothing was ever uploaded: the server has no such session, nothing to end.
   const bool end_ok = r.status == 200 || (r.status == 404 && uploaded == 0);
   if (!end_ok)
     logf("end call failed: %s",

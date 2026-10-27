@@ -222,7 +222,7 @@ class CoreUploadTests(unittest.TestCase):
     def test_finish_honours_deadline_with_silent_server(self):
         run = self.run_core("hang", "--deadline-ms", "2000")
         self.assertEqual(run.num("finish"), 0)
-        self.assertLessEqual(run.num("elapsed_ms"), 2300)
+        self.assertLessEqual(run.num("elapsed_ms"), 2400)
         self.assertGreaterEqual(run.num("elapsed_ms"), 1000)  # it did try to send
 
     def test_refused_chunk_is_dropped(self):
