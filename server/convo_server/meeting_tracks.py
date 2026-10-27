@@ -16,8 +16,9 @@ participant's: no diarizer, no speaker embedder. Then:
   several people. The configured diarizer runs on that track only; its unnamed voices become
   "Speaker N" (numbered across the meeting) with stored voices, so ``name_speaker`` and
   ``list_unnamed_speakers`` work on them as on any recording.
-* **Owner**: a track named in ``CONVO_ZOOM_OWNER_NAMES`` is the owner's
-  (``is_owner=true``), named as the owner is everywhere else.
+* **Owner**: a track named CONVO_OWNER_NAME or in ``CONVO_ZOOM_OWNER_NAMES``
+  (``Settings.zoom_owner_name_list``) is the owner's (``is_owner=true``), named as the
+  owner is everywhere else (enrolled owner voice, else CONVO_OWNER_NAME).
 
 Imported only by ``Pipeline._transcribe_session`` for a session that has tracks, so a
 server that never sees a meeting never loads this module.
@@ -84,7 +85,8 @@ def _same_name(a: str, b: str) -> bool:
 
 
 def track_speaker(store: Store, track_info: dict[str, Any],
-                  owner_names: Sequence[str]) -> tuple[str, bool]:
+                  owner_names: Sequence[str], *,
+                  owner_display: str | None = None) -> tuple[str, bool]:
     """Who a track's lines belong to: (speaker name for its segments, is_owner).
 
     The one place a track becomes a speaker. Lane 2B's ``meeting_names.speaker_for_track``
@@ -92,10 +94,13 @@ def track_speaker(store: Store, track_info: dict[str, Any],
     and their aliases (creating a person when it is new) and keeps every display name as
     an alias. An empty name means the track has no person's name (a device, a room or
     nothing); the caller numbers it "Speaker N" or diarizes it as a shared room.
+    ``owner_display`` is the owner's canonical name (``store.owner_name() or
+    CONVO_OWNER_NAME``): an owner track is named by it, never by its Zoom name.
     """
     from .meeting_names import speaker_for_track
 
-    return speaker_for_track(store, {**track_info, "placeholder": ""}, owner_names)
+    return speaker_for_track(store, {**track_info, "placeholder": ""}, owner_names,
+                             owner_display=owner_display)
 
 
 def _room_track(info: dict[str, Any], owner_names: Sequence[str]) -> bool:
@@ -212,11 +217,12 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
     # tracks in order of first audio; chunks without a track (none from the bot) last
     order = sorted(by_track, key=lambda t: (t == "", infos.get(t, {}).get("started_at", 0.0),
                                             t))
-    who = {t: track_speaker(store, infos.get(t, {"track": t, "name": None}), owner_names)
-           for t in order if t}
-    # after naming the tracks: an owner track matched by CONVO_ZOOM_OWNER_NAMES makes the
-    # owner's person when no owner voice is enrolled, and the lines take its name (QA BUG-07)
+    # the owner's one name (QA BUG-07, owner request): the enrolled owner voice's, else
+    # CONVO_OWNER_NAME, never a Zoom name; an owner track's Zoom names become aliases
     owner_display = store.owner_name() or cfg.owner_name
+    who = {t: track_speaker(store, infos.get(t, {"track": t, "name": None}), owner_names,
+                            owner_display=owner_display)
+           for t in order if t}
     prompt = pipeline.whisper_prompt()
     if cfg.whisper_prompt_names:
         prompt = meeting_prompt(prompt, [n for t, (n, _) in who.items()
