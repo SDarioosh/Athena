@@ -117,6 +117,16 @@ def _room_track(info: dict[str, Any], owner_names: Sequence[str]) -> bool:
                for n in names)
 
 
+def is_room_track(info: dict[str, Any], owner_names: Sequence[str]) -> bool:
+    """The one rule for a shared-room track, the end pass's and live work's: any display
+    name it ever had is a room or a device (``_room_track``), and it isn't the owner's
+    track (one of its names is one of ``owner_names``)."""
+    from .meeting_names import _is_owner_track, _track_names
+
+    return _room_track(info, owner_names) and not _is_owner_track(_track_names(info),
+                                                                  owner_names)
+
+
 @dataclass
 class Line:
     start: float  # epoch seconds
@@ -240,7 +250,7 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str,
         # a shared room: any display name the track ever had is a room or a device
         # ("Conference Room 2", "iPhone", "Zoom user"), other than the owner's own names
         raw = infos.get(track, {}).get("name")
-        shared = not track or (not owner and _room_track(infos.get(track, {}), owner_names))
+        shared = not track or (not owner and is_room_track(infos.get(track, {}), owner_names))
         if not shared:
             got = meeting_live.finish_track(pipeline, session_id, track, by_track[track],
                                             states.get(track), lambda: prompt)

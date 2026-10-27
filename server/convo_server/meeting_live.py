@@ -61,7 +61,7 @@ from .audio import SAMPLE_RATE, AudioDecodeError
 from .clips import Window
 from .diarize import PieceRef, rms_db
 from .meeting_names import clean_display_name
-from .meeting_tracks import is_shared_room, meeting_prompt
+from .meeting_tracks import is_room_track, is_shared_room, meeting_prompt
 from .vad import Span
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -292,12 +292,12 @@ def _fold(st: TrackState, got: list[Piece], audio: RunAudio) -> None:
     st.lines += [_row(p, audio.loudness(p[3])) for p in got]
 
 
-def deferred(info: dict[str, Any]) -> bool:
-    """A track left to the end-of-meeting pass: no person's name in any of its display
-    names and the latest one is a room or a device (``meeting_tracks`` diarizes it over
-    the whole track, so its "Speaker N" numbering stays consistent)."""
-    names = [n for n in (info.get("names") or []) if n] or [info.get("name") or ""]
-    return is_shared_room(info.get("name")) and not any(clean_display_name(n) for n in names)
+def deferred(info: dict[str, Any], owner_names: list[str]) -> bool:
+    """A track left to the end-of-meeting pass: a shared room by the rule that pass uses
+    (``meeting_tracks.is_room_track``: any display name it ever had is a room or a
+    device, owner names excepted; QA BUG-01/15), so it is diarized over the whole track
+    and its "Speaker N" numbering stays consistent."""
+    return is_room_track(info, owner_names)
 
 
 def meeting_whisper_prompt(pipeline: Pipeline, infos: list[dict[str, Any]]) -> str:
@@ -402,6 +402,7 @@ def _session_steps(pipeline: Pipeline, session_id: str) -> list[Iterator[None]]:
     if sess is None or sess["status"] != "recording":
         return []
     infos = store.tracks(session_id)
+    owners = pipeline.settings.zoom_owner_name_list
     states = store.live_states(session_id)
     by_track: dict[str, list[dict[str, Any]]] = {}
     for c in store.chunks(session_id):
@@ -417,7 +418,7 @@ def _session_steps(pipeline: Pipeline, session_id: str) -> list[Iterator[None]]:
     out = []
     for info in infos:
         track = info["track"]
-        if deferred(info) or track not in by_track:
+        if deferred(info, owners) or track not in by_track:
             continue
         runs = plan_runs(by_track[track], final=False)
         st = TrackState.load(states.get(track)) or TrackState()

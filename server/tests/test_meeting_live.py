@@ -584,6 +584,54 @@ def test_room_tracks_wait_for_the_end(pipeline):
     assert {900, 1100} <= set(pipeline.transcriber.voices())
 
 
+def _named_chunks(pipeline, track, names):
+    """One chunk per display name (None: not known yet) on ``track``, a voice in each,
+    a tick after each. Returns how many clips whisper had heard after each tick."""
+    worker = setup(pipeline)
+    pipeline.settings.meeting_live_budget_seconds = 600.0
+    heard = []
+    for seq, name in enumerate(names):
+        pipeline.ingest_chunk(device="zoom", session_id="m1", sequence=seq,
+                              started_at=T0 + 30 * seq, codec="wav",
+                              data=chunk((2, tone(300 + 100 * seq, 4)), (20, tone(800, 3))),
+                              track=track, track_name=name)
+        worker.tick()
+        heard.append(len(pipeline.transcriber.calls))
+    return heard
+
+
+@pytest.mark.parametrize("names", [
+    ["Conference Room 2", "Alice Example"],  # a room that later set a person's name
+    ["Zoom user", "Kath's iPhone"],           # no person, then a personal device
+    ["Alice Example", "iPhone", "Alice Example"],  # a bare device in between
+])
+def test_live_skips_every_track_the_end_pass_diarizes(pipeline, names):
+    """QA BUG-01/15 (live): a track is left to the end by the same rule the end pass
+    uses to diarize it (any display name it ever had is a room or a device, owner names
+    excepted), not by its latest name only: no live work is spent on it once a room or
+    device name is known."""
+    from convo_server.meeting_tracks import is_room_track
+
+    heard = _named_chunks(pipeline, "t1", names)
+    info = pipeline.store.tracks("m1")[0]
+    assert is_room_track(info, pipeline.settings.zoom_owner_name_list)
+    room_at = next(i for i, n in enumerate(names) if n in ("Conference Room 2", "Zoom user",
+                                                           "iPhone"))
+    assert heard[-1] == (heard[room_at - 1] if room_at else 0)
+
+
+@pytest.mark.parametrize("names", [
+    ["Kath's iPhone"],                         # a personal device is that person
+    ["Cleo Example", "iPhone"],                # the owner's track, whatever it showed
+    ["Cleo (phone)"],                          # an owner name that looks like a device
+])
+def test_live_works_on_people_and_the_owner(pipeline, names):
+    pipeline.settings.zoom_owner_names = "Cleo Example, Cleo (phone)"
+    _named_chunks(pipeline, "t1", [*names, names[-1]])
+    assert pipeline.transcriber.calls
+    assert "t1" in pipeline.store.live_states("m1")
+
+
 def test_audio_is_kept_until_the_end_pass_succeeds(pipeline):
     worker = setup(pipeline)
     for rnd in range(len(ROUNDS)):
