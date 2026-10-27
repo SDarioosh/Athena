@@ -284,25 +284,25 @@ skips pyannote for normal participants. Depends on Phase 1C.
 
 **Lane 2A, per-track transcription (`pipeline.py`, new `meeting_tracks.py`):**
 
-- [ ] Transcribe each track's VAD speech on its own; every line from a track gets that
+- [x] Transcribe each track's VAD speech on its own; every line from a track gets that
       track's participant; merge all lines in time order.
-- [ ] Crosstalk: lines from different tracks may overlap in time and are all kept, ordered
+- [x] Crosstalk: lines from different tracks may overlap in time and are all kept, ordered
       by start time.
-- [ ] Bleed: when two participants share a room, one voice can reach both mics. Drop a line
+- [x] Bleed: when two participants share a room, one voice can reach both mics. Drop a line
       whose text nearly matches a line on another track at the same time, keeping the
       louder track's line.
-- [ ] A track whose display name is a room or device ("Conference Room", "iPhone", "Zoom
+- [x] A track whose display name is a room or device ("Conference Room", "iPhone", "Zoom
       user") can hold several people: pyannote runs on that track only.
-- [ ] Owner: names in `CONVO_ZOOM_OWNER_NAMES` become the owner (`is_owner=true`).
-- [ ] Test asserts a meeting of named tracks never loads or runs pyannote.
+- [x] Owner: names in `CONVO_ZOOM_OWNER_NAMES` become the owner (`is_owner=true`).
+- [x] Test asserts a meeting of named tracks never loads or runs pyannote.
 
 **Lane 2B, names to people (`speakers.py`, `people` table):**
 
-- [ ] Clean display names (drop "(he/him)", "| Company", device suffixes); match against
+- [x] Clean display names (drop "(he/him)", "| Company", device suffixes); match against
       people names and aliases; an unknown name becomes a new named speaker.
-- [ ] Key participants by Zoom user id, so one person who renames mid-meeting stays one
+- [x] Key participants by Zoom user id, so one person who renames mid-meeting stays one
       person.
-- [ ] `rename_speaker_everywhere` keeps working; the Zoom display name is kept as an alias.
+- [x] `rename_speaker_everywhere` keeps working; the Zoom display name is kept as an alias.
 
 **Lane 2C, learning voices (on by default, owner's decision):**
 

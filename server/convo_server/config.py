@@ -189,6 +189,11 @@ class Settings(BaseSettings):
     owner_hint_margin: float = 0.10
     owner_hint_db: float = 3.0
     owner_name: str = "Me"
+    # --- meetings: lines from per-participant tracks (convo_server/meeting_tracks.py) ---
+    # The owner's Zoom display names in addition to CONVO_OWNER_NAME (which counts too
+    # unless it is the default "Me"), comma-separated (any case), e.g. "Shahyah (phone)":
+    # that track's lines are the owner's (is_owner=true), named by the owner's name.
+    zoom_owner_names: str = ""
     # Where downloaded model weights are cached (speaker models). Default: <data_dir>/models.
     models_dir: Path | None = None
 
@@ -266,6 +271,18 @@ class Settings(BaseSettings):
         if v is not None and v.lower().startswith("change-me"):
             raise ValueError(f"CONVO_{info.field_name.upper()} still has the placeholder value")
         return v
+
+    @property
+    def zoom_owner_name_list(self) -> tuple[str, ...]:
+        """CONVO_ZOOM_OWNER_NAMES as a tuple, blanks dropped, then CONVO_OWNER_NAME unless
+        it is the default placeholder "Me" or already listed (any case): an owner who
+        joins Zoom under their own name needs no extra setting."""
+        names = [n.strip() for n in self.zoom_owner_names.split(",") if n.strip()]
+        owner = " ".join((self.owner_name or "").split())
+        if owner and owner.casefold() != "me" and owner.casefold() not in {
+                " ".join(n.split()).casefold() for n in names}:
+            names.append(owner)
+        return tuple(names)
 
     @property
     def db_path(self) -> Path:

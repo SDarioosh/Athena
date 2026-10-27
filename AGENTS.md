@@ -136,7 +136,8 @@ server. **Nothing in the data path touches the cloud.**
    the owner is `is_owner=true`).
 5. **Split** — conversations break on speech gaps > 3 min
    (`CONVO_CONVERSATION_GAP_SECONDS`); a new session within the gap on the
-   same device extends the previous conversation.
+   same device extends the previous conversation. A meeting (a session with tracks) is one
+   conversation of its own: never split at gaps, never joined with another session.
 6. **Summarize** — llama-server (OpenAI-compatible, `json_schema` constrained,
    thinking disabled) returns title, summary, key points, action items,
    people, topics, durable facts, each with a source offset. Daily digest per
