@@ -26,7 +26,8 @@ server. **Nothing in the data path touches the cloud.**
   `org.barvis.sound.relay`, the BLE name `barvis-tw` and its `BARVIS_UUID` /
   `BARVIS_*` Opus tag macros, and the PC relay's `barvis_relay` package. Renaming them
   breaks deployed servers and configs, paired watches, the installed phone app and
-  Odysseus. Don't "fix" them.
+  Odysseus. Don't "fix" them ad hoc: the planned rename, step by step with the old
+  names still working, is `docs/athena-rename-plan.md`.
 
 ## This is an Odysseus module
 
@@ -66,7 +67,8 @@ server. **Nothing in the data path touches the cloud.**
   recorder on the LilyGO T-Watch Ultra, built first, with one shared ESP-IDF firmware.
   Milestone 1 of the T-Watch Ultra is implemented in `firmware/recorder/`, and so is the BLE
   upload path; `twatch-ble-protocol.md`: the watch ↔ relay protocol;
-  `t5-pda-plan.md`: a T5 E-Paper Pro PDA synced over BLE through the phone, planned).
+  `t5-pda-plan.md`: a T5 E-Paper Pro PDA synced over BLE through the phone, planned;
+  `athena-rename-plan.md`: the work order for renaming the old names, planned).
 - `hermes/`: Hermes profile snippet used by the orchestrator.
 - `orchestrator/`: optional build loop. Leave it alone.
 
