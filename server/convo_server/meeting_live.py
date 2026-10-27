@@ -296,8 +296,12 @@ def deferred(info: dict[str, Any], owner_names: list[str]) -> bool:
     """A track left to the end-of-meeting pass: a shared room by the rule that pass uses
     (``meeting_tracks.is_room_track``: any display name it ever had is a room or a
     device, owner names excepted; QA BUG-01/15), so it is diarized over the whole track
-    and its "Speaker N" numbering stays consistent."""
-    return is_room_track(info, owner_names)
+    and its "Speaker N" numbering stays consistent. A track with no display name yet
+    waits too: its first chunk can arrive before the name, which may be a room's
+    (QA BUG-24)."""
+    from .meeting_names import _track_names
+
+    return not _track_names(info) or is_room_track(info, owner_names)
 
 
 def meeting_whisper_prompt(pipeline: Pipeline, infos: list[dict[str, Any]]) -> str:

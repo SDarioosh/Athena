@@ -632,6 +632,27 @@ def test_live_works_on_people_and_the_owner(pipeline, names):
     assert "t1" in pipeline.store.live_states("m1")
 
 
+def test_live_waits_for_a_track_name(pipeline):
+    """QA BUG-24: a track's first chunk can arrive before its display name; live work
+    waits for the name, so a track that turns out to be a room wasted nothing."""
+    _named_chunks(pipeline, "t1", [None, ""])
+    assert pipeline.transcriber.calls == []
+    assert "t1" not in pipeline.store.live_states("m1")
+    pipeline.ingest_chunk(device="zoom", session_id="m1", sequence=2, started_at=T0 + 60,
+                          codec="wav", data=chunk((2, tone(500, 4))), track="t1",
+                          track_name="Conference Room 2")
+    Worker(pipeline).tick()
+    assert pipeline.transcriber.calls == []
+    assert "t1" not in pipeline.store.live_states("m1")
+
+
+def test_live_starts_once_the_track_has_a_name(pipeline):
+    """QA BUG-24: once named after a person, the track's earlier chunks are done live."""
+    _named_chunks(pipeline, "t1", [None, "Alice Example", "Alice Example"])
+    assert 300 in pipeline.transcriber.voices()
+    assert "t1" in pipeline.store.live_states("m1")
+
+
 def test_audio_is_kept_until_the_end_pass_succeeds(pipeline):
     worker = setup(pipeline)
     for rnd in range(len(ROUNDS)):
