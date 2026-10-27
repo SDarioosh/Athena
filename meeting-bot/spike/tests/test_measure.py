@@ -89,3 +89,20 @@ def test_attach_to_running_bot(tmp_path):
 def test_usage_errors():
     assert subprocess.run([str(MEASURE)], capture_output=True).returncode == 2
     assert subprocess.run([str(MEASURE), "-p", "1"], capture_output=True).returncode == 2
+
+
+def test_other_programs_temp_files_are_listed_but_do_not_fail(tmp_path):
+    results = tmp_path / "m.md"
+    other = Path("/dev/shm") / f"sem.unrelated-{os.getpid()}"
+    proc = subprocess.Popen([str(MEASURE), "-o", str(results), "-l", "other", "-i", "1", "--",
+                             str(FAKE)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, env={**os.environ, "FAKE_SECONDS": "2"})
+    try:
+        time.sleep(1.5)
+        other.touch()
+        out, _ = proc.communicate(timeout=60)
+    finally:
+        other.unlink(missing_ok=True)
+    assert proc.returncode == 0, out
+    assert _row(results)[-1] == "none"
+    assert "likely other programs" in out and other.name in out

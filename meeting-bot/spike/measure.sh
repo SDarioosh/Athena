@@ -124,6 +124,7 @@ alive() {  # running and not a zombie waiting for its parent
 # --- sample until the bot exits ----------------------------------------------------------
 printf 'epoch\tcpu_pct\trss_kb\n' > "$samples"
 declare -A seen=()
+declare -A opened_temp=()
 peak_hwm_kb=0
 t_recording=""
 last_ticks=0
@@ -134,6 +135,9 @@ while alive "$pid"; do
   rss_total=0
   for p in "${pids[@]}"; do
     seen[$p]=1
+    # temp files the bot holds open (to tell its leftovers from other programs' files)
+    while read -r f; do [[ -n "$f" ]] && opened_temp[$f]=1; done < <(
+      find "/proc/$p/fd" \( -lname '/tmp/*' -o -lname '/dev/shm/*' \) -printf '%l\n' 2>/dev/null || true)
     hwm="$(awk '/^VmHWM:/ {print $2}' "/proc/$p/status" 2>/dev/null || true)"
     rss="$(awk '/^VmRSS:/ {print $2}' "/proc/$p/status" 2>/dev/null || true)"
     if [[ -n "$hwm" ]] && ((hwm > peak_hwm_kb)); then peak_hwm_kb="$hwm"; fi
@@ -228,13 +232,29 @@ if ((${#leftover_procs[@]})); then
 fi
 list_temp > "$run_dir/temp.after"
 new_temp="$(comm -13 "$run_dir/temp.before" "$run_dir/temp.after" | grep -v "^$run_dir" || true)"
+# Other programs create temp files too. Count a new entry as the bot's when the bot had a
+# file under it open, or its name looks like the bot's (zoom, pulse, athena, the command).
+bot_name="$(basename "${1:-athena}")"
+bot_temp=""
+other_temp=""
+while read -r t; do
+  [[ -z "$t" ]] && continue
+  mine=0
+  for f in "${!opened_temp[@]}"; do [[ "$f" == "$t" || "$f" == "$t"/* ]] && mine=1; done
+  shopt -s nocasematch
+  if [[ "$t" =~ zoom|pulse|athena || "$t" == *"$bot_name"* ]]; then mine=1; fi
+  shopt -u nocasematch
+  if ((mine)); then bot_temp+="$t"$'\n'; else other_temp+="$t"$'\n'; fi
+done <<< "$new_temp"
+bot_temp="${bot_temp%$'\n'}"
+other_temp="${other_temp%$'\n'}"
 sdk_logs="none"
 if [[ -d "$HOME/.zoomsdk" ]]; then sdk_logs="$(du -sh "$HOME/.zoomsdk" | cut -f1) in ~/.zoomsdk"; fi
 
 left=()
 ((${#leftover_procs[@]})) && left+=("${#leftover_procs[@]} process(es)")
 [[ -n "$sockets" ]] && left+=("listening socket(s)")
-[[ -n "$new_temp" ]] && left+=("$(wc -l <<< "$new_temp") temp file(s)")
+[[ -n "$bot_temp" ]] && left+=("$(wc -l <<< "$bot_temp") temp file(s)")
 leftovers="none"
 if ((${#left[@]})); then leftovers="$(printf '%s, ' "${left[@]}")"; leftovers="${leftovers%, }"; fi
 
@@ -257,7 +277,11 @@ if ((${#left[@]})); then leftovers="$(printf '%s, ' "${left[@]}")"; leftovers="$
   fi
   fence='```'
   if [[ -n "$sockets" ]]; then printf '\nListening sockets:\n\n%s\n%s\n%s\n' "$fence" "$sockets" "$fence"; fi
-  if [[ -n "$new_temp" ]]; then printf '\nNew temp files:\n\n%s\n%s\n%s\n' "$fence" "$new_temp" "$fence"; fi
+  if [[ -n "$bot_temp" ]]; then printf '\nTemp files left by the bot:\n\n%s\n%s\n%s\n' "$fence" "$bot_temp" "$fence"; fi
+  if [[ -n "$other_temp" ]]; then
+    printf '\nOther new temp files during the run (likely other programs; check):\n\n%s\n%s\n%s\n' \
+      "$fence" "$other_temp" "$fence"
+  fi
   echo "- Zoom SDK logs (persist between runs): $sdk_logs"
 } > "$run_dir/summary.md"
 
