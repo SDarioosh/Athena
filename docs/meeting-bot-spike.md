@@ -2,8 +2,9 @@
 
 Status: **template, prepared by lane 0A; the owner's run fills it in.** Fields to fill are
 marked `____`. Plan: [zoom-meeting-bot-plan.md](zoom-meeting-bot-plan.md), Phase 0, as
-updated in PR #118 (the bot is mainly for other people's meetings) and by the owner's rule
-that the bot never asks for recording permission.
+updated in PR #118 (the bot is mainly for other people's meetings) and PR #119 (the bot
+never asks for recording permission; it joins any meeting the owner has a link to, whether
+or not he is in it, with its own Zoom account, and leaves when the meeting ends).
 
 The spike code is in [`meeting-bot/spike/`](../meeting-bot/spike/) on branch
 `feature/meeting-bot-0a`. It is throwaway: Phase 1 lanes take the findings, not the code.
@@ -28,7 +29,10 @@ Zoom delivers: one raw PCM file per Zoom user id (`track-<id>.pcm`, s16le mono) 
 `chat.jsonl` (`{at, from, zoom_user_id, text, to_all}`). It leaves after `--minutes`, when
 the meeting ends, when removed, or on SIGINT/SIGTERM. It never asks for recording
 permission, posts nothing in chat and takes no commands. If Zoom delivers no raw audio it
-stays and says so. Status lines on stdout:
+stays and says so. The join token comes from `ATHENA_ZOOM_JOIN_TOKEN` (the name lane 1B's
+launcher passes) with `ATHENA_ZOOM_JOIN_TOKEN_KIND=zak` (Athena's own account, the default)
+or `obf` (on behalf of the owner); without a token it joins with the JWT only. Status
+lines on stdout:
 
 ```text
 STATE starting
@@ -66,25 +70,45 @@ What lane 0A found on 2026-10-27 (public pages, not legal advice; recheck, they 
   ([forum](https://devforum.zoom.us/t/question-on-linux-sdk-usage-policy/141545)). This is
   the biggest open risk of the plan: the owner needs Zoom's answer for this use (a personal
   assistant joining as a named guest for its owner).
-- **Meetings in other accounts need an on-behalf-of (OBF) token since 2026-03-02.** A
-  Meeting SDK app joining a meeting hosted by an external account must join tied to a Zoom
-  user who authorized the app (OAuth, scope `user:read:token`) and who is **already in the
-  meeting**. Token: `GET https://api.zoom.us/v2/users/me/token?type=onbehalf&meeting_id=<id>`.
-  If that user leaves, Zoom's FAQ says the SDK session ends. ZAK tokens (join as the user)
-  are the other accepted option. Meetings in the app owner's own account need only the JWT.
-  Minimum SDK version 5.17.5; from 6.6.10 a join without the user present fails with
+- **Meetings in other accounts need a signed-in Zoom user since 2026-03-02.** The owner
+  wants Athena to join any meeting he has a link to, whether or not he is in it, and to
+  leave when it ends. Two join paths exist:
+  - **Primary, to test: a ZAK of Athena's own Zoom account.** Athena gets a dedicated Zoom
+    account (display name "Athena"), which authorizes the app once (OAuth, scope
+    `user:read:token`). Per meeting, the bot fetches
+    `GET https://api.zoom.us/v2/users/me/token?type=zak` and joins as that signed-in user.
+    No one else needs to be in the meeting.
+  - **Fallback: an on-behalf-of (OBF) token from the owner's account**,
+    `GET https://api.zoom.us/v2/users/me/token?type=onbehalf&meeting_id=<id>`. It works
+    only while the owner is in the meeting, and the bot is dropped when he leaves.
+
+  Zoom's FAQ ([OBF FAQ](https://developers.zoom.us/docs/meeting-sdk/obf-faq/), read
+  2026-10-27) does not list the ZAK path for this case:
+  - Its table gives "Join a Zoom meeting or webinar outside the app owner's account
+    associated with a Zoom user account" → "JWT + OBF token", and "Start or join a Zoom
+    meeting or webinar as a Zoom user" → "JWT + ZAK token".
+  - "ZAK tokens represent a person." "ZAK tokens are tied to a specific Zoom user account."
+  - "OBF tokens represent an app." "Use them when the MSDK app joins a meeting as an
+    automated participant like a recording or note-taking app." "For automated or bot-like
+    use cases that don't need user authorization, use OBF tokens instead." For persistent
+    or automated recording: "Use RTMS, which supports persistent or automated recording."
+  - On OBF: "The SDK session is tied to the presence of the authorizing user, so the
+    session ends when that user leaves the meeting."
+
+  So **test C decides whether a ZAK join works** (meeting hosted from another account,
+  owner not in it). If it fails, the owner chooses between OBF (Athena only while he is
+  there) and RTMS (Zoom streams to us, which needs an always-listening public endpoint and
+  breaks priority 2). Meetings in the app owner's own account need only the JWT. Minimum
+  SDK version 5.17.5; from 6.6.10 an OBF join without the user present fails with
   `MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING` (retry after 1–5 s)
-  ([OBF FAQ](https://developers.zoom.us/docs/meeting-sdk/obf-faq/),
-  [OBF transition blog](https://developers.zoom.us/blog/transition-to-obf-token-meetingsdk-apps/)).
-  So Athena would join **on behalf of the owner, only while the owner is in the meeting**,
-  and is dropped when the owner leaves: the plan's conditional leave rule applies, and
-  Phase 1B needs the owner's one-time Zoom sign-in.
+  ([OBF transition blog](https://developers.zoom.us/blog/transition-to-obf-token-meetingsdk-apps/)).
 - **Review.** Apps that add the `user:read:token` scope must submit a review request; apps
   used only inside the developer's own account need no Marketplace submission (blog above).
-  Whether an unpublished app authorized only by the owner may fetch OBF tokens for meetings
-  in other accounts is unclear; one developer could not test external joins with an
-  unpublished app ([forum](https://devforum.zoom.us/t/how-to-test-obf-token-implementation-with-external-zoom-accounts-if-unpublished-app-cant-be-installed-outside-developer-account/145012)).
-  Start the review early; it can take weeks.
+  Whether an unpublished app may fetch tokens for joins in other accounts is unclear; one
+  developer could not test external joins with an unpublished app
+  ([forum](https://devforum.zoom.us/t/how-to-test-obf-token-implementation-with-external-zoom-accounts-if-unpublished-app-cant-be-installed-outside-developer-account/145012)).
+  Athena's own account is a second account authorizing the app, which may be what makes
+  review necessary. Start the review early; it can take weeks.
 - **Raw audio needs recording rights.** Forum answers say a guest gets raw audio only as
   host, co-host, with the host's recording permission, or with a host-issued
   local-recording join token
@@ -96,30 +120,34 @@ To fill in (date and where each answer came from):
 
 | Question | Answer | Source, date |
 | --- | --- | --- |
-| Does Zoom allow this use of the Meeting SDK (personal assistant guest, owner present)? | ____ | ____ |
+| Does Zoom allow this use of the Meeting SDK (Athena as a named guest of the owner)? | ____ | ____ |
 | Is Marketplace review or publishing needed to join other accounts' meetings? Submitted on, approved on | ____ | ____ |
-| Must the bot join with an OBF token (or ZAK) from the owner's account for other accounts' meetings? | ____ | ____ |
-| Does Zoom end the bot's session when the owner leaves? (seen in test B) | ____ | ____ |
-| Does Zoom deliver raw audio to the bot without any recording permission? (test B) | ____ | ____ |
-| Own-account meetings: JWT only, no OBF? (test A) | ____ | ____ |
+| Does a ZAK of Athena's own account join a meeting in another account with the owner absent? (test C) | ____ | ____ |
+| If not: the error (`STATE failed ...`, MeetingFailCode) | ____ | ____ |
+| OBF fallback: joins with the owner present, dropped when he leaves? (test B) | ____ | ____ |
+| Does Zoom deliver raw audio to the bot without any recording permission? (tests B, C) | ____ | ____ |
+| Own-account meetings: JWT only, no token? (test A) | ____ | ____ |
 | Is Zoom RTMS a usable fallback (plan, cost, public endpoint)? | ____ | ____ |
 
 ## 2. Meeting in another account
 
-Filled from test B ([Owner steps](#owner-steps), step 8): a meeting hosted from a different
-Zoom account, the owner joined first.
+Filled from test C (Athena's own account's ZAK, owner **not** in the meeting;
+[Owner steps](#owner-steps), step 9) and test B (OBF fallback, owner in the meeting; step 10).
+Both meetings are hosted from a Zoom account that is neither the owner's nor Athena's.
 
-| Question | Answer |
-| --- | --- |
-| How "Athena" shows in the host's participant list (name, any "app" / "on behalf of" label, avatar) | ____ |
-| Any banner, notice or prompt the host or participants see when Athena joins | ____ |
-| Any recording prompt shown to the host (the bot never requests one; expect none) | ____ |
-| Did raw audio arrive? (`participants.json` bytes > 0 / `STATE recording no_audio`) | ____ |
-| `CanStartRawRecording` result logged (`LOG raw audio not allowed by Zoom (...=N)`) | ____ |
-| Join needed a token from the owner's account (OBF/ZAK)? Without it, the error was | ____ |
-| When the owner left: bot dropped? after how many seconds? `STATE ended ...` line | ____ |
-| Waiting room: did the host have to admit Athena? | ____ |
-| Chat events arrived (`chat.jsonl` lines)? | ____ |
+| Question | Test C (ZAK, owner absent) | Test B (OBF, owner present) |
+| --- | --- | --- |
+| Did it join? Last `STATE` line, `LOG meeting status ... result N` | ____ | ____ |
+| How "Athena" shows in the host's participant list (name, any "app" / "on behalf of" label, avatar) | ____ | ____ |
+| Any banner, notice or prompt the host or participants see when Athena joins | ____ | ____ |
+| Any recording prompt shown to the host (the bot never requests one; expect none) | ____ | ____ |
+| Did raw audio arrive? (`participants.json` bytes > 0 / `STATE recording no_audio`) | ____ | ____ |
+| `CanStartRawRecording` result logged (`LOG raw audio not allowed by Zoom (...=N)`) | ____ | ____ |
+| Waiting room: did the host have to admit Athena? | ____ | ____ |
+| Chat events arrived (`chat.jsonl` lines)? | ____ | ____ |
+| When the meeting ended: `STATE ended meeting_ended_N`? | ____ | ____ |
+| When the owner left (test B only): bot dropped? after how many seconds? | n/a | ____ |
+| Same meeting with no token at all: the `STATE failed ...` line | ____ | |
 
 ## 3. SDK version and size
 
@@ -135,7 +163,7 @@ Zoom account, the owner joined first.
 
 ## 4. What the SDK needs in the process
 
-Test from [Owner steps](#owner-steps), step 7, inside the container (no X server, no
+Test from [Owner steps](#owner-steps), step 8, inside the container (no X server, no
 `DISPLAY`).
 
 | Setup | Joins? | Raw audio? | Notes |
@@ -189,7 +217,7 @@ fictional participants talking most of the time.
 ## 7. Opus 32 kbps vs WAV
 
 `wer.py` on the fixture tracks of test A (each fictional participant reads their script in
-[Owner steps](#owner-steps), step 6), through the server's whisper-server and model.
+[Owner steps](#owner-steps), step 7), through the server's whisper-server and model.
 
 | Track | Words | WAV WER % | Opus 32k WER % | Δ (Opus − WAV) pp | Opus kbps |
 | --- | --- | --- | --- | --- | --- |
@@ -212,13 +240,16 @@ reading fictional lines, whisper.cpp `base.en` on CPU, jiwer: WAV 6.5 %, Opus 32
 - [ ] Start → joined ≤ 30 s, or a standby proposal in § 9: ____
 - [ ] If a fake audio device is needed: PulseAudio runs only inside the bot's scope: ____
 - [ ] Zoom's rules (§ 1) allow joining the meetings the owner needs: ____
+- [ ] Test C: Athena's own ZAK joins another account's meeting with the owner absent: ____.
+      If it fails, the owner chooses: OBF (Athena only while the owner is in the meeting)
+      or RTMS (always-listening public endpoint, breaks priority 2): ____
 
 ## 9. Decision
 
 - Binding: ____ (why)
 - Audio device: ____
-- Join path for other accounts' meetings (OBF from the owner's sign-in / review status): ____
-- Leave when the owner leaves: ____
+- Join path for other accounts' meetings (Athena's own ZAK / OBF fallback / RTMS; review status): ____
+- Leave when the owner leaves (only on the OBF path): ____
 - Track codec: ____
 - Cold start: on demand / standby process (≤ 50 MB RAM, no CPU while waiting): ____
 - Changes the plan needs (as a separate docs PR): ____
@@ -253,7 +284,37 @@ For other accounts' meetings, also add the OAuth scope `user:read:token`, add a 
 URL (for the spike, `http://localhost:8765/zoom`), and submit the review request now if
 Zoom asks for one. Note the dates in § 1.
 
-**2. SDK download.** Download the Meeting SDK for Linux (x86_64) from the app's page to
+**2. Athena's own Zoom account and its ZAK** (the primary join path, § 1). Create a
+separate Zoom account for Athena (a free account on an e-mail address only Athena uses),
+with first name "Athena" and no last name, so its display name is "Athena". Then authorize
+the app with it once and fetch a ZAK by hand (Phase 1B automates this; tokens stay in shell
+variables):
+
+```bash
+export $(grep -E '^CONVO_(ZOOM_SDK_KEY|ZOOM_SDK_SECRET|WHISPER_SERVER_URL)=' /path/to/athena/server/.env | xargs)
+zoom_access() {  # $1 = the code from the redirect URL; prints an access token (valid ~1 h)
+  curl -s -u "$CONVO_ZOOM_SDK_KEY:$CONVO_ZOOM_SDK_SECRET" -X POST \
+    "https://zoom.us/oauth/token?grant_type=authorization_code&code=$1&redirect_uri=http://localhost:8765/zoom" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'
+}
+# a) open this in a PRIVATE browser window signed in to ATHENA's account, approve,
+#    then copy `code=...` from the URL the browser is sent to (the page itself won't load)
+echo "https://zoom.us/oauth/authorize?response_type=code&client_id=$CONVO_ZOOM_SDK_KEY&redirect_uri=http://localhost:8765/zoom"
+ATHENA_ACCESS=$(zoom_access "<code>")
+# b) Athena's ZAK (fetch it shortly before each join)
+export ATHENA_ZOOM_JOIN_TOKEN=$(curl -s -H "Authorization: Bearer $ATHENA_ACCESS" \
+  "https://api.zoom.us/v2/users/me/token?type=zak" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+export ATHENA_ZOOM_JOIN_TOKEN_KIND=zak
+echo "ZAK: ${#ATHENA_ZOOM_JOIN_TOKEN} characters"
+```
+
+Expected: a ZAK of a few hundred characters. If Zoom refuses to authorize the app for
+Athena's account (for example because the app is unpublished), note the message in § 1:
+that is the review question. If an endpoint answers differently, follow Zoom's current
+docs and note it.
+
+**3. SDK download.** Download the Meeting SDK for Linux (x86_64) from the app's page to
 `~/zoom-sdk`, outside every git checkout, and record § 3:
 
 ```bash
@@ -265,16 +326,16 @@ test -f ~/zoom-sdk/h/zoom_sdk.h && echo "SDK layout ok"
 Expected: `h/`, `libmeetingsdk.so`, `qt_libs/`, "SDK layout ok". (If the archive has no top
 folder, drop `--strip-components=1`.)
 
-**3. Spike checkout** (a separate clone, so no deployed worktree changes):
+**4. Spike checkout** (a separate clone, so no deployed worktree changes):
 
 ```bash
 git clone -b feature/meeting-bot-0a https://github.com/SDarioosh/Athena ~/athena-spike
 cd ~/athena-spike/meeting-bot/spike
 python3 -m venv ~/athena-spike/.venv && ~/athena-spike/.venv/bin/pip install -q pytest jiwer
-~/athena-spike/.venv/bin/python -m pytest -q tests     # 17 passed (needs ffmpeg)
+~/athena-spike/.venv/bin/python -m pytest -q tests     # 18 passed (needs ffmpeg)
 ```
 
-**4. Build the image** (the SDK enters only through the build context):
+**5. Build the image** (the SDK enters only through the build context):
 
 ```bash
 cd ~/athena-spike
@@ -289,15 +350,14 @@ Expected: both builds finish. A build that stops at "missing libraries" lists th
 packages to add to the Dockerfile's runtime `apt-get` line; a compile error lists names to
 fix (note them in § 10). If the Python build fails, note why in § 5 and continue with C++.
 
-**5. Credentials for the run:**
+**6. Credentials for the run** (the variables from step 2, in the same shell):
 
 ```bash
-export $(grep -E '^CONVO_(ZOOM_SDK_KEY|ZOOM_SDK_SECRET|WHISPER_SERVER_URL)=' /path/to/athena/server/.env | xargs)
 python3 meeting-bot/spike/sign_jwt.py >/dev/null && echo "JWT ok"
 mkdir -p ~/athena-spike/out && chmod 777 ~/athena-spike/out
 ```
 
-**6. Test A: own meeting, 30 minutes, measured.** Host a meeting from your account with
+**7. Test A: own meeting, 30 minutes, measured.** Host a meeting from your account with
 2–3 fictional participants on other devices, each named (for example "Fictional Alice",
 "Fictional Bob", "Fictional Carol"). Each reads their script below once, then they talk
 freely, overlapping now and then. Note the meeting id and passcode, then:
@@ -318,7 +378,7 @@ Expected: `STATE recording` within seconds of the host admitting Athena, a
 `track-<id>.pcm` per participant with their names in `participants.json`, the chat lines
 someone typed in `chat.jsonl`, `STATE ended duration` after 30 minutes, a row in
 `results/measurements.md` with "Left behind: none", and no container or socket left. If
-it says `STATE recording no_audio` with `ATHENA_SPIKE_PULSE=0`, run step 7 first. Copy the
+it says `STATE recording no_audio` with `ATHENA_SPIKE_PULSE=0`, run step 8 first. Copy the
 row into § 6, then repeat with the Python image (`athena-meeting-spike:py` and `--python`
 right after the image name, output to `~/athena-spike/out-py`) for the second row.
 
@@ -334,7 +394,7 @@ Scripts (fictional, also the WER references; save each as `<name>.txt`):
   asked for a dark mode, so let us add that to the backlog and look at it again next
   Tuesday."
 
-**7. Display and audio device check** (§ 4): two short joins to the same meeting, no
+**8. Display and audio device check** (§ 4): two short joins to the same meeting, no
 display in the container either time:
 
 ```bash
@@ -347,38 +407,57 @@ done
 
 Expected: either both record (then no PulseAudio is needed), or only `pulse-1` does.
 
-**8. Test B: meeting hosted from a different Zoom account** (§ 2). Use a second Zoom
-account you control (for example a free account on another e-mail). Host from it on
-another device and join it yourself first, signed in to your main account. Get an OBF
-token for your main account (the spike does the OAuth by hand; Phase 1B automates it):
+**9. Test C: Athena's own ZAK, meeting in another account, owner not in it** (§ 2, first
+column). Use a third Zoom account you control as the host (neither yours nor Athena's,
+for example a free account on another e-mail). Host a meeting from it on another device
+with one or two fictional participants talking; **don't join it with your own account**.
+Fetch a fresh ZAK (step 2 b; repeat step 2 a if the access token is over an hour old),
+then:
 
 ```bash
-# a) open in a browser signed in to your MAIN account, approve, copy `code=` from the redirect URL
-echo "https://zoom.us/oauth/authorize?response_type=code&client_id=$CONVO_ZOOM_SDK_KEY&redirect_uri=http://localhost:8765/zoom"
-CODE=<code from the redirect URL>
-# b) access token (stays in this shell)
-ACCESS=$(curl -s -u "$CONVO_ZOOM_SDK_KEY:$CONVO_ZOOM_SDK_SECRET" -X POST \
-  "https://zoom.us/oauth/token?grant_type=authorization_code&code=$CODE&redirect_uri=http://localhost:8765/zoom" \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
-# c) OBF token for this meeting (you must be in the meeting now)
+cd ~/athena-spike/meeting-bot/spike
 MID=<meeting id>; PW=<passcode>
-export ATHENA_SPIKE_OBF_TOKEN=$(curl -s -H "Authorization: Bearer $ACCESS" \
+docker run --rm --init -e CONVO_ZOOM_SDK_KEY -e CONVO_ZOOM_SDK_SECRET \
+  -e ATHENA_ZOOM_JOIN_TOKEN -e ATHENA_ZOOM_JOIN_TOKEN_KIND=zak \
+  -e ATHENA_SPIKE_PULSE=<0 or 1 from step 8> -v ~/athena-spike/out:/out athena-meeting-spike \
+  -- --meeting-id "$MID" --passcode "$PW" --minutes 15 --no-audio-seconds 30 --out /out/test-c \
+  | tee ~/athena-spike/out/test-c.log
+```
+
+Expected (if Zoom accepts the ZAK): `LOG joining with zak`, `STATE waiting_room` until the
+host admits Athena, then `STATE recording` (or `STATE recording no_audio` if Zoom delivers
+no audio without recording rights). Record in § 2: does it join, what the host sees
+(name, labels, banners, any prompt; don't grant recording, the bot never asks), whether
+`participants.json` shows bytes, chat lines, and any `STATE failed ...` /
+`LOG meeting status ... result N` code. Then end the meeting from the host and check the
+bot says `STATE ended meeting_ended_N` and the container exits. Finally run the same
+command once with `-e ATHENA_ZOOM_JOIN_TOKEN=` (no token) and note the `STATE failed ...`
+line. If test C fails, the gate in § 8 asks the owner to choose OBF or RTMS.
+
+**10. Test B: OBF fallback, owner in the meeting** (§ 2, second column). Same host account,
+new meeting. Join it yourself first with your main account, then get an OBF token for your
+main account:
+
+```bash
+# a) in a browser signed in to YOUR main account, approve, copy `code=` from the redirect URL
+echo "https://zoom.us/oauth/authorize?response_type=code&client_id=$CONVO_ZOOM_SDK_KEY&redirect_uri=http://localhost:8765/zoom"
+OWNER_ACCESS=$(zoom_access "<code>")
+# b) OBF token for this meeting (you must be in the meeting now)
+MID=<meeting id>; PW=<passcode>
+export ATHENA_ZOOM_JOIN_TOKEN=$(curl -s -H "Authorization: Bearer $OWNER_ACCESS" \
   "https://api.zoom.us/v2/users/me/token?type=onbehalf&meeting_id=$MID" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
 cd ~/athena-spike/meeting-bot/spike
-docker run --rm --init -e CONVO_ZOOM_SDK_KEY -e CONVO_ZOOM_SDK_SECRET -e ATHENA_SPIKE_OBF_TOKEN \
-  -e ATHENA_SPIKE_PULSE=<0 or 1 from step 7> -v ~/athena-spike/out:/out athena-meeting-spike \
+docker run --rm --init -e CONVO_ZOOM_SDK_KEY -e CONVO_ZOOM_SDK_SECRET \
+  -e ATHENA_ZOOM_JOIN_TOKEN -e ATHENA_ZOOM_JOIN_TOKEN_KIND=obf \
+  -e ATHENA_SPIKE_PULSE=<0 or 1 from step 8> -v ~/athena-spike/out:/out athena-meeting-spike \
   -- --meeting-id "$MID" --passcode "$PW" --minutes 10 --no-audio-seconds 30 --out /out/test-b
 ```
 
-(If Zoom's OAuth or token endpoints answer differently, follow their current docs and note
-it in § 1.) During the run: look at the host's screen (participant list, banners, any
-prompt) and fill § 2; don't grant recording, the bot never asks. After a few minutes leave
-the meeting with your main account and note whether and when the bot gets
-`STATE ended ...`. Then run the bot once more **without** `-e ATHENA_SPIKE_OBF_TOKEN` and
-note the `STATE failed ...` line.
+During the run, fill the second column of § 2 the same way. After a few minutes leave the
+meeting with your main account and note whether and when the bot gets `STATE ended ...`.
 
-**9. Opus vs WAV** (§ 7), with the server's whisper-server (the URL from your Athena
+**11. Opus vs WAV** (§ 7), with the server's whisper-server (the URL from your Athena
 `.env`, `CONVO_WHISPER_SERVER_URL`; nothing else is touched):
 
 ```bash
@@ -396,7 +475,7 @@ script reading, for example
 and pass `alice.wav` instead. Copy the table into § 7. (`pip install jiwer` for the jiwer
 engine; without it the script uses its own edit distance.)
 
-**10. Clean up.** The image contains the SDK and the output folder holds meeting audio:
+**12. Clean up.** The image contains the SDK and the output folder holds meeting audio:
 
 ```bash
 docker image rm athena-meeting-spike athena-meeting-spike:py
