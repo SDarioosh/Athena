@@ -54,6 +54,9 @@ QUESTIONS: list[tuple[str, list[str], list[str]]] = [
     ("What did Alice say about Mars?", [], []),
     # voice notes: the newest recordings are conversations, so this needs kind="note"
     ("What was my latest voice note about?", ["note-offsite"], ["cooking", "pasta"]),
+    # Zoom meetings (MCP 0.16.0): a chat line, and a participant who never spoke
+    ("What did Dana post in chat?", ["zoom-budget"], ["garden-budget-v3", "budget-v3"]),
+    ("Who was in the budget meeting?", ["zoom-budget"], ["Rafael"]),
 ]
 
 CONVO_TOOLS = {"search_transcripts", "search_conversations", "get_conversation",

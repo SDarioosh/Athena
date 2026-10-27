@@ -379,7 +379,7 @@ def test_seed_demo_has_a_meeting_with_crosstalk(pipeline):
     sys.path.insert(0, str(SERVER / "scripts"))
     from seed_demo import ME, MEETINGS, insert_meeting
 
-    (key, start, lines), = MEETINGS
+    key, start, lines = next(m for m in MEETINGS if m[0] == "zoom-newsletter")
     (conv,) = insert_meeting(pipeline.store, pipeline, key, start, lines)
     segs = pipeline.store.conversation_segments(conv)
     assert len(segs) == len(lines) and {s.device for s in segs} == {"zoom"}

@@ -23,7 +23,7 @@ from pydantic import Field
 from .config import Settings
 from .dates import fact_valid_until
 from .diarize import load_voices
-from .links import local_time, transcript_link, written_label
+from .links import local_time, meeting_label, speaker_label, transcript_link, written_label
 from .search import Embedder, search
 from .speakers import relabel_matches, suggestion
 from .store import CONVERSATION, ITEM_KINDS, NOTE, UNSET, VOICE, WRITTEN, Store, short_title
@@ -61,6 +61,11 @@ notes or memos, call search_conversations with kind="note" (no query needed for 
 latest ones). Notes the user wrote by hand are notes too, marked "(written by hand: \
 <link>)" instead; that link opens the handwritten page. kind="voice" keeps only voice \
 notes, kind="written" only handwritten ones.
+
+Zoom meetings: a meeting is marked "(Zoom meeting: <topic>)" after its title and lists \
+its participants (everyone in the meeting, also those who never spoke). A line "Dana \
+(chat): ..." was typed in the meeting chat, not said. For "who was in the X meeting" call \
+search_conversations with the topic words and answer from its participants.
 
 Showing a transcript: when the user asks to see or read a transcript, answer with its link \
 and a short summary of who said what; don't copy the transcript lines into your answer \
@@ -100,7 +105,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.15.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.16.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -143,12 +148,15 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             return f"No lines by {speaker!r} in that range. Known speakers: {known or 'none'}."
         lines = [header(len(rows), "transcript lines")]
         written = store.written_notes_for(r["conversation_id"] for r in rows)
+        meetings = store.meetings_for(r["conversation_id"] for r in rows)
         for r in rows:
             link = transcript_link(settings, r["conversation_id"],
                                    r["started_at"] - r["conversation_at"])
-            lines.append(f"- #{r['id']} {when(r['started_at'])} {r['speaker']}: \"{r['text']}\" "
+            lines.append(f"- #{r['id']} {when(r['started_at'])} {speaker_label(r)}: "
+                         f"\"{r['text']}\" "
                          f"(conversation \"{r['conversation_title'] or 'untitled'}\""
-                         f"{_note(r.get('conversation_kind'), written.get(r['conversation_id']))}, "
+                         f"{_note(r.get('conversation_kind'), written.get(r['conversation_id']))}"
+                         f"{meeting_label(meetings.get(r['conversation_id']))}, "
                          f"id {r['conversation_id']}) {link}")
         return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
@@ -183,9 +191,10 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         for c in convs:
             lines.append(
                 f"- {when(c['started_at'])}–{when(c['ended_at'], '%H:%M')} "
-                f"\"{_title(c)}\"{_note(c.get('kind'), c.get('written'))} id {c['id']}; people: "
-                f"{', '.join(c['people']) or '—'}\n  {c['summary'] or ''}\n  "
-                f"{transcript_link(settings, c['id'])}")
+                f"\"{_title(c)}\"{_note(c.get('kind'), c.get('written'))}"
+                f"{meeting_label(c.get('meeting'))} id {c['id']}; people: "
+                f"{', '.join(c['people']) or '—'}{_participants(c.get('meeting'))}\n  "
+                f"{c['summary'] or ''}\n  {transcript_link(settings, c['id'])}")
         return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
     @mcp.tool(annotations=ro)
@@ -195,10 +204,13 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if c is None:
             return f"No conversation {conversation_id!r}."
         speakers = sorted({s.speaker for s in store.conversation_segments(conversation_id)})
-        out = [f"\"{_title(c)}\"{_note(c.get('kind'), c.get('written'))} — {when(c['started_at'])}–"
+        out = [f"\"{_title(c)}\"{_note(c.get('kind'), c.get('written'))}"
+               f"{meeting_label(c.get('meeting'))} — {when(c['started_at'])}–"
                f"{when(c['ended_at'], '%H:%M')} ({settings.timezone}), device {c['device']}"
                + (f", type {c['kind']}" if c.get("kind") else ""),
-               f"Speakers: {', '.join(speakers) or '—'}. People: {', '.join(c['people']) or '—'}",
+               f"Speakers: {', '.join(speakers) or '—'}. People: {', '.join(c['people']) or '—'}"
+               + (f". Participants: {_attendance(c['meeting'], when)}" if c.get("meeting")
+                  else ""),
                f"Link: {transcript_link(settings, c['id'])}",
                f"Summary: {_summary(c)}"]
         out += [f"* {k}" for k in c["key_points"]]
@@ -229,7 +241,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         # One time per line keeps the result short: a line's clock time is the header's
         # start time plus its seconds.
         out = [f"\"{c['title'] or 'untitled'}\" {when(origin, '%Y-%m-%d %H:%M:%S')} {link}"]
-        out += [f"#{s.id} [{int(s.started_at - origin)}s] {s.speaker}: {s.text}"
+        out += [f"#{s.id} [{int(s.started_at - origin)}s] {speaker_label(s)}: {s.text}"
                 for s in segs[:max_lines]]
         if pruned := c.get("transcript_pruned_at"):
             out.append(f"The transcript was removed on {when(pruned, '%Y-%m-%d')}"
@@ -249,7 +261,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     def item_json(r: dict[str, Any], mine_names: set[str],
                   participants: dict[str, list[dict[str, Any]]],
                   written: dict[str, dict[str, Any]],
-                  summaries: dict[str, dict[str, Any]]) -> dict[str, Any]:
+                  summaries: dict[str, dict[str, Any]],
+                  meetings: dict[str, dict[str, Any]]) -> dict[str, Any]:
         owner = (r["owner"] or "").strip().lower()
         kind = r.get("kind") or "task"
         others = [] if kind == "note" else _with(r["text"], participants.get(
@@ -270,6 +283,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                 "created_at": _iso(r.get("created_at") or r["conversation_at"]),
                 "timezone": settings.timezone, "link": item_link(r), "with": others,
                 "key_points": _note_key_points(r, summaries.get(r["conversation_id"])),
+                "source": _source(r["conversation_id"], meetings),
                 **_written_json(written.get(r["conversation_id"]))}
 
     @mcp.tool(annotations=ro)
@@ -310,13 +324,14 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if person.strip():
             rows = [r for r in rows if _involves(r, person, participants)]
         written = store.written_notes_for(r["conversation_id"] for r in rows)
+        meetings = store.meetings_for(r["conversation_id"] for r in rows)
         if fmt == "json":
             mine_names = store.known_names()[0] | _OWNER_WORDS | {
                 settings.owner_name.strip().lower()} - {""}
             summaries = store.summaries_for(
                 r["conversation_id"] for r in rows if r.get("kind") == "note")
-            return json.dumps([item_json(r, mine_names, participants, written, summaries)
-                               for r in rows], ensure_ascii=False)
+            return json.dumps([item_json(r, mine_names, participants, written, summaries,
+                                         meetings) for r in rows], ensure_ascii=False)
         lines = [header(len(rows), f"{st} action items")]
         for r in rows:
             lines.append(f"- #{r['id']} [{r['status']}] {_kind_word(r)}{r['text']}"
@@ -325,6 +340,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                          + (f" [list {r['list_name']}]" if r.get("list_name") else "")
                          + f" — from \"{r['conversation_title']}\""
                          + _note(r.get("conversation_kind"), written.get(r["conversation_id"]))
+                         + meeting_label(meetings.get(r["conversation_id"]))
                          + f" {when(r['conversation_at'])} " + item_link(r))
         return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
 
@@ -405,6 +421,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             min_sources=settings.fact_confirm_sources if confirmed else 0,
             min_days=settings.fact_confirm_days if confirmed else 0)
         written = store.written_notes_for(f["conversation_id"] for f in rows)
+        meetings = store.meetings_for(f["conversation_id"] for f in rows)
         if fmt == "json":
             owners, people = store.known_names()
             owners |= _OWNER_WORDS | {settings.owner_name.strip().lower()} - {""}
@@ -424,6 +441,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                         "confirmed": (f["times_said"] >= settings.fact_confirm_sources
                                       and f["days"] >= settings.fact_confirm_days),
                         "valid_until": until(f), "link": fact_link(f),
+                        "source": _source(f["conversation_id"], meetings),
                         **_written_json(written.get(f["conversation_id"]))}
 
             return json.dumps({"facts": [fact_json(f) for f in rows]}, ensure_ascii=False)
@@ -437,7 +455,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             lines.append(f"- [{f['subject']}] {f['fact']} (learned "
                          f"{when(f['conversation_at'], '%Y-%m-%d')}"
                          + (f", until {end}" if end else "") + ") " + fact_link(f)
-                         + written_label(written.get(f["conversation_id"])))
+                         + written_label(written.get(f["conversation_id"]))
+                         + meeting_label(meetings.get(f["conversation_id"])))
             for s in sources[f["id"]]:
                 lines.append(f"  said again {when(s['conversation_at'], '%Y-%m-%d')} "
                              + transcript_link(settings, s["conversation_id"],
@@ -500,7 +519,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         for cid in d.get("conversation_ids", []):
             conv = store.get_conversation(cid)
             what = ("Written note" if conv and conv.get("written") else
-                    "Voice note" if conv and conv.get("kind") == "note" else "Conversation")
+                    "Voice note" if conv and conv.get("kind") == "note" else
+                    "Zoom meeting" if conv and conv.get("meeting") else "Conversation")
             out.append(f"{what}: {transcript_link(settings, cid)}")
         out.append(f"{cite}.")
         return "\n".join(out)
@@ -772,6 +792,31 @@ def _note_key_points(r: dict[str, Any], summary: dict[str, Any] | None) -> list[
     if not said or said != " ".join((r.get("text") or "").split()):
         return []
     return [str(k).strip() for k in summary.get("key_points") or [] if str(k).strip()]
+
+
+def _source(conv_id: str, meetings: dict[str, dict[str, Any]]) -> str | None:
+    """JSON rows' ``source`` (MCP 0.16.0): "meeting" when the fact or item comes from a
+    Zoom meeting, else null (a recording, a voice note or a written note; those are told
+    apart by ``conversation_kind`` and ``written_by_hand``)."""
+    return "meeting" if conv_id in meetings else None
+
+
+def _participants(meeting: dict[str, Any] | None) -> str:
+    """"; participants: A, B" after a meeting's people in search_conversations."""
+    if not meeting or not meeting.get("participants"):
+        return ""
+    return "; participants: " + ", ".join(p["name"] for p in meeting["participants"])
+
+
+def _attendance(meeting: dict[str, Any], when: Any) -> str:
+    """get_conversation's participants: "Dana Example (16:00–16:45), Me", with the times
+    they joined and left when the bot sent them."""
+    out = []
+    for p in meeting.get("participants") or []:
+        span = "–".join(when(t, "%H:%M") for t in (p.get("joined_at"), p.get("left_at"))
+                        if t is not None)
+        out.append(p["name"] + (f" ({span})" if span else ""))
+    return ", ".join(out) or "—"
 
 
 def _written_json(written: dict[str, Any] | None) -> dict[str, Any]:
