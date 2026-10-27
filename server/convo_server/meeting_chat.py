@@ -140,17 +140,26 @@ def line_key(at: float, zoom_user_id: str, sender: str, text: str) -> str:
 class _Names:
     """Who chat senders and participants are, named as the meeting's tracks are."""
 
-    def __init__(self, pipeline: Pipeline, session_id: str) -> None:
+    def __init__(self, pipeline: Pipeline, session_id: str,
+                 seen: dict[str, list[str]] | None = None) -> None:
         self.store, cfg = pipeline.store, pipeline.settings
         self.owner_names = cfg.zoom_owner_name_list
         self.owner_display = self.store.owner_name() or cfg.owner_name
         self.tracks = {t["track"]: t for t in self.store.tracks(session_id)}
-        self._cache: dict[tuple[str, str], tuple[str, bool]] = {}
+        # every name a zoom_user_id used in this call (chat senders first, then the
+        # participant list, Zoom's latest), so one Zoom user is one person (QA BUG-12)
+        self.seen = seen or {}
+        self._cache: dict[str, tuple[str, bool]] = {}
+
+    @staticmethod
+    def _key(zoom_user_id: str, name: str) -> str:
+        return f"id:{zoom_user_id}" if zoom_user_id else f"name:{name}"
 
     def speaker(self, zoom_user_id: str, name: str) -> tuple[str, bool]:
         """(speaker name, is_owner) for a chat sender: their track's name when they have
-        one, else their chat name as a person (made when new, as for a track)."""
-        key = (zoom_user_id, name)
+        one, else their names in this call as one person (made when new, as for a
+        track). Resolved once per zoom_user_id, whichever of its names asks."""
+        key = self._key(zoom_user_id, name)
         if key not in self._cache:
             from .meeting_names import speaker_for_track
             from .meeting_tracks import track_speaker
@@ -159,14 +168,17 @@ class _Names:
             if zoom_user_id in self.tracks:
                 who, owner = track_speaker(self.store, self.tracks[zoom_user_id],
                                            self.owner_names)
-            if not who and not owner and name:
+            seen = self.seen.get(zoom_user_id, []) if zoom_user_id else []
+            names = [n for n in dict.fromkeys([*([name] if name not in seen else []), *seen])
+                     if n]
+            if not who and not owner and names:
                 who, owner = speaker_for_track(
-                    self.store, {"track": zoom_user_id, "name": name, "names": [name],
+                    self.store, {"track": zoom_user_id, "name": names[-1], "names": names,
                                  "placeholder": ""}, self.owner_names)
             if owner:
                 who = self.owner_display or who
             elif not who:  # a room, a device or no name: what Zoom showed, else Unknown
-                who = name or "Unknown"
+                who = (names[-1] if names else "") or "Unknown"
             self._cache[key] = (who, owner)
         return self._cache[key]
 
@@ -176,8 +188,8 @@ class _Names:
         up, so a silent guest adds no person."""
         from .meeting_names import clean_display_name
 
-        if zoom_user_id in self.tracks or any(k[0] == zoom_user_id and zoom_user_id
-                                              for k in self._cache):
+        if zoom_user_id and (zoom_user_id in self.tracks
+                             or self._key(zoom_user_id, name) in self._cache):
             who, owner = self.speaker(zoom_user_id, name)
         else:
             clean = clean_display_name(name)
@@ -187,6 +199,23 @@ class _Names:
         if owner:
             return who, self.store.owner_person_id(self.owner_names)
         return who, self.store.person_id(who) if who else None
+
+
+def _names_by_zoom_id(body: ChatIn) -> dict[str, list[str]]:
+    """Every cleaned name each zoom_user_id used in the call: chat senders in line order,
+    then the participant list (Zoom's latest name, preferred). Bad ids are skipped here
+    and rejected by the main pass."""
+    out: dict[str, list[str]] = {}
+    pairs = [(ln.zoom_user_id, ln.from_) for ln in body.lines if not ln.private]
+    pairs += [(p.zoom_user_id, p.name) for p in body.participants or []]
+    for zid, raw in pairs:
+        zid, name = (zid or "").strip(), clean_text(raw, MAX_TRACK_NAME_CHARS)
+        if zid and name and TRACK.match(zid):
+            got = out.setdefault(zid, [])
+            if name in got:
+                got.remove(name)
+            got.append(name)
+    return out
 
 
 def ingest_chat(pipeline: Pipeline, session_id: str, body: ChatIn) -> dict[str, Any]:
@@ -203,7 +232,7 @@ def ingest_chat(pipeline: Pipeline, session_id: str, body: ChatIn) -> dict[str, 
         raise KeyError(session_id)
     if sess["device"] != ZOOM_DEVICE and not store.has_tracks(session_id):
         raise NotAMeeting(session_id)
-    names = _Names(pipeline, session_id)
+    names = _Names(pipeline, session_id, _names_by_zoom_id(body))
     lines: list[tuple[str, Segment]] = []
     private = 0
     for i, ln in enumerate(body.lines):

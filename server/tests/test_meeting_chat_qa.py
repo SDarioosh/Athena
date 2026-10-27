@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from conftest import silence, wav
 from test_mcp import call
-from test_meeting_chat import chat, process
+from test_meeting_chat import chat, process, upload
 from test_meeting_tracks import ALICE, T0, ScriptedWhisper
 
 from convo_server.mcp_server import build_mcp
@@ -77,3 +77,21 @@ def test_bug02_idle_finalize_picks_up_a_chat_only_meeting(pipeline, client):
     pipeline.finalize_idle(now=10**10)
     pipeline.process_pending()
     assert pipeline.store.meeting_conversation("zoom-silent") is not None
+
+
+# ------------------------------------------------------------------ BUG-12
+
+
+def test_bug12_one_zoom_user_is_one_person(pipeline, client):
+    upload(pipeline, tracks=(ALICE,))
+    body = {"participants": [{"name": "Dana Example (she/her)", "zoom_user_id": "16782336"}],
+            "lines": [{"at": T0 + 5, "from": "Dana", "zoom_user_id": "16782336",
+                       "text": "Hi!"}]}
+    assert chat(client, body).status_code == 200
+    names = [p["name"] for p in pipeline.store.people()]
+    assert not ("Dana" in names and "Dana Example" in names), names
+    segs = [s for s in pipeline.store.session_segments("m1") if s.kind == CHAT]
+    parts = pipeline.store.get_conversation(
+        process(pipeline)[0].conversation_id)["meeting"]["participants"]
+    dana = [p for p in parts if p["name"].startswith("Dana")]
+    assert len(dana) == 1 and dana[0]["name"] == segs[0].speaker

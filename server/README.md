@@ -397,8 +397,10 @@ after `/end`:
   stored ones when given; leaving them out keeps them.
 - A chat line becomes a transcript line of kind `chat` at `at` (start = end), from the
   sender's person: the line is named exactly as the sender's track is (owner included);
-  a sender without a track by their cleaned chat name, made a person when new. No VAD,
-  no whisper. A participant who never spoke or typed is only looked up, never made a
+  a sender without a track by their cleaned names, made a person when new. One
+  `zoom_user_id` is one person: every name it uses in the call (chat `from`, then its
+  `participants` name, preferred as Zoom's latest) is matched together and kept as
+  aliases. No VAD, no whisper. A participant who never spoke or typed is only looked up, never made a
   person.
 - Idempotent: each line is stored once per session (SHA-256 of its cleaned time, sender id,
   sender name and text), also after `erase_fact` redacted it or retention removed it.
