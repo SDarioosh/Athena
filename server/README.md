@@ -142,6 +142,21 @@ other's name; two different named speakers stay apart (often a real interruption
   split by its token times. `CONVO_WHISPER_WINDOW_SECONDS=0` sends every region alone
   (the behaviour before). `CONVO_WHISPER_CONTEXT_WORDS` (0 = off) adds the end of the
   previous clip's text to the prompt; it made the eval worse.
+- Zoom names become people (`convo_server/meeting_names.py`, imported only by the meeting
+  pipeline, never at startup). Each track's display names are cleaned first: pronouns
+  ("(she/her)"), bracketed tags, "| Company", " - Company" (spaced dash only, so
+  "Smith-Jones" stays), "@ Company", device suffixes ("Kath's iPhone", "(iPad)"), titles
+  and credentials ("Dr.", ", PhD"), emoji and stray punctuation go; ALL-CAPS and
+  all-lowercase names are title-cased ("MARCUS MCDONALD" → "Marcus McDonald"), mixed case
+  is kept ("van der Berg", "O'Neil"). A name that is only a device, a room or a label
+  ("iPhone", "Zoom user", "Conference Room 2") makes no person: the track gets an unnamed
+  label ("Speaker N"), which `name_speaker` can rename. A cleaned name that matches
+  `CONVO_ZOOM_OWNER_NAMES` is the owner. Otherwise it is matched exactly (any case) against
+  people names and aliases; an unknown name becomes a new person. There is no first-name
+  guessing ("Kath Dlamini" is not merged into "Kath"): a wrong merge mixes two people,
+  while `rename_speaker_everywhere("Kath Dlamini", "Kath")` merges them for good. Every
+  display name a track used, raw and cleaned, is kept as an alias, so a participant who
+  renames mid-meeting stays one person and the next meeting finds them again.
 - Decoding settings go with every whisper request (whisper-server form fields, the same
   flags for whisper-cli): `CONVO_WHISPER_BEAM_SIZE`, `_BEST_OF`, `_SUPPRESS_NON_SPEECH`,
   `_NO_SPEECH_THOLD`, `_LOGPROB_THOLD`, `_ENTROPY_THOLD`, `_CARRY_INITIAL_PROMPT`,
