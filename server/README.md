@@ -331,6 +331,17 @@ spelling), and every line from a track is that participant's:
   same: word similarity >= 0.9, or >= 0.7 when one line is at least 6 dB quieter
   (whisper slips words on the far mic; two people saying the same sentence at once are
   about as loud and both stay).
+- One meeting is one conversation: its lines are never split at a speech gap
+  (`CONVO_CONVERSATION_GAP_SECONDS` doesn't apply to a break inside a meeting), it never
+  extends the conversation before it on the same device, and a session without tracks
+  never joins a meeting's conversation. Two back-to-back meetings are two conversations.
+- Late chunks: once a meeting is being or has been processed, a new chunk (a new
+  (`track`, `sequence`)) is answered `stop: true` with the session's stop reason and is
+  not stored, so it can't replace the other tracks' lines, whose audio is gone. Until
+  processing starts (status `ended`), chunks are still stored: the other tracks' chunks
+  of the round that reached `CONVO_MAX_SESSION_SECONDS` are kept. A retry of a stored
+  chunk is `duplicate: true` as before. Sessions without tracks still take late chunks
+  and transcribe them on the next pass.
 
 Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client"|"idle"|null,
 "duplicate": bool, "speech_seconds", "trailing_silence_seconds", "session_seconds"}`, plus

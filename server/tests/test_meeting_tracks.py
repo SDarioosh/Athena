@@ -331,3 +331,119 @@ def test_seed_demo_has_a_meeting_with_crosstalk(pipeline):
                 if b.started_at < a.ended_at]
     assert overlaps == [("Lena Example", "Omar Example")]
     assert pipeline.summarize_conversation(conv)
+
+
+# ----------------------------------------------- one meeting, one conversation
+
+
+def _upload(pipeline, session, seq, start, data, track=None, name=None, device="zoom"):
+    return pipeline.ingest_chunk(device=device, session_id=session, sequence=seq,
+                                 started_at=start, codec="wav", data=data, track=track,
+                                 track_name=name)
+
+
+def _finish(pipeline, session):
+    pipeline.end_session(session)
+    pipeline.process_session(session)
+    return pipeline.store.session_conversations(session)
+
+
+def test_a_long_break_inside_a_meeting_is_one_conversation(pipeline):
+    pipeline.transcriber = ScriptedWhisper()
+    speech = track_audio((0, tone(300, 5)))
+    _upload(pipeline, "m1", 0, T0, speech, "a", "Alice Example")
+    _upload(pipeline, "m1", 21, T0 + 630, speech, "a", "Alice Example")  # 10 min later
+    _upload(pipeline, "m1", 21, T0 + 640, track_audio((0, tone(500, 5))), "b", "Bo Example")
+    (conv,) = _finish(pipeline, "m1")
+    segs = pipeline.store.conversation_segments(conv)
+    assert [s.speaker for s in segs] == ["Alice Example", "Alice Example", "Bo Example"]
+    assert segs[1].started_at - segs[0].ended_at > pipeline.settings.conversation_gap_seconds
+
+
+def test_back_to_back_meetings_are_two_conversations(pipeline):
+    pipeline.transcriber = ScriptedWhisper()
+    speech = track_audio((20, tone(300, 5)))  # speech ends 25 s in
+    _upload(pipeline, "m1", 0, T0, speech, "a", "Alice Example")
+    (first,) = _finish(pipeline, "m1")
+    _upload(pipeline, "m2", 0, T0 + 85, track_audio((0, tone(300, 5))), "a", "Alice Example")
+    (second,) = _finish(pipeline, "m2")  # 1 min after the first meeting's last line
+    assert first != second
+    assert pipeline.store.get_conversation(first) is not None
+
+
+def test_an_untracked_session_never_joins_a_meeting(pipeline):
+    pipeline.transcriber = ScriptedWhisper()
+    _upload(pipeline, "m1", 0, T0, track_audio((20, tone(300, 5))), "a", "Alice Example")
+    (meeting_conv,) = _finish(pipeline, "m1")
+    _upload(pipeline, "s1", 0, T0 + 60, track_audio((0, tone(300, 5))))
+    (plain,) = _finish(pipeline, "s1")
+    assert plain != meeting_conv
+    # untracked sessions still join each other within the gap, as before
+    _upload(pipeline, "s2", 0, T0 + 120, track_audio((0, tone(300, 5))))
+    assert _finish(pipeline, "s2") == [plain]
+
+
+# --------------------------------------------------------------- late chunks
+
+
+def test_a_late_chunk_never_touches_an_ended_meeting(pipeline, settings):
+    segs = meeting(pipeline, [ALICE, BO])
+    before = rows(segs)
+    chunks = len(pipeline.store.chunks("m1"))
+    late = _upload(pipeline, "m1", 1, T0 + 30, track_audio((0, tone(300, 5))), BO[0], BO[1])
+    assert late.stop and late.reason == "client" and not late.duplicate
+    assert len(pipeline.store.chunks("m1")) == chunks  # not stored
+    assert not (settings.audio_dir / "zoom" / "m1").exists()  # no file written
+    assert pipeline.store.get_session("m1")["status"] == "done"  # not reprocessed
+    assert rows(pipeline.store.session_segments("m1")) == before
+    # a new track after the end is refused the same way
+    assert _upload(pipeline, "m1", 0, T0, track_audio((0, tone(300, 5))), "zz").stop
+    # a retry of a stored chunk is still a duplicate, as today
+    retry = _upload(pipeline, "m1", 0, T0, ALICE[2], ALICE[0], ALICE[1])
+    assert retry.duplicate and retry.stop
+    assert rows(pipeline.store.session_segments("m1")) == before
+
+
+def test_untracked_sessions_still_take_late_chunks(pipeline):
+    pipeline.transcriber = ScriptedWhisper()
+    _upload(pipeline, "s1", 0, T0, track_audio((0, tone(300, 5))), device="omi")
+    _finish(pipeline, "s1")
+    late = _upload(pipeline, "s1", 1, T0 + 30, track_audio((0, tone(500, 5))), device="omi")
+    assert late.stop and not late.duplicate
+    assert len(pipeline.store.chunks("s1")) == 2  # stored, transcribed on the next pass
+    pipeline.process_session("s1")
+    assert [s.text for s in pipeline.store.session_segments("s1")] == [SCRIPT[300],
+                                                                        SCRIPT[500]]
+
+
+def test_the_last_round_after_max_duration_is_still_stored(pipeline):
+    # the first track's chunk reaches the max duration and ends the meeting; the other
+    # tracks' chunks of the same round arrive just after and are kept
+    pipeline.transcriber = ScriptedWhisper()
+    end = pipeline.settings.max_session_seconds
+    _upload(pipeline, "m1", 0, T0, track_audio((0, tone(300, 5))), "a", "Alice Example")
+    first = _upload(pipeline, "m1", 1, T0 + end, track_audio((0, tone(300, 5))), "a")
+    assert first.stop and first.reason == "max_duration"
+    other = _upload(pipeline, "m1", 0, T0 + end, track_audio((0, tone(500, 5))), "b",
+                    "Bo Example")
+    assert other.stop and other.reason == "max_duration" and not other.duplicate
+    assert len(pipeline.store.chunks("m1", track="b")) == 1
+
+
+def test_a_chunk_racing_the_worker_is_refused(pipeline, settings):
+    from convo_server.store import MeetingClosed
+
+    _upload(pipeline, "m1", 0, T0, track_audio((0, tone(300, 5))), "a", "Alice Example")
+    pipeline.end_session("m1")
+    pipeline.store.set_session_status("m1", "processing")  # the worker just started
+    with pytest.raises(MeetingClosed):
+        pipeline.store.add_chunk(session_id="m1", device="zoom", sequence=1,
+                                 started_at=T0 + 30, duration=30, codec="wav",
+                                 audio_path=None, speech=[], track="a")
+    pipeline._late_meeting_chunk = lambda *a: None  # the early check passed just before
+    late = _upload(pipeline, "m1", 1, T0 + 30, track_audio((0, tone(300, 5))), "a")
+    assert late.stop and late.reason == "client"
+    assert len(pipeline.store.chunks("m1")) == 1
+    assert pipeline.store.get_session("m1")["status"] == "processing"
+    # only the first chunk's file: the refused upload left no file behind
+    assert len(list((settings.audio_dir / "zoom" / "m1").iterdir())) == 1
