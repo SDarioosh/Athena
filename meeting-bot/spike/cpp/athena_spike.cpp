@@ -15,11 +15,15 @@
 // on SIGINT/SIGTERM. It never asks for recording permission, posts nothing in chat and
 // takes no commands from participants (owner's rule). If Zoom delivers no raw audio it
 // stays in the meeting and says `STATE recording no_audio`. Meetings in other accounts:
-// ATHENA_ZOOM_JOIN_TOKEN holds Athena's own account's ZAK (ATHENA_ZOOM_JOIN_TOKEN_KIND=zak,
-// default) or an on-behalf-of token from the owner (kind obf, only while he is there).
+// ATHENA_ZOOM_JOIN_TOKEN holds an on-behalf-of token from the owner's account
+// (ATHENA_ZOOM_JOIN_TOKEN_KIND=obf, the default: Zoom admits the bot only while the owner
+// is in the meeting; it prints `STATE starting waiting_for_owner` while it retries, `STATE
+// failed owner_not_joined` after --owner-wait-seconds, `STATE ended owner_left` when Zoom
+// drops it because he left) or, as a later option, a separate Athena account's ZAK (zak).
 //
 // Status lines on stdout, one per change (measure.sh and later the launcher read them):
-//   STATE starting | waiting_room | recording | recording no_audio | ended <reason> |
+//   STATE starting | starting waiting_for_owner | waiting_room | recording |
+//         recording no_audio | ended <reason> |
 //         failed <reason>
 // Other output is prefixed `LOG`.
 
@@ -64,16 +68,17 @@ struct Options {
     std::string out_dir = "out";
     std::string jwt;              // env ATHENA_SPIKE_JWT (from sign_jwt.py)
     // env ATHENA_ZOOM_JOIN_TOKEN (the name lane 1B's launcher passes) with
-    // ATHENA_ZOOM_JOIN_TOKEN_KIND: "zak" (default) = ZAK of Athena's own Zoom account, the
-    // primary path for other accounts' meetings, no one else needs to be there; "obf" =
-    // on-behalf-of token from the owner's account, fallback, works only while the owner is
-    // in the meeting. Empty: JWT only (meetings in the app owner's own account).
+    // ATHENA_ZOOM_JOIN_TOKEN_KIND: "obf" (default) = on-behalf-of token from the owner's own
+    // Zoom account, the primary path for other accounts' meetings (owner's decision): Zoom
+    // admits the bot only while the owner is in the meeting. "zak" = ZAK of a separate
+    // Athena Zoom account, a later option. Empty: JWT only (the app owner's own meetings).
     std::string join_token;
-    std::string join_token_kind = "zak";
+    std::string join_token_kind = "obf";
     std::string recording_token;  // env ATHENA_SPIKE_RECORDING_TOKEN: host-issued local-recording
                                   // join token, only if the host chose to give one
     int minutes = 30;
     int no_audio_seconds = 60;
+    int owner_wait_seconds = 600;  // obf: how long to retry while the owner isn't in yet
 };
 
 Options g_opt;
@@ -84,6 +89,9 @@ ISettingService* g_settings = nullptr;
 IZoomSDKAudioRawDataHelper* g_audio_helper = nullptr;
 std::string g_state;
 std::string g_end_reason = "left";
+long long g_first_join_ms = 0;
+bool g_in_meeting = false;
+void join();
 std::atomic<bool> g_leaving{false};
 std::atomic<bool> g_failed{false};
 std::atomic<long long> g_last_audio_ms{0};
@@ -358,7 +366,7 @@ gboolean on_duration_over(gpointer) {
 }
 
 gboolean on_signal(gpointer) {
-    leave("signal");
+    leave("stopped");  // lane 1B's reason for SIGTERM
     return G_SOURCE_REMOVE;
 }
 
@@ -377,6 +385,7 @@ gboolean audio_watch(gpointer) {
 }
 
 void on_joined() {
+    g_in_meeting = true;
     state("recording");
     if (g_joined_ms) return;  // back in after a reconnect: timers and events already set
     g_joined_ms = now_ms();
@@ -396,6 +405,32 @@ void on_joined() {
     g_timeout_add_seconds(static_cast<guint>(g_opt.minutes) * 60, on_duration_over, nullptr);
 }
 
+gboolean retry_join(gpointer) {
+    if (!g_leaving) join();
+    return G_SOURCE_REMOVE;
+}
+
+// OBF: Zoom refuses the join until the owner is in the meeting. Retry every 3 s (Zoom
+// suggests 1-5 s) until --owner-wait-seconds, then give up.
+void wait_for_owner() {
+    if (!g_first_join_ms) g_first_join_ms = now_ms();
+    if (now_ms() - g_first_join_ms >= g_opt.owner_wait_seconds * 1000LL) {
+        fail("owner_not_joined");
+        return;
+    }
+    state("starting waiting_for_owner");
+    g_timeout_add_seconds(3, retry_join, nullptr);
+}
+
+// With OBF, a session Zoom ends or drops without the host ending it means the owner left.
+void owner_left(int code) {
+    log("session ended by Zoom, code " + std::to_string(code) +
+        " (obf: taken as the owner leaving; record this code in the findings)");
+    g_end_reason = "owner_left";
+    g_leaving = true;
+    quit_loop(nullptr);
+}
+
 class MeetingEvents : public IMeetingServiceEvent {
 public:
     void onMeetingStatusChanged(MeetingStatus status, int result) override {
@@ -404,14 +439,31 @@ public:
             case MEETING_STATUS_IN_WAITING_ROOM: state("waiting_room"); break;
             case MEETING_STATUS_INMEETING: on_joined(); break;
             case MEETING_STATUS_FAILED:
-                // result is a MeetingFailCode, e.g. MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING
-                // when an OBF token's user is not in the meeting (SDK >= 6.6.10), or an
-                // auth error when Zoom refuses the ZAK (what test C finds out).
+                if (g_in_meeting && g_opt.join_token_kind == "obf" && !g_opt.join_token.empty() &&
+                    !g_leaving) {
+                    // dropped after joining: with an OBF token most likely the owner left
+                    // (test B records the real code so the bot can match it exactly)
+                    owner_left(result);
+                    break;
+                }
+                // result is a MeetingFailCode. MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING
+                // (SDK >= 6.6.10): the OBF token's user (the owner) isn't in the meeting yet.
+                if (result == MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING && !g_leaving) {
+                    wait_for_owner();
+                    break;
+                }
                 fail("join_failed_" + std::to_string(result));
                 break;
             case MEETING_STATUS_ENDED:
-                // result is a MeetingEndReason (removed by host, host ended, ...).
-                if (!g_leaving) g_end_reason = "meeting_ended_" + std::to_string(result);
+                // result is a MeetingEndReason. The reason Zoom gives when an OBF session
+                // ends because the owner left is not documented: test B records it.
+                if (!g_leaving) {
+                    if (result == EndMeetingReason_KickByHost) g_end_reason = "removed";
+                    else if (result == EndMeetingReason_EndByHost) g_end_reason = "meeting_ended";
+                    else if (g_opt.join_token_kind == "obf" && !g_opt.join_token.empty())
+                        owner_left(result);
+                    else g_end_reason = "meeting_ended_" + std::to_string(result);
+                }
                 g_leaving = true;
                 quit_loop(nullptr);
                 break;
@@ -482,8 +534,9 @@ const char* env_or(const char* name, const char* def) {
 void usage() {
     std::cerr << "usage: athena-meeting-spike --meeting-id ID --passcode PW [--name Athena]\n"
                  "         [--minutes 30] [--out DIR] [--no-audio-seconds 60]\n"
+                 "         [--owner-wait-seconds 600]\n"
                  "env: ATHENA_SPIKE_JWT (required, from sign_jwt.py)\n"
-                 "     ATHENA_ZOOM_JOIN_TOKEN + ATHENA_ZOOM_JOIN_TOKEN_KIND=zak|obf (default zak)\n"
+                 "     ATHENA_ZOOM_JOIN_TOKEN + ATHENA_ZOOM_JOIN_TOKEN_KIND=obf|zak (default obf)\n"
                  "     ATHENA_SPIKE_RECORDING_TOKEN (host-issued, optional)\n";
 }
 
@@ -497,15 +550,17 @@ bool parse(int argc, char** argv) {
         else if (a == "--out") g_opt.out_dir = next();
         else if (a == "--minutes") g_opt.minutes = std::atoi(next().c_str());
         else if (a == "--no-audio-seconds") g_opt.no_audio_seconds = std::atoi(next().c_str());
+        else if (a == "--owner-wait-seconds") g_opt.owner_wait_seconds = std::atoi(next().c_str());
         else return false;
     }
     g_opt.jwt = env_or("ATHENA_SPIKE_JWT", "");
     g_opt.join_token = env_or("ATHENA_ZOOM_JOIN_TOKEN", "");
-    g_opt.join_token_kind = env_or("ATHENA_ZOOM_JOIN_TOKEN_KIND", "zak");
+    g_opt.join_token_kind = env_or("ATHENA_ZOOM_JOIN_TOKEN_KIND", "");
+    if (g_opt.join_token_kind.empty()) g_opt.join_token_kind = "obf";
     if (g_opt.join_token_kind != "zak" && g_opt.join_token_kind != "obf") return false;
     g_opt.recording_token = env_or("ATHENA_SPIKE_RECORDING_TOKEN", "");
     return !g_opt.meeting_id.empty() && !g_opt.jwt.empty() && g_opt.minutes > 0 &&
-           g_opt.no_audio_seconds > 0;
+           g_opt.no_audio_seconds > 0 && g_opt.owner_wait_seconds > 0;
 }
 
 }  // namespace

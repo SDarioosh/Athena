@@ -20,9 +20,12 @@ recording permission and never posts in chat. Prints the same STATE lines.
     ATHENA_SPIKE_JWT=$(python3 ../sign_jwt.py) python3 athena_spike.py \
         --meeting-id 81234567890 --passcode xxxxxx --minutes 30 --out out-py
 
-Meetings in other accounts: set ATHENA_ZOOM_JOIN_TOKEN to Athena's own account's ZAK
-(ATHENA_ZOOM_JOIN_TOKEN_KIND=zak, the default) or to an on-behalf-of token from the owner's
-account (ATHENA_ZOOM_JOIN_TOKEN_KIND=obf, works only while the owner is in the meeting).
+Meetings in other accounts: set ATHENA_ZOOM_JOIN_TOKEN to an on-behalf-of token from the
+owner's own account (ATHENA_ZOOM_JOIN_TOKEN_KIND=obf, the default). Zoom admits the bot
+only while the owner is in the meeting: it prints `STATE starting waiting_for_owner` while
+it retries, `STATE failed owner_not_joined` after --owner-wait-seconds, and `STATE ended
+owner_left` when Zoom drops it because he left. Later option: a separate Athena account's
+ZAK (ATHENA_ZOOM_JOIN_TOKEN_KIND=zak).
 """
 
 from __future__ import annotations
@@ -54,9 +57,9 @@ def log(msg: str) -> None:
 
 
 def join_token() -> tuple[str, str]:
-    kind = os.environ.get("ATHENA_ZOOM_JOIN_TOKEN_KIND", "zak") or "zak"
-    if kind not in ("zak", "obf"):
-        raise SystemExit("ATHENA_ZOOM_JOIN_TOKEN_KIND must be zak or obf")
+    kind = os.environ.get("ATHENA_ZOOM_JOIN_TOKEN_KIND", "") or "obf"
+    if kind not in ("obf", "zak"):
+        raise SystemExit("ATHENA_ZOOM_JOIN_TOKEN_KIND must be obf or zak")
     return os.environ.get("ATHENA_ZOOM_JOIN_TOKEN", ""), kind
 
 
@@ -80,6 +83,8 @@ class Bot:
         self.failed = False
         self.end_reason = "left"
         self.joined_at = 0.0
+        self.first_join = 0.0
+        self.in_meeting = False
         self.last_audio = 0.0
         self.chat_file = None
         # keep references: the binding does not own callback objects
@@ -113,6 +118,9 @@ class Bot:
         if result != zoom.AUTHRET_SUCCESS:
             return self.fail(f"sdk_auth_{result}")
         log("SDK auth ok")
+        self.join()
+
+    def join(self) -> bool:
         jp = zoom.JoinParam()
         jp.userType = zoom.SDKUserType.SDK_UT_WITHOUT_LOGIN
         p = jp.param
@@ -123,9 +131,9 @@ class Bot:
         p.isAudioOff = False
         p.isAudioRawDataStereo = False
         p.isMyVoiceInMix = False
-        # ATHENA_ZOOM_JOIN_TOKEN (lane 1B's name): kind "zak" (default) = Athena's own Zoom
-        # account, primary for other accounts' meetings; "obf" = on behalf of the owner,
-        # fallback, only while the owner is in the meeting. Empty: JWT only.
+        # ATHENA_ZOOM_JOIN_TOKEN (lane 1B's name): kind "obf" (default) = on behalf of the
+        # owner, primary, only while the owner is in the meeting; "zak" = a separate Athena
+        # account, later option. Empty: JWT only.
         token, kind = join_token()
         if token:
             setattr(p, "userZAK" if kind == "zak" else "onBehalfToken", token)
@@ -136,6 +144,25 @@ class Bot:
         err = self.meeting.Join(jp)
         if err != zoom.SDKERR_SUCCESS:
             self.fail(f"join_call_{err}")
+        return False  # also a one-shot GLib timeout callback
+
+    def obf(self) -> bool:
+        token, kind = join_token()
+        return bool(token) and kind == "obf"
+
+    def wait_for_owner(self) -> None:
+        """OBF: Zoom refuses until the owner is in. Retry every 3 s up to the limit."""
+        self.first_join = self.first_join or time.time()
+        if time.time() - self.first_join >= self.args.owner_wait_seconds:
+            return self.fail("owner_not_joined")
+        say("starting waiting_for_owner")
+        GLib.timeout_add_seconds(3, self.join)
+
+    def owner_left(self, code) -> None:
+        log(f"session ended by Zoom, code {code} (obf: taken as the owner leaving; record it)")
+        self.end_reason = "owner_left"
+        self.leaving = True
+        self.loop.quit()
 
     # --- meeting ---------------------------------------------------------------------
     def on_status(self, status, result) -> None:
@@ -145,14 +172,28 @@ class Bot:
         elif status == zoom.MEETING_STATUS_INMEETING:
             self.on_joined()
         elif status == zoom.MEETING_STATUS_FAILED:
-            self.fail(f"join_failed_{result}")
+            if self.in_meeting and self.obf() and not self.leaving:
+                self.owner_left(result)
+            elif (result == zoom.MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING  # SDK >= 6.6.10
+                  and not self.leaving):
+                self.wait_for_owner()
+            else:
+                self.fail(f"join_failed_{result}")
         elif status == zoom.MEETING_STATUS_ENDED:
             if not self.leaving:
-                self.end_reason = f"meeting_ended_{result}"
+                if result == zoom.EndMeetingReason_KickByHost:
+                    self.end_reason = "removed"
+                elif result == zoom.EndMeetingReason_EndByHost:
+                    self.end_reason = "meeting_ended"
+                elif self.obf():
+                    return self.owner_left(result)
+                else:
+                    self.end_reason = f"meeting_ended_{result}"
             self.leaving = True
             self.loop.quit()
 
     def on_joined(self) -> None:
+        self.in_meeting = True
         say("recording")
         if self.joined_at:  # back in after a reconnect: timers and events already set
             return
@@ -296,6 +337,7 @@ def main() -> int:
     ap.add_argument("--minutes", type=int, default=30)
     ap.add_argument("--out", default="out-py")
     ap.add_argument("--no-audio-seconds", type=int, default=60)
+    ap.add_argument("--owner-wait-seconds", type=int, default=600)
     args = ap.parse_args()
     join_token()  # fail early on a bad kind
     if not os.environ.get("ATHENA_SPIKE_JWT"):
@@ -303,7 +345,7 @@ def main() -> int:
         return 2
     bot = Bot(args)
     for sig in (signal.SIGINT, signal.SIGTERM):
-        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, bot.leave, "signal")
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, bot.leave, "stopped")
     GLib.idle_add(lambda: bot.start() or False)
     bot.loop.run()
     bot.cleanup()
