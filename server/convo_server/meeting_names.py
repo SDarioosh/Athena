@@ -8,7 +8,7 @@ turns a track's display names into the speaker name written on its lines:
    punctuation, and fixes ALL-CAPS or all-lowercase names. A name that is only a device,
    a room or a generic label ("iPhone", "Zoom user", "Conference Room") cleans to "".
 2. ``speaker_for_track`` matches the cleaned names against the owner's Zoom names
-   (``CONVO_ZOOM_OWNER_NAMES``), then against people names and aliases, exactly (any
+   (``Settings.zoom_owner_name_list``), then against people names and aliases, exactly (any
    case). An unknown name becomes a new person. Every display name the track used is
    kept as an alias, so the next meeting finds the same person and a participant who
    renamed mid-meeting stays one person.
@@ -245,7 +245,8 @@ def speaker_for_track(store: Store, track_info: Mapping[str, Any],
 
 
 def speakers_for_tracks(store: Store, tracks: Iterable[Mapping[str, Any]],
-                        owner_names: Sequence[str]) -> dict[str, tuple[str, bool]]:
+                        owner_names: Sequence[str], *,
+                        owner_display: str | None = None) -> dict[str, tuple[str, bool]]:
     """``speaker_for_track`` for every track of a meeting, keyed by track id. Tracks with
     no usable name are told apart as "Speaker 1", "Speaker 2", ... in track order, so
     ``name_speaker`` can name each one."""
@@ -258,7 +259,8 @@ def speakers_for_tracks(store: Store, tracks: Iterable[Mapping[str, Any]],
             unnamed += 1
             out[t["track"]] = (f"Speaker {unnamed}", False)
         else:
-            out[t["track"]] = speaker_for_track(store, t, owner_names)
+            out[t["track"]] = speaker_for_track(store, t, owner_names,
+                                                owner_display=owner_display)
     return out
 
 
