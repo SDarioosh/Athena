@@ -8,7 +8,7 @@ turns a track's display names into the speaker name written on its lines:
    punctuation, and fixes ALL-CAPS or all-lowercase names. A name that is only a device,
    a room or a generic label ("iPhone", "Zoom user", "Conference Room") cleans to "".
 2. ``speaker_for_track`` matches the cleaned names against the owner's Zoom names
-   (``CONVO_ZOOM_OWNER_NAMES``), then against people names and aliases, exactly (any
+   (``Settings.zoom_owner_name_list``), then against people names and aliases, exactly (any
    case). An unknown name becomes a new person. Every display name the track used is
    kept as an alias, so the next meeting finds the same person and a participant who
    renamed mid-meeting stays one person.
@@ -194,7 +194,8 @@ def _clean_part(s: str) -> str:
 
 
 def speaker_for_track(store: Store, track_info: Mapping[str, Any],
-                      owner_names: Sequence[str]) -> tuple[str, bool]:
+                      owner_names: Sequence[str], *,
+                      owner_display: str | None = None) -> tuple[str, bool]:
     """The speaker name to write on a meeting track's lines, and whether it is the owner.
 
     ``track_info`` is one entry of ``Store.tracks``: ``name`` (latest display name) and
@@ -206,6 +207,14 @@ def speaker_for_track(store: Store, track_info: Mapping[str, Any],
     display names of the track, raw and cleaned, become aliases of that person. A track
     with no usable name gets ``track_info["placeholder"]`` (default "Unknown") and makes
     no person. Lane 2A calls this through ``meeting_tracks.track_speaker``.
+
+    The owner keeps their canonical name, never a Zoom display name (owner request, QA
+    BUG-07): the enrolled owner voice's name, else ``owner_display`` (callers pass
+    CONVO_OWNER_NAME). The track's display names become aliases of the owner person, and
+    an owner person still called by an older name (a Zoom name from before) is renamed
+    to the canonical name, keeping the old one as an alias (``Store.name_owner``).
+    Without either, the owner person keeps the name it has, or a new one is called by the
+    cleaned owner Zoom name (the behaviour before ``owner_display``).
     """
     raws = _track_names(track_info)
     usable = [(r, c) for r, c in ((r, clean_display_name(r)) for r in raws) if c]
@@ -213,10 +222,17 @@ def speaker_for_track(store: Store, track_info: Mapping[str, Any],
     if _is_owner_track(raws, owner_names):
         # raw names too: an owner Zoom name that cleans to nothing ("Me", "iPhone")
         # still names the owner (QA BUG-08); such a name makes no person or alias
-        candidates = [store.owner_name() or "", *(clean_display_name(o) for o in owner_names),
+        canonical = store.owner_name() or (owner_display or "").strip()
+        if canonical:
+            store.name_owner(canonical)  # an owner person under an older (Zoom) name
+        candidates = [canonical, store.owner_person_name() or "",
+                      *(clean_display_name(o) for o in owner_names),
                       *(c for _, c in usable[-1:])]
         got = store.link_person(candidates, aliases, is_owner=True)
-        return (got[1] if got else " ".join(raws[-1].split())), True
+        if got and canonical and got[1] != canonical:  # found by a Zoom name or alias
+            store.name_owner(canonical)
+            return canonical, True
+        return (got[1] if got else canonical or " ".join(raws[-1].split())), True
     if not usable:
         return str(track_info.get("placeholder", PLACEHOLDER)), False
     latest_first = usable[::-1]
@@ -229,7 +245,8 @@ def speaker_for_track(store: Store, track_info: Mapping[str, Any],
 
 
 def speakers_for_tracks(store: Store, tracks: Iterable[Mapping[str, Any]],
-                        owner_names: Sequence[str]) -> dict[str, tuple[str, bool]]:
+                        owner_names: Sequence[str], *,
+                        owner_display: str | None = None) -> dict[str, tuple[str, bool]]:
     """``speaker_for_track`` for every track of a meeting, keyed by track id. Tracks with
     no usable name are told apart as "Speaker 1", "Speaker 2", ... in track order, so
     ``name_speaker`` can name each one."""
@@ -242,7 +259,8 @@ def speakers_for_tracks(store: Store, tracks: Iterable[Mapping[str, Any]],
             unnamed += 1
             out[t["track"]] = (f"Speaker {unnamed}", False)
         else:
-            out[t["track"]] = speaker_for_track(store, t, owner_names)
+            out[t["track"]] = speaker_for_track(store, t, owner_names,
+                                                owner_display=owner_display)
     return out
 
 

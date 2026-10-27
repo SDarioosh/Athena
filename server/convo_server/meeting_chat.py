@@ -167,14 +167,16 @@ class _Names:
             who, owner = "", False
             if zoom_user_id in self.tracks:
                 who, owner = track_speaker(self.store, self.tracks[zoom_user_id],
-                                           self.owner_names)
+                                           self.owner_names,
+                                           owner_display=self.owner_display)
             seen = self.seen.get(zoom_user_id, []) if zoom_user_id else []
             names = [n for n in dict.fromkeys([*([name] if name not in seen else []), *seen])
                      if n]
             if not who and not owner and names:
                 who, owner = speaker_for_track(
                     self.store, {"track": zoom_user_id, "name": names[-1], "names": names,
-                                 "placeholder": ""}, self.owner_names)
+                                 "placeholder": ""}, self.owner_names,
+                    owner_display=self.owner_display)
             if owner:
                 who = self.owner_display or who
             elif not who:  # a room, a device or no name: what Zoom showed, else Unknown

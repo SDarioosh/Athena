@@ -155,9 +155,11 @@ other's name; two different named speakers stay apart (often a real interruption
   "Polycom", "Logitech Rally", "SM-G991B") makes no person ("Jordan Hall" and a bare
   "Hall", "Mac" or "Dell" are names; "Mac Pro" and "Dell XPS 13" are not): the track gets an unnamed
   label ("Speaker N"), which `name_speaker` can rename. A cleaned name that matches
-  `CONVO_ZOOM_OWNER_NAMES` is the owner; with no owner voice enrolled, that person's
-  name is then the owner's name on every owner line (meetings and voice notes alike)
-  instead of `CONVO_OWNER_NAME`, so lines and `list_people` agree. Otherwise it is matched exactly (any case) against
+  `CONVO_OWNER_NAME` or `CONVO_ZOOM_OWNER_NAMES` is the owner. The owner keeps their own name on every owner
+  line (meetings, voice notes, written notes) and in `list_people`: the enrolled owner
+  voice's name, else `CONVO_OWNER_NAME`, never the Zoom name. The track's Zoom names
+  become aliases of the owner, so the next meeting finds them again; an owner person
+  named by a Zoom name before this rule is renamed (same id, the old name an alias). Otherwise it is matched exactly (any case) against
   people names and aliases; an unknown name becomes a new person. There is no first-name
   guessing ("Kath Dlamini" is not merged into "Kath"): a wrong merge mixes two people,
   while `rename_speaker_everywhere("Kath Dlamini", "Kath")` merges them for good. Every
@@ -335,10 +337,12 @@ tracks is processed). Each track's VAD speech goes to whisper on its own (whispe
 context never crosses tracks; the participants' names are added to its prompt for
 spelling), and every line from a track is that participant's:
 
-- A line is named by the track's latest `track_name`. A track named in
-  `CONVO_ZOOM_OWNER_NAMES` (comma-separated, any case) is the owner's: `is_owner=true`,
-  named like the owner everywhere else (the enrolled owner voice's name, else
-  `CONVO_OWNER_NAME`). A track without a name is an unnamed "Speaker N".
+- A line is named by the track's latest `track_name`. A track named `CONVO_OWNER_NAME`
+  (unless it is the default "Me") or one of `CONVO_ZOOM_OWNER_NAMES` (extra names in
+  addition to `CONVO_OWNER_NAME`, comma-separated, any case, e.g. "Shahyah (phone)") is
+  the owner's: `is_owner=true`, named like the owner everywhere else (the enrolled owner
+  voice's name, else `CONVO_OWNER_NAME`, never the Zoom name; the Zoom names become
+  aliases of the owner). A track without a name is an unnamed "Speaker N".
 - No diarizer or speaker model runs for these tracks. A track whose name is a room or
   a device ("Conference Room", "Meeting Room 2", "Zoom Rooms", "Anna's iPhone", "Galaxy
   S23", "Zoom user", "Polycom", a dial-in number) can hold several people: the configured
