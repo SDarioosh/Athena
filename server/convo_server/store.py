@@ -2157,22 +2157,51 @@ class Store:
         return rows
 
     def owner_voice_name(self) -> str | None:
-        """The enrolled owner voice's name (``speakers.is_owner``), None without one. Unlike
-        ``owner_name`` it never falls back to the owner's person: voice samples need a
-        voice to go to."""
+        """The enrolled owner voice's name (``speakers.is_owner``), None without one: the
+        voice learned owner samples go to. The same as ``owner_name`` (which no longer
+        falls back to the owner's person); kept as its own name so learning reads as
+        "needs a voice"."""
         row = self._one("SELECT name FROM speakers WHERE is_owner = 1")
         return row["name"] if row else None
 
     def owner_name(self) -> str | None:
-        """The name owner lines are written under: the enrolled owner voice's name; without
-        one, the owner's person (a Zoom track matched by CONVO_ZOOM_OWNER_NAMES makes one),
-        so lines and ``people`` name the owner alike (QA BUG-07). None when neither exists;
-        callers then use CONVO_OWNER_NAME."""
+        """The enrolled owner voice's name, or None; callers then use CONVO_OWNER_NAME.
+        This is the owner's name on every owner line (meetings, voice notes, written
+        notes). A ``people`` row never names the owner: a Zoom name matched by
+        CONVO_ZOOM_OWNER_NAMES is only an alias (owner request, QA BUG-07)."""
         row = self._one("SELECT name FROM speakers WHERE is_owner = 1")
-        if row is None:
-            row = self._one("SELECT name FROM people WHERE is_owner = 1"
-                            " AND merged_into IS NULL")
         return row["name"] if row else None
+
+    def owner_person_name(self) -> str | None:
+        """The current name of the owner's person (``owner_person_id``), or None."""
+        row = self._one("SELECT name FROM people WHERE is_owner = 1 AND merged_into IS NULL")
+        return row["name"] if row else None
+
+    def name_owner(self, name: str) -> None:
+        """Call the owner's person ``name`` (the canonical owner name: the enrolled owner
+        voice's, else CONVO_OWNER_NAME). The person keeps their id and the old name (for
+        example a Zoom display name a meeting named the owner by before) becomes an
+        alias; owner lines under the old name move to ``name`` and stay owner lines. If
+        ``name`` is already another person, the owner is merged into them (that id
+        survives and becomes the owner). No-op without an owner person."""
+        name = (name or "").strip()
+        if not name or _PLACEHOLDER_SPEAKER.match(name):
+            return
+        with self.tx() as c:
+            row = c.execute("SELECT name FROM people WHERE is_owner = 1"
+                            " AND merged_into IS NULL").fetchone()
+            if row is None or row["name"] == name:
+                return
+            old = row["name"]
+            convs = [r["conversation_id"] for r in c.execute(
+                "SELECT DISTINCT conversation_id FROM segments WHERE speaker = ?"
+                " COLLATE NOCASE AND is_owner = 1 AND conversation_id IS NOT NULL", (old,))]
+            c.execute("UPDATE segments SET speaker = ? WHERE speaker = ? COLLATE NOCASE"
+                      " AND is_owner = 1", (name, old))
+            c.execute("UPDATE OR REPLACE conversation_people SET name = ? WHERE name = ?",
+                      (name, old))
+            _rename_person(c, old, name)
+            _touch_conversations(c, convs, None)
 
     # ------------------------------------------------------------------ people
     def ensure_person(self, name: str, speaker_id: int | None = None,

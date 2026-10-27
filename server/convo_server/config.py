@@ -190,8 +190,9 @@ class Settings(BaseSettings):
     owner_hint_db: float = 3.0
     owner_name: str = "Me"
     # --- meetings: lines from per-participant tracks (convo_server/meeting_tracks.py) ---
-    # The owner's Zoom display names, comma-separated (any case): that track's lines are
-    # the owner's (is_owner=true) and named like the owner everywhere else.
+    # The owner's Zoom display names in addition to CONVO_OWNER_NAME (which counts too
+    # unless it is the default "Me"), comma-separated (any case), e.g. "Shahyah (phone)":
+    # that track's lines are the owner's (is_owner=true), named by the owner's name.
     zoom_owner_names: str = ""
     # Save up to 3 voice samples of 3 s from each named participant's own track, so they
     # are recognized in later recordings (convo_server/meeting_voices.py). false = off.
@@ -249,8 +250,15 @@ class Settings(BaseSettings):
 
     @property
     def zoom_owner_name_list(self) -> tuple[str, ...]:
-        """CONVO_ZOOM_OWNER_NAMES as a tuple, blanks dropped."""
-        return tuple(n.strip() for n in self.zoom_owner_names.split(",") if n.strip())
+        """CONVO_ZOOM_OWNER_NAMES as a tuple, blanks dropped, then CONVO_OWNER_NAME unless
+        it is the default placeholder "Me" or already listed (any case): an owner who
+        joins Zoom under their own name needs no extra setting."""
+        names = [n.strip() for n in self.zoom_owner_names.split(",") if n.strip()]
+        owner = " ".join((self.owner_name or "").split())
+        if owner and owner.casefold() != "me" and owner.casefold() not in {
+                " ".join(n.split()).casefold() for n in names}:
+            names.append(owner)
+        return tuple(names)
 
     @property
     def db_path(self) -> Path:

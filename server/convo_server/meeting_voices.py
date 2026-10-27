@@ -251,7 +251,8 @@ def learn_from_meeting(pipeline: Pipeline, session_id: str,
         if track not in by_track:
             continue
         owner_names = cfg.zoom_owner_name_list
-        name, owner = track_speaker(store, info, owner_names)
+        name, owner = track_speaker(store, info, owner_names,
+                                    owner_display=owner_voice or cfg.owner_name)
         if not owner and _room_track(info, owner_names):
             # transcription's own decision (any name the track ever had is a room or a
             # device): it was diarized, so several voices may be on it (QA BUG-01)
