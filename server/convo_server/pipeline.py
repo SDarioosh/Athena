@@ -10,6 +10,7 @@ make_digest   -> daily digest over the day's summarized conversations
 from __future__ import annotations
 
 import contextlib
+import itertools
 import logging
 import re
 import threading
@@ -60,6 +61,38 @@ def validate_id(value: str, what: str) -> str:
     if not _SAFE.match(value):
         raise ValueError(f"{what} must match {_SAFE.pattern}")
     return value
+
+
+# Tracks (POST /v1/ingest/chunk ``track``/``track_name``): one participant's audio in a
+# session with several, e.g. a Zoom user id and display name.
+TRACK = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+MAX_TRACK_NAME_CHARS = 200
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def validate_track(track: str | None, track_name: str | None) -> tuple[str, str | None]:
+    """The stored (track, track_name): '' for no track (``track`` omitted or empty);
+    the name with control characters dropped and spaces collapsed, None when empty.
+    Raises ValueError for a bad track, a name over ``MAX_TRACK_NAME_CHARS`` characters,
+    or a name without a track."""
+    track = track or ""
+    if track and not TRACK.match(track):
+        raise ValueError(f"track must match {TRACK.pattern}")
+    name = " ".join(_CONTROL_CHARS.sub("", track_name or "").split()) or None
+    if name is not None and len(name) > MAX_TRACK_NAME_CHARS:
+        raise ValueError(f"track_name is longer than {MAX_TRACK_NAME_CHARS} characters")
+    if name is not None and not track:
+        raise ValueError("track_name needs a track")
+    return track, name
+
+
+def chunk_filename(track: str, sequence: int, codec: str) -> str:
+    """A chunk's audio file name in its session folder. Without a track it is the name
+    used before tracks; a track is hex-encoded, so any valid track ('..', ':') makes a
+    safe, distinct name."""
+    if not track:
+        return f"{sequence:06d}.{codec}"
+    return f"t{track.encode().hex()}-{sequence:06d}.{codec}"
 
 
 # Written notes (POST /v1/ingest/text): the hub's stable id of a note, and size limits
@@ -163,11 +196,19 @@ class Pipeline:
     # ------------------------------------------------------------------ ingest
     def ingest_chunk(self, *, device: str, session_id: str, sequence: int, started_at: float,
                      codec: str, data: bytes, sample_rate: int = audio_mod.SAMPLE_RATE,
-                     now: float | None = None, kind: str = CONVERSATION) -> IngestResult:
+                     now: float | None = None, kind: str = CONVERSATION,
+                     track: str | None = None, track_name: str | None = None
+                     ) -> IngestResult:
+        """Store one chunk. ``track`` (optional) keeps one participant's audio apart
+        in a session with several; sequences count per track. Without it the session
+        works as before tracks. The stop answer is for the whole session: trailing
+        silence counts from the latest speech on any track, so one quiet participant
+        never ends a meeting."""
         from .store import DuplicateChunk
 
         validate_id(device, "device")
         validate_id(session_id, "session_id")
+        track, track_name = validate_track(track, track_name)
         if device == WRITTEN_DEVICE or session_id.startswith(WRITTEN_SESSION_PREFIX):
             raise ValueError(f"device {WRITTEN_DEVICE!r} and session ids starting with "
                              f"{WRITTEN_SESSION_PREFIX!r} are for written notes "
@@ -195,7 +236,7 @@ class Pipeline:
         if data:
             d = self.settings.audio_dir / device / session_id
             d.mkdir(parents=True, exist_ok=True)
-            path = d / f"{sequence:06d}.{codec}"
+            path = d / chunk_filename(track, sequence, codec)
             # Unique temp name: a retry racing the original upload of the same chunk
             # must not overwrite or delete the original's temp file.
             part = path.with_name(f"{path.name}.{uuid.uuid4().hex}.part")
@@ -204,7 +245,8 @@ class Pipeline:
             sess = self.store.add_chunk(session_id=session_id, device=device, sequence=sequence,
                                         started_at=started_at, duration=duration, codec=codec,
                                         audio_path=str(path) if path else None, speech=speech,
-                                        now=now, kind=kind)
+                                        now=now, kind=kind, track=track,
+                                        track_name=track_name)
             duplicate = False
             if part and path:
                 part.replace(path)
@@ -336,7 +378,10 @@ class Pipeline:
         piece_words: list[list[tuple[float, float, str]]] = []  # run time, per piece
         cfg = self.settings
         context = ""
-        for run_start, run_audio, run_speech in self._runs(chunks):
+        last_track = None
+        for track, run_start, run_audio, run_speech in self._track_runs(chunks):
+            if track != last_track:  # whisper's context never crosses participants
+                context, last_track = "", track
             runs.append(run_audio)
             regions = merge_spans(run_speech, REGION_MERGE_GAP)
             windows = plan_windows(regions, run_audio.size / audio_mod.SAMPLE_RATE,
@@ -435,8 +480,23 @@ class Pipeline:
             parts.append(", ".join(names[:MAX_PROMPT_NAMES]) + ".")
         return " ".join(p for p in parts if p)
 
+    def _track_runs(self, chunks: list[dict[str, Any]]):
+        """Yield (track, epoch_start, audio, speech_spans): each track's runs of
+        contiguous chunks, reassembled by that track's own sequence, track by track
+        ('' = chunks without a track, which is all of a session before tracks). Runs never
+        mix tracks, and ``join_lines`` never joins lines of two runs.
+
+        Seam for per-track transcription (meeting lane 2A): lines of a tracked session
+        are still diarized as today; 2A replaces this loop's caller for tracked
+        sessions with whisper per track and lines named by track."""
+        ordered = sorted(chunks, key=lambda c: (c.get("track") or "", c["sequence"]))
+        for track, group in itertools.groupby(ordered, key=lambda c: c.get("track") or ""):
+            for run_start, audio, spans in self._runs(list(group)):
+                yield track, run_start, audio, spans
+
     def _runs(self, chunks: list[dict[str, Any]]):
-        """Yield (epoch_start, audio, speech_spans) for runs of contiguous chunks."""
+        """Yield (epoch_start, audio, speech_spans) for runs of contiguous chunks of
+        one track, in sequence order."""
         run: list[dict[str, Any]] = []
 
         def flush():
@@ -476,7 +536,8 @@ class Pipeline:
         for c in chunks:
             if c["audio_path"]:
                 Path(c["audio_path"]).unlink(missing_ok=True)
-        self.store.clear_chunk_audio(session_id, [c["sequence"] for c in chunks])
+        self.store.clear_chunk_audio(session_id,
+                                     [(c.get("track") or "", c["sequence"]) for c in chunks])
         # rmdir, not rmtree: an upload in flight has its .part file in this folder.
         with contextlib.suppress(OSError):
             (self.settings.audio_dir / device / session_id).rmdir()

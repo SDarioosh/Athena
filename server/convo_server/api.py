@@ -2,6 +2,7 @@
 
 Device ingestion:
     POST /v1/ingest/chunk          multipart audio chunk -> {"ok", "stop", ...}
+                                   (optional track, track_name: one participant's audio)
     POST /v1/sessions/{id}/end     device pressed Stop
 Written notes (the hub's handwritten notes, reviewed text):
     POST   /v1/ingest/text         JSON {source_id, text, written_at, link, title?}
@@ -107,6 +108,8 @@ class ChunkJson(BaseModel):
     codec: str = "opus"
     sample_rate: int = audio_mod.SAMPLE_RATE
     kind: str = "conversation"  # or "note" (voice note)
+    track: str | None = None  # optional, as in the multipart form
+    track_name: str | None = None
     audio_b64: str = Field(max_length=MAX_CHUNK_BYTES * 4 // 3 + 4)
 
 
@@ -150,7 +153,7 @@ REJECTED_KEEP = 20  # undecodable uploads kept for debugging, newest first
 
 
 def save_rejected(settings: Settings, session_id: str, sequence: int, codec: str,
-                  data: bytes) -> str:
+                  data: bytes, track: str | None = None) -> str:
     """Keep an upload ffmpeg could not decode, so its format can be inspected.
 
     The file stays in the server's data directory, like any queued audio. Only the newest
@@ -158,7 +161,8 @@ def save_rejected(settings: Settings, session_id: str, sequence: int, codec: str
     """
     folder = settings.data_dir / "rejected"
     folder.mkdir(parents=True, exist_ok=True)
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{session_id}-{sequence}.{codec}")[:120]
+    name = f"{session_id}-{track}-{sequence}" if track else f"{session_id}-{sequence}"
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{name}.{codec}")[:120]
     path = folder / f"{safe}.bin"
     path.write_bytes(data)
     old = sorted(folder.glob("*.bin"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -218,7 +222,12 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         codec: Annotated[str, Form()] = "opus",
         sample_rate: Annotated[int, Form()] = audio_mod.SAMPLE_RATE,
         kind: Annotated[str, Form()] = "conversation",
+        track: Annotated[str | None, Form()] = None,
+        track_name: Annotated[str | None, Form()] = None,
     ) -> dict[str, Any]:
+        """One chunk. ``track`` (optional, ``[A-Za-z0-9._:-]{1,64}``) keeps one
+        participant's audio apart, sequences counting per track; ``track_name``
+        (optional, at most 200 characters, needs ``track``) is their display name."""
         if len(audio) > MAX_CHUNK_BYTES:
             raise HTTPException(413, "chunk too large")
         started = parse_ts(timestamp)
@@ -226,15 +235,18 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
             result = await run_in_threadpool(
                 pipeline.ingest_chunk, device=device, session_id=session_id, sequence=sequence,
                 started_at=started, codec=codec, data=audio, sample_rate=sample_rate,
-                kind=kind)
+                kind=kind, track=track, track_name=track_name)
         except audio_mod.AudioDecodeError as e:
-            saved = save_rejected(settings, session_id, sequence, codec, audio)
+            saved = save_rejected(settings, session_id, sequence, codec, audio, track)
             log.warning("could not decode %d bytes (%s), saved to %s: %s",
                         len(audio), codec, saved, e)
             raise HTTPException(422, f"could not decode audio: {e}") from e
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
-        return {**result.as_dict(), "session_id": session_id, "sequence": sequence}
+        out = {**result.as_dict(), "session_id": session_id, "sequence": sequence}
+        if track:  # an upload without a track gets the same answer as before tracks
+            out["track"] = track
+        return out
 
     @v1.post("/ingest/chunk.json")
     async def ingest_chunk_json(body: ChunkJson) -> dict[str, Any]:
@@ -247,7 +259,8 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         return await ingest_chunk(audio=audio, device=body.device, session_id=body.session_id,
                                   sequence=body.sequence, timestamp=body.timestamp,
                                   codec=body.codec, sample_rate=body.sample_rate,
-                                  kind=body.kind)
+                                  kind=body.kind, track=body.track,
+                                  track_name=body.track_name)
 
     @v1.post("/ingest/text")
     def ingest_text(body: TextNote) -> dict[str, Any]:
@@ -294,10 +307,15 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         if s is None:
             raise HTTPException(404, "session not found")
         chunks = store.chunks(session_id)
+        tracks = [{**t, "started_at": iso(t["started_at"]), "ended_at": iso(t["ended_at"])}
+                  for t in store.tracks(session_id)]
         return {**{k: iso(v) if k.endswith("_at") else v for k, v in s.items()},
                 "chunks": [{"sequence": c["sequence"], "started_at": iso(c["started_at"]),
                             "duration": c["duration"], "speech": c["speech"],
-                            "has_audio": c["audio_path"] is not None} for c in chunks]}
+                            "has_audio": c["audio_path"] is not None,
+                            "track": c["track"] or None, "track_name": c["track_name"]}
+                           for c in chunks],
+                "tracks": tracks}
 
     # --------------------------------------------------------- conversations
     @v1.get("/conversations")
