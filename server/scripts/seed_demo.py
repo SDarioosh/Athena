@@ -121,7 +121,34 @@ MEETINGS: list[tuple[str, str, list[tuple[str, str, float, float]]]] = [
          "fifteenth.", 48, 5),
         ("Omar Example", "I'll have the welcome email ready a week before that.", 55, 5),
     ]),
+    ("zoom-budget", "2026-10-13T15:00", [
+        ("Sam Example", "Let's go through the Q4 budget for the community garden project.",
+         0, 6),
+        (ME, "The main open item is the tool shed, the quote came in at four thousand "
+         "euros.", 8, 6),
+        ("Sam Example", "That's more than we planned. Dana, do you have the updated sheet?",
+         16, 5),
+        ("Kai Example", "The second supplier is cheaper, about three thousand two hundred.",
+         30, 5),
+        (ME, "Then let's go with the second supplier. I'll confirm the order by Friday.",
+         38, 5),
+        ("Sam Example", "Agreed. That's all for today, thanks everyone.", 46, 4),
+    ]),
 ]
+
+# What the Zoom bot sends when a meeting ends (POST /v1/sessions/{id}/chat): the topic,
+# the participant list (Rafael never speaks or types) and chat messages
+# ((sender, text, at seconds)). Dana only types in chat.
+MEETING_CHAT: dict[str, tuple[str, list[str], list[tuple[str, str, float]]]] = {
+    "zoom-newsletter": ("Community newsletter relaunch",
+                        ["Priya Example", ME, "Lena Example", "Omar Example"], []),
+    "zoom-budget": ("Q4 budget review: community garden",
+                    ["Sam Example", ME, "Dana Example", "Kai Example", "Rafael Example"], [
+        ("Dana Example", "Here's the updated sheet: "
+         "https://files.example.org/garden-budget-v3.xlsx", 21),
+        ("Dana Example", "Tab 2 has the shed quotes from both suppliers.", 24),
+    ]),
+}
 
 
 def insert_meeting(store: Store, pipeline: Pipeline, key: str, start: str,
@@ -141,6 +168,19 @@ def insert_meeting(store: Store, pipeline: Pipeline, key: str, start: str,
     store.replace_segments(sid, device, segs, [(t0, end + 1)])
     conv_ids = pipeline._assign_conversations(sid, device)
     store.set_session_status(sid, "done")
+    if key in MEETING_CHAT:  # as the bot sends it after the meeting
+        from convo_server.meeting_chat import ChatIn, ingest_chat
+
+        topic, people, chat = MEETING_CHAT[key]
+        ids = {name: f"1678{i:04d}" for i, name in enumerate(people)}
+        body = ChatIn.model_validate({
+            "topic": topic,
+            "participants": [{"zoom_user_id": ids[n], "name": n, "joined_at": t0,
+                              "left_at": end} for n in people],
+            "lines": [{"at": t0 + at, "from": n, "zoom_user_id": ids[n], "text": text}
+                      for n, text, at in chat]})
+        out = ingest_chat(pipeline, sid, body)
+        conv_ids = [out["conversation_id"]] if out["conversation_id"] else conv_ids
     return conv_ids
 
 

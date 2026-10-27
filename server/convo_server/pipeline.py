@@ -38,6 +38,7 @@ from .store import (
     SESSION_KINDS,
     WRITTEN_DEVICE,
     WRITTEN_SESSION_PREFIX,
+    ZOOM_DEVICE,
     Segment,
     Store,
 )
@@ -624,6 +625,10 @@ class Pipeline:
                                                    [s.id for s in group if s.id is not None],
                                                    absorb=near[1:])
             touched = [t for t in touched if t not in near] + [conv_id]
+        # a Zoom session without tracks is a meeting too, with or without a chat call
+        # (QA BUG-27): its conversation gets the meeting block
+        if touched and (device == ZOOM_DEVICE or self.store.has_meeting_info(session_id)):
+            self.store.link_meeting(session_id, touched[0])
         return touched
 
     def _assign_meeting(self, session_id: str, device: str) -> list[str]:
@@ -637,6 +642,8 @@ class Pipeline:
         conv_id = self.store.save_conversation(have[0] if have else None, device,
                                                [s.id for s in segs if s.id is not None],
                                                absorb=have[1:])
+        # its topic and participants (meeting_chat.py) show on this conversation
+        self.store.link_meeting(session_id, conv_id)
         return [conv_id]
 
     def _assign_note(self, session_id: str, device: str) -> list[str]:
@@ -661,10 +668,16 @@ class Pipeline:
         conv = self.store.get_conversation(conv_id)
         kind = conv.get("kind") if conv else None
         stamp = conv["updated_at"] if conv else None
+        extra: dict[str, Any] = {}
+        if conv and conv.get("meeting"):  # a Zoom meeting: its topic, people, chat lines
+            from .meeting_chat import summary_context
+
+            extra["context"] = summary_context(conv["meeting"], segments)
         try:
             # facts that repeat or update stored ones are never cut by the fact cap
             summary = self.summarizer.summarize(
-                segments, kind=kind, known=lambda fs: self.store.facts_like(conv_id, fs))
+                segments, kind=kind, known=lambda fs: self.store.facts_like(conv_id, fs),
+                **extra)
         except Exception as e:
             log.exception("summary failed for %s", conv_id)
             self.store.mark_conversation_failed(conv_id, f"{type(e).__name__}: {e}")

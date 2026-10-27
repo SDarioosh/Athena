@@ -78,7 +78,8 @@ CREATE TABLE IF NOT EXISTS segments (
     ended_at REAL NOT NULL,
     speaker TEXT NOT NULL,
     is_owner INTEGER NOT NULL DEFAULT 0,
-    text TEXT NOT NULL
+    text TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'speech'       -- speech | chat (a meeting's chat message)
 );
 CREATE INDEX IF NOT EXISTS segments_time ON segments(device, started_at);
 CREATE INDEX IF NOT EXISTS segments_conv ON segments(conversation_id, started_at);
@@ -243,6 +244,26 @@ CREATE TABLE IF NOT EXISTS erased_facts (
     erased_at REAL NOT NULL
 );
 
+-- Meetings (Zoom bot, POST /v1/sessions/{id}/chat): the topic and participant list the bot
+-- sends, per session. conversation_id is the meeting's conversation once it has one, so
+-- a meeting stays one after retention removed its lines. participants is JSON
+-- [{zoom_user_id, name, person_id, joined_at, left_at}] (display name as Zoom showed it).
+CREATE TABLE IF NOT EXISTS meeting_info (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+    topic TEXT,
+    participants TEXT NOT NULL DEFAULT '[]',
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS meeting_info_conv ON meeting_info(conversation_id);
+-- Chat lines already stored, by a SHA-256 of their cleaned fields, so the bot's retries
+-- never add a line twice (also after erase_fact redacted it or retention removed it).
+CREATE TABLE IF NOT EXISTS meeting_chat (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    line_key TEXT NOT NULL,
+    PRIMARY KEY (session_id, line_key)
+);
+
 -- Line-level full-text index for "what did X say about Y" (kept in sync by triggers).
 CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
     text, content='segments', content_rowid='id', tokenize = 'porter unicode61'
@@ -321,6 +342,12 @@ class MeetingClosed(Exception):
     its time range, whose audio is gone."""
 
 
+# Transcript line kinds (segments.kind): spoken, or typed in a meeting's chat.
+SPEECH = "speech"
+CHAT = "chat"
+# The device the Zoom bot uploads as.
+ZOOM_DEVICE = "zoom"
+
 # A meeting in one of these statuses takes no new chunk (``MeetingClosed``).
 MEETING_CLOSED_STATUSES = ("processing", "done")
 
@@ -336,6 +363,7 @@ class Segment:
     session_id: str | None = None
     device: str | None = None
     conversation_id: str | None = None
+    kind: str = SPEECH  # CHAT: a message typed in a meeting's chat, not transcribed
 
 
 ITEM_STATUSES = ("open", "done", "dismissed")
@@ -553,6 +581,10 @@ class Store:
             # cleared when the bot exits.
             self._conn.executescript(MEETINGS_SCHEMA)
             self._conn.execute("PRAGMA user_version = 16")
+        # Not a numbered step on purpose (Zoom bot lane 3B): lane 1B takes version 16, and
+        # this only adds a column with a default, which _add_column does at most once.
+        # Meeting chat lines are segments of kind 'chat'; every older line is speech.
+        self._add_column("segments", "kind", f"TEXT NOT NULL DEFAULT '{SPEECH}'")
 
     def _rebuild_chunks_with_track(self) -> None:
         c = self._conn
@@ -847,6 +879,161 @@ class Store:
                     t["names"].append(name)
         return sorted(out.values(), key=lambda t: (t["started_at"], t["track"]))
 
+    # ---------------------------------------------------------------- meetings
+    def put_meeting_chat(self, session_id: str, lines: list[tuple[str, Segment]],
+                         topic: str | None = None,
+                         participants: list[dict[str, Any]] | None = None,
+                         now: float | None = None) -> dict[str, Any]:
+        """Store a meeting's chat lines and its topic and participants, in one transaction
+        (``POST /v1/sessions/{id}/chat``, ``meeting_chat.py``).
+
+        ``lines`` are (line_key, segment): a key already stored for the session is a retry
+        and is skipped. New lines become segments of kind CHAT without a conversation;
+        the caller attaches them. ``topic`` / ``participants`` replace the stored ones
+        when given (None keeps them). A session being processed is sent back for another
+        pass when something changed, so the new lines join its conversation. Returns
+        ``{"added": [segment ids], "duplicates", "changed" (topic or participants),
+        "status" (the session's, before this call), "device"}``; KeyError for an unknown
+        session.
+        """
+        now = time.time() if now is None else now
+        with self.tx() as c:
+            sess = c.execute("SELECT device, status FROM sessions WHERE id = ?",
+                             (session_id,)).fetchone()
+            if sess is None:
+                raise KeyError(session_id)
+            added: list[int] = []
+            duplicates = 0
+            for key, seg in lines:
+                if not c.execute("INSERT OR IGNORE INTO meeting_chat VALUES (?, ?)",
+                                 (session_id, key)).rowcount:
+                    duplicates += 1
+                    continue
+                added.append(c.execute(
+                    "INSERT INTO segments (session_id, device, started_at, ended_at, speaker,"
+                    " is_owner, text, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (session_id, sess["device"], seg.started_at, seg.ended_at, seg.speaker,
+                     int(seg.is_owner), seg.text, CHAT)).lastrowid)
+            info = c.execute("SELECT topic, participants FROM meeting_info WHERE"
+                             " session_id = ?", (session_id,)).fetchone()
+            old_topic, old_parts = (info["topic"], info["participants"]) if info else (None,
+                                                                                       "[]")
+            new_topic = old_topic if topic is None else topic
+            new_parts = old_parts if participants is None else json.dumps(participants)
+            changed = (new_topic, new_parts) != (old_topic, old_parts)
+            c.execute("INSERT INTO meeting_info (session_id, topic, participants, updated_at)"
+                      " VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET"
+                      " topic = excluded.topic, participants = excluded.participants,"
+                      " updated_at = CASE WHEN ? THEN excluded.updated_at ELSE updated_at END",
+                      (session_id, new_topic, new_parts, now, int(changed)))
+            if sess["status"] == "processing" and (added or changed):
+                c.execute("UPDATE sessions SET status = 'ended' WHERE id = ?"
+                          " AND status = 'processing'", (session_id,))
+            return {"added": added, "duplicates": duplicates, "changed": changed,
+                    "status": sess["status"], "device": sess["device"]}
+
+    def link_meeting(self, session_id: str, conv_id: str) -> None:
+        """Record ``conv_id`` as the conversation of the meeting ``session_id`` and index
+        its search entry again, so a topic, participants or chat lines sent late are found
+        before the summary is redone (QA BUG-14)."""
+        with self.tx() as c:
+            old = c.execute("SELECT conversation_id FROM meeting_info WHERE session_id = ?",
+                            (session_id,)).fetchone()
+            c.execute("INSERT INTO meeting_info (session_id, conversation_id, updated_at)"
+                      " VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET"
+                      " conversation_id = excluded.conversation_id",
+                      (session_id, conv_id, time.time()))
+            for cid in {conv_id, *([old[0]] if old and old[0] else [])}:
+                c.execute("DELETE FROM search_fts WHERE kind = 'transcript'"
+                          " AND conversation_id = ?", (cid,))
+                if c.execute("SELECT 1 FROM conversations WHERE id = ?", (cid,)).fetchone():
+                    self._index_transcript(c, cid)
+
+    def has_meeting_info(self, session_id: str) -> bool:
+        return self._one("SELECT 1 AS x FROM meeting_info WHERE session_id = ?",
+                         (session_id,)) is not None
+
+    def meeting_conversation(self, session_id: str) -> str | None:
+        """The meeting's conversation: the linked one, else the one holding its lines."""
+        row = self._one("SELECT m.conversation_id AS id FROM meeting_info m JOIN"
+                        " conversations c ON c.id = m.conversation_id"
+                        " WHERE m.session_id = ?", (session_id,))
+        if row:
+            return row["id"]
+        have = self.session_conversations(session_id)
+        return have[0] if have else None
+
+    def meetings_for(self, conv_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """``{conversation_id: {"topic", "participants"}}`` for the Zoom meetings among
+        ``conv_ids`` (others are left out). ``topic`` is the Zoom topic or None;
+        ``participants`` ``[{"name", "person_id", "is_owner", "zoom_name", "joined_at",
+        "left_at"}]``: the participant list the bot sent, each named by their person's
+        current name, then anyone else heard or seen in its chat, in order of first line
+        (``person_id``, ``zoom_name`` and the times are None for those)."""
+        with self._lock:
+            return self._meetings_for(self._conn, list(dict.fromkeys(conv_ids)))
+
+    def _meetings_for(self, c: sqlite3.Connection,
+                      ids: list[str]) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            for r in c.execute(
+                    "SELECT conversation_id, topic, participants FROM meeting_info"
+                    f" WHERE conversation_id IN ({','.join('?' * len(part))})"
+                    " ORDER BY updated_at", part).fetchall():
+                m = out.setdefault(r["conversation_id"], {"topic": None, "participants": []})
+                m["topic"] = m["topic"] or r["topic"]
+                m["participants"] += json.loads(r["participants"] or "[]")
+        for conv_id, m in out.items():
+            people: list[dict[str, Any]] = []
+            keys: set[tuple[Any, ...]] = set()  # one entry per zoom_user_id (QA BUG-13)
+            seen: set[str] = set()  # names listed, so heard speakers aren't listed twice
+            devices: list[dict[str, Any]] = []  # shown only as a device or room
+            for p in m["participants"]:
+                name, owner = p.get("name") or p.get("zoom_name") or "", False
+                pid = p.get("person_id")
+                if pid is not None:
+                    live = _live_person(c, pid)
+                    if live is not None:
+                        pid, name, owner = live["id"], live["name"], bool(live["is_owner"])
+                zid = p.get("zoom_user_id")
+                # two people with one name ("Alex", "iPhone") are two entries
+                key = ("id", zid) if zid else ("name", name.casefold(), p.get("joined_at"))
+                if not name or key in keys:
+                    continue
+                keys.add(key)
+                seen.add(name.casefold())
+                entry = {"name": name, "person_id": pid, "is_owner": owner,
+                         "zoom_name": p.get("zoom_name"),
+                         "joined_at": p.get("joined_at"), "left_at": p.get("left_at")}
+                people.append(entry)
+                if pid is None and not owner and _device_name(p.get("zoom_name") or name):
+                    devices.append(entry)
+            heard, unnamed = [], []  # unnamed: "Speaker 1", a room: no person
+            for r in c.execute("SELECT speaker, MAX(is_owner) AS is_owner, MIN(started_at)"
+                               " AS first FROM segments WHERE conversation_id = ?"
+                               " GROUP BY speaker COLLATE NOCASE ORDER BY first",
+                               (conv_id,)).fetchall():
+                if r["speaker"].casefold() not in seen:
+                    seen.add(r["speaker"].casefold())
+                    heard.append({"name": r["speaker"], "person_id": None,
+                                  "is_owner": bool(r["is_owner"]), "zoom_name": None,
+                                  "joined_at": None, "left_at": None})
+                    if not r["is_owner"] and _person_id(c, r["speaker"]) is None:
+                        unnamed.append(heard[-1])
+            if unnamed and devices:
+                # A participant Zoom shows only as a device or room ("iPhone") whose lines
+                # are named "Speaker 1" (no person) is listed by those speakers, not
+                # twice; with one such participant they keep its Zoom name and times.
+                people = [p for p in people if p not in devices]
+                if len(devices) == 1:
+                    for h in unnamed:
+                        h.update({k: devices[0][k] for k in ("zoom_name", "joined_at",
+                                                             "left_at")})
+            m["participants"] = people + heard
+        return out
+
     def clear_chunk_audio(self, session_id: str,
                           keys: Iterable[tuple[str, int]] | None = None) -> None:
         """Forget the audio of the given chunks, as (track, sequence) pairs ('' = no
@@ -867,17 +1054,19 @@ class Store:
         """Replace the session's segments that start inside the re-transcribed ``ranges``.
 
         Segments outside those ranges (from chunks whose audio is already deleted)
-        are kept, so late chunks for a finished session don't wipe its transcript.
+        are kept, so late chunks for a finished session don't wipe its transcript. Chat
+        lines (kind CHAT) never come from audio, so a pass never replaces them.
         """
         with self.tx() as c:
             c.executemany(
-                "DELETE FROM segments WHERE session_id = ? AND started_at >= ? AND started_at < ?",
-                [(session_id, a, b) for a, b in ranges])
+                "DELETE FROM segments WHERE session_id = ? AND started_at >= ? AND started_at < ?"
+                " AND kind != ?",
+                [(session_id, a, b, CHAT) for a, b in ranges])
             c.executemany(
                 "INSERT INTO segments (session_id, device, started_at, ended_at, speaker,"
-                " is_owner, text) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " is_owner, text, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [(session_id, device, s.started_at, s.ended_at, s.speaker, int(s.is_owner),
-                  s.text) for s in segments],
+                  s.text, s.kind) for s in segments],
             )
 
     def session_segments(self, session_id: str) -> list[Segment]:
@@ -1073,9 +1262,16 @@ class Store:
 
     def _index_transcript(self, c: sqlite3.Connection, conv_id: str) -> None:
         transcript = "\n".join(
-            f"{r['speaker']}: {r['text']}" for r in c.execute(
-                "SELECT speaker, text FROM segments WHERE conversation_id = ?"
+            f"{r['speaker']}{' (chat)' if r['kind'] == CHAT else ''}: {r['text']}"
+            for r in c.execute(
+                "SELECT speaker, text, kind FROM segments WHERE conversation_id = ?"
                 " ORDER BY started_at", (conv_id,)))
+        meeting = self._meetings_for(c, [conv_id]).get(conv_id)
+        if meeting:  # "budget meeting" finds the meeting by its Zoom topic and people
+            transcript = "\n".join([
+                f"Zoom meeting: {meeting['topic'] or ''}",
+                "Participants: " + ", ".join(p["name"] for p in meeting["participants"]),
+                transcript])
         c.execute("INSERT INTO search_fts VALUES ('transcript', ?, ?, ?)",
                   (conv_id, conv_id, transcript))
 
@@ -1303,7 +1499,7 @@ class Store:
         that only paraphrases the fact, with no line nearby that says its words, is
         still redacted."""
         rows = c.execute(
-            "SELECT id, session_id, started_at, ended_at, erased, text FROM segments"
+            "SELECT id, session_id, started_at, ended_at, erased, text, kind FROM segments"
             " WHERE conversation_id = ? ORDER BY started_at", (conv_id,)).fetchall()
         line = _cited_line(rows, source_at, fact)
         if line is None or line["erased"]:
@@ -1314,6 +1510,8 @@ class Store:
         c.execute("DELETE FROM search_fts WHERE kind = 'transcript' AND conversation_id = ?",
                   (conv_id,))
         self._index_transcript(c, conv_id)
+        if line["kind"] == CHAT:  # typed, never heard: no audio holds its words
+            return 1
         for chunk in c.execute(
                 "SELECT track, sequence, audio_path FROM chunks WHERE session_id = ?"
                 " AND audio_path IS NOT NULL AND started_at < ? AND started_at + duration > ?",
@@ -1435,8 +1633,8 @@ class Store:
         Without a query, lines come back in chronological order.
         """
         cols = ("s.id, s.conversation_id, s.started_at, s.ended_at, s.speaker, s.is_owner,"
-                " s.text, c.title AS conversation_title, c.started_at AS conversation_at,"
-                " c.kind AS conversation_kind")
+                " s.text, s.kind, c.title AS conversation_title,"
+                " c.started_at AS conversation_at, c.kind AS conversation_kind")
         where = ["s.conversation_id IS NOT NULL"]
         params: list[Any] = []
         if speaker:
@@ -1915,6 +2113,8 @@ class Store:
         row["forget_pending"] = self.rewrite_pending([conv_id])
         # a note written by hand in the hub: {"source_id", "link", "title"}, else None
         row["written"] = self.written_notes_for([conv_id]).get(conv_id)
+        # a Zoom meeting: {"topic", "participants"} (``meetings_for``), else None
+        row["meeting"] = self.meetings_for([conv_id]).get(conv_id)
         return row
 
     def list_conversations(self, *, since: float | None = None, until: float | None = None,
@@ -1951,10 +2151,12 @@ class Store:
         params.append(limit)
         rows = self._q(sql, params)
         written = self.written_notes_for(r["id"] for r in rows)
+        meetings = self.meetings_for(r["id"] for r in rows)
         for row in rows:
             for k in ("key_points", "topics", "people"):
                 row[k] = json.loads(row[k])
             row["written"] = written.get(row["id"])
+            row["meeting"] = meetings.get(row["id"])
         return rows
 
     def conversations_with_status(self, status: str) -> list[str]:
@@ -2377,6 +2579,17 @@ class Store:
 MAX_LEARNED_SAMPLES = 40  # per speaker, besides enrollment samples
 
 
+def _live_person(c: sqlite3.Connection, pid: int) -> sqlite3.Row | None:
+    """The person ``pid`` is now (following merges), or None."""
+    for _ in range(50):
+        row = c.execute("SELECT id, name, is_owner, merged_into FROM people WHERE id = ?",
+                        (pid,)).fetchone()
+        if row is None or row["merged_into"] is None:
+            return row
+        pid = row["merged_into"]
+    return None
+
+
 def _unit(v: np.ndarray) -> np.ndarray:
     v = np.asarray(v, dtype=np.float32).ravel()
     n = float(np.linalg.norm(v))
@@ -2617,11 +2830,19 @@ def _move_knowledge(c: sqlite3.Connection, src: str, dst: str) -> None:
               " AND kind IN ('fact', 'action_item')", (dst, src))
 
 
+def _device_name(name: str) -> bool:
+    """A Zoom display name with no person in it: a device, a room or conference hardware
+    ("iPhone", "Zoom user", "Conference Room 2"). Only meetings get here."""
+    from .meeting_names import clean_display_name, is_room_or_hardware
+
+    return is_room_or_hardware(name) or not clean_display_name(name)
+
+
 def _segment(r: dict[str, Any]) -> Segment:
     return Segment(started_at=r["started_at"], ended_at=r["ended_at"], text=r["text"],
                    speaker=r["speaker"], is_owner=bool(r["is_owner"]), id=r["id"],
                    session_id=r["session_id"], device=r["device"],
-                   conversation_id=r["conversation_id"])
+                   conversation_id=r["conversation_id"], kind=r.get("kind") or SPEECH)
 
 
 # ------------------------------------------------------------ re-summary carry-over

@@ -429,6 +429,12 @@ def test_upload_token_only_for_its_session(meeting_settings, client, tmp_path) -
                          ("delete", f"/v1/meetings/{mid}")):
         assert getattr(client, method)(path, headers=auth).status_code in (401, 403), path
     assert client.post("/v1/ingest/chunk.json", headers=auth, json={}).status_code == 403
+    # the bot may post its own meeting's chat, never another session's
+    chat = {"topic": "Planning (fictional)", "lines": []}
+    r = client.post(f"/v1/sessions/{sid}/chat", headers=auth, json=chat)
+    assert r.status_code == 200 and r.json()["ok"], r.text
+    assert client.post("/v1/sessions/other/chat", headers=auth,
+                       json=chat).status_code == 403
     assert client.post(f"/v1/sessions/{sid}/end", headers=auth).status_code == 200
     # the token dies with the bot
     client.delete(f"/v1/meetings/{mid}")

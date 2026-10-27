@@ -547,6 +547,65 @@ starts nothing; run `convo-server zoom-login` again.
 - Exit 0 after `STATE ended <reason>`; non-zero after `STATE failed <reason>`. A non-zero
   exit without a `failed` line becomes `failed`/`bot_crashed`.
 
+### Meeting chat, topic and participants
+
+`POST /v1/sessions/{id}/chat` (JSON, same bearer token; lane 1B's per-meeting bot token
+also works for its own session) is the Zoom bot's one call when a meeting ends, before or
+after `/end`:
+
+```json
+{"lines": [{"at": "2026-10-13T15:00:21Z", "from": "Dana Example",
+            "zoom_user_id": "16782336", "text": "Here's the sheet: https://…/budget-v3.xlsx",
+            "private": false}],
+ "topic": "Q4 budget review",
+ "participants": [{"zoom_user_id": "16782336", "name": "Dana Example",
+                   "joined_at": "2026-10-13T15:00:02Z", "left_at": null}]}
+```
+
+- `at`, `joined_at`, `left_at`: ISO-8601 (naive = UTC) or epoch s/ms, 2000..2100.
+  `zoom_user_id`: the sender's Zoom user id, the same value as the chunk `track`
+  (`[A-Za-z0-9._:-]{1,64}`), optional. `from`, `name`: display names, at most 200
+  characters kept. `text`: control characters and line breaks become spaces, cut at 4,000
+  characters; empty lines are skipped. `private: true` (a message to Athena alone) is
+  dropped unread. Every field but `lines[].at` and `lines[].text` is optional; unknown
+  fields are ignored. `topic` (at most 200 characters) and `participants` replace the
+  stored ones when given; leaving them out keeps them.
+- A chat line becomes a transcript line of kind `chat` at `at` (start = end), from the
+  sender's person: the line is named exactly as the sender's track is (owner included);
+  a sender without a track by their cleaned names, made a person when new. One
+  `zoom_user_id` is one person: every name it uses in the call (chat `from`, then its
+  `participants` name, preferred as Zoom's latest) is matched together and kept as
+  aliases. No VAD, no whisper. A participant who never spoke or typed is only looked up, never made a
+  person.
+- Idempotent: each line is stored once per session (SHA-256 of its cleaned time, sender id,
+  sender name and text), also after `erase_fact` redacted it or retention removed it.
+- Order: before the meeting is processed the lines wait and join its conversation then;
+  during processing the session goes back for one more pass; afterwards they are added to
+  its conversation, which is summarized again on the worker's next pass.
+- Limits: body at most 1,000,000 bytes, at most 2,000 lines and 1,000 participants (413).
+  Errors: 404 unknown session, 409 not a meeting (no tracks and device not `zoom`), 422
+  not JSON or wrong types, 400 a bad time or `zoom_user_id`, 401 no token.
+- Response: `{"ok": true, "session_id", "result": "queued"|"attached"|"unchanged",
+  "added", "duplicates", "private_dropped", "conversation_id"}` (`conversation_id` once
+  the meeting has one; `attached`: added to a processed meeting).
+
+The summary prompt gets "This is a Zoom meeting with the topic …", the participants, and
+chat lines as `[21] Dana Example (chat): …` (links and file names kept as written).
+`GET /v1/conversations/{id}` has `meeting` (`topic`, `participants`) for every
+conversation of a meeting session, a session with tracked chunks (any device) or device
+`zoom`, also when the bot never made the chat call (then `topic` is null and
+`participants` are the speakers heard); any other conversation has `meeting: null`. JSON
+fact and action-item rows say `"source": "meeting"` for exactly those conversations. Each
+transcript segment has `kind` (`speech` or `chat`). `participants` (`name`,
+`person_id`, `is_owner`, `zoom_name`, `joined_at`, `left_at`): the list the bot sent, one
+entry per `zoom_user_id` (two people with one name stay two; entries without an id are
+told apart by join time), each by their person's current name, then everyone else heard
+or seen in the chat, in order of first line. A participant Zoom shows only as a device or
+room ("iPhone", "Zoom user") whose lines are named "Speaker N" (no person) is listed by
+those speakers instead of twice; with one such participant they take its `zoom_name` and
+times. `convo_server/meeting_chat.py`
+is imported on the first chat call (or when a meeting is summarized), never at startup.
+
 ### Written notes
 
 `POST /v1/ingest/text` (JSON, same bearer token) takes a note the owner wrote by hand in
@@ -658,7 +717,8 @@ conversation first, with no citation line:
   "conversation_at": "2025-10-09T08:53:20+00:00",
   "created_at": "2025-10-09T08:55:02+00:00", "timezone": "Europe/Berlin",
   "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=0",
-  "with": [{"id": 4, "name": "Greta"}, {"id": null, "name": "Tom"}], "key_points": []}]
+  "with": [{"id": 4, "name": "Greta"}, {"id": null, "name": "Tom"}], "key_points": [],
+  "source": null, "written_by_hand": false, "note_link": null}]
 ```
 
 `key_points` (MCP 0.15.0, additive) is set on a note that is a whole voice note ("Make a
@@ -702,7 +762,7 @@ both formats. `list_facts(format="json")` returns current facts in the text mode
             "conversation_id": "c-…", "quote": "Alice doesn't eat meat, remember?",
             "times_said": 3, "days": 2,
             "first_said": "2025-10-09", "last_said": "2025-10-10",
-            "confirmed": false, "valid_until": null,
+            "confirmed": false, "valid_until": null, "source": null,
             "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
 ```
 
@@ -735,6 +795,15 @@ after that day. `link` is
 the same transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
 program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
 fact id that stops being returned (replaced, retired, or its conversation deleted).
+
+`source` (MCP 0.16.0, additive) is on every JSON fact row and every JSON
+`list_action_items` row: `"meeting"` when the fact or item comes from a Zoom meeting's
+conversation, else null (recordings, voice notes and written notes are told apart by
+`conversation_kind` and `written_by_hand`; other values may be added later, so treat an
+unknown one as null). In the text results a meeting's conversation is marked `(Zoom
+meeting: <topic>)` (`(Zoom meeting)` without a topic) and lists its participants
+(`search_conversations`, `get_conversation` with join and leave times), and chat lines
+read `<name> (chat): …` (`get_transcript`, `search_transcripts`, the `/view` page).
 
 `written_by_hand` and `note_link` (MCP 0.12.0, additive) are on every JSON fact row and
 every JSON `list_action_items` row: true and the note's URL in the hub when the fact or
