@@ -20,8 +20,15 @@ The hub's "Send Athena to a meeting" box starts and stops the Zoom bot the same 
     GET    /meetings/{id}            same as /v1/meetings/{id} (state)
     DELETE /meetings/{id}            same as /v1/meetings/{id} (leave; waits for the bot)
 
-The relay only forwards HTTP: it never imports ``convo_server.meetings``, so building
-the MCP app starts and loads nothing meeting-related.
+The hub's "Sign in to Zoom" button signs Athena in to Zoom the same way:
+
+    GET  /zoom/signin                same JSON as /v1/zoom/signin (status)
+    POST /zoom/signin/start          same as /v1/zoom/signin/start (authorize URL)
+    POST /zoom/signin/finish         same JSON and answer as /v1/zoom/signin/finish
+
+The relay only forwards HTTP: it never imports ``convo_server.meetings`` or
+``convo_server.zoom_signin``, so building the MCP app starts and loads nothing
+meeting-related.
 
 They are not MCP tools (the model never sees them) and sit behind the same ``BearerAuth``
 as ``/mcp``; the MCP token can already read all of this through the tools. Each request is
@@ -62,6 +69,10 @@ MEETING_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 MEETING_LEAVE_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
 MEETING_LIST_MAX = 100
 _MEETING_ID = re.compile(r"^[0-9a-f]{32}$")
+
+# Zoom sign-in: the finish body is the pasted redirect address (the API caps it at 8 KB);
+# finishing makes one call to Zoom (5 s timeout) before the API answers.
+MAX_SIGNIN_BODY_BYTES = 8 * 1024
 
 # (method, path on the MCP app); the API path is "/v1" + path ("/health" stays as it is).
 READ_ROUTES = [
@@ -286,3 +297,27 @@ def add_ingest_routes(mcp: Any, settings: Settings,
             return _json(404, "meeting not found")
         return await forward_method("DELETE", path, timeout=MEETING_LEAVE_TIMEOUT,
                                     headers=auth)
+
+    # ------------------------------------------------------------- Zoom sign-in
+    @mcp.custom_route("/zoom/signin", methods=["GET"], include_in_schema=False)
+    async def zoom_signin_status(request: Any) -> Any:
+        return await forward_method("GET", "/v1/zoom/signin", timeout=MEETING_TIMEOUT,
+                                    headers=auth)
+
+    @mcp.custom_route("/zoom/signin/start", methods=["POST"], include_in_schema=False)
+    async def zoom_signin_start(request: Any) -> Any:
+        return await forward_method("POST", "/v1/zoom/signin/start",
+                                    timeout=MEETING_TIMEOUT, headers=auth)
+
+    @mcp.custom_route("/zoom/signin/finish", methods=["POST"], include_in_schema=False)
+    async def zoom_signin_finish(request: Any) -> Any:
+        # Never log the body: it is the pasted sign-in code.
+        ctype = request.headers.get("content-type", "")
+        if not ctype.lower().startswith("application/json"):
+            return _json(415, "send application/json, like /v1/zoom/signin/finish")
+        body = await _read_capped(request, MAX_SIGNIN_BODY_BYTES)
+        if body is None:
+            return _json(413, "request too large")
+        return await forward_method("POST", "/v1/zoom/signin/finish",
+                                    timeout=MEETING_TIMEOUT, content=body,
+                                    headers={**auth, "Content-Type": "application/json"})
