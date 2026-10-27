@@ -307,6 +307,31 @@ is told `stop: true`. Errors (400): `track must match
 ^[A-Za-z0-9._:-]{1,64}$`, `track_name is longer than 200 characters`, `track_name needs a
 track`. `POST /v1/ingest/chunk.json` takes the same two fields.
 
+**Meeting lines** (`convo_server/meeting_tracks.py`, imported only when a session with
+tracks is processed). Each track's VAD speech goes to whisper on its own (whisper's
+context never crosses tracks; the participants' names are added to its prompt for
+spelling), and every line from a track is that participant's:
+
+- A line is named by the track's latest `track_name`. A track named in
+  `CONVO_ZOOM_OWNER_NAMES` (comma-separated, any case) is the owner's: `is_owner=true`,
+  named like the owner everywhere else (the enrolled owner voice's name, else
+  `CONVO_OWNER_NAME`). A track without a name is an unnamed "Speaker N".
+- No diarizer or speaker model runs for these tracks. A track whose name is a room or
+  a device ("Conference Room", "Meeting Room 2", "Zoom Rooms", "Anna's iPhone", "Galaxy
+  S23", "Zoom user", "Polycom", a dial-in number) can hold several people: the configured
+  diarizer runs on that track only, and its voices are named from enrolled voices or
+  become "Speaker N" (numbered across the meeting) with a stored voice, so
+  `name_speaker` and `list_unnamed_speakers` work on them. With diarization off the
+  room's lines carry the room's name.
+- Lines of different tracks may overlap (crosstalk); all are kept, in start-time order.
+  `CONVO_JOIN_LINES` joins fragments within one track only.
+- Bleed (two participants in one room, one voice on both mics): a line on another track
+  that overlaps by at least half the shorter line and says nearly the same words is
+  dropped, keeping the louder line (RMS dBFS of each line on its own track). Nearly the
+  same: word similarity >= 0.9, or >= 0.7 when one line is at least 6 dB quieter
+  (whisper slips words on the far mic; two people saying the same sentence at once are
+  about as loud and both stay).
+
 Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client"|"idle"|null,
 "duplicate": bool, "speech_seconds", "trailing_silence_seconds", "session_seconds"}`, plus
 `"track"` when the upload had one.
