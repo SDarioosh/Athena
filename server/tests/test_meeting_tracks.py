@@ -451,3 +451,125 @@ def test_a_chunk_racing_the_worker_is_refused(pipeline, settings):
     assert pipeline.store.get_session("m1")["status"] == "processing"
     # only the first chunk's file: the refused upload left no file behind
     assert len(list((settings.audio_dir / "zoom" / "m1").iterdir())) == 1
+
+
+# ------------------------------------------- QA: bleed before joining (BUG-04)
+
+
+def _with_script(extra, fn):
+    original = dict(SCRIPT)
+    SCRIPT.update(extra)
+    try:
+        return fn()
+    finally:
+        SCRIPT.clear()
+        SCRIPT.update(original)
+
+
+def test_bleed_runs_on_unjoined_pieces_agreement_in_a_pause_is_kept(pipeline):
+    """QA BUG-04: Alice says "Let's ship the release", pauses, then "before Friday
+    afternoon"; Bo agrees "Let's ship the release" in her silent pause. Joined first,
+    her line spanned his and the same words read as bleed. Bleed is decided on the
+    pieces whisper heard, then lines join: everyone's words stay."""
+    pipeline.settings.join_gap_seconds = 3.0
+    words = {300: "Let's ship the release", 400: "before Friday afternoon.",
+             500: "Let's ship the release!"}
+    alice = ("a", "Alice Example", track_audio((0, tone(300, 2)), (4.5, tone(400, 2))))
+    bo = ("b", "Bo Example", track_audio((2.2, tone(500, 1.6))))
+    segs = _with_script(words, lambda: meeting(pipeline, [alice, bo]))
+    assert rows(segs) == [
+        ("Alice Example", False, "Let's ship the release before Friday afternoon."),
+        ("Bo Example", False, "Let's ship the release!"),
+    ]
+    alice_line = segs[0]
+    assert alice_line.started_at == pytest.approx(T0, abs=0.5)
+    assert alice_line.ended_at == pytest.approx(T0 + 6.5, abs=0.5)
+
+
+def test_true_bleed_is_still_dropped_and_never_joined_back(pipeline):
+    """Bo's sentence reaches Alice's mic (quiet copy); Alice's own unfinished line
+    right before it must not pull the dropped copy back in by joining."""
+    pipeline.settings.join_gap_seconds = 3.0
+    words = {300: "so I think", 600: "Let's ship the release on Friday."}
+    alice = ("a", "Alice Example",
+             track_audio((0, tone(300, 2)), (4.5, tone(600, 4, amp=0.05))))
+    bo = ("b", "Bo Example", track_audio((4.5, tone(600, 4))))
+    segs = _with_script(words, lambda: meeting(pipeline, [alice, bo]))
+    assert rows(segs) == [("Alice Example", False, "so I think"),
+                          ("Bo Example", False, "Let's ship the release on Friday.")]
+
+
+# ------------------------------------- QA: rooms by any of a track's names (BUG-15)
+
+
+def _two_chunk_track(pipeline, names, owners=""):
+    pipeline.transcriber = ScriptedWhisper()
+    pipeline.settings.zoom_owner_names = owners
+    calls = []
+    real = pipeline.diarizer.diarize_runs
+    pipeline.diarizer.diarize_runs = lambda *a: calls.append(1) or real(*a)
+    for seq, name in enumerate(names):
+        _upload(pipeline, "m1", seq, T0 + 30 * seq,
+                track_audio((1, tone(900, 4)), (9, tone(1100, 4))), "t1", name)
+    _finish(pipeline, "m1")
+    return calls, {s.speaker for s in pipeline.store.session_segments("m1")}
+
+
+@pytest.mark.parametrize("names", [
+    ("Conference Room 2", "Alice Example"),   # the room renamed to a person later
+    ("Conference Room 2", "\N{THUMBS UP SIGN}"),
+    ("Alice Example", "Conference Room 2"),
+])
+def test_a_track_that_was_ever_a_room_is_diarized(pipeline, names):
+    """QA BUG-15: a track that showed a room name at any point can hold several people;
+    a person's name on it too is most likely someone in that room, so the diarizer
+    decides (it still names enrolled voices), not the latest display name."""
+    calls, speakers = _two_chunk_track(pipeline, names)
+    assert calls == [1]
+    assert speakers == {"Speaker 1", "Speaker 2"}
+
+
+def test_owner_names_that_look_like_devices_stay_the_owner(pipeline):
+    # "Cleo (phone)" is a device word, but it is one of the owner's own names
+    calls, speakers = _two_chunk_track(pipeline, ["Cleo (phone)", "Cleo (phone)"],
+                                       owners="Cleo Example, Cleo (phone)")
+    assert calls == [] and speakers == {"Me"}
+
+
+# ------------------------------- QA: hardware and room names are rooms (BUG-01, 2A)
+
+
+@pytest.mark.parametrize("name", ["Polycom", "Logitech Rally", "Huddle 4", "Conf Rm A",
+                                  "ZoomRoom-3F", "SM-G991B", "Lobby", "Speakerphone"])
+def test_qa_room_and_hardware_names_are_diarized(pipeline, name):
+    assert is_shared_room(name)
+    calls, speakers = _two_chunk_track(pipeline, [name])
+    assert calls == [1] and speakers == {"Speaker 1", "Speaker 2"}
+
+
+def test_first_tracked_chunk_reopens_a_processed_silence_stopped_session(pipeline):
+    """QA BUG-16 with the late-chunk rule: an untracked chunk stopped the session on
+    silence and the worker processed it before the meeting's first tracked chunk came.
+    That chunk reopens the session instead of being refused as a late meeting chunk;
+    a real meeting (with tracked chunks) that was processed still refuses new ones."""
+    s = pipeline.settings
+    t = T0
+    r = pipeline.ingest_chunk(device="zoom", session_id="mix", sequence=0, started_at=t,
+                              codec="wav", data=wav(silence(30)),
+                              now=t + s.silence_stop_seconds + 60)
+    sess = pipeline.store.get_session("mix")
+    if sess["status"] == "recording":  # a short silence needs more chunks to stop
+        pipeline.end_session("mix", reason="silence")
+    pipeline.store.set_session_status("mix", "done")
+    r = pipeline.ingest_chunk(device="zoom", session_id="mix", sequence=0,
+                              started_at=t + 40, codec="wav", data=wav(tone(200, 5)),
+                              track="t1", track_name="Alice Example")
+    sess = pipeline.store.get_session("mix")
+    assert r.stop is False and sess["status"] == "recording" and not sess["stop_reason"]
+    # now a real meeting: processed, a new tracked chunk is refused
+    pipeline.end_session("mix")
+    pipeline.store.set_session_status("mix", "done")
+    r = pipeline.ingest_chunk(device="zoom", session_id="mix", sequence=1,
+                              started_at=t + 70, codec="wav", data=wav(tone(200, 5)),
+                              track="t1")
+    assert r.stop is True and pipeline.store.get_session("mix")["status"] == "done"

@@ -297,14 +297,16 @@ class Pipeline:
         Until processing starts (status ``ended``), chunks of the last round are still
         stored, e.g. the other tracks' chunks of the round that reached the max duration.
         A retry of a stored chunk goes on and is answered ``duplicate: true``. Sessions
-        without tracks keep taking late chunks (transcribed on the next pass).
+        without tracks keep taking late chunks (transcribed on the next pass); so does
+        one an untracked chunk stopped on silence, whose first tracked chunk reopens it.
         ``Store.add_chunk`` makes the same check inside its transaction (``MeetingClosed``),
         so a chunk racing the worker is refused too; this one only skips the decode."""
         from .store import MEETING_CLOSED_STATUSES
 
         sess = self.store.get_session(session_id)
         if (sess is None or sess["status"] not in MEETING_CLOSED_STATUSES
-                or not (track or self.store.has_tracks(session_id))
+                or not ((track and sess["stop_reason"] != "silence")
+                        or self.store.has_tracks(session_id))
                 or self.store.has_chunk(session_id, track, sequence)):
             return None
         return self._meeting_closed(sess, track, sequence)
