@@ -29,7 +29,7 @@ lane below.
 
 1. **No contract change.** No MCP tool name, argument, annotation, link format, auth, relay
    path, JSON field or stored identifier changes in this plan. The MCP version stays at
-   0.18.0. A lane that finds it needs one stops and writes `ESCALATE:`; the owner decides
+   0.19.0. A lane that finds it needs one stops and writes `ESCALATE:`; the owner decides
    and it becomes its own coordinated PR pair per the versioning rules.
 2. **No behaviour change unless the lane says so.** Lanes marked *behaviour* change
    output on purpose (bug fixes) and say exactly what changes. Every other lane is a
@@ -72,14 +72,14 @@ Testing is layered so a lane can't be green alone and break the whole.
   Known upstream failures (`tests/KNOWN_FAILURES.md`) are not ours; judge a failure on a
   clean `barvis` worktree.
 
-**Baseline, measured 2026-10-28 in the sandbox** (Phase 0 adds the eval scores):
+**Baseline, measured 2026-10-28 in the sandbox on `main` after MCP 0.19.0 and on `barvis` after the Share button** (Phase 0 adds the eval scores):
 
 | Check | Result |
 |---|---|
 | Athena `ruff check .` | clean |
-| Athena `pytest -q` (server) | 1,564 passed, 3 skipped, ~3 min |
-| Hub focused trio | 286 passed, ~30 s |
-| Hub fork tests (69 files added since the last upstream base) | 1,621 passed, ~4.7 min |
+| Athena `pytest -q` (server) | 1,571 passed, 3 skipped, ~3 min |
+| Hub fork tests (70 files added since the last upstream base) plus the focused trio | 1,899 passed, ~5.3 min |
+| Hub vs upstream `dev` | 39 commits behind (last base 2026-10-22); 0D catches up |
 
 **Evals at every phase gate:** `server/eval/bakeoff.py --frontend odysseus` (sandbox
 subset), `server/eval/voice_commands.py`, and in the hub `scripts/module_slash_eval.py`,
@@ -171,12 +171,9 @@ flowchart LR
 | 4 | One deploy path, shims removed, final docs | 4A, 4B / 4C | deploy (owner decision) |
 
 **Feature freeze in Phase 2.** Phase 2 moves files; any open PR then needs a rebase. Merge
-or park feature PRs before it starts. Open at the time of writing:
-[SDarioosh/Athena#145](https://github.com/SDarioosh/Athena/pull/145) (share a
-conversation, MCP 0.19.0) and its hub pair
-[SDarioosh/odysseus-expanded#125](https://github.com/SDarioosh/odysseus-expanded/pull/125),
-and [SDarioosh/odysseus-expanded#110](https://github.com/SDarioosh/odysseus-expanded/pull/110).
-Phases 0 and 1 can run beside them; 0A's snapshots are regenerated once #145 merges.
+or park feature PRs before it starts. Phases 0, 1, 3 and 4 allow feature work beside
+them; a feature PR that changes tool output updates 0A's snapshots (and 0C's hub fixtures)
+in the same PR pair.
 
 ## Shared interfaces
 
@@ -553,4 +550,4 @@ of `pipeline.py` into `validation.py`, so it goes before 3A, which rewrites `pip
 
 | Gate | Date | Athena tests | Hub fork tests | Bakeoff subset | voice_commands | Hub evals | Notes |
 |---|---|---|---|---|---|---|---|
-| Baseline | 2026-10-28 | 1,564 passed, 3 skipped | 1,621 passed (+286 focused) | Phase 0 | Phase 0 | Phase 0 | sandbox |
+| Baseline | 2026-10-28 | 1,571 passed, 3 skipped | 1,899 passed (fork + trio) | Phase 0 | Phase 0 | Phase 0 | sandbox |
