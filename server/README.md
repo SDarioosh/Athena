@@ -438,6 +438,22 @@ curl -H "Authorization: Bearer $CONVO_INGEST_TOKEN" -F name=Me -F is_owner=true 
      -F codec=wav -F audio=@me.wav http://127.0.0.1:8000/v1/speakers/enroll
 ```
 
+Or from the next recording, best on the watch you wear every day (its microphone is the
+one your voice is recognized through): Odysseus' **Enroll my voice** window does this for
+you and shows statements to read. By hand: `POST /v1/speakers/enroll/next` with JSON
+`{"name": "<your name>", "is_owner": true}` (both optional: the name defaults to the
+enrolled owner voice, else the owner's person, else `CONVO_OWNER_NAME`), then record 60–90 s
+of yourself talking. The first recording whose first chunk reaches the server after that
+(and that started at most 2 minutes before it, on any device but the Zoom bot, not a
+meeting) is enrolled when it is processed, with at least 30 s of speech: it replaces
+earlier enrollment samples (named and learned samples stay), renames matching unnamed
+speakers in earlier recordings, and makes **no conversation** (read-aloud statements would
+give the summarizer made-up facts); its audio is deleted unless `CONVO_KEEP_AUDIO`.
+`GET /v1/speakers/enroll/next` shows the state (`none`, `waiting` with the `recording`
+coming in, `processing`, `done` with `samples`, `speech_seconds`, `relabeled_lines`,
+`failed` with `error`, `cancelled`, `expired` after 30 minutes without a recording),
+`DELETE` cancels while waiting (409 while processing). `convo_server/voice_enroll.py`.
+
 ## Ingestion API
 
 `POST /v1/ingest/chunk` (multipart), header `Authorization: Bearer <token>`:
@@ -1173,6 +1189,7 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 | `GET /digests/{date}`, `POST /digests/{date}` | the `/v1` routes |
 | `GET /settings/llm`, `PUT /settings/llm` | the `/v1` routes (the hub's settings page: the summary model) |
 | `GET /settings/vocabulary`, `PUT /settings/vocabulary` | the `/v1` routes (the hub's settings page: words whisper is nudged toward) |
+| `GET`, `POST`, `DELETE /speakers/enroll/next` | the `/v1` routes (the hub's "Enroll my voice": enroll the next recording; MCP 0.20.0) |
 | `POST /meetings` | `POST /v1/meetings` (same JSON `{url}` or `{meeting_id, passcode}`, `title?`; same answer: 202, 400, 409 busy with `message` and `active`, 501 meetings off, 500) |
 | `GET /meetings` | `GET /v1/meetings` (only `limit`, bounded to 1–100) |
 | `GET /meetings/{id}`, `DELETE /meetings/{id}` | the `/v1` routes (state; leave, answering once the bot exited) |

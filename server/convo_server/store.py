@@ -180,6 +180,14 @@ CREATE TABLE IF NOT EXISTS module_settings (
     updated_at REAL NOT NULL
 );
 
+-- "Enroll my voice" from the next recording (convo_server/voice_enroll.py): one row,
+-- its state as JSON, kept after it ends so the hub can show how it went.
+CREATE TABLE IF NOT EXISTS voice_enrollment (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    state TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+
 -- Voice embeddings of unnamed speakers ("Speaker 1") per session, so naming a speaker
 -- later can also teach the diarizer that voice.
 CREATE TABLE IF NOT EXISTS speaker_candidates (
@@ -675,6 +683,37 @@ class Store:
                           " ON CONFLICT(key) DO UPDATE SET value = excluded.value,"
                           " updated_at = excluded.updated_at",
                           (key, json.dumps(value), time.time()))
+
+    # ------------------------------------------------- voice enrollment (next recording)
+    def get_voice_enrollment(self) -> dict[str, Any] | None:
+        """The "enroll from the next recording" state (``voice_enroll.py``), or None."""
+        row = self._one("SELECT state FROM voice_enrollment WHERE id = 1")
+        return json.loads(row["state"]) if row else None
+
+    def put_voice_enrollment(self, state: dict[str, Any] | None) -> None:
+        """Replace that state; None removes it."""
+        with self.tx() as c:
+            if state is None:
+                c.execute("DELETE FROM voice_enrollment WHERE id = 1")
+            else:
+                c.execute("INSERT INTO voice_enrollment (id, state, updated_at) VALUES (1, ?, ?)"
+                          " ON CONFLICT(id) DO UPDATE SET state = excluded.state,"
+                          " updated_at = excluded.updated_at",
+                          (json.dumps(state), time.time()))
+
+    def recordings_since(self, received_after: float, started_after: float,
+                         skip_devices: Iterable[str] = ()) -> list[dict[str, Any]]:
+        """Sessions whose first chunk reached the server after ``received_after`` and
+        that started after ``started_after``, oldest first, with ``seconds`` (audio
+        received so far): recordings, not meetings (no tracks) and not ``skip_devices``."""
+        skip = list(skip_devices)
+        marks = ", ".join("?" * len(skip)) or "''"
+        return self._q(
+            "SELECT s.id, s.device, s.started_at, s.status, s.kind,"
+            " SUM(c.duration) AS seconds FROM sessions s JOIN chunks c ON c.session_id = s.id"
+            f" WHERE s.started_at >= ? AND s.device NOT IN ({marks})"
+            " GROUP BY s.id HAVING MIN(c.received_at) >= ? AND MAX(c.track) = ''"
+            " ORDER BY s.started_at, s.id", [started_after, *skip, received_after])
 
     # ---------------------------------------------------------------- sessions
     def get_session(self, session_id: str) -> dict[str, Any] | None:

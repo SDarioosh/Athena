@@ -15,6 +15,8 @@ Read API (used by the knowledge-layer/MCP integration and for debugging):
     GET  /v1/action-items, PATCH /v1/action-items/{id}
     GET  /v1/digests/{date}, POST /v1/digests/{date}
     POST /v1/speakers/enroll
+    GET/POST/DELETE /v1/speakers/enroll/next   enroll the next recording (the hub's
+                                               "Enroll my voice"; voice_enroll.py)
 Settings (the hub's settings page):
     GET  /v1/settings/llm, PUT /v1/settings/llm {"model": name | null}
     GET  /v1/settings/vocabulary, PUT /v1/settings/vocabulary {"words": "a, b" | [..] | null}
@@ -60,7 +62,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
 from . import audio as audio_mod
-from . import export, llm_settings, vocabulary
+from . import export, llm_settings, vocabulary, voice_enroll
 from .config import Settings
 from .diarize import enroll_voice, load_voices
 from .links import render_conversation, transcript_link, verify
@@ -162,6 +164,12 @@ class EnrollJson(BaseModel):
 
 class LlmSettingsPut(BaseModel):
     model: str | None = Field(default=None, max_length=llm_settings.MAX_NAME)
+
+
+class EnrollNext(BaseModel):
+    """``POST /v1/speakers/enroll/next``: who the next recording is (default: the owner)."""
+    name: str | None = Field(default=None, max_length=200)
+    is_owner: bool = True
 
 
 class VocabularyPut(BaseModel):
@@ -601,6 +609,25 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         if not audio:
             raise HTTPException(400, "empty audio")
         return await enroll_audio(audio, body.name, body.is_owner, body.codec)
+
+    # The hub's "Enroll my voice": enroll the next recording (voice_enroll.py).
+    @v1.get("/speakers/enroll/next")
+    def enroll_next_status() -> dict[str, Any]:
+        return voice_enroll.status(pipeline)
+
+    @v1.post("/speakers/enroll/next")
+    def enroll_next_start(body: EnrollNext) -> dict[str, Any]:
+        try:
+            return voice_enroll.start(pipeline, body.name, body.is_owner)
+        except voice_enroll.EnrollError as e:
+            raise HTTPException(e.status, e.detail) from e
+
+    @v1.delete("/speakers/enroll/next")
+    def enroll_next_cancel() -> dict[str, Any]:
+        try:
+            return voice_enroll.cancel(pipeline)
+        except voice_enroll.EnrollError as e:
+            raise HTTPException(e.status, e.detail) from e
 
     @v1.get("/speakers")
     def speakers() -> dict[str, Any]:

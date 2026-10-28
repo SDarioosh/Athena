@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from . import audio as audio_mod
+from . import voice_enroll
 from .clips import Window, plan_windows, tail_words
 from .config import Settings
 from .conversations import split_on_gaps
@@ -414,6 +415,11 @@ class Pipeline:
             if sess is None:
                 raise KeyError(session_id)
             self.store.set_session_status(session_id, "processing")
+            if voice_enroll.claims(self, sess):
+                # the hub's "Enroll my voice": this recording becomes a voiceprint, not a
+                # conversation (voice_enroll.py)
+                voice_enroll.enroll_session(self, sess)
+                return
             note = sess.get("kind") == NOTE
             try:
                 kept: dict[str, list[tuple[float, float]]] = {}  # meeting tracks' lines
