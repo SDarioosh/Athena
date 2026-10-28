@@ -309,9 +309,14 @@ def add_ingest_routes(mcp: Any, settings: Settings,
         params: dict[str, int] = {}
         raw = request.query_params.get("limit")
         if raw is not None:
-            if not raw.strip().isdigit():
+            # ASCII digits only: "²".isdigit() is true but int() refuses it, and int()
+            # refuses a digit string over 4300 digits; any number past the cap is the cap
+            digits = raw.strip()
+            if not re.fullmatch(r"[0-9]+", digits):
                 return _json(400, f"limit must be a whole number from 1 to {MEETING_LIST_MAX}")
-            params["limit"] = max(1, min(int(raw), MEETING_LIST_MAX))
+            digits = digits.lstrip("0") or "0"
+            params["limit"] = MEETING_LIST_MAX if len(digits) > 6 else \
+                max(1, min(int(digits), MEETING_LIST_MAX))
         return await forward_method("GET", "/v1/meetings", timeout=MEETING_TIMEOUT,
                                     params=params, headers=auth)
 
