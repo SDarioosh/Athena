@@ -358,7 +358,11 @@ class Pipeline:
 
     def finalize_idle(self, now: float | None = None) -> list[str]:
         now = time.time() if now is None else now
-        ids = self.store.idle_sessions(now - self.settings.session_idle_seconds)
+        idle = self.settings.session_idle_seconds
+        # a meeting whose bot still runs isn't idle (everyone muted uploads nothing); a
+        # bot can't outlive CONVO_MAX_SESSION_SECONDS, so after that idle applies again
+        ids = self.store.idle_sessions(
+            now - idle, bot_started_after=now - self.settings.max_session_seconds - idle)
         for sid in ids:
             self.store.end_session(sid, "idle")
         return ids
@@ -677,7 +681,11 @@ class Pipeline:
             (self.settings.audio_dir / device / session_id).rmdir()
 
     def _assign_conversations(self, session_id: str, device: str) -> list[str]:
-        if self.store.has_tracks(session_id):
+        # a meeting: tracks, or a Zoom session without them (the bot's chat-only meeting:
+        # one untracked second of silence, then chat lines), is never split at gaps nor
+        # joined with another meeting
+        if (self.store.has_tracks(session_id) or device == ZOOM_DEVICE
+                or self.store.has_meeting_info(session_id)):
             return self._assign_meeting(session_id, device)
         gap = self.settings.conversation_gap_seconds
         touched: list[str] = []
@@ -690,14 +698,11 @@ class Pipeline:
                                                    [s.id for s in group if s.id is not None],
                                                    absorb=near[1:])
             touched = [t for t in touched if t not in near] + [conv_id]
-        # a Zoom session without tracks is a meeting too, with or without a chat call
-        # (QA BUG-27): its conversation gets the meeting block
-        if touched and (device == ZOOM_DEVICE or self.store.has_meeting_info(session_id)):
-            self.store.link_meeting(session_id, touched[0])
         return touched
 
     def _assign_meeting(self, session_id: str, device: str) -> list[str]:
-        """A meeting (a session with tracks) is one conversation: never split at speech
+        """A meeting (a session with tracks, or a Zoom session: QA BUG-27, its conversation
+        gets the meeting block) is one conversation: never split at speech
         gaps (a break inside it), never joined with another session's conversation (two
         back-to-back meetings stay two). A pass after the first keeps its conversation."""
         segs = self.store.session_segments(session_id)

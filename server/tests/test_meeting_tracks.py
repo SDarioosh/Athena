@@ -429,16 +429,20 @@ def test_back_to_back_meetings_are_two_conversations(pipeline):
     assert pipeline.store.get_conversation(first) is not None
 
 
-def test_an_untracked_session_never_joins_a_meeting(pipeline):
+@pytest.mark.parametrize("device", ["zoom", "bot-test"])
+def test_an_untracked_session_never_joins_a_meeting(pipeline, device):
     pipeline.transcriber = ScriptedWhisper()
-    _upload(pipeline, "m1", 0, T0, track_audio((20, tone(300, 5))), "a", "Alice Example")
+    _upload(pipeline, "m1", 0, T0, track_audio((20, tone(300, 5))), "a", "Alice Example",
+            device=device)
     (meeting_conv,) = _finish(pipeline, "m1")
-    _upload(pipeline, "s1", 0, T0 + 60, track_audio((0, tone(300, 5))))
+    _upload(pipeline, "s1", 0, T0 + 60, track_audio((0, tone(300, 5))), device=device)
     (plain,) = _finish(pipeline, "s1")
     assert plain != meeting_conv
-    # untracked sessions still join each other within the gap, as before
-    _upload(pipeline, "s2", 0, T0 + 120, track_audio((0, tone(300, 5))))
-    assert _finish(pipeline, "s2") == [plain]
+    _upload(pipeline, "s2", 0, T0 + 120, track_audio((0, tone(300, 5))), device=device)
+    if device == "zoom":  # an untracked Zoom session is a meeting of its own (BUG-27)
+        assert _finish(pipeline, "s2") not in ([plain], [meeting_conv])
+    else:  # untracked sessions of another device still join each other, as before
+        assert _finish(pipeline, "s2") == [plain]
 
 
 # --------------------------------------------------------------- late chunks

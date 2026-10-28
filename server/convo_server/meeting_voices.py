@@ -270,6 +270,11 @@ def learn_from_meeting(pipeline: Pipeline, session_id: str,
             # speakerphone, so whose voice it carries is not sure enough (QA BUG-05)
             continue
         plan.append((track, name))
+    # one name on two tracks ("Alex Example" twice): maybe two people, so whose voice it
+    # is isn't sure; the owner's tracks are the owner's whatever their names
+    names = [n.casefold() for _, n in plan]
+    plan = [(t, n) for t, n in plan
+            if n == owner_voice or names.count(n.casefold()) == 1]
     if not plan:
         return []
     if pipeline.diarizer is None or cfg.speaker_embedder != "ecapa":
