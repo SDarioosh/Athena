@@ -341,6 +341,10 @@ WRITTEN_DEVICE = "handwriting"
 # (MCP 0.14.0). NOTE itself is both.
 VOICE = "voice"      # notes recorded out loud
 WRITTEN = "written"  # notes written by hand in the hub (WRITTEN_DEVICE)
+# ... and (MCP 0.18.0) CONVERSATION split in two: online meetings (a meeting_info row)
+# and the other conversations, recorded in person.
+MEETING = "meeting"
+IN_PERSON = "in_person"
 # A written note's session id is this prefix plus its source id.
 WRITTEN_SESSION_PREFIX = "written:"
 
@@ -2162,7 +2166,8 @@ class Store:
                            person: str | None = None, kind: str | None = None,
                            limit: int = 50) -> list[dict[str, Any]]:
         """Newest first. ``kind``: NOTE = notes (voice and written), VOICE = only voice
-        notes, WRITTEN = only notes written by hand, CONVERSATION = everything else."""
+        notes, WRITTEN = only notes written by hand, CONVERSATION = everything else,
+        MEETING = only online meetings, IN_PERSON = conversations that are no meeting."""
         sql = "SELECT * FROM conversations WHERE 1=1"
         params: list[Any] = []
         if kind == NOTE:
@@ -2176,6 +2181,13 @@ class Store:
             params.append(WRITTEN_DEVICE)
         elif kind == CONVERSATION:
             sql += " AND kind IS NOT ?"
+            params.append(NOTE)
+        elif kind == MEETING:
+            sql += (" AND id IN (SELECT conversation_id FROM meeting_info"
+                    " WHERE conversation_id IS NOT NULL)")
+        elif kind == IN_PERSON:
+            sql += (" AND kind IS NOT ? AND id NOT IN (SELECT conversation_id FROM"
+                    " meeting_info WHERE conversation_id IS NOT NULL)")
             params.append(NOTE)
         if since is not None:
             sql += " AND ended_at >= ?"

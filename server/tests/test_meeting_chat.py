@@ -263,7 +263,7 @@ def test_mcp_version(mcp):
         async with Client(mcp) as client:
             return client.server_info.version
 
-    assert asyncio.run(go()) == "0.17.0"
+    assert asyncio.run(go()) == "0.18.0"
 
 
 def test_mcp_transcripts_show_chat(done_meeting, mcp):
@@ -473,3 +473,27 @@ def test_meeting_label_names_no_platform():
     assert meeting_label({"topic": None}) == " (Online meeting)"
     assert meeting_label(None) == ""
     assert "Zoom" not in meeting_label({"topic": "Weekly sync"})
+
+
+def test_kind_meeting_and_in_person_split_conversations(done_meeting, pipeline, mcp):
+    # MCP 0.18.0: the hub's Online meetings tab lists meetings apart.
+    from convo_server.store import IN_PERSON, MEETING
+    conv_id = done_meeting[0].conversation_id
+    pipeline.ingest_chunk(device="omi", session_id="s1", sequence=0, started_at=T0 + 7200,
+                          codec="wav", data=ALICE[2])
+    process(pipeline, "s1")
+    plain_id = pipeline.store.session_segments("s1")[0].conversation_id
+    assert plain_id != conv_id
+    store = pipeline.store
+    assert [c["id"] for c in store.list_conversations(kind=MEETING)] == [conv_id]
+    assert [c["id"] for c in store.list_conversations(kind=IN_PERSON)] == [plain_id]
+    out = call(mcp, "search_conversations", kind="meeting")
+    assert "online meetings" in out and conv_id in out and plain_id not in out
+    for loose in ("zoom", "Online meetings", "meetings"):
+        assert conv_id in call(mcp, "search_conversations", kind=loose)
+    for loose in ("in_person", "in-person", "face to face"):
+        out = call(mcp, "search_conversations", kind=loose)
+        assert plain_id in out and conv_id not in out
+    both = call(mcp, "search_conversations", kind="conversation")
+    assert conv_id in both and plain_id in both
+    assert "'meeting'" in call(mcp, "search_conversations", kind="bogus")
