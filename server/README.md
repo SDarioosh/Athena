@@ -592,7 +592,9 @@ participant for `CONVO_MEETING_ALONE_SECONDS`), `removed`, `owner_left` (join to
 `obf`: Zoom ends the bot's session when the owner leaves), `stopped` (DELETE),
 `max_duration`, `server_stop`, `exited`. `failed` reasons come from the bot
 (`wrong_passcode`, `meeting_not_started`, `waiting_room_timeout`, `owner_not_joined` (the
-owner didn't join within the wait), `join_token_expired`, `join_failed`, `auth_failed`,
+owner didn't join within the wait), `join_token_expired`, `external_meeting_not_allowed`
+(another account's meeting and the Zoom app isn't published), `outside_users_blocked`,
+`blocked_by_account_admin`, `zoom_signin_required`, `join_failed`, `auth_failed`,
 `sdk_error`, …) or the launcher (`bot_not_started`, `bot_crashed`, `server_restarted`). The bot asks
 for recording permission once, never again, never leaves over it, and never leaves
 because someone asks it to.
@@ -658,6 +660,14 @@ app join a meeting hosted by another Zoom account only on behalf of a signed-in 
    replaced atomically). `convo-server zoom-login --status` (or Odysseus) says whether
    Athena is signed in and which join token the next meeting gets. Delete the file to
    sign out.
+
+**Publishing the Zoom app.** Signing in is not enough on its own: Zoom lets an
+**unpublished** Marketplace app join only meetings hosted by the account the app was made
+in. Another account's meeting fails with `MeetingFailCode` 63, reason
+`external_meeting_not_allowed` (the hub says so). Notetakers such as Read.ai get in because
+their apps are published. To join other people's meetings, submit the Meeting SDK app for
+Marketplace review and publish it; publishing it **unlisted** keeps it out of the public
+Marketplace. Review can take weeks. Until then Athena works in meetings the owner hosts.
 
 The routes behind Odysseus's button (`convo_server/zoom_signin.py`, imported on the first
 sign-in request; bearer `CONVO_INGEST_TOKEN` like every `/v1` route). The MCP HTTP app
