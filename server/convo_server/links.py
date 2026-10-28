@@ -11,6 +11,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
+import time
+from collections.abc import Collection
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -59,16 +61,25 @@ margin:.8rem 0}}
 section{{background:#202020;border-color:#333}} .line.hit{{background:#4a4000}}}}
 </style></head><body>
 <h1>{title}</h1><div class="meta">{when} · {people}</div>{written}
-<section>{summary}{lists}</section>
-<section id="transcript">{lines}</section>
-<script>
-(function(){{var m=location.hash.match(/t=(\\d+)/);if(!m)return;var t=+m[1],best=null;
-document.querySelectorAll('.line').forEach(function(e){{if(+e.dataset.t<=t)best=e;}});
-if(best){{best.classList.add('hit');best.scrollIntoView({{block:'center'}});}}}})();
-</script></body></html>"""
+{sections}{script}</body></html>"""
+
+# Jumps to the line a link's #t=<seconds> points at. Left out of shared copies.
+_JUMP_SCRIPT = """<script>
+(function(){var m=location.hash.match(/t=(\\d+)/);if(!m)return;var t=+m[1],best=null;
+document.querySelectorAll('.line').forEach(function(e){if(+e.dataset.t<=t)best=e;});
+if(best){best.classList.add('hit');best.scrollIntoView({block:'center'});}})();
+</script>"""
+
+# What a page can hold; ``render_conversation(include=...)`` picks from these.
+SECTIONS = ("summary", "action_items", "facts", "transcript")
 
 
-def render_conversation(settings: Settings, conv: dict[str, Any], segments: list[Any]) -> str:
+def render_conversation(settings: Settings, conv: dict[str, Any], segments: list[Any], *,
+                        include: Collection[str] = SECTIONS, shared: bool = False) -> str:
+    """The transcript page. ``include`` picks sections from :data:`SECTIONS` (summary
+    with key points, action items, facts, transcript). ``shared`` is a copy to send to
+    other people (``export.py``): no jump script, no link back into the hub, and a line
+    saying where it came from."""
     e = html.escape
     origin = conv["started_at"]
 
@@ -77,12 +88,15 @@ def render_conversation(settings: Settings, conv: dict[str, Any], segments: list
             return ""
         return f"<h3>{e(title)}</h3><ul>" + "".join(f"<li>{r}</li>" for r in rows) + "</ul>"
 
-    lists = items("Key points", [e(k) for k in conv.get("key_points", [])])
-    lists += items("Action items", [
+    hidden = bool(conv.get("forget_pending"))  # erase_fact: wait for the rewrite
+    lists = items("Key points", [] if hidden else [e(k) for k in conv.get("key_points", [])])
+    lists = lists if "summary" in include else ""
+    lists += "" if "action_items" not in include else items("Action items", [
         e(a["text"]) + (f" <em>({e(a['owner'])})</em>" if a.get("owner") else "")
         + (" ✔" if a.get("status") == "done" else "")
         for a in conv.get("action_items", [])])
-    lists += items("Facts", [e(f["fact"]) for f in conv.get("facts", [])])
+    if "facts" in include:
+        lists += items("Facts", [e(f["fact"]) for f in conv.get("facts", [])])
     lines = []
     for s in segments:
         off = int(s.started_at - origin)
@@ -93,27 +107,51 @@ def render_conversation(settings: Settings, conv: dict[str, Any], segments: list
             f'{e(local_time(settings, s.started_at, "%H:%M:%S") or "")}</span>'
             f'<span class="{cls}">{e(s.speaker)}'
             f'{" <span class=via>(chat)</span>" if chat else ""}:</span>{e(s.text)}</div>')
-    return _PAGE.format(
-        title=e(conv.get("title") or "Untitled conversation"),
-        written=_written(conv.get("written")) + _meeting(conv.get("meeting")),
-        when=e(f"{local_time(settings, origin)} – {local_time(settings, conv['ended_at'], '%H:%M')}"
-               f" ({settings.timezone})"),
-        people=e(", ".join(conv.get("people", [])) or "—"),
-        summary=f"<p>{e(conv.get('summary') or _no_summary(conv))}</p>",
-        lists=lists,
-        lines="".join(lines) or (
+    summary = (f"<p>{e(_no_summary(conv) if hidden else conv.get('summary') or _no_summary(conv))}"
+               "</p>" if "summary" in include else "")
+    sections = f"<section>{summary}{lists}</section>" if summary or lists else ""
+    if "transcript" in include:
+        sections += '\n<section id="transcript">' + ("".join(lines) or (
             f"<p>The transcript was removed on {e(local_time(settings, pruned, '%Y-%m-%d') or '')}"
             " by the retention setting; the summary, facts and action items are kept.</p>"
-            if (pruned := conv.get("transcript_pruned_at")) else "<p>No transcript.</p>"),
+            if (pruned := conv.get("transcript_pruned_at")) else "<p>No transcript.</p>")
+        ) + "</section>"
+    if shared:
+        sections += (f'\n<p class="meta">Shared from Athena on '
+                     f"{e(local_time(settings, time.time(), '%Y-%m-%d') or '')}.</p>")
+    return _PAGE.format(
+        title=e(title_of(conv)),
+        written=(_written(conv.get("written"), link=not shared)
+                 + _meeting(conv.get("meeting"))),
+        when=e(when_of(settings, conv)),
+        people=e(", ".join(conv.get("people", [])) or "—"),
+        sections=sections,
+        script="" if shared else _JUMP_SCRIPT,
     )
 
 
-def _written(written: dict[str, Any] | None) -> str:
+def title_of(conv: dict[str, Any]) -> str:
+    """A page's title; hidden while erase_fact's rewrite is pending, like the summary."""
+    if conv.get("forget_pending"):
+        return "Untitled conversation"
+    return conv.get("title") or "Untitled conversation"
+
+
+def when_of(settings: Settings, conv: dict[str, Any]) -> str:
+    """"2025-10-09 10:53 – 11:20 (Europe/Lisbon)"."""
+    return (f"{local_time(settings, conv['started_at'])} – "
+            f"{local_time(settings, conv['ended_at'], '%H:%M')} ({settings.timezone})")
+
+
+def _written(written: dict[str, Any] | None, *, link: bool = True) -> str:
     """A written note: says so, and links back to the note (and its handwriting) in the
-    hub. The link was checked to be http(s) when the note came in."""
+    hub (not in a shared copy: ``link=False``). The link was checked to be http(s) when
+    the note came in."""
     if not written:
         return ""
     e = html.escape
+    if not link:
+        return '<div class="meta">Written by hand</div>'
     label = f"“{written['title']}” in Odysseus" if written.get("title") else "the note in Odysseus"
     return (f'<div class="meta">Written by hand · <a href="{e(written["link"], quote=True)}"'
             f' rel="noreferrer noopener">Open {e(label)}</a></div>')

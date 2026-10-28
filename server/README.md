@@ -881,6 +881,27 @@ signed `link`, and action items and facts a `source_url`, of the form `<CONVO_PU
 transcript page that opens in a phone browser without the bearer token and jumps to that
 moment. Rotating `CONVO_INGEST_TOKEN` revokes all links.
 
+### Sharing a conversation
+
+`GET /v1/conversations/{id}/export?format=md|html&include=...` answers with one file to send
+to other people (`Content-Disposition: attachment`, a name like
+`2025-10-09 Planning the trip.md`, `Cache-Control: no-store`). The hub's Share button gets
+it through the MCP server's relay route `GET /conversations/{id}/export` (MCP 0.19.0).
+
+| parameter | values |
+|---|---|
+| `format` | `md` (Markdown, the default) or `html` (one self-contained page, the `/view` look, prints to PDF from a browser) |
+| `include` | comma list of `summary` (with key points), `action_items`, `facts`, `transcript`; default `summary,action_items,transcript` |
+
+What a shared copy holds: the title, date and time in `CONVO_TIMEZONE`, people, the
+meeting topic and participants, "Written by hand" for a written note, and the sections
+asked for; transcript lines as `HH:MM:SS Speaker: text` (`Name (chat)` for meeting chat).
+What it leaves out: signed transcript links, the link to the hub note, ids, the jump
+script, dismissed action items, and facts unless asked for. Lines erased with
+`erase_fact` read `[forgotten]`; a summary waiting for its rewrite after a forget stays
+hidden; a transcript removed by retention says so. Errors: 400 for an unknown `format` or
+`include` name, 404 `conversation not found`.
+
 ## Knowledge layer (MCP)
 
 `convo-server mcp` exposes the store to any MCP-capable frontend. The store stays the
@@ -1150,6 +1171,7 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 | `POST /meetings` | `POST /v1/meetings` (same JSON `{url}` or `{meeting_id, passcode}`, `title?`; same answer: 202, 400, 409 busy with `message` and `active`, 501 meetings off, 500) |
 | `GET /meetings` | `GET /v1/meetings` (only `limit`, bounded to 1–100) |
 | `GET /meetings/{id}`, `DELETE /meetings/{id}` | the `/v1` routes (state; leave, answering once the bot exited) |
+| `GET /conversations/{id}/export` | `GET /v1/conversations/{id}/export` (same `format`, `include`; the file comes back as it is, not JSON; errors are JSON `detail`; the hub's Share button; MCP 0.19.0) |
 
 The meeting routes are for the hub's "Send Athena to a meeting" box (lane 4B of
 `docs/zoom-meeting-bot-plan.md`). An `{id}` that isn't a meeting id (32 lowercase hex
