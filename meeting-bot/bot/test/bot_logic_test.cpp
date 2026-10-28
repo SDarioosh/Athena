@@ -269,12 +269,19 @@ void test_join_failures() {
                  Case{JoinFail::NotStarted, "meeting_not_started"},
                  Case{JoinFail::NotFound, "meeting_not_found"},
                  Case{JoinFail::TokenExpired, "join_token_expired"},
+                 Case{JoinFail::ExternalNotAllowed, "external_meeting_not_allowed"},
+                 Case{JoinFail::OutsideUsersBlocked, "outside_users_blocked"},
+                 Case{JoinFail::BlockedByAdmin, "blocked_by_account_admin"},
+                 Case{JoinFail::SignInRequired, "zoom_signin_required"},
                  Case{JoinFail::Other, "join_failed"},
                  Case{JoinFail::OwnerNotIn, "join_failed"}}) {  // without obf
     Rules r(cfg(), T0);
     auto d = r.join_failed(c.why, s(1));
     CHECK(d.outcome == Outcome::Failed && d.reason == c.reason);
   }
+  Rules r(cfg(true), T0);  // obf: Zoom refusing the app is no reason to wait for the owner
+  auto d = r.join_failed(JoinFail::ExternalNotAllowed, s(1));
+  CHECK(d.outcome == Outcome::Failed && d.reason == "external_meeting_not_allowed");
 }
 
 void test_owner_wait() {

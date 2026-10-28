@@ -148,6 +148,10 @@ Decision Rules::join_failed(JoinFail why, int64_t now) {
         return conclude(Decision::ended("meeting_ended"));
       case JoinFail::WrongPasscode:
       case JoinFail::TokenExpired:  // will not change on another try
+      case JoinFail::ExternalNotAllowed:
+      case JoinFail::OutsideUsersBlocked:
+      case JoinFail::BlockedByAdmin:
+      case JoinFail::SignInRequired:
         return conclude(Decision::ended("connection_lost"));
       case JoinFail::Other:
         break;
@@ -175,6 +179,11 @@ Decision Rules::join_failed(JoinFail why, int64_t now) {
     case JoinFail::NotStarted: return conclude(Decision::failed("meeting_not_started"));
     case JoinFail::NotFound: return conclude(Decision::failed("meeting_not_found"));
     case JoinFail::TokenExpired: return conclude(Decision::failed("join_token_expired"));
+    case JoinFail::ExternalNotAllowed:
+      return conclude(Decision::failed("external_meeting_not_allowed"));
+    case JoinFail::OutsideUsersBlocked: return conclude(Decision::failed("outside_users_blocked"));
+    case JoinFail::BlockedByAdmin: return conclude(Decision::failed("blocked_by_account_admin"));
+    case JoinFail::SignInRequired: return conclude(Decision::failed("zoom_signin_required"));
     case JoinFail::Other: break;
   }
   return conclude(Decision::failed("join_failed"));

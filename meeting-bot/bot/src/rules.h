@@ -23,8 +23,16 @@ struct RulesConfig {
 
 constexpr int kRejoinTries = 3;
 
-// SDK-neutral join failure (main.cpp maps MeetingFailCode to it).
-enum class JoinFail { WrongPasscode, NotStarted, NotFound, TokenExpired, OwnerNotIn, Other };
+// SDK-neutral join failure (main.cpp maps MeetingFailCode to it). The last four are Zoom
+// refusing the bot itself, not the meeting: another try can't change them.
+enum class JoinFail {
+  WrongPasscode, NotStarted, NotFound, TokenExpired, OwnerNotIn,
+  ExternalNotAllowed,  // the Marketplace app isn't published: only its own account's meetings
+  OutsideUsersBlocked,  // the host lets in only users of certain accounts or domains
+  BlockedByAdmin,       // an account admin blocks the app
+  SignInRequired,       // the meeting needs a signed-in join token (OBF or ZAK)
+  Other
+};
 // SDK-neutral end of the meeting session (main.cpp maps EndMeetingReason to it).
 enum class EndKind { ByHost, Removed, HostNeverCame, Other };
 
