@@ -28,6 +28,9 @@
 //   waiting_room_back recording; at 2 s the host moves the bot to the waiting room, for good
 //   waiting_room_readmit  as waiting_room_back, let in again at 3 s; ends at 5 s
 //   chat_no_audio     may not record and the request is never answered; chat; ends at 3 s
+//   revoke            recording; at 1.5 s the host takes the recording permission away (raw
+//                     audio stops, onRecordPrivilegeChanged(false)), gives it back at 3 s
+//                     (onRecordPrivilegeChanged(true)); the host ends the meeting at 5 s
 //   fixture           as record, but Dana's audio is the raw PCM file ATHENA_SDKSTUB_PCM
 //                     (s16le mono 32 kHz, 10 ms blocks, looped; the tone without it) and
 //                     the host ends the meeting after ATHENA_SDKSTUB_SECONDS (default 20)
@@ -119,6 +122,7 @@ struct Chat : IMeetingChatController {
 
 IMeetingRecordingCtrlEvent* g_rec_ev = nullptr;
 bool g_may_record = false;
+bool g_raw_recording = false;  // StartRawRecording succeeded and the permission still holds
 struct Recording : IMeetingRecordingController {
   SDKError SetEvent(IMeetingRecordingCtrlEvent* ev) override {
     g_rec_ev = ev;
@@ -128,7 +132,9 @@ struct Recording : IMeetingRecordingController {
     return g_may_record ? SDKERR_SUCCESS : SDKERR_NO_PERMISSION;
   }
   SDKError StartRawRecording() override {
-    return g_may_record ? SDKERR_SUCCESS : SDKERR_NO_PERMISSION;
+    if (!g_may_record) return SDKERR_NO_PERMISSION;
+    g_raw_recording = true;
+    return SDKERR_SUCCESS;
   }
   SDKError RequestLocalRecordingPrivilege() override;
 } g_recording;
@@ -231,6 +237,17 @@ gboolean back_from_breakouts_cb(gpointer) {
   g_users = {&g_dana, &g_lee};
   return G_SOURCE_REMOVE;
 }
+gboolean revoke_cb(gpointer) {  // as Zoom: taking the permission away stops raw recording
+  g_may_record = false;
+  g_raw_recording = false;
+  if (g_rec_ev) g_rec_ev->onRecordPrivilegeChanged(false);
+  return G_SOURCE_REMOVE;
+}
+gboolean regrant_cb(gpointer) {
+  g_may_record = true;
+  if (g_rec_ev) g_rec_ev->onRecordPrivilegeChanged(true);
+  return G_SOURCE_REMOVE;
+}
 void end_after(guint ms) { later(ms, end_cb, GINT_TO_POINTER(EndMeetingReason_EndByHost)); }
 
 void schedule_5b(const std::string& s) {
@@ -255,6 +272,11 @@ void schedule_5b(const std::string& s) {
       end_after(7500);
     }
     if (s == "chat_no_audio") end_after(3000);
+    if (s == "revoke") {
+      later(1500, revoke_cb);
+      later(3000, regrant_cb);
+      end_after(5000);
+    }
   } else if (s == "drop_rejoin") {
     end_after(2500);
   }
@@ -309,7 +331,7 @@ gboolean in_meeting_cb(gpointer) {
   if (g_stays == 1 && s != "alone") g_users = {&g_dana, &g_lee};
   if (g_stays == 1 && s == "breakout") g_users = {&g_dana, &g_lee, &g_kim, &g_sam};
   g_may_record = s == "record" || s == "ended" || s == "removed" || s == "alone" ||
-                 s == "owner_late" || s == "owner_left" || s == "breakout" ||
+                 s == "owner_late" || s == "owner_left" || s == "breakout" || s == "revoke" ||
                  s.rfind("waiting_room_", 0) == 0 || (drops(s) && g_stays == 1) ||
                  s == "sdk_reconnect";
   if (s == "fixture") fixture_start();  // before INMEETING: may record at once
@@ -359,7 +381,8 @@ guint g_audio_source = 0;
 uint64_t g_phase = 0;
 
 gboolean audio_cb(gpointer) {
-  if (!g_audio_delegate || g_status != MEETING_STATUS_INMEETING) return G_SOURCE_CONTINUE;
+  if (!g_audio_delegate || !g_raw_recording || g_status != MEETING_STATUS_INMEETING)
+    return G_SOURCE_CONTINUE;
   bool dana_here = false;
   for (auto* u : g_users) dana_here = dana_here || u == &g_dana;
   Block b;

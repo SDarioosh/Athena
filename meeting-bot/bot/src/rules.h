@@ -76,6 +76,9 @@ class Rules {
   Breakouts others(int count, int64_t now, bool breakouts_open = false);
   // Raw audio subscribed: recording.
   void recording(int64_t now);
+  // The host took the recording permission away: raw audio stopped (waiting_permission
+  // until it is given back; the bot never asks again).
+  void recording_stopped();
   // The host declined the recording request.
   void permission_denied();
 

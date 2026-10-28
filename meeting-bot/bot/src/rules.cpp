@@ -103,6 +103,12 @@ void Rules::recording(int64_t now) {
   no_audio_ = false;
 }
 
+void Rules::recording_stopped() {
+  if (done()) return;
+  recording_ = false;
+  no_audio_ = false;
+}
+
 void Rules::permission_denied() {
   if (!recording_) denied_ = true;
 }

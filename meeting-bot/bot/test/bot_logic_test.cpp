@@ -177,6 +177,23 @@ void test_happy_path() {
   CHECK(!r.stop_signal());  // decided once
 }
 
+// The host takes the recording permission away and gives it back later.
+void test_permission_revoked() {
+  Rules r(cfg(), T0);
+  r.joined(s(1));
+  r.others(1, s(1));
+  r.recording(s(2));
+  CHECK_EQ(r.status().line(), "recording");
+  r.recording_stopped();
+  CHECK(!r.is_recording());
+  CHECK_EQ(r.status().line(), "waiting_permission");
+  CHECK(!r.tick(s(200), s(10), false, false));  // no no_audio while not recording
+  CHECK_EQ(r.status().line(), "waiting_permission");
+  r.recording(s(201));
+  CHECK_EQ(r.status().line(), "recording");
+  CHECK(!r.tick(s(202), s(202), false, false));
+}
+
 void test_waiting_room_timeout() {
   Rules r(cfg(), T0);
   r.waiting_room(s(2));
@@ -519,6 +536,7 @@ int main() {
   test_options();
   test_status_reasons();
   test_happy_path();
+  test_permission_revoked();
   test_waiting_room_timeout();
   test_waiting_for_host();
   test_alone();
