@@ -12,7 +12,8 @@ second URL and token, the MCP HTTP app gets two plain HTTP routes:
 The phone relay's T5 sync, paired through Odysseus, also reads a few API routes the same
 way (:data:`READ_ROUTES`): the same paths without ``/v1``, same query, same JSON. The
 hub's settings page reads and sets the summary model through ``/settings/llm`` and
-whisper's vocabulary through ``/settings/vocabulary``.
+whisper's vocabulary through ``/settings/vocabulary``; its "Enroll my voice" window
+starts, follows and cancels enrolling the next recording through ``/speakers/enroll/next``.
 
 The hub's Share button downloads a conversation as a file the same way:
 
@@ -95,6 +96,10 @@ READ_ROUTES = [
     # the hub's settings page: words whisper is nudged toward
     ("GET", "/settings/vocabulary"),
     ("PUT", "/settings/vocabulary"),
+    # the hub's "Enroll my voice": enroll the next recording (MCP 0.20.0)
+    ("GET", "/speakers/enroll/next"),
+    ("POST", "/speakers/enroll/next"),
+    ("DELETE", "/speakers/enroll/next"),
 ]
 
 
