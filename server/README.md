@@ -473,7 +473,9 @@ in order of first use), `chunks`, `started_at`, `ended_at`; each
 chunk also has `track` and `track_name`, null without one). A session with any tracked
 chunk (a meeting) never stops on trailing silence, so a quiet break doesn't end it: it
 stops at `CONVO_MAX_SESSION_SECONDS`, on `POST /v1/sessions/{id}/end`, or after
-`CONVO_SESSION_IDLE_SECONDS` without uploads (the uploader died); once ended, every track
+`CONVO_SESSION_IDLE_SECONDS` without uploads (the uploader died; not while the meeting
+bot that records it still runs, since Zoom sends no audio while everyone is muted: its exit
+ends the session); once ended, every track
 is told `stop: true`. If an untracked chunk stopped the session on silence first, the
 first tracked chunk reopens it (`recording` again, no stop reason). Errors (400): `track must match
 ^[A-Za-z0-9._:-]{1,64}$`, `track_name is longer than 200 characters`, `track_name needs a
@@ -606,7 +608,8 @@ on a pidfd (no thread). The task ends with the bot. After a server restart, acti
 are checked on the next meeting request: if the pid is no longer that bot, the row
 becomes `failed`/`server_restarted`; a bot still running counts as busy and `DELETE`
 stops it. On exit the session is ended (`stop_reason` `meeting_<reason>`) if the bot
-didn't end it.
+didn't end it. When the server is its container's PID 1 (the sound-api container), its exit
+would kill every bot, so shutdown first sends them SIGTERM (final rows `ended server_stop`).
 
 **Upload token.** The bot never gets `CONVO_INGEST_TOKEN`. Each meeting gets a random
 token (stored only as a SHA-256 hash, cleared when the bot exits) that is accepted only
@@ -731,7 +734,9 @@ convo-server zoom-login") and starts nothing; sign in again either way.
   denied`, then keep waiting (an Allow later still gives `STATE recording`). Never ask
   again and never leave over permission; `--waiting-room-seconds` does not apply here
   (the meeting's end, the alone rule, SIGTERM, `owner_left` and `--max-seconds` still
-  end it). Already host, co-host or allowed: `STATE recording` straight away.
+  end it). If the host takes the permission away while recording, print `STATE
+  waiting_permission` again and resume (`STATE recording`, same tracks) once it is given
+  back. Already host, co-host or allowed: `STATE recording` straight away.
 - With an `obf` token: while Zoom refuses the join because the authorizing user isn't in
   the meeting yet (SDK `MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING`), retry and print
   `STATE starting waiting_for_owner` (once); after `--waiting-room-seconds` give up with

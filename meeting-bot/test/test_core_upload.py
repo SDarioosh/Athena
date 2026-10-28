@@ -266,6 +266,16 @@ class CoreUploadTests(unittest.TestCase):
         data = Path(chunks[0]["files"][0]["path"]).read_bytes()
         self.assertAlmostEqual(opus_seconds(data), 29.5, delta=0.002)
 
+    def test_track_name_is_valid_utf8(self):
+        """A display name with a byte that is not UTF-8: the server would read the whole
+        field as Latin-1 (mojibake, and over 200 characters a 400 that drops the chunk),
+        so the bad byte goes out as U+FFFD and the rest of the name stays as it was."""
+        run = self.run_core("ok", "--pattern", "badname")
+        self.assertEqual(run.num("finish"), 1, run.stderr)
+        chunks = run.chunks()
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0]["fields"]["track_name"], "Zo\u00eb \ufffd Example")
+
     def test_chat_without_audio_makes_the_session(self):
         """No chunk ever (no recording permission): one second of silence without a track
         goes first, so the chat call finds the session instead of a 404."""

@@ -1,5 +1,7 @@
 #include "chat.h"
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
@@ -50,15 +52,27 @@ void ChatLog::on_chat(int64_t at_ms, const std::string& from_name,
                            "later messages are not kept\n", lines_, bytes_);
     return;
   }
-  if (!chat_) chat_ = std::fopen(chat_path_.c_str(), "a");
+  if (!chat_) {
+    chat_ = std::fopen(chat_path_.c_str(), "a");
+    if (chat_ && std::fseek(chat_, 0, SEEK_END) == 0) file_end_ = std::ftell(chat_);
+  }
   if (!chat_ || std::fwrite(line.data(), 1, line.size(), chat_) != line.size() ||
       std::fflush(chat_) != 0) {
     std::fprintf(stderr, "athena-core: could not write %s\n", chat_path_.c_str());
     ++dropped_;
+    if (chat_) {
+      // A full disk can take part of the line: cut it off again, or the next line is
+      // glued to it and the chat call's JSON is broken (the server refuses all of it).
+      std::fclose(chat_);
+      chat_ = nullptr;
+      if (::truncate(chat_path_.c_str(), static_cast<off_t>(file_end_)) != 0)
+        std::fprintf(stderr, "athena-core: could not cut %s back\n", chat_path_.c_str());
+    }
     return;
   }
   ++lines_;
   bytes_ += line.size();
+  file_end_ += static_cast<long>(line.size());
 }
 
 void ChatLog::on_participant(const std::string& track_id, const std::string& name,

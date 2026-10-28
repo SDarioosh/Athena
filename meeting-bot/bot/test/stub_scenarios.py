@@ -47,9 +47,16 @@ def form_fields(content_type: str, body: bytes) -> dict[str, str]:
             for part in msg.iter_parts() if part.get_filename() is None}
 
 
+SLOW = "zoom-slow"  # sessions whose uploads hang: Core.finish runs to its deadline
+SLOW_SECONDS = 25
+
+
 class Api(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 (http.server API)
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if SLOW in self.path or SLOW.encode() in body:
+            time.sleep(SLOW_SECONDS)  # an unreachable upload API, as seen from the bot
+            return
         entry = {"path": self.path, "auth": self.headers.get("Authorization"), "body": body}
         status = 200
         if self.path == "/v1/ingest/chunk":
@@ -76,7 +83,8 @@ class Api(BaseHTTPRequestHandler):
 
 def run(bot: str, url: str, name: str, scenario: str, expect: list[str], code: int,
         obf: bool = False, term_after: str | None = None, extra: dict | None = None,
-        args: list[str] | None = None, env_extra: dict | None = None) -> list[str]:
+        args: list[str] | None = None, env_extra: dict | None = None,
+        term_delay: float = 0.5) -> list[str]:
     """Returns a list of problems (empty = passed)."""
     work = tempfile.mkdtemp(prefix=f"athena-bot-{name}-")
     opts = {"--meeting-id": "81234567890", "--session-id": f"zoom-{name}", "--upload-url": url,
@@ -103,7 +111,7 @@ def run(bot: str, url: str, name: str, scenario: str, expect: list[str], code: i
         line = raw.rstrip("\n")
         lines.append(line)
         if term_after and line == f"STATE {term_after}" and term_at is None:
-            time.sleep(0.5)
+            time.sleep(term_delay)
             term_at = time.monotonic()
             p.send_signal(signal.SIGTERM)
         if time.monotonic() > deadline:
@@ -215,6 +223,15 @@ def check_sessions() -> int:
                          participants=both + ["Kim Placeholder", "Sam Fictional"]),
         "chatnoaudio": dict(chat_lines=["Dana Example"], participants=both,
                             silent_start=True),
+        # SIGTERM, permission, max duration, alone, rejoin given up: flushed and ended too
+        "sigterm": dict(chat_lines=[], participants=both),  # SIGTERM before the chat
+        "permission": dict(chat_lines=["Dana Example"], participants=both),
+        "maxdur": dict(chat_lines=["Dana Example"], participants=both, lee_left=True),
+        "dropterm": dict(chat_lines=["Dana Example"], participants=both),
+        "ownerlate": dict(chat_lines=[], participants=both),
+        "denied": dict(chat_lines=["Dana Example"], participants=both, silent_start=True),
+        # recording again once the host gave the permission back: a second chunk
+        "revoke": dict(dana_chunks=2, chat_lines=["Dana Example"], participants=both),
     }
     failures = 0
     for name, kw in checks.items():
@@ -272,6 +289,8 @@ def main() -> int:
                                            "ended waiting_room_timeout"], 0, False, None, None),
         ("readmit", "waiting_room_readmit", ["recording", "waiting_room", "recording",
                                              "ended meeting_ended"], 0, False, None, None),
+        ("revoke", "revoke", ["recording", "waiting_permission", "recording",
+                              "ended meeting_ended"], 0, False, None, None),
         ("chatnoaudio", "chat_no_audio", ["waiting_permission", "ended meeting_ended"], 0,
          False, None, None),
     ]
@@ -280,6 +299,11 @@ def main() -> int:
         futs = {pool.submit(run, bot, url, c[0], c[1], c[2], c[3], c[4], c[5], c[6],
                             env_extra=c[7] if len(c) > 7 else None): c[0]
                 for c in cases}
+        # SIGTERM while the bot already flushes after the meeting ended (uploads hang): it
+        # must still exit within 5 s, with its own final line
+        futs[pool.submit(run, bot, url, "slowfinish", "ended", ["recording",
+                         "ended meeting_ended"], 0, term_after="recording",
+                         term_delay=5.0)] = "slowfinish"
         futs[pool.submit(run, bot, url, "badargs", "record", ["failed bad_arguments"], 2,
                          args=["--meeting-id", "123"])] = "badargs"
         for fut in concurrent.futures.as_completed(futs):

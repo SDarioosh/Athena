@@ -89,7 +89,10 @@ struct Core::Impl {
   void enqueue(FinishedChunk&& c) {
     QueuedChunk q;
     q.track = c.track;
-    q.track_name = util::utf8_truncate(util::clean_line(c.track_name), kMaxNameChars);
+    // Valid UTF-8 only: the server reads a form field with a bad byte as Latin-1 (the
+    // whole name garbled, and a long one over its 200 characters: 400, chunk dropped).
+    q.track_name =
+        util::utf8_truncate(util::utf8_fix(util::clean_line(c.track_name)), kMaxNameChars);
     q.sequence = c.sequence;
     q.start_ms = c.start_ms;
     q.seconds = c.seconds();

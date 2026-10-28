@@ -78,6 +78,22 @@ std::string json_str(const std::string& s) {
   return o;
 }
 
+std::string utf8_fix(const std::string& s) {
+  std::string o;
+  o.reserve(s.size());
+  for (size_t i = 0; i < s.size();) {
+    const size_t n = utf8_seq_len(s, i);
+    if (n == 0) {
+      o += "\xEF\xBF\xBD";  // U+FFFD
+      ++i;
+    } else {
+      o.append(s, i, n);
+      i += n;
+    }
+  }
+  return o;
+}
+
 std::string utf8_truncate(const std::string& s, size_t max_chars) {
   size_t i = 0, chars = 0;
   while (i < s.size() && chars < max_chars) {

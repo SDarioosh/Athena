@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -245,6 +246,7 @@ ChatEvents g_chat;
 // ---- recording permission: ask Zoom once, then wait (spike) --------------------------
 
 bool try_start_raw_audio();
+void stop_raw_audio();
 
 class RecordingEvents : public IMeetingRecordingCtrlEvent {
  public:
@@ -253,6 +255,7 @@ class RecordingEvents : public IMeetingRecordingCtrlEvent {
   void onRecordPrivilegeChanged(bool can_record) override {
     log(std::string("record privilege changed: ") + (can_record ? "yes" : "no"));
     if (can_record) try_start_raw_audio();
+    else stop_raw_audio();  // the host took it away: Zoom stops the raw recording
   }
   void onLocalRecordingPrivilegeRequestStatus(RequestLocalRecordingStatus status) override {
     log("recording request answer: " + std::to_string(status));
@@ -321,6 +324,24 @@ gboolean permission_retry(gpointer) {
     return G_SOURCE_REMOVE;
   }
   return G_SOURCE_CONTINUE;  // also while out of the meeting: tries again once back in
+}
+
+// The host took the recording permission away while we recorded: Zoom stopped the raw
+// recording, so stop taking audio, upload what we have and show waiting_permission. Once the
+// host gives it back (onRecordPrivilegeChanged(true), or the 15 s retry) recording starts
+// again; we never ask again, not even after a rejoin.
+void stop_raw_audio() {
+  if (!g_raw_started || g_concluding) return;
+  log("recording permission taken away: raw audio stopped");
+  g_audio_on = false;
+  if (g_audio_helper) g_audio_helper->unSubscribe();
+  g_raw_started = false;
+  g_had_raw = false;
+  if (g_core) g_core->close_chunks();
+  g_rules->recording_stopped();
+  show();  // waiting_permission
+  if (!g_permission_timer)
+    g_permission_timer = g_timeout_add_seconds(kPermissionRetrySeconds, permission_retry, nullptr);
 }
 
 // Ask the host at most once per stay in the meeting: once at the first join, and once
@@ -408,12 +429,53 @@ void set_topic(const zchar_t* topic) {
 
 // ---- leaving -------------------------------------------------------------------------
 
+// Core::finish blocks the main loop (up to 20 s after a meeting), so the GLib signal source
+// can't run then. A SIGTERM/SIGINT during it gets these plain handlers instead: finish keeps
+// going for at most kSignalBudget more, then the final line is written and the bot exits,
+// within the launcher's 5 s rule. Only async-signal-safe calls in the handlers.
+volatile sig_atomic_t g_term_in_finish = 0;
+char g_final_line[96];
+size_t g_final_len = 0;
+int g_final_code = 0;
+
+extern "C" void finish_term_handler(int) {
+  if (!g_term_in_finish) {
+    g_term_in_finish = 1;
+    alarm(static_cast<unsigned>(
+        std::chrono::duration_cast<std::chrono::seconds>(kSignalBudget).count()));
+  }
+}
+
+extern "C" void finish_alarm_handler(int) {
+  ssize_t w = write(STDOUT_FILENO, g_final_line, g_final_len);
+  (void)w;
+  _exit(g_final_code);
+}
+
 gboolean finish_cb(gpointer) {
   if (g_finished) return G_SOURCE_REMOVE;
   g_finished = true;
+  const Status final_status{g_final.outcome == Outcome::Failed ? "failed" : "ended",
+                            g_final.reason};
+  std::snprintf(g_final_line, sizeof g_final_line, "STATE %s\n", final_status.line().c_str());
+  g_final_len = std::strlen(g_final_line);
+  g_final_code = g_final.outcome == Outcome::Failed ? 1 : 0;
+  struct sigaction term {}, alrm {}, old_term {}, old_int {}, old_alrm {};
+  term.sa_handler = finish_term_handler;
+  sigemptyset(&term.sa_mask);
+  alrm.sa_handler = finish_alarm_handler;
+  sigemptyset(&alrm.sa_mask);
+  sigaction(SIGALRM, &alrm, &old_alrm);
+  sigaction(SIGTERM, &term, &old_term);
+  sigaction(SIGINT, &term, &old_int);
   bool ok = g_core ? g_core->finish(g_deadline) : false;
+  sigaction(SIGTERM, &old_term, nullptr);  // first, so no new alarm is armed after alarm(0)
+  sigaction(SIGINT, &old_int, nullptr);
+  alarm(0);
+  sigaction(SIGALRM, &old_alrm, nullptr);
+  if (g_term_in_finish) g_from_signal = true;  // exit at once, without the SDK teardown
   log(ok ? "session finished: everything sent" : "session finished: not everything was sent");
-  emit(Status{g_final.outcome == Outcome::Failed ? "failed" : "ended", g_final.reason});
+  emit(final_status);
   if (g_loop) g_main_loop_quit(g_loop);
   return G_SOURCE_REMOVE;
 }
@@ -596,6 +658,7 @@ class MeetingEvents : public IMeetingServiceEvent {
 MeetingEvents g_meeting_events;
 
 void join() {
+  if (g_concluding) return;  // e.g. SIGTERM handled in the same loop turn as the auth answer
   JoinParam jp;
   jp.userType = SDK_UT_WITHOUT_LOGIN;
   JoinParam4WithoutLogin& p = jp.param.withoutloginuserJoin;

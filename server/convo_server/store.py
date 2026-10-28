@@ -789,10 +789,20 @@ class Store:
         with self.tx() as c:
             return c.execute(sql, params).rowcount > 0
 
-    def idle_sessions(self, received_before: float) -> list[str]:
-        rows = self._q("SELECT id FROM sessions WHERE status = 'recording' AND received_at < ?",
-                       (received_before,))
-        return [r["id"] for r in rows]
+    def idle_sessions(self, received_before: float,
+                      bot_started_after: float | None = None) -> list[str]:
+        """Recording sessions with no upload since ``received_before``. With
+        ``bot_started_after``, a session whose meeting bot is still active and was started
+        after that time is left out: Zoom sends audio only while someone talks, so a
+        muted stretch uploads nothing while the bot still records; its exit ends the
+        session (meetings.py)."""
+        sql, params = ("SELECT id FROM sessions WHERE status = 'recording' AND received_at < ?",
+                       [received_before])
+        if bot_started_after is not None:
+            sql += (" AND id NOT IN (SELECT session_id FROM meetings WHERE"
+                    f" state IN ({_ACTIVE_IN}) AND created_at > ?)")
+            params += [*MEETING_ACTIVE, bot_started_after]
+        return [r["id"] for r in self._q(sql, params)]
 
     def requeue_interrupted(self) -> int:
         """Send sessions left in 'processing' (server stopped mid-run) back to 'ended'."""

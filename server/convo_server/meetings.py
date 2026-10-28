@@ -87,6 +87,12 @@ MAX_TITLE_CHARS = 200
 MAX_PASSCODE_CHARS = 128
 JOIN_TOKEN_SECONDS = 7200  # a ZAK or OBF token lasts about 2 h (zoom_signin.py)
 JOIN_TOKEN_MARGIN_SECONDS = 300  # the wait ends this long before the token does
+# The bot reads its --*-seconds as whole numbers of at most 9 digits, at least 1
+# (meeting-bot/bot/src/options.cpp); anything else and it exits "failed bad_arguments".
+MAX_BOT_SECONDS = 999_999_999
+# Server shutdown as a container's init (see Launcher.shutdown): the bots' SIGTERM wait,
+# within Docker's default 10 s stop timeout (the bot exits within 5 s of SIGTERM).
+SHUTDOWN_STOP_SECONDS = 6.0
 
 _STATE_LINE = re.compile(r"^STATE (starting|waiting_room|waiting_permission|recording|ended|"
                          r"failed)"
@@ -328,6 +334,13 @@ def check_settings(settings: Settings) -> Path:
         raise MeetingError(501, "CONVO_MEETING_TRACK_CODEC must be opus or wav")
     if settings.zoom_join_token not in ("auto", "zak", "obf", "none"):
         raise MeetingError(501, "CONVO_ZOOM_JOIN_TOKEN must be auto, zak, obf or none")
+    for name, value in (("CONVO_MAX_SESSION_SECONDS", settings.max_session_seconds),
+                        ("CONVO_MEETING_ALONE_SECONDS", settings.meeting_alone_seconds),
+                        ("CONVO_MEETING_WAITING_ROOM_SECONDS",
+                         settings.meeting_waiting_room_seconds)):
+        if not (math.isfinite(value) and 1 <= int(value) <= MAX_BOT_SECONDS):
+            raise MeetingError(501, f"{name} must be a whole number of seconds from 1 to "
+                                    f"{MAX_BOT_SECONDS} for the meeting bot")
     return bot
 
 
@@ -339,8 +352,12 @@ def parse_state_line(line: str) -> tuple[str, str | None] | None:
 def final_state(last: tuple[str, str | None] | None, code: int,
                 stop_reason: str | None) -> tuple[str, str]:
     """The row's state and reason once the bot exited with ``code``. The bot's own last
-    ``ended``/``failed`` line wins; else a stop the server asked for ends it; else exit
-    code 0 is ``ended``/``exited`` and anything else ``failed``/``bot_crashed``."""
+    ``ended``/``failed`` line wins, except its ``ended stopped``, which only says it got
+    the server's SIGTERM: then the server's reason (``stopped``, ``max_duration``,
+    ``server_stop``) says why. Else a stop the server asked for ends it; else exit code 0
+    is ``ended``/``exited`` and anything else ``failed``/``bot_crashed``."""
+    if last == ("ended", "stopped") and stop_reason:
+        return "ended", stop_reason
     if last and last[0] in TERMINAL:
         return last[0], last[1] or ("exited" if last[0] == "ended" else "bot_crashed")
     if stop_reason:
@@ -552,7 +569,20 @@ class Launcher:
         return out(self.store.get_meeting(mid) or row)
 
     async def shutdown(self) -> None:
-        """Server shutdown: stop watching (bots keep running, see reconcile)."""
+        """Server shutdown: stop watching (bots keep running, see reconcile). Except
+        when this process is its PID namespace's init (the sound-api container, whose
+        entrypoint execs convo-server): its exit SIGKILLs every bot, losing their last
+        chunks, the meeting's chat and the session's end, so they are asked to leave
+        first (SIGTERM; final rows ``ended server_stop``)."""
+        runs = list(self.running.values())
+        if runs and _exit_kills_bots():
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(asyncio.gather(
+                    *(self._terminate(r, "server_stop") for r in runs)),
+                    SHUTDOWN_STOP_SECONDS)
+            tasks = [r.task for r in runs if r.task]
+            if tasks:  # their final rows
+                await asyncio.wait(tasks, timeout=READER_DRAIN_SECONDS + 0.5)
         for run in list(self.running.values()):
             if run.task:
                 run.task.cancel()
@@ -672,11 +702,11 @@ class Launcher:
         log.info("meeting %s: %s%s", run.id, state, f" ({reason})" if reason else "")
 
     async def _terminate(self, run: _Running, reason: str) -> None:
+        if run.exited.done():  # gone already: its exit code says why, not this stop
+            return
         if run.stop_reason is None:
             run.stop_reason = reason
             self.store.update_meeting(run.id, stop_requested_at=time.time())
-        if run.exited.done():
-            return
         with contextlib.suppress(ProcessLookupError):
             run.proc.send_signal(signal.SIGTERM)
         try:
@@ -718,6 +748,12 @@ class Launcher:
                                   upload_token_hash=None, pid=None)
         # the bot normally ends its session itself; make sure it is ended
         self.pipeline.end_session(session_id, f"meeting_{reason}")
+
+
+def _exit_kills_bots() -> bool:
+    """Is this process its PID namespace's init (PID 1 in a container)? When it exits,
+    the kernel SIGKILLs every other process of the namespace, bots included."""
+    return os.getpid() == 1
 
 
 # --------------------------------------------------- child exit, no thread

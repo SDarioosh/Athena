@@ -37,7 +37,10 @@ def parse_multipart(content_type: str, body: bytes) -> tuple[dict[str, str], lis
             files.append({"name": name, "filename": part.get_filename(),
                           "type": part.get_content_type(), "data": data})
         else:
-            fields[name] = data.decode("utf-8")
+            try:  # as Starlette's form parser: UTF-8, else Latin-1
+                fields[name] = data.decode("utf-8")
+            except UnicodeDecodeError:
+                fields[name] = data.decode("latin-1")
     return fields, files
 
 
