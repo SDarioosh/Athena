@@ -2,11 +2,9 @@
 
 Private conversation memory, and the first module of
 [Odysseus](https://github.com/SDarioosh/Barvis) (our Odysseus fork), a personal, fully
-local AI system. Formerly called convo-ai (then barvis-ai and barvis-sound); code
-identifiers such as `convo_server`, `convo-server` and `CONVO_*` keep the old names.
+local AI system.
 
-Wearables (an Amazfit T-Rex 3 Pro watch app now, a XIAO ESP32-S3 pendant planned, an Omi
-pendant later) record conversations. A server on the owner's machine transcribes them
+Wearables record conversations. A server on the owner's machine transcribes them
 (Silero VAD, whisper.cpp), identifies speakers, splits them into conversations,
 summarizes them with a local LLM, stores everything in SQLite, and exposes it to Odysseus
 through an MCP server. Nothing in the data path uses the cloud.
