@@ -889,7 +889,7 @@ source of truth, so the frontend can be swapped. Tools:
 | tool | answers |
 |---|---|
 | `search_transcripts(speaker, query, since, until)` | "what did X say (about Y) on/since DATE": actual lines, with links |
-| `search_conversations(query, person, since, until, kind)` | conversations by topic / person / date; `kind`: `conversation`, `note` (voice and written notes), `voice` or `written` (MCP 0.14.0) |
+| `search_conversations(query, person, since, until, kind)` | conversations by topic / person / date; `kind`: `conversation`, `note` (voice and written notes), `voice` or `written` (MCP 0.14.0), `meeting` (online meetings only) or `in_person` (conversations that are no meeting; MCP 0.18.0) |
 | `get_conversation(id)`, `get_transcript(id, start_seconds, end_seconds)` | details |
 | `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs (below), notes (kind `note`, `note_title`) included (the hub files voice-note items into its calendar, to-dos and notes from it) |
 | `update_action_item(item_id, status, kind, due_date, due_time, list_name, title)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears), time (`HH:MM`, `none` clears), to-do list (`shopping`, `none` clears) or title (at most 60 characters, `none` = from the text); every argument but `item_id` is optional |

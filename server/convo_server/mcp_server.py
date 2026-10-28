@@ -26,7 +26,18 @@ from .diarize import load_voices
 from .links import local_time, meeting_label, speaker_label, transcript_link, written_label
 from .search import Embedder, search
 from .speakers import relabel_matches, suggestion
-from .store import CONVERSATION, ITEM_KINDS, NOTE, UNSET, VOICE, WRITTEN, Store, short_title
+from .store import (
+    CONVERSATION,
+    IN_PERSON,
+    ITEM_KINDS,
+    MEETING,
+    NOTE,
+    UNSET,
+    VOICE,
+    WRITTEN,
+    Store,
+    short_title,
+)
 
 INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
 with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
@@ -65,7 +76,8 @@ notes, kind="written" only handwritten ones.
 Online meetings: a meeting is marked "(Online meeting: <topic>)" after its title and lists \
 its participants (everyone in the meeting, also those who never spoke). A line "Dana \
 (chat): ..." was typed in the meeting chat, not said. For "who was in the X meeting" call \
-search_conversations with the topic words and answer from its participants.
+search_conversations with the topic words and answer from its participants. To list \
+the user's online meetings, call search_conversations with kind="meeting".
 
 Showing a transcript: when the user asks to see or read a transcript, answer with its link \
 and a short summary of who said what; don't copy the transcript lines into your answer \
@@ -79,7 +91,9 @@ RecKind = Annotated[str, Field(description=(
     "'note' = all the user's notes (voice notes and notes written by hand); "
     "'voice' = only voice notes (memos the user recorded for themselves); "
     "'written' = only notes the user wrote by hand; "
-    "'conversation' = only conversations with other people; empty = everything"))]
+    "'conversation' = only conversations with other people (in person and online); "
+    "'meeting' = only online meetings; 'in_person' = only conversations recorded in "
+    "person (no online meetings); empty = everything"))]
 ConvId = Annotated[str, Field(description="conversation id from a previous result")]
 
 
@@ -105,7 +119,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.17.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.18.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -752,15 +766,20 @@ def _title(c: dict[str, Any]) -> str:
     return c.get("title") or "untitled (summary pending)"
 
 
-_KIND_HEADER = {NOTE: "notes", VOICE: "voice notes", WRITTEN: "written notes"}
+_KIND_HEADER = {NOTE: "notes", VOICE: "voice notes", WRITTEN: "written notes",
+                MEETING: "online meetings"}
 
 
 def _kind(value: str) -> str | None:
     """search_conversations' ``kind``, read loosely: small models write "voice_note",
-    "memo", "handwritten" or "notes"."""
+    "memo", "handwritten" or "notes"; "zoom" or "online" for a meeting."""
     v = (value or "").strip().lower()
     if not v or v in ("all", "any", "both"):
         return None
+    if "person" in v or "face" in v or "offline" in v:
+        return IN_PERSON
+    if "meet" in v or "zoom" in v or "online" in v:
+        return MEETING
     if "writ" in v or "hand" in v:
         return WRITTEN
     if "voice" in v or "memo" in v or "spoken" in v:
@@ -769,8 +788,8 @@ def _kind(value: str) -> str | None:
         return NOTE
     if "conv" in v:
         return CONVERSATION
-    raise ValueError(f"bad kind {value!r}; use 'note', 'voice', 'written', 'conversation' "
-                     "or ''")
+    raise ValueError(f"bad kind {value!r}; use 'note', 'voice', 'written', 'conversation', "
+                     "'meeting', 'in_person' or ''")
 
 
 def _note(kind: str | None, written: dict[str, Any] | None = None) -> str:

@@ -224,7 +224,10 @@ server. **Nothing in the data path touches the cloud.**
   `conversation`, or empty for everything; from MCP 0.14.0 (additive) also `voice` (voice
   notes only) and `written` (notes written by hand only), and the result header says
   "notes" for `note`. Loose spellings are read too: "voice_note" and "memo" mean `voice`,
-  "handwritten" means `written`.
+  "handwritten" means `written`. From MCP 0.18.0 (additive) also `meeting` (online meetings
+  only, header "online meetings") and `in_person` (conversations that are no online
+  meeting), for the hub's Online meetings tab; "zoom" and "online" mean `meeting`,
+  "in-person" and "face to face" mean `in_person`.
 - Each `list_action_items` JSON row has `title` (≤ 60 characters, for the hub's to-do or
   note) and `explicit` (true when the item has a date or time, a named list, kind
   reminder/event/note, or the voice note used a command word such as "remind me" or "add a
