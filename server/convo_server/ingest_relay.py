@@ -14,6 +14,10 @@ way (:data:`READ_ROUTES`): the same paths without ``/v1``, same query, same JSON
 hub's settings page reads and sets the summary model through ``/settings/llm`` and
 whisper's vocabulary through ``/settings/vocabulary``.
 
+The hub's Share button downloads a conversation as a file the same way:
+
+    GET /conversations/{id}/export   same query and file as /v1/conversations/{id}/export
+
 The hub's "Send Athena to a meeting" box starts and stops the Zoom bot the same way:
 
     POST   /meetings                 same JSON and answer as /v1/meetings (join)
@@ -258,6 +262,34 @@ def add_ingest_routes(mcp: Any, settings: Settings,
 
         session_id = request.path_params["session_id"]
         return await forward(f"/v1/sessions/{quote(session_id, safe='')}/end", headers=auth)
+
+    # ------------------------------------------------------------------- export
+    @mcp.custom_route("/conversations/{conv_id}/export", methods=["GET"],
+                      include_in_schema=False)
+    async def export_conversation(request: Any) -> Any:
+        """The file as the API sends it (not JSON); an error is JSON like the others."""
+        from urllib.parse import quote
+
+        from starlette.responses import Response
+
+        conv_id = request.path_params["conv_id"]
+        params = [(k, v) for k, v in request.query_params.multi_items()
+                  if k in ("format", "include")]
+        try:
+            async with httpx.AsyncClient(base_url=base, transport=transport, timeout=TIMEOUT,
+                                         follow_redirects=False) as client:
+                resp = await client.get(f"/v1/conversations/{quote(conv_id, safe='')}/export",
+                                        params=params, headers=auth)
+        except httpx.HTTPError as e:
+            log.warning("ingest API at %s not reachable: %s", base, type(e).__name__)
+            return _json(502, f"Athena's ingest API is not reachable at {base} "
+                              "(is `convo-server serve` running?)")
+        if resp.status_code != 200:
+            return _passthrough(resp)
+        keep = ("content-type", "content-disposition", "cache-control",
+                "x-content-type-options")
+        return Response(resp.content, status_code=200,
+                        headers={k: v for k, v in resp.headers.items() if k.lower() in keep})
 
     # ----------------------------------------------------------------- meetings
     @mcp.custom_route("/meetings", methods=["POST"], include_in_schema=False)

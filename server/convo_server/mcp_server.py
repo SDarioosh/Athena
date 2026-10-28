@@ -119,7 +119,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.18.0")
+    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.19.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)

@@ -56,11 +56,11 @@ from fastapi import (
     Request,
 )
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
 from . import audio as audio_mod
-from . import llm_settings, vocabulary
+from . import export, llm_settings, vocabulary
 from .config import Settings
 from .diarize import enroll_voice, load_voices
 from .links import render_conversation, transcript_link, verify
@@ -462,6 +462,28 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
                          "kind": s.kind})
         return {"conversation_id": conv_id, "title": c["title"],
                 "started_at": iso(origin), "segments": segs}
+
+    @v1.get("/conversations/{conv_id}/export")
+    def export_conversation(conv_id: str, format: str = "md",
+                            include: str | None = None) -> Response:
+        """The conversation as a file to share: ``format`` md (Markdown) or html (one
+        self-contained page); ``include`` a comma list of summary, action_items, facts,
+        transcript (default summary,action_items,transcript). No links back here."""
+        fmt = format.strip().lower()
+        if fmt not in export.FORMATS:
+            raise HTTPException(400, f"format must be one of {', '.join(export.FORMATS)}")
+        try:
+            sections = export.parse_include(include)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        c = store.get_conversation(conv_id)
+        if c is None:
+            raise HTTPException(404, "conversation not found")
+        segs = store.conversation_segments(conv_id) if "transcript" in sections else []
+        body = export.render(settings, c, segs, fmt, sections)
+        return Response(body, media_type=export.FORMATS[fmt], headers={
+            "Content-Disposition": export.content_disposition(export.filename(settings, c, fmt)),
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
     @v1.post("/conversations/{conv_id}/summarize")
     async def resummarize(conv_id: str) -> dict[str, Any]:

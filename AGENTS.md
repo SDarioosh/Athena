@@ -178,7 +178,10 @@ server. **Nothing in the data path touches the cloud.**
   `message` and `active`; ids checked before forwarding; `DELETE` waits up to 30 s for the
   bot to exit), and `GET /zoom/signin`, `POST /zoom/signin/start`,
   `POST /zoom/signin/finish` for the hub's "Sign in to Zoom" button (same JSON and status
-  as `/v1/zoom/signin*`, contract in `server/README.md`). They are **not MCP tools** (never register
+  as `/v1/zoom/signin*`, contract in `server/README.md`), and (MCP 0.19.0, additive)
+  `GET /conversations/{id}/export` for the hub's Share button (the file of
+  `/v1/conversations/{id}/export`, `format` md or html, `include` sections; no links or ids
+  in it). They are **not MCP tools** (never register
   them as tools) and forward unchanged to the ingest API with `CONVO_INGEST_TOKEN`, which
   never leaves the module. So **the MCP token can add recordings**: Odysseus uses it for
   its call recorder and for phones paired through it, and it can send the meeting bot
