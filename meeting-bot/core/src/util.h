@@ -10,6 +10,9 @@ namespace athena::util {
 // parser never rejects a whole call over one bad byte from the SDK.
 std::string json_str(const std::string& s);
 
+// `s` with every byte that is not part of valid UTF-8 replaced by U+FFFD (as json_str).
+std::string utf8_fix(const std::string& s);
+
 // At most `max_chars` Unicode code points (the server counts Python characters).
 std::string utf8_truncate(const std::string& s, size_t max_chars);
 

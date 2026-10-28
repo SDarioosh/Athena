@@ -55,6 +55,7 @@ class ChatLog {
   mutable std::mutex mu_;
   std::FILE* chat_ = nullptr;
   size_t lines_ = 0, bytes_ = 0, dropped_ = 0, private_dropped_ = 0;
+  long file_end_ = 0;  // chat.jsonl's size after its last whole line
   std::string topic_;
   std::vector<Participant> participants_;  // order of first join
   struct Breakout {

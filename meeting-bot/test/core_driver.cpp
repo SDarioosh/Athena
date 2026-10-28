@@ -8,6 +8,7 @@
 //   meeting: Dana talks throughout, Lee 5..15 s and 40..45 s (leaves in between)
 //   bursts:  Dana alone, 1 s of speech every 10 s
 //   tail:    Dana alone, 0..29.5 s, then silence (the uploader's tick closes the chunk)
+//   badname: as tail, with a display name holding a byte that is not UTF-8
 //   chat:    no audio at all (no recording permission), one chat line
 #include <chrono>
 #include <cmath>
@@ -85,7 +86,8 @@ int main(int argc, char** argv) {
     dana[i] = static_cast<int16_t>(6000 * std::sin(2 * M_PI * 220 * i / kRate));
     lee[i] = static_cast<int16_t>(6000 * std::sin(2 * M_PI * 330 * i / kRate));
   }
-  int64_t total_ms = pattern == "tail" ? 29500 : int64_t(audio_seconds) * 1000;
+  const bool badname = pattern == "badname";
+  int64_t total_ms = pattern == "tail" || badname ? 29500 : int64_t(audio_seconds) * 1000;
   if (pattern == "chat") {
     total_ms = 0;
     core.on_chat(kT0 + 21000, "Dana Example", kDana,
@@ -95,8 +97,8 @@ int main(int argc, char** argv) {
   for (int64_t t = 0; t < total_ms; t += 10) {
     const int64_t now = kT0 + t;
     if (pattern != "bursts" || t % 10000 < 1000)
-      core.on_audio(kDana, t < 50000 ? "Dana Example" : "Dana E.", dana.data(), dana.size(),
-                    kRate, now);
+      core.on_audio(kDana, badname ? "Zo\xC3\xAB \xFF Example" : t < 50000 ? "Dana Example" : "Dana E.",
+                    dana.data(), dana.size(), kRate, now);
     if (!meeting) continue;
     if ((t >= 5000 && t < 15000) || (t >= 40000 && t < 45000))
       core.on_audio(kLee, "Lee Example", lee.data(), lee.size(), kRate, now);

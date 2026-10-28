@@ -1,7 +1,10 @@
 // Host tests of the core's parts: chunker, encoders, chat log, helpers. No SDK, no
 // network. Fictional data only.
+#include <sys/resource.h>
+
 #include <algorithm>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -95,6 +98,8 @@ void test_util() {
   CHECK_EQ(util::json_str("caf\xC3\xA9"), std::string("\"caf\xC3\xA9\""));
   CHECK_EQ(util::json_str("bad\xFFx"), std::string("\"bad\xEF\xBF\xBDx\""));
   CHECK_EQ(util::json_str("\xC3"), std::string("\"\xEF\xBF\xBD\""));  // cut sequence
+  CHECK_EQ(util::utf8_fix("Zo\xC3\xAB \xFF Ex\xC3"), std::string("Zo\xC3\xAB \xEF\xBF\xBD Ex\xEF\xBF\xBD"));
+  CHECK_EQ(util::utf8_fix("caf\xC3\xA9"), std::string("caf\xC3\xA9"));
   CHECK_EQ(util::utf8_truncate("\xC3\xA9\xC3\xA9\xC3\xA9", 2), std::string("\xC3\xA9\xC3\xA9"));
   CHECK_EQ(util::clean_line("  a\n\tb   c \r"), std::string("a b c"));
   CHECK_EQ(util::iso_utc_ms(kT0 + 21250), std::string("2025-10-13T15:00:21.250Z"));
@@ -460,6 +465,45 @@ void test_chat_log() {
   std::filesystem::remove_all(dir);
 }
 
+// The disk fills up while a chat line is written (here: a file size limit, which makes
+// the write stop part-way like ENOSPC does). The cut line must not stay in chat.jsonl:
+// the next line would be glued to it and the whole chat call answered 422.
+void test_chat_log_partial_write() {
+  const auto dir = std::filesystem::temp_directory_path() / "athena-core-unit-chat-full";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  {
+    ChatLog chat(dir.string());
+    auto old_handler = std::signal(SIGXFSZ, SIG_IGN);
+    rlimit old{};
+    getrlimit(RLIMIT_FSIZE, &old);
+    rlimit lim = old;
+    lim.rlim_cur = 300;  // room for two lines and part of a third
+    setrlimit(RLIMIT_FSIZE, &lim);
+    for (int i = 0; i < 5; ++i)
+      chat.on_chat(kT0 + i * 1000, "Dana Example", "1", "message " + std::to_string(i), false);
+    setrlimit(RLIMIT_FSIZE, &old);
+    std::signal(SIGXFSZ, old_handler);
+    chat.on_chat(kT0 + 10000, "Dana Example", "1", "the disk has room again", false);
+    CHECK_EQ(chat.lines(), size_t(3));
+    const std::string file = read_file((dir / "chat.jsonl").string());
+    size_t starts = 0, ends = 0;
+    for (size_t at = file.find("{\"at\""); at != std::string::npos; at = file.find("{\"at\"", at + 1))
+      ++starts;
+    for (size_t at = file.find("\"private\": false}\n"); at != std::string::npos;
+         at = file.find("\"private\": false}\n", at + 1))
+      ++ends;
+    CHECK_EQ(count_lines(file), size_t(3));
+    CHECK_EQ(starts, size_t(3));  // no cut line glued to the next one
+    CHECK_EQ(ends, size_t(3));
+    const std::string body = chat.body();
+    CHECK(body.find("\"text\": \"the disk has room again\"") != std::string::npos);
+    CHECK(body.find("Dana{") == std::string::npos);
+    chat.remove_files();
+  }
+  std::filesystem::remove_all(dir);
+}
+
 }  // namespace
 
 int main() {
@@ -478,6 +522,7 @@ int main() {
   test_wav_encoder();
   test_opus_encoder();
   test_chat_log();
+  test_chat_log_partial_write();
   if (g_failures) {
     std::fprintf(stderr, "%d check(s) failed\n", g_failures);
     return 1;
