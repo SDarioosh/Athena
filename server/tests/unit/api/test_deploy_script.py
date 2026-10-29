@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -16,9 +17,26 @@ SERVER = SCRIPT.parents[1]
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 
 
+_NO_API_BIN: Path | None = None
+
+
+def _no_api_bin() -> Path:
+    """A bin dir whose curl never reaches anything, so a test never asks a real Athena on
+    this machine whether a meeting is running (a developer's server/.env has a real token)."""
+    global _NO_API_BIN
+    if _NO_API_BIN is None:
+        _NO_API_BIN = Path(tempfile.mkdtemp(prefix="deploy-test-bin-"))
+        curl = _NO_API_BIN / "curl"
+        curl.write_text("#!/usr/bin/env bash\nexit 7\n")
+        curl.chmod(0o755)
+    return _NO_API_BIN
+
+
 def run(*args: str, **env: str) -> subprocess.CompletedProcess[str]:
     base = {k: v for k, v in os.environ.items()
             if not k.startswith(("CONVO_", "BARVIS_SOUND_"))}
+    # tests that fake their own tools pass PATH; the others get a curl that can't connect
+    base["PATH"] = f"{_no_api_bin()}:{base.get('PATH', '')}"
     # background runner: never touches the real systemd
     return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True,
                           env={**base, "BARVIS_SOUND_RUNNER": "background", **env},
