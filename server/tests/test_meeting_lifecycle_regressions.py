@@ -19,8 +19,8 @@ from test_meetings import (  # noqa: F401  (meeting_settings is a fixture)
 )
 from test_relay_meetings import Q, fake
 
-from athena import meetings
 from athena.meetings import Launcher, _Running, final_state
+from athena.meetings.bot import launcher as meetings
 
 
 # --------------------------------------------------- relay: GET /meetings?limit
