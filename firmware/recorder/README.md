@@ -319,8 +319,8 @@ export BARVIS_TZ=Europe/Berlin           # the feed's time zone and the T5 clock
 - Exit codes: 0 ok, 1 some actions still waiting, 2 retry later, 3 token rejected,
   incompatible or bad settings, 4 T5 not found.
 - The code is in `tools/pda_relay.py` and `tools/barvis_relay/pda_*.py`. The tests are in
-  `tools/tests/test_pda.py` (fake T5, fake server) and `server/tests/test_pda_feed.py` (the
-  real API, seeded fictional data).
+  `tools/tests/test_pda.py` (fake T5, fake server) and
+  `server/tests/integration/test_pda_feed.py` (the real API, seeded fictional data).
 
 ## Build
 

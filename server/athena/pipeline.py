@@ -29,11 +29,9 @@ from . import transcribe_engine, voice_enroll
 from .clips import Window
 from .config import Settings
 from .conversations import split_on_gaps
+from .db.store import Store
 from .diarize import Diarizer, PieceRef, load_voices
-from .lines import join_lines
-from .llm import Summarizer
-from .search import Embedder, index_conversation
-from .store import (
+from .domain import (
     CONVERSATION,
     NOTE,
     SESSION_KINDS,
@@ -41,8 +39,10 @@ from .store import (
     WRITTEN_SESSION_PREFIX,
     ZOOM_DEVICE,
     Segment,
-    Store,
 )
+from .lines import join_lines
+from .search import Embedder, index_conversation
+from .summarize.summarizer import Summarizer
 from .transcribe import Transcriber
 from .transcribe_engine import (  # noqa: F401  (still read from here)
     ASR_AGC_DEADBAND,
@@ -208,7 +208,7 @@ class Pipeline:
         stops on trailing silence, so a quiet break doesn't end it: it stops at
         ``CONVO_MAX_SESSION_SECONDS``, on ``end_session`` or, if its uploader dies,
         after ``CONVO_SESSION_IDLE_SECONDS`` without uploads (``finalize_idle``)."""
-        from .store import DuplicateChunk, MeetingClosed
+        from .db.sessions import DuplicateChunk, MeetingClosed
 
         validate_id(device, "device")
         validate_id(session_id, "session_id")
@@ -304,7 +304,7 @@ class Pipeline:
         one an untracked chunk stopped on silence, whose first tracked chunk reopens it.
         ``Store.add_chunk`` makes the same check inside its transaction (``MeetingClosed``),
         so a chunk racing the worker is refused too; this one only skips the decode."""
-        from .store import MEETING_CLOSED_STATUSES
+        from .domain import MEETING_CLOSED_STATUSES
 
         sess = self.store.get_session(session_id)
         if (sess is None or sess["status"] not in MEETING_CLOSED_STATUSES
@@ -385,7 +385,7 @@ class Pipeline:
 
     def transcribe_live(self) -> int:
         """Transcribe meetings that are still being recorded, window by window, so only
-        their last windows are left when they end (``meeting_live.py``). Called on each
+        their last windows are left when they end (``meetings/transcribe/live.py``). Called on each
         worker tick: with no meeting in progress it costs one indexed query and imports
         nothing; ``CONVO_MEETING_LIVE_TRANSCRIBE=false`` makes it cost nothing. Returns
         how many whisper windows were done."""
@@ -399,7 +399,7 @@ class Pipeline:
         if not self._process_lock.acquire(blocking=False):
             return 0
         try:
-            from . import meeting_live
+            from .meetings.transcribe import live as meeting_live
 
             return meeting_live.step(self, ids, cfg.meeting_live_budget_seconds)
         except Exception as e:  # whisper-server down: next tick, or the end pass
@@ -434,11 +434,11 @@ class Pipeline:
             if (self.settings.learn_meeting_voices and not note and segments
                     and self.store.has_tracks(session_id)):
                 # voice samples from named meeting tracks, while the audio is here
-                from .meeting_voices import learn_from_meeting
+                from .meetings.people.voices import learn_from_meeting
 
                 learn_from_meeting(self, session_id, done, kept)
             if any(c["track"] for c in done):
-                # a meeting's live transcript (meeting_live.py) is in its lines now
+                # a meeting's live transcript (meetings/transcribe/live.py) is in its lines now
                 self.store.drop_live_states(session_id)
             if not self.settings.keep_audio:
                 # Only the chunks transcribed here: one uploaded meanwhile waits for the
@@ -472,7 +472,7 @@ class Pipeline:
         if not note and self.store.has_tracks(session_id):
             # A meeting: one track per participant, each transcribed on its own and named
             # by its track. Imported only here, so sessions without tracks never load it.
-            from . import meeting_tracks
+            from .meetings.transcribe import tracks as meeting_tracks
 
             return (meeting_tracks.transcribe_meeting(self, session_id, chunks, kept),
                     ranges, chunks)
@@ -665,7 +665,7 @@ class Pipeline:
         conv_id = self.store.save_conversation(have[0] if have else None, device,
                                                [s.id for s in segs if s.id is not None],
                                                absorb=have[1:])
-        # its topic and participants (meeting_chat.py) show on this conversation
+        # its topic and participants (meetings/ingest/chat.py) show on this conversation
         self.store.link_meeting(session_id, conv_id)
         return [conv_id]
 
@@ -693,7 +693,7 @@ class Pipeline:
         stamp = conv["updated_at"] if conv else None
         extra: dict[str, Any] = {}
         if conv and conv.get("meeting"):  # a Zoom meeting: its topic, people, chat lines
-            from .meeting_chat import summary_context
+            from .meetings.ingest.chat import summary_context
 
             extra["context"] = summary_context(conv["meeting"], segments)
         try:

@@ -118,7 +118,7 @@ venv installed before the rename that knows only the `convo_server` folder still
 `athena`), because commands outside the repos may use the old name; it goes with the
 other shims (step 16, cleanup lane 4B). The hub's docs name `convo_server` paths in
 comments only (`docs/fork/sandbox.md` imports `convo_server.mcp_server`, which the alias
-keeps working). Tested in `server/tests/test_convo_server_alias.py`.
+keeps working). Tested in `server/tests/unit/api/test_convo_server_alias.py`.
 
 - `git mv server/convo_server server/athena`, and change the imports in `server/`
   (about 50 files), `server/Dockerfile`, `server/eval/`, `server/scripts/`, and the

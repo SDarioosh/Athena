@@ -98,7 +98,7 @@ COPY docker/athena-meeting-bot-run ${BOT_DIR}/athena-meeting-bot-run
 # The SDK's soname is libmeetingsdk.so.1 but it ships as libmeetingsdk.so (the spike's
 # link trick), made in the image's copy, never in the owner's folder. Then fail the build
 # if the bot misses a library, seen as the launcher starts it: an environment with only
-# the variables meetings.py keeps (_KEEP_ENV), through the start script.
+# the variables meetings/bot/launcher.py keeps (_KEEP_ENV), through the start script.
 RUN sdk=${BOT_DIR}/zoomsdk \
     && if [ ! -e $sdk/libmeetingsdk.so.1 ]; then ln -s libmeetingsdk.so $sdk/libmeetingsdk.so.1; fi \
     && chmod 0755 ${BOT_DIR}/athena-meeting-bot ${BOT_DIR}/athena-meeting-bot-run \

@@ -66,7 +66,7 @@ class SileroVAD:
         return [Span(float(s["start"]), float(s["end"])) for s in stamps]
 
 
-# Not used by the server; only tests/test_audio_vad.py calls it.
+# Not used by the server; only tests/unit/transcribe/test_audio_vad.py calls it.
 def level_dbfs(audio: np.ndarray, percentile: float = 95.0, frame_ms: int = 30) -> float:
     """Loudness of the loud part of ``audio``: a high percentile of 30 ms frame RMS, dBFS."""
     frame = int(SAMPLE_RATE * frame_ms / 1000)

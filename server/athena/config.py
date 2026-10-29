@@ -201,15 +201,15 @@ class Settings(BaseSettings):
     owner_hint_margin: float = 0.10
     owner_hint_db: float = 3.0
     owner_name: str = "Me"
-    # --- meetings: lines from per-participant tracks (athena/meeting_tracks.py) ---
+    # --- meetings: lines from per-participant tracks (athena/meetings/transcribe/tracks.py) ---
     # The owner's Zoom display names in addition to CONVO_OWNER_NAME (which counts too
     # unless it is the default "Me"), comma-separated (any case), e.g. "Shahyah (phone)":
     # that track's lines are the owner's (is_owner=true), named by the owner's name.
     zoom_owner_names: str = ""
     # Save up to 3 voice samples of 3 s from each named participant's own track, so they
-    # are recognized in later recordings (athena/meeting_voices.py). false = off.
+    # are recognized in later recordings (athena/meetings/people/voices.py). false = off.
     learn_meeting_voices: bool = True
-    # Transcribe a meeting's tracks while it runs (athena/meeting_live.py), on the
+    # Transcribe a meeting's tracks while it runs (athena/meetings/transcribe/live.py), on the
     # worker's existing ticks, so only the last window of each track and the summary are
     # left when it ends. Each tick spends at most about meeting_live_budget_seconds on it
     # (whisper requests one at a time); false transcribes the whole meeting at its end.
@@ -239,7 +239,7 @@ class Settings(BaseSettings):
     fact_min_score: int = Field(default=4, ge=1, le=5)
     max_facts_per_conversation: int = Field(default=3, ge=0)
 
-    # --- meeting bot (POST /v1/meetings; athena/meetings.py) ---
+    # --- meeting bot (POST /v1/meetings; athena/meetings/bot/launcher.py) ---
     # Read only when a join request arrives; nothing runs between meetings.
     # The bot program (athena-meeting-bot). Unset = meetings are off (501).
     meeting_bot_path: Path | None = None

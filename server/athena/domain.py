@@ -105,7 +105,7 @@ def is_explicit(item: dict[str, Any]) -> bool:
 def _device_name(name: str) -> bool:
     """A Zoom display name with no person in it: a device, a room or conference hardware
     ("iPhone", "Zoom user", "Conference Room 2"). Only meetings get here."""
-    from .meeting_names import clean_display_name, is_room_or_hardware
+    from .meetings.people.names import clean_display_name, is_room_or_hardware
 
     return is_room_or_hardware(name) or not clean_display_name(name)
 

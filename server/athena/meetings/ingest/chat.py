@@ -4,8 +4,8 @@ The bot sends them in one call when the meeting ends: ``POST /v1/sessions/{id}/c
 
 * Each chat message becomes a transcript line of kind ``chat`` at the time it was sent,
   from its sender's person: the sender's track (``zoom_user_id``) is named exactly as
-  that track's spoken lines are (``meeting_tracks.track_speaker``), and a sender without
-  a track by their chat name (``meeting_names.speaker_for_track``). No VAD, no whisper.
+  that track's spoken lines are (``transcribe.tracks.track_speaker``), and a sender without
+  a track by their chat name (``people.names.speaker_for_track``). No VAD, no whisper.
 * Retries are free: a line is stored once per session (SHA-256 of its cleaned time,
   sender id, sender name and text), also after ``erase_fact`` redacted it or retention
   removed it.
@@ -31,8 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ...domain import CHAT, ZOOM_DEVICE, Segment
 from ...pipeline import MAX_TITLE_CHARS, MAX_TRACK_NAME_CHARS, TRACK, validate_id
-from ...store import CHAT, ZOOM_DEVICE, Segment
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...pipeline import Pipeline

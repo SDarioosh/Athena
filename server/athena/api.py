@@ -20,11 +20,11 @@ Read API (used by the knowledge-layer/MCP integration and for debugging):
 Settings (the hub's settings page):
     GET  /v1/settings/llm, PUT /v1/settings/llm {"model": name | null}
     GET  /v1/settings/vocabulary, PUT /v1/settings/vocabulary {"words": "a, b" | [..] | null}
-Meeting bot (athena/meetings.py, imported on the first meeting request):
+Meeting bot (athena/meetings/bot/launcher.py, imported on the first meeting request):
     POST   /v1/meetings            JSON {url} or {meeting_id, passcode}, title? -> {id, state}
     GET    /v1/meetings, /v1/meetings/{id}
     DELETE /v1/meetings/{id}       the bot leaves
-Zoom sign-in (athena/zoom_signin.py, imported on the first sign-in request; the hub's
+Zoom sign-in (athena/meetings/bot/zoom_signin.py, imported on the first sign-in request; the hub's
 "Sign in to Zoom" button):
     GET  /v1/zoom/signin           {configured, signed_in, join_token, missing}
     POST /v1/zoom/signin/start     -> {url, expires_in}
@@ -66,8 +66,8 @@ from . import audio as audio_mod
 from . import export, llm_settings, vocabulary, voice_enroll
 from .config import Settings
 from .diarize import enroll_voice, load_voices
+from .domain import UNSET
 from .links import render_conversation, transcript_link, verify
-from .llm import LLMError
 from .pipeline import (
     MAX_LINK_CHARS,
     MAX_TEXT_CHARS,
@@ -77,7 +77,7 @@ from .pipeline import (
 )
 from .search import search
 from .speakers import relabel_matches
-from .store import UNSET
+from .summarize.client import LLMError
 
 log = logging.getLogger(__name__)
 MAX_CHUNK_BYTES = 25 * 1024 * 1024
@@ -253,7 +253,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         if scheme.lower() == "bearer" and hmac.compare_digest(value.encode(), token):
             return
         # A running meeting bot's own token: only its session's uploads, end and chat
-        # (athena/meetings.py). Looked up only when the ingest token didn't match.
+        # (athena/meetings/bot/launcher.py). Looked up only when the ingest token didn't match.
         grant = store.meeting_upload_session(value) if scheme.lower() == "bearer" and value \
             else None
         if grant is not None and request.method == "POST":
@@ -390,13 +390,13 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     @v1.post("/sessions/{session_id}/chat")
     async def session_chat(session_id: str, request: Request) -> dict[str, Any]:
         """A meeting's chat lines, topic and participants, sent by the Zoom bot when the
-        meeting ends (``athena/meeting_chat.py``, imported on the first call).
+        meeting ends (``athena/meetings/ingest/chat.py``, imported on the first call).
         Idempotent: resent lines are not added twice."""
         import json
 
         from pydantic import ValidationError
 
-        from . import meeting_chat as mc
+        from .meetings.ingest import chat as mc
 
         if int(request.headers.get("content-length") or 0) > mc.MAX_CHAT_BYTES:
             raise HTTPException(413, f"body is larger than {mc.MAX_CHAT_BYTES} bytes")
@@ -683,7 +683,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     # --------------------------------------------------------------- meetings
     def launcher() -> Any:
         """The meeting launcher, made (and its module imported) on first use."""
-        from . import meetings
+        from .meetings.bot import launcher as meetings
 
         if getattr(app.state, "meetings", None) is None:
             app.state.meetings = meetings.Launcher(pipeline)
@@ -713,7 +713,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         """Send Athena to a Zoom meeting (JSON body: MeetingJoin): 202 {id, state,
         session_id}; 400 bad link or body, 409 busy, 413 body too large, 501 meetings
         off."""
-        from .meetings import MeetingError
+        from .meetings.bot.launcher import MeetingError
 
         body = await meeting_body(request)
         if isinstance(body, JSONResponse):
@@ -730,7 +730,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
 
     @v1.get("/meetings/{meeting_id}")
     async def get_meeting(meeting_id: str) -> Any:
-        from .meetings import MeetingError
+        from .meetings.bot.launcher import MeetingError
 
         try:
             return launcher().get(meeting_id)
@@ -741,7 +741,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     async def leave_meeting(meeting_id: str) -> Any:
         """The bot leaves (it flushes its last chunks and ends the session); answers
         with the meeting's state once it exited."""
-        from .meetings import MeetingError
+        from .meetings.bot.launcher import MeetingError
 
         try:
             return await launcher().leave(meeting_id)
@@ -751,7 +751,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     # ---------------------------------------------------------- Zoom sign-in
     @v1.get("/zoom/signin")
     def zoom_signin_status() -> dict[str, Any]:
-        from . import zoom_signin
+        from .meetings.bot import zoom_signin
 
         return zoom_signin.signin_status(settings)
 
@@ -759,7 +759,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     def zoom_signin_start() -> Any:
         """A Zoom authorize URL for the owner to open; 501 when the OAuth client is not
         set up. Replaces any sign-in already waiting."""
-        from . import zoom_signin
+        from .meetings.bot import zoom_signin
 
         try:
             return zoom_signin.begin_signin(settings)
@@ -774,7 +774,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         The pasted text and the tokens are never logged."""
         import json
 
-        from . import zoom_signin
+        from .meetings.bot import zoom_signin
 
         raw = b""
         async for part in request.stream():

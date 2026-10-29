@@ -173,7 +173,7 @@ class SessionsRepo:
         ``bot_started_after``, a session whose meeting bot is still active and was started
         after that time is left out: Zoom sends audio only while someone talks, so a
         muted stretch uploads nothing while the bot still records; its exit ends the
-        session (meetings.py)."""
+        session (meetings/bot/launcher.py)."""
         sql, params = ("SELECT id FROM sessions WHERE status = 'recording' AND received_at < ?",
                        [received_before])
         if bot_started_after is not None:

@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .store import Store
+from .db.store import Store
 
 KEY = "whisper_vocabulary"
 MAX_WORDS = 50

@@ -7,7 +7,7 @@ from typing import Any, Protocol
 import httpx
 import numpy as np
 
-from .store import Store
+from .db.store import Store
 
 
 class Embedder(Protocol):

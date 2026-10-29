@@ -356,7 +356,7 @@ class PeopleRepo:
         """The first of ``names`` that is a person (name or alias, any case, following
         merges), else a new person called the first usable one; ``aliases`` are added to
         that person (its own name and unnamed labels are skipped). Returns (id, current
-        name), or None when no name is usable. One transaction (meeting_names.py)."""
+        name), or None when no name is usable. One transaction (meetings/people/names.py)."""
         names = [n.strip() for n in names if n and n.strip()
                  and not _PLACEHOLDER_SPEAKER.match(n.strip())]
         if not names:

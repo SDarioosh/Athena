@@ -55,8 +55,12 @@ server. **Nothing in the data path touches the cloud.**
 - `server/`: Python 3.11+ package `athena` (old name `convo_server`, an alias): ingestion API, VAD,
   transcription, diarization, conversation splitting, summaries, SQLite
   storage, search, digest, MCP server (`athena/mcp_server.py`), frontend eval
-  (`server/eval/bakeoff.py`). `server/scripts/deploy.sh` updates the server and runs it
-  as background services, or as the Docker containers of `server/compose.yml`
+  (`server/eval/bakeoff.py`). Storage is `athena/db/` (`Store` in `db/store.py`) with the
+  kinds, statuses and name rules in `athena/domain.py`; summaries are `athena/summarize/`;
+  meetings are `athena/meetings/`; the old modules (`athena/store.py`, `athena/llm.py`,
+  `athena/meeting_*.py`, `athena/zoom_signin.py`) only re-export them, so import from
+  the new paths. Tests: `server/tests/unit/`, `integration/`, `meetings/`, `contract/`.
+  `server/scripts/deploy.sh` updates the server and runs it as background services, or as the Docker containers of `server/compose.yml`
   (`BARVIS_SOUND_RUNNER=docker`); the hub's `scripts/fork_deploy.sh` calls it. See `server/README.md`.
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
   recording feasibility test app; see `zepp-app/README.md`.
@@ -367,7 +371,7 @@ relay tests and the Android build and tests.
   `CONVO_INGEST_TOKEN`.
 - Zepp app: JavaScript, `@zeppos/zeus-cli`, test on the real device.
 - Database schema changes go only through a new numbered step at the end of `MIGRATIONS`
-  (`server/athena/store.py`); never edit `SCHEMA` (the frozen first schema) for a new
+  (`server/athena/db/migrations.py`); never edit `SCHEMA` (the frozen first schema) for a new
   table, column or index. One PR at a time takes the next number and names it in its
   title (e.g. "migration 18: …").
 - Small, focused commits with descriptive messages.

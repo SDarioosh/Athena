@@ -25,9 +25,11 @@ import pytest
 
 from athena.config import Settings
 from athena.db import conversations as store_module
-from athena.llm import LLMClient, Summarizer
+from athena.db.store import Store
+from athena.domain import CONVERSATION, NOTE, Segment
 from athena.pipeline import Pipeline
-from athena.store import CONVERSATION, NOTE, Segment, Store
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
 from athena.vad import EnergyVAD
 
 ME = "Me"
@@ -472,7 +474,7 @@ def _insert_conversation(store: Store, pipeline: Pipeline, key: str, start: str,
 def _insert_meeting(store: Store, pipeline: Pipeline, key: str, start: str,
                     lines: list[tuple[str, str, float, float]]) -> list[str]:
     """As seed_demo.insert_meeting: per-track lines, then the bot's chat call."""
-    from athena.meeting_chat import ChatIn, ingest_chat
+    from athena.meetings.ingest.chat import ChatIn, ingest_chat
 
     sid, device, t0 = f"demo-{key}", "zoom", _ts(start)
     segs = sorted((Segment(t0 + at, t0 + at + length, text, speaker, speaker == ME)

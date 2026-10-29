@@ -9,10 +9,11 @@ import pytest
 
 from athena.audio import SAMPLE_RATE, to_wav_bytes
 from athena.config import Settings
+from athena.db.store import Store
 from athena.diarize import Diarizer, load_voices
-from athena.llm import LLMClient, Summarizer
 from athena.pipeline import Pipeline
-from athena.store import Store
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
 from athena.transcribe import TranscriptPiece
 from athena.vad import EnergyVAD
 
@@ -108,6 +109,16 @@ def fake_llm_transport(summary: dict | None = None, digest: dict | None = None,
             "content": json.dumps(content)}}]})
 
     return httpx.MockTransport(handler)
+
+
+def make_summarizer(summary: dict | None = None, *, scores: dict[str, int] | None = None,
+                    log: list | None = None, **opts) -> Summarizer:
+    """The owner "Me"'s summarizer in Europe/Berlin, answered by the fake llama-server
+    (``fake_llm_transport`` with ``summary``, ``scores`` and ``log``); ``opts`` go to
+    ``Summarizer`` (e.g. ``min_words=1``)."""
+    llm = LLMClient("http://llm.test/v1", "m",
+                    transport=fake_llm_transport(summary=summary, log=log, scores=scores))
+    return Summarizer(llm, "Me", timezone="Europe/Berlin", **opts)
 
 
 @pytest.fixture

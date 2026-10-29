@@ -25,7 +25,15 @@ from typing import Any
 
 import httpx
 import pytest
-from demo_store import (
+from fastapi.testclient import TestClient
+
+from athena.api import create_app
+from athena.db.store import Store
+from athena.ingest_relay import add_ingest_routes
+from athena.links import sign
+from athena.mcp_server import BearerAuth, build_mcp
+from athena.pipeline import Pipeline
+from tests.contract.demo_store import (
     INGEST_TOKEN,
     MCP_TOKEN,
     build,
@@ -33,14 +41,6 @@ from demo_store import (
     make_pipeline,
     settings_for,
 )
-from fastapi.testclient import TestClient
-
-from athena.api import create_app
-from athena.ingest_relay import add_ingest_routes
-from athena.links import sign
-from athena.mcp_server import BearerAuth, build_mcp
-from athena.pipeline import Pipeline
-from athena.store import Store
 
 SNAPSHOTS = Path(__file__).parent / "snapshots"
 UPDATE = os.environ.get("UPDATE_SNAPSHOTS") == "1"

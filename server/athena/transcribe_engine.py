@@ -91,7 +91,7 @@ def whisper_window(settings: Settings, transcriber: Transcriber, run: int,
                    ) -> tuple[list[tuple[float, float, str, PieceRef]],
                               list[list[tuple[float, float, str]]], str]:
     """Transcribe one window (``clip`` is ``w.extract`` of the run audio): its pieces,
-    their words and the context after it. ``meeting_live`` calls this one window at a
+    their words and the context after it. ``meetings.transcribe.live`` calls this one window at a
     time while a meeting runs, so both paths send whisper the same clips."""
     cfg = settings
     pieces: list[tuple[float, float, str, PieceRef]] = []

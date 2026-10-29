@@ -35,8 +35,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from . import transcribe_engine
 from .audio import SAMPLE_RATE
-from .store import WRITTEN_DEVICE, ZOOM_DEVICE
+from .domain import WRITTEN_DEVICE, ZOOM_DEVICE
 
 if TYPE_CHECKING:  # pragma: no cover
     from .pipeline import Pipeline
@@ -173,7 +174,7 @@ def enroll_session(pipeline: Pipeline, session: dict[str, Any],
     try:
         speech = []
         for c in chunks:
-            pcm = pipeline._load_chunk(c)
+            pcm = transcribe_engine.load_chunk(c)
             speech += [pcm[int(a * SAMPLE_RATE):int(b * SAMPLE_RATE)] for a, b in c["speech"]]
         audio = np.concatenate(speech) if speech else np.zeros(0, np.float32)
         seconds = audio.size / SAMPLE_RATE

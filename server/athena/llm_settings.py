@@ -17,8 +17,8 @@ import re
 from typing import Any
 
 from .config import Settings
-from .llm import LLMClient
-from .store import Store
+from .db.store import Store
+from .summarize.client import LLMClient
 
 log = logging.getLogger(__name__)
 

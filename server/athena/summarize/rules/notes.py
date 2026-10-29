@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ...store import NOTE_ITEM, clean_notes_name, short_title
+from ...domain import NOTE_ITEM, clean_notes_name, short_title
 from ..schemas import ActionItem
 from .text import _NAME_WORD
 

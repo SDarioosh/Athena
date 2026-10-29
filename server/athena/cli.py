@@ -10,11 +10,12 @@ from zoneinfo import ZoneInfo
 
 from . import llm_settings
 from .config import Settings, get_settings
+from .db.store import Store
 from .diarize import Diarizer, EcapaEmbedder, load_voices
-from .llm import LLMClient, Summarizer
 from .pipeline import Pipeline
 from .search import OpenAIEmbedder
-from .store import Store
+from .summarize.client import LLMClient
+from .summarize.summarizer import Summarizer
 from .transcribe import (
     DecodeOptions,
     HallucinationFilter,
@@ -129,7 +130,7 @@ def zoom_login(settings: Settings, *, status_only: bool = False,
     server may be headless. Tokens are never printed."""
     import asyncio
 
-    from . import zoom_signin
+    from .meetings.bot import zoom_signin
 
     path = zoom_signin.token_file(settings)
     if status_only:

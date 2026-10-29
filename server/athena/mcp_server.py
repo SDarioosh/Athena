@@ -22,11 +22,9 @@ from pydantic import Field
 
 from .config import Settings
 from .dates import fact_valid_until
+from .db.store import Store
 from .diarize import load_voices
-from .links import local_time, meeting_label, speaker_label, transcript_link, written_label
-from .search import Embedder, search
-from .speakers import relabel_matches, suggestion
-from .store import (
+from .domain import (
     CONVERSATION,
     IN_PERSON,
     ITEM_KINDS,
@@ -35,9 +33,11 @@ from .store import (
     UNSET,
     VOICE,
     WRITTEN,
-    Store,
     short_title,
 )
+from .links import local_time, meeting_label, speaker_label, transcript_link, written_label
+from .search import Embedder, search
+from .speakers import relabel_matches, suggestion
 
 INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
 with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
@@ -802,9 +802,9 @@ def _note(kind: str | None, written: dict[str, Any] | None = None) -> str:
 
 def _note_key_points(r: dict[str, Any], summary: dict[str, Any] | None) -> list[str]:
     """JSON rows' ``key_points`` (MCP 0.15.0): for a note that is a whole voice note (its
-    text is the voice note's summary, see ``_lone_note`` in llm.py), the voice note's key
-    points, so the hub's note holds what was said ("Screen: 49 mm x 60 mm"), not only the
-    summary; ``[]`` for every other item."""
+    text is the voice note's summary, see ``_lone_note`` in summarize/rules/notes.py), the
+    voice note's key points, so the hub's note holds what was said ("Screen: 49 mm x
+    60 mm"), not only the summary; ``[]`` for every other item."""
     if r.get("kind") != "note" or r.get("list_name") or not summary:
         return []
     said = " ".join((summary.get("summary") or "").split())
