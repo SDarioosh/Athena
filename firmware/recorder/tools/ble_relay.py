@@ -24,7 +24,8 @@ bleak can't type it, so the operating system pairs:
     # Linux: bluetoothctl -> `agent on`, `default-agent`, `scan on`, `pair <address>`, type the
     #   code. (Or keep bluetoothctl open with its agent and run --pair below: BlueZ asks
     #   for the code in the bluetoothctl window.)
-    # Windows: Settings > Bluetooth & devices > Add device > Bluetooth > "barvis-tw", type the code
+    # Windows: Settings > Bluetooth & devices > Add device > Bluetooth > "athena-tw"
+    #   (older firmware: "barvis-tw"), type the code
     # macOS: run --list below; macOS asks for the code when the relay first connects
 
 Then look at the queue without changing anything:
@@ -146,7 +147,7 @@ async def find_watch(address: str | None, timeout: float):
         return await BleakScanner.find_device_by_address(address, timeout=timeout)
 
     def match(_dev, adv) -> bool:
-        return p.SERVICE_UUID in [u.lower() for u in adv.service_uuids]
+        return p.is_watch(adv.service_uuids, adv.local_name)
 
     return await BleakScanner.find_device_by_filter(match, timeout=timeout,
                                                     service_uuids=[p.SERVICE_UUID])
