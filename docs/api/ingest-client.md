@@ -7,7 +7,9 @@ every uploader. The machine-readable form is
 [`ingest-client-cases.json`](ingest-client-cases.json): one row per answer,
 `{"status": int, "body": object | string | null, "expect": "ok" | "retry" | "drop" |
 "stop_uploads"}`, where `status` 0 means no HTTP answer at all (network error, timeout,
-connection closed). Uploader tests read that file instead of keeping their own list.
+connection closed). Uploader tests read that file instead of keeping their own list:
+the meeting bot's, the PC relay's and the Android relay's (table below). A new row is
+checked by all three at once.
 
 ## The request
 
@@ -72,8 +74,8 @@ answers are read with the same classes: `200` with `"ok": true` is done (it answ
 | Client | Code | Follows the contract | Tests read the cases file |
 |---|---|---|---|
 | Meeting bot (C++) | `meeting-bot/core/src/core.cpp` (`upload_loop`) | yes | yes: `meeting-bot/test/test_core_upload.py` (`test_ingest_client_cases`) runs the core against `meeting-bot/test/fake_ingest_server.py --mode case` for every row |
-| PC BLE relay (Python) | `firmware/recorder/tools/barvis_relay/uploader.py` (`classify`, `Uploader._request`) | yes | not yet: wired to the cases file in a later cleanup lane (the package is being renamed) |
-| Android relay (Kotlin) | `android-relay/.../net/HttpUploader.kt` (`classify`) | yes | not yet: wired to the cases file in a later cleanup lane (the package is being renamed) |
+| PC BLE relay (Python) | `firmware/recorder/tools/athena_relay/uploader.py` (`classify`, `Uploader._request`, `Uploader.upload_chunk`) | yes | yes: `firmware/recorder/tools/tests/test_ingest_client_cases.py` serves every row from a local HTTP server to `upload_chunk` (`UploadError` kinds: `RETRY` = retry, `AUTH` = stop_uploads, `SKIP` = drop) |
+| Android relay (Kotlin) | `android-relay/.../net/HttpUploader.kt` (`classify`) | yes | yes: `android-relay/app/src/test/java/org/athena/relay/net/IngestClientCasesTest.kt` serves every row from a JDK HTTP server to `HttpUploader.upload` (`ServerResult`: `Transient` = retry, `AuthRejected` = stop_uploads, `Rejected` = drop); the file is an input of the Gradle test tasks |
 | Zepp app (JavaScript) | `zepp-app/shared/uploader.js` (`uploadEnvelope`) | **no**, see below | no |
 
 What **drop** means per client: the meeting bot deletes the chunk from its queue (it has
