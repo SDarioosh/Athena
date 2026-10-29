@@ -483,3 +483,10 @@ def test_hub_deploy_during_a_meeting_fails_fast(tmp_path):
         r = subprocess.run([str(hub)], capture_output=True, text=True, timeout=120,
                            env={**env, force: "1"})
         assert "warning: --force" in r.stdout and "not running" not in r.stderr
+
+
+def test_meeting_check_reads_the_token_under_its_new_name(tmp_path):
+    env = {**fake_system(tmp_path), "ATHENA_INGEST_TOKEN": INGEST, "CONVO_INGEST_TOKEN": ""}
+    r = run("restart", **env)
+    assert r.returncode == 1 and "Athena is in a meeting right now" in r.stderr
+    assert f"stdin Authorization: Bearer {INGEST}" in calls(tmp_path)

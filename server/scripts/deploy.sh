@@ -76,8 +76,9 @@ given() {  # is setting $1 (or its old name $2) given in the environment or in .
   return 1
 }
 
-setting() {  # $1 ATHENA_<x>: the environment's ATHENA_<x>, then BARVIS_SOUND_<x>, then .env's likewise, else $2
-  local new=$1 old=BARVIS_SOUND_${1#ATHENA_} n
+setting() {  # $1 ATHENA_<x>: the environment's ATHENA_<x>, then the old name ($3, default
+            # BARVIS_SOUND_<x>), then .env's likewise, else $2
+  local new=$1 old=${3:-BARVIS_SOUND_${1#ATHENA_}} n
   for n in "$new" "$old"; do
     if [ -n "${!n+x}" ]; then env_value "$n" "$2"; return; fi
   done
@@ -96,6 +97,7 @@ load_config() {
   REMOTE_NAME=$(setting ATHENA_REMOTE "")
   BRANCH=$(setting ATHENA_BRANCH main)
   RUNNER=$(setting ATHENA_RUNNER auto)
+  # data dir, host and port as compose.yml reads them (its ${CONVO_*} values)
   DATA_DIR=$(env_value CONVO_DATA_DIR data)
   case $DATA_DIR in /*) ;; *) DATA_DIR=$SERVER_DIR/$DATA_DIR ;; esac
   PORT=$(env_value CONVO_PORT 8000)
@@ -320,7 +322,7 @@ docker_preflight() {  # settings the containers would crash on, said before buil
     die "ATHENA_ZOOM_SDK_DIR (or BARVIS_SOUND_ZOOM_SDK_DIR)=$ZOOM_SDK_DIR is not the unpacked Zoom Meeting SDK for Linux (no h/zoom_sdk.h); fix it, or remove the line to deploy without the meeting bot"
   fi
   extras=$(env_value CONVO_DOCKER_EXTRAS vad,diarization)
-  if [ "$(env_value CONVO_DIARIZER ecapa)" = pyannote ] && [[ ,$extras, != *,pyannote,* ]]; then
+  if [ "$(setting ATHENA_DIARIZER ecapa CONVO_DIARIZER)" = pyannote ] && [[ ,$extras, != *,pyannote,* ]]; then
     die "CONVO_DIARIZER=pyannote needs pyannote in the image: add CONVO_DOCKER_EXTRAS=$extras,pyannote to server/.env (and CONVO_DOCKER_API_GPU=true to run it on the GPU)"
   fi
   whisper_chosen || log "warning: no whisper for Docker: set COMPOSE_PROFILES=whisper-gpu or whisper-cpu, or CONVO_DOCKER_WHISPER_URL, in server/.env (README \"Docker\"); recordings are not transcribed until then"
@@ -402,7 +404,7 @@ active_meetings() {  # sets MEETINGS (one line per active bot); status 1 + MEETI
   local token url out code
   MEETINGS="" MEETINGS_NOTE=""
   url="http://$(probe_host "$HOST"):$PORT/v1/meetings?limit=100"
-  token=$(env_value CONVO_INGEST_TOKEN "")
+  token=$(setting ATHENA_INGEST_TOKEN "" CONVO_INGEST_TOKEN)
   if [ -z "$token" ]; then MEETINGS_NOTE="no CONVO_INGEST_TOKEN to ask $url"; return 1; fi
   # the token goes in on stdin, never on a command line (ps shows those to every user)
   if ! out=$(printf 'Authorization: Bearer %s\n' "$token" \
@@ -463,7 +465,7 @@ zoom_sdk_notes() {  # what deploy does about the meeting bot, said once per depl
   if [ -n "$ZOOM_SDK_AUTO" ]; then
     log "meeting bot: found the Zoom Meeting SDK in $ZOOM_SDK_DIR (ATHENA_ZOOM_SDK_DIR unset; set it to off for no bot)"
   fi
-  if [ -z "$(env_value CONVO_ZOOM_SDK_KEY "")" ] || [ -z "$(env_value CONVO_ZOOM_SDK_SECRET "")" ]; then
+  if [ -z "$(setting ATHENA_ZOOM_SDK_KEY "" CONVO_ZOOM_SDK_KEY)" ] || [ -z "$(setting ATHENA_ZOOM_SDK_SECRET "" CONVO_ZOOM_SDK_SECRET)" ]; then
     log "warning: CONVO_ZOOM_SDK_KEY / CONVO_ZOOM_SDK_SECRET are not set in server/.env: the meeting bot is built, but joining a meeting answers 501 until they are (README \"Meeting bot\")"
   fi
 }
