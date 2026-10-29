@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -32,7 +33,7 @@ class Settings(BaseSettings):
     session_idle_seconds: float = 600.0
 
     # --- pipeline ---
-    vad_backend: str = "silero"  # "silero" (production) or "energy" (tests only)
+    vad_backend: Literal["silero", "energy"] = "silero"  # "energy" is for tests only
     # Silero speech threshold, the silence that ends a speech span, and padding around
     # each span (Silero's default is 30 ms; Omi uses 300 ms pre-roll). Ignored by the
     # energy backend.
@@ -64,7 +65,7 @@ class Settings(BaseSettings):
 
     # Speech-to-text model: "whisper" (whisper.cpp, below) or "parakeet" (Parakeet TDT
     # 0.6B v3 in-process via sherpa-onnx, extra `parakeet`; being measured against whisper).
-    transcriber: str = "whisper"
+    transcriber: Literal["whisper", "parakeet"] = "whisper"
     # Unpacked sherpa-onnx export, e.g. .../sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
     parakeet_model_dir: Path | None = None
     parakeet_threads: int = 4
@@ -130,7 +131,7 @@ class Settings(BaseSettings):
     diarization: bool = True
     # "ecapa": cluster one voiceprint per transcript piece (no extra install).
     # "pyannote": pyannote.audio community-1 pipeline, local (extra `pyannote`).
-    diarizer: str = "ecapa"
+    diarizer: Literal["ecapa", "pyannote"] = "ecapa"
     # Hugging Face id or a local directory. Cloud (pyannoteAI) pipelines are refused.
     pyannote_model: str = "pyannote-community/speaker-diarization-community-1"
     pyannote_device: str = "auto"  # auto (cuda if available), cuda or cpu
@@ -140,7 +141,7 @@ class Settings(BaseSettings):
     # Voiceprints for naming speakers: "ecapa" (SpeechBrain, default) or "pyannote" (the
     # pyannote pipeline's own WeSpeaker model; CONVO_DIARIZER=pyannote only). Switching
     # needs a new enrollment: voices of the other model never match.
-    speaker_embedder: str = "ecapa"
+    speaker_embedder: Literal["ecapa", "pyannote"] = "ecapa"
     pyannote_cluster_threshold: float | None = None
     # VBx clustering (community-1): how many speakers come out. Unset = the pipeline's own
     # (Fa 0.07, Fb 0.8); a lower Fb or a higher Fa keeps more speakers apart.
@@ -233,13 +234,13 @@ class Settings(BaseSettings):
     meeting_bot_path: Path | None = None
     # How the bot is started: "systemd" (systemd-run --user --scope with CPU, memory and
     # lifetime caps), "plain" (nice 10 + RLIMIT_AS) or "auto" (systemd when it works).
-    meeting_bot_runner: str = "auto"
+    meeting_bot_runner: Literal["auto", "systemd", "plain"] = "auto"
     meeting_bot_max: int = Field(default=1, ge=1)  # bots at a time; more answers 409 busy
     meeting_bot_cpu: str = "200%"  # systemd CPUQuota (safety cap, systemd runner only)
     meeting_bot_memory: str = "2G"  # systemd MemoryMax, or RLIMIT_AS with the plain runner
     meeting_alone_seconds: float = 60.0  # leave after being the only participant this long
     meeting_waiting_room_seconds: float = 600.0  # give up in the waiting room after this
-    meeting_track_codec: str = "opus"  # per-participant tracks: "opus" (32 kbps) or "wav"
+    meeting_track_codec: Literal["opus", "wav"] = "opus"  # per-participant tracks (opus: 32 kbps)
     # The owner's Zoom Meeting SDK app credentials; the join token is signed locally.
     zoom_sdk_key: str | None = None
     zoom_sdk_secret: str | None = None
@@ -252,7 +253,7 @@ class Settings(BaseSettings):
     zoom_client_id: str | None = None
     zoom_client_secret: str | None = None
     zoom_redirect_url: str | None = None
-    zoom_join_token: str = "auto"
+    zoom_join_token: Literal["auto", "zak", "obf", "none"] = "auto"
 
     @property
     def base_url(self) -> str:
