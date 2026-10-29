@@ -126,6 +126,10 @@ clone of the current URL.
 
 ## Step 4: PC relay package (Athena)
 
+**Done** (2026-10-29): `athena_relay`, with `barvis_relay/` as a stub that aliases each
+submodule (`barvis_relay.uploader is athena_relay.uploader`); the state dir rule is tested
+for old dir only, new only, both and neither (`tools/tests/test_relay_names.py`).
+
 - `git mv firmware/recorder/tools/barvis_relay firmware/recorder/tools/athena_relay`,
   then change the imports in `ble_relay.py`, `pda_relay.py`, the tests (`tools/tests/`,
   10 files), the one `server/tests` file and `ci.yml`.
@@ -139,6 +143,11 @@ clone of the current URL.
 - Done when: `python -m pytest -q firmware/recorder/tools` passes.
 
 ## Step 5: firmware macros (Athena)
+
+**Done** (2026-10-29): the Opus tags were string literals in `session_rec.c`, not macros; they
+and the UUID bytes are now `ATHENA_TAG_*` and `ATHENA_UUID_BYTES` in `main/wire_ids.h`,
+with the same bytes. `test/test_wire_ids.c` pins every UUID and tag byte against literals
+copied from the firmware before the rename. `idf.py build` runs in CI.
 
 - In `firmware/recorder/main/ble_sync.c` and the other files that use them (13 files),
   rename `BARVIS_UUID` and the `BARVIS_*` Opus tag macros to `ATHENA_*`.
@@ -302,6 +311,9 @@ clone of the current URL.
   (both a new hub and a hub from before step 13).
 
 ## Step 15: Zepp test app name (Athena)
+
+**Done** (2026-10-29), also the page title, the settings heading and the microphone hint.
+The real-device install is in that PR's Server verification.
 
 - `zepp-app/app.json`: `appName` "Convo Rec Test" becomes "Athena Rec Test", in both
   places. `appId` (1092611) and the vendor stay the same, so the watch treats it as the

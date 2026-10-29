@@ -19,12 +19,15 @@ server. **Nothing in the data path touches the cloud.**
 - **Don't rename code identifiers.** They keep the old name on purpose: the
   `convo_server` package, the `convo-server` CLI, `CONVO_*` env vars, paths such as
   `server/data/convo.db`, the MCP server name `convo-ai`, the hub's server name
-  `convo`, the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app ("Convo Rec Test", vendor
-  `convo-ai`), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
+  `convo`, the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app's appId and vendor
+  `convo-ai` (its display name is now "Athena Rec Test"), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
   `SDarioosh/Athena`; GitHub redirects the old URL), the `barvis-sound*` service names
   and `BARVIS_SOUND_*` vars of `server/scripts/deploy.sh`, the Android app ID
-  `org.barvis.sound.relay`, the BLE name `barvis-tw` and its `BARVIS_UUID` /
-  `BARVIS_*` Opus tag macros, and the PC relay's `barvis_relay` package. Renaming them
+  `org.barvis.sound.relay`, the BLE name `barvis-tw`, the BLE UUID bytes and the
+  Opus tag text (`BARVIS_SESSION=`…; the macros are now `ATHENA_UUID_BYTES` / `ATHENA_TAG_*` in
+  `firmware/recorder/main/wire_ids.h`, values unchanged), and the PC relay's old package
+  name `barvis_relay` (now `athena_relay`; `barvis_relay` stays as a stub) and its state
+  dir `barvis-relay` (used as is where it exists). Renaming them
   breaks deployed servers and configs, paired watches, the installed phone app and
   Odysseus. Don't "fix" them ad hoc: the planned rename, step by step with the old
   names still working, is `docs/athena-rename-plan.md`.
