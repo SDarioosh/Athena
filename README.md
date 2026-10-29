@@ -11,7 +11,7 @@ through an MCP server. Nothing in the data path uses the cloud.
 
 - Agent instructions: [AGENTS.md](AGENTS.md) (Claude Code: [CLAUDE.md](CLAUDE.md))
 - Goal and plan: [MISSION.md](MISSION.md); status: [PROGRESS.md](PROGRESS.md)
-- Server, API and MCP tools: [server/README.md](server/README.md)
+- Server: [server/README.md](server/README.md); API and MCP tools: [docs/api/](docs/api/mcp.md)
 - Watch app: [zepp-app/README.md](zepp-app/README.md)
 - How Odysseus uses this module:
   [hub docs/fork/modules/odysseus-sound.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules/odysseus-sound.md)

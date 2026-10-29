@@ -45,7 +45,7 @@ What it does:
   goes first (logged).
 - **Chat, topic, participants.** Each chat message is appended to `<work_dir>/chat.jsonl`
   as it arrives, already shaped as a `lines[]` entry of `POST /v1/sessions/{id}/chat`
-  (`server/README.md`, "Meeting chat, topic and participants"); at most 2,000 messages
+  (`docs/api/meetings.md`, "Meeting chat, topic and participants"); at most 2,000 messages
   and 1 MB. A message sent to Athena alone is dropped and never written. Participants
   (join, leave, rename) and the topic are kept in memory and in
   `<work_dir>/participants.json`.

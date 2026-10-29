@@ -183,7 +183,7 @@ server. **Nothing in the data path touches the cloud.**
   `message` and `active`; ids checked before forwarding; `DELETE` waits up to 30 s for the
   bot to exit), and `GET /zoom/signin`, `POST /zoom/signin/start`,
   `POST /zoom/signin/finish` for the hub's "Sign in to Zoom" button (same JSON and status
-  as `/v1/zoom/signin*`, contract in `server/README.md`), and (MCP 0.19.0, additive)
+  as `/v1/zoom/signin*`, contract in `docs/api/meetings.md`), and (MCP 0.19.0, additive)
   `GET /conversations/{id}/export` for the hub's Share button (the file of
   `/v1/conversations/{id}/export`, `format` md or html, `include` sections; no links or ids
   in it). They are **not MCP tools** (never register
@@ -215,14 +215,14 @@ server. **Nothing in the data path touches the cloud.**
   so a program can read all current facts and promote the confirmed ones. Each JSON row
   also has `valid_until` (MCP 0.13.0, additive): the last day a fact about one occasion
   ("has a meeting with X on Tuesday at 11 a.m.") is worth keeping, else null; the hub
-  ends the belief after it. JSON fields are listed in `server/README.md`.
+  ends the belief after it. JSON fields are listed in `docs/api/mcp.md`.
 - Each `list_action_items` JSON row has `key_points` (MCP 0.15.0, additive): for a note
   that is a whole voice note (its text is the voice note's summary), the voice note's key
   points, which the hub writes into the note between the summary and the transcript
   link; `[]` for every other item.
 - Zoom meetings (MCP 0.16.0, additive): the bot sends a meeting's chat, topic and
   participant list in one call, `POST /v1/sessions/{id}/chat` (not a relay route, not a
-  tool; contract in `server/README.md`). Chat lines are transcript lines of kind `chat`;
+  tool; contract in `docs/api/meetings.md`). Chat lines are transcript lines of kind `chat`;
   results show them as `<name> (chat): …`, mark a meeting's conversation `(Online meeting:
   <topic>)` (or `(Online meeting)`; MCP 0.17.0, before that `(Zoom meeting…)`: the mark
   names no platform, meetings may come from others than Zoom later; the hub reads both)

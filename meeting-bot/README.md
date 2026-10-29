@@ -10,7 +10,7 @@ The Zoom side: joins one meeting as "Athena" with the Zoom Meeting SDK for Linux
 participant's raw audio, the participant list, the chat and the topic to `athena::Core`,
 and leaves on its own. The launcher (`server/convo_server/meetings.py`) starts it per
 meeting; nothing of it runs between meetings. Its command line, environment and status
-lines are the launcher's "Bot contract" in `server/README.md`.
+lines are the launcher's "Bot contract" in `docs/api/meetings.md`.
 
 ### Build
 
