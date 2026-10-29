@@ -67,10 +67,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from .config import Settings
-from .store import MEETING_ACTIVE, Store
+from ...config import Settings
+from ...store import MEETING_ACTIVE, Store
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("athena.meetings")  # its name before the move
 
 STATES = ("starting", "waiting_room", "waiting_permission", "recording", "ended", "failed")
 TERMINAL = ("ended", "failed")

@@ -40,7 +40,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 
-from .config import Settings
+from ...config import Settings
 
 AUTHORIZE_URL = "https://zoom.us/oauth/authorize"
 TOKEN_URL = "https://zoom.us/oauth/token"

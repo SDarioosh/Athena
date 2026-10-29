@@ -51,13 +51,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .audio import SAMPLE_RATE
-from .diarize import rms_db
+from ...audio import SAMPLE_RATE
+from ...diarize import rms_db
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .pipeline import Pipeline
+    from ...pipeline import Pipeline
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("athena.meeting_voices")  # its name before the move
 
 WINDOW_SECONDS = 3.0
 SAMPLES_PER_MEETING = 3
@@ -176,7 +176,7 @@ def on_device(name: str) -> bool:
     """Whether a display name puts its person on a personal device ("Anna's iPhone",
     "Kath (mobile)", "iPad von Jan"). "Mac" and "Dell" that are the person's own name
     ("Mac Example") are not devices (``meeting_names``' rule)."""
-    from .meeting_names import _DEVICE, _NAME_LIKE_DEVICE, clean_display_name
+    from .names import _DEVICE, _NAME_LIKE_DEVICE, clean_display_name
 
     kept = clean_display_name(name).lower().split()
     return any(not (w.lower() in _NAME_LIKE_DEVICE and w.lower() in kept)
@@ -235,9 +235,9 @@ def learn_from_meeting(pipeline: Pipeline, session_id: str,
     relabel matching unnamed speakers in other recordings. ``spoken``: each named
     track's kept lines (``transcribe_meeting``'s ``kept``). Call after the meeting's
     lines are stored and before its audio is deleted."""
-    from .meeting_names import PLACEHOLDER
-    from .meeting_tracks import _UNNAMED, _room_track, track_speaker
-    from .speakers import relabel_matches
+    from ...speakers import relabel_matches
+    from ..transcribe.tracks import _UNNAMED, _room_track, track_speaker
+    from .names import PLACEHOLDER
 
     store, cfg = pipeline.store, pipeline.settings
     by_track: dict[str, list[dict[str, Any]]] = {}

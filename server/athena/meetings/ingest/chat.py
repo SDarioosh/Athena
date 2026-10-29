@@ -31,11 +31,11 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .pipeline import MAX_TITLE_CHARS, MAX_TRACK_NAME_CHARS, TRACK, validate_id
-from .store import CHAT, ZOOM_DEVICE, Segment
+from ...pipeline import MAX_TITLE_CHARS, MAX_TRACK_NAME_CHARS, TRACK, validate_id
+from ...store import CHAT, ZOOM_DEVICE, Segment
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .pipeline import Pipeline
+    from ...pipeline import Pipeline
 
 MAX_CHAT_BYTES = 1_000_000  # request body
 MAX_CHAT_LINES = 2_000
@@ -161,8 +161,8 @@ class _Names:
         track). Resolved once per zoom_user_id, whichever of its names asks."""
         key = self._key(zoom_user_id, name)
         if key not in self._cache:
-            from .meeting_names import speaker_for_track
-            from .meeting_tracks import track_speaker
+            from ..people.names import speaker_for_track
+            from ..transcribe.tracks import track_speaker
 
             who, owner = "", False
             if zoom_user_id in self.tracks:
@@ -188,7 +188,7 @@ class _Names:
         """(name, person id or None) for a participant. Someone with a track or a chat
         line was made a person already; someone who never spoke or typed is only looked
         up, so a silent guest adds no person."""
-        from .meeting_names import clean_display_name
+        from ..people.names import clean_display_name
 
         if zoom_user_id and (zoom_user_id in self.tracks
                              or self._key(zoom_user_id, name) in self._cache):

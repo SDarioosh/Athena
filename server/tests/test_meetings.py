@@ -21,7 +21,6 @@ from pathlib import Path
 import pytest
 from conftest import TOKEN, tone, wav
 
-from athena import meetings
 from athena.meetings import (
     ZoomMeeting,
     bot_args,
@@ -33,6 +32,7 @@ from athena.meetings import (
     parse_zoom_link,
     sign_sdk_jwt,
 )
+from athena.meetings.bot import launcher as meetings
 
 FAKE_BOT = Path(__file__).with_name("fake_meeting_bot.py")
 SDK_KEY = "fictional-sdk-key"

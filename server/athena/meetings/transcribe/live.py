@@ -59,17 +59,17 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .audio import SAMPLE_RATE, AudioDecodeError
-from .clips import Window
-from .diarize import PieceRef, rms_db
-from .meeting_names import clean_display_name
-from .meeting_tracks import is_room_track, is_shared_room, meeting_prompt
-from .vad import Span
+from ...audio import SAMPLE_RATE, AudioDecodeError
+from ...clips import Window
+from ...diarize import PieceRef, rms_db
+from ...vad import Span
+from ..people.names import clean_display_name
+from .tracks import is_room_track, is_shared_room, meeting_prompt
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .pipeline import Pipeline
+    from ...pipeline import Pipeline
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("athena.meeting_live")  # its name before the move
 
 # A line: (epoch start, epoch end, text, PieceRef(run = first sequence of its run, run
 # time start, run time end)) plus its loudness in dBFS.
@@ -130,7 +130,7 @@ def plan_runs(chunks: list[dict[str, Any]], *, final: bool) -> list[Run]:
     """A track's runs of contiguous chunks, as ``Pipeline._runs`` cuts them. While the
     meeting records (``final`` false) only the gap-free sequence prefix is used and the
     last run stays open."""
-    from .pipeline import CONTIGUOUS_TOLERANCE
+    from ...pipeline import CONTIGUOUS_TOLERANCE
 
     ordered = sorted((c for c in chunks if c["audio_path"]), key=lambda c: c["sequence"])
     if not final:
@@ -301,7 +301,7 @@ def deferred(info: dict[str, Any], owner_names: list[str]) -> bool:
     and its "Speaker N" numbering stays consistent. A track with no display name yet
     waits too: its first chunk can arrive before the name, which may be a room's
     (QA BUG-24)."""
-    from .meeting_names import _track_names
+    from ..people.names import _track_names
 
     return not _track_names(info) or is_room_track(info, owner_names)
 
@@ -310,7 +310,7 @@ def meeting_whisper_prompt(pipeline: Pipeline, infos: list[dict[str, Any]]) -> s
     """Whisper's prompt for a meeting: the usual one plus the participants' display names
     (cleaned, rooms and devices left out), in track order. Read-only, so it is the same
     while the meeting runs and at its end."""
-    from .pipeline import MAX_PROMPT_NAMES
+    from ...pipeline import MAX_PROMPT_NAMES
 
     prompt = pipeline.whisper_prompt()
     if not pipeline.settings.whisper_prompt_names:

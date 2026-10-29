@@ -39,16 +39,16 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .audio import SAMPLE_RATE
-from .diarize import PieceRef, SpeakerLabel, load_voices, rms_db
-from .lines import join_lines
-from .store import Segment
+from ...audio import SAMPLE_RATE
+from ...diarize import PieceRef, SpeakerLabel, load_voices, rms_db
+from ...lines import join_lines
+from ...store import Segment
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .pipeline import Pipeline
-    from .store import Store
+    from ...pipeline import Pipeline
+    from ...store import Store
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("athena.meeting_tracks")  # its name before the move
 
 # Bleed: a line is a copy of a line on another track when its words match that line's
 # (``text_similarity``: the better of SequenceMatcher's ratio over words and, when the
@@ -79,7 +79,7 @@ def is_shared_room(name: str | None) -> bool:
     person whose name holds such a word ("Jordan Hall", "Cisco Ramirez") or a personal
     device ("Kath's iPhone" is Kath). ``meeting_names.is_room_or_hardware`` is
     the one rule; this name stays for callers of this module."""
-    from .meeting_names import is_room_or_hardware
+    from ..people.names import is_room_or_hardware
 
     return is_room_or_hardware(name)
 
@@ -101,7 +101,7 @@ def track_speaker(store: Store, track_info: dict[str, Any],
     ``owner_display`` is the owner's canonical name (``store.owner_name() or
     CONVO_OWNER_NAME``): an owner track is named by it, never by its Zoom name.
     """
-    from .meeting_names import speaker_for_track
+    from ..people.names import speaker_for_track
 
     return speaker_for_track(store, {**track_info, "placeholder": ""}, owner_names,
                              owner_display=owner_display)
@@ -126,7 +126,7 @@ def is_room_track(info: dict[str, Any], owner_names: Sequence[str]) -> bool:
     """The one rule for a shared-room track, the end pass's and live work's: any display
     name it ever had is a room or a device (``_room_track``), and it isn't the owner's
     track (one of its names is one of ``owner_names``)."""
-    from .meeting_names import _is_owner_track, _track_names
+    from ..people.names import _is_owner_track, _track_names
 
     return _room_track(info, owner_names) and not _is_owner_track(_track_names(info),
                                                                   owner_names)
@@ -230,7 +230,7 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str, chunks: list[dict[st
     ``kept``, when given, is filled with each named (not shared-room) track's kept lines
     as (start, end) epoch seconds, after bleed is dropped and before lines are joined:
     the only speech ``meeting_voices`` learns a voice from (QA BUG-05)."""
-    from . import meeting_live
+    from . import live as meeting_live
 
     store, cfg = pipeline.store, pipeline.settings
     owner_names = cfg.zoom_owner_name_list
