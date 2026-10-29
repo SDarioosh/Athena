@@ -180,6 +180,7 @@ def main(argv: list[str] | None = None) -> None:
     settings = get_settings()
     # logs go to stderr; stdout is the MCP stdio channel
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger(__name__).info("database: %s", settings.db_path)
 
     if args.cmd == "mcp":
         from .mcp_server import run

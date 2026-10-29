@@ -34,16 +34,23 @@ x-sound: &sound
     - "host.docker.internal:host-gateway"
   restart: unless-stopped
 
+# Values forced on the containers below are set under both setting names: the server reads
+# ATHENA_* before CONVO_*, so an ATHENA_* line in .env (env_file) must not win over them.
 services:
   sound-api:
     <<: *sound
     command: ["serve"]
     environment:
       CONVO_DATA_DIR: /data
+      ATHENA_DATA_DIR: /data
       CONVO_HOST: 0.0.0.0
+      ATHENA_HOST: 0.0.0.0
       CONVO_PORT: "8000"
-      CONVO_PUBLIC_URL: ${CONVO_PUBLIC_URL:-http://127.0.0.1:${CONVO_PORT:-8000}}
+      ATHENA_PORT: "8000"
+      CONVO_PUBLIC_URL: ${ATHENA_PUBLIC_URL:-${CONVO_PUBLIC_URL:-http://127.0.0.1:${CONVO_PORT:-8000}}}
+      ATHENA_PUBLIC_URL: ${ATHENA_PUBLIC_URL:-${CONVO_PUBLIC_URL:-http://127.0.0.1:${CONVO_PORT:-8000}}}
       CONVO_WHISPER_SERVER_URL: ${CONVO_DOCKER_WHISPER_URL:-http://whisper:8178}
+      ATHENA_WHISPER_SERVER_URL: ${CONVO_DOCKER_WHISPER_URL:-http://whisper:8178}
     ports:
       # CONVO_HOST/CONVO_PORT keep their meaning: where devices reach the API.
       - "${CONVO_HOST:-127.0.0.1}:${CONVO_PORT:-8000}:8000"
@@ -59,14 +66,20 @@ services:
     command: ["mcp", "--http"]
     environment:
       CONVO_DATA_DIR: /data
+      ATHENA_DATA_DIR: /data
       CONVO_MCP_HOST: 0.0.0.0
+      ATHENA_MCP_HOST: 0.0.0.0
       CONVO_MCP_PORT: "8001"
+      ATHENA_MCP_PORT: "8001"
       # The relay routes (ingest_relay.py: uploads, notes, T5 reads, /settings/llm)
       # forward to the ingest API at CONVO_HOST:CONVO_PORT: here the sound-api container.
       CONVO_HOST: sound-api
+      ATHENA_HOST: sound-api
       CONVO_PORT: "8000"
+      ATHENA_PORT: "8000"
       CONVO_MCP_TOKEN: ${CONVO_MCP_TOKEN:?set CONVO_MCP_TOKEN in server/.env (16+ characters)}
-      CONVO_PUBLIC_URL: ${CONVO_PUBLIC_URL:-http://127.0.0.1:${CONVO_PORT:-8000}}
+      CONVO_PUBLIC_URL: ${ATHENA_PUBLIC_URL:-${CONVO_PUBLIC_URL:-http://127.0.0.1:${CONVO_PORT:-8000}}}
+      ATHENA_PUBLIC_URL: ${ATHENA_PUBLIC_URL:-${CONVO_PUBLIC_URL:-http://127.0.0.1:${CONVO_PORT:-8000}}}
     ports:
       # Where Odysseus reaches MCP today: 172.17.0.1 for Odysseus in Docker
       # (http://host.docker.internal:8001/mcp?access_token=...), else 127.0.0.1.

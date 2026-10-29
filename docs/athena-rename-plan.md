@@ -1,6 +1,7 @@
 # Athena rename: work order
 
-Status: **step 1 in progress** (Athena's links done 2026-10-29), the other steps not started (written 2026-10-27). On 2026-10-29 the owner also chose to
+Status: **step 1 in progress** (Athena's links done 2026-10-29); steps 7, 8 and 14 done in
+code (cleanup lane 4E, 2026-10-29); for the others see each step (written 2026-10-27). On 2026-10-29 the owner also chose to
 rename the hub's stored `"odysseus-sound"` values and server name `convo` with a data
 migration (cleanup lane 4F; filed calendar event IDs stay), and the watch's Bluetooth name
 (lane 1I, **done** 2026-10-29: `athena-tw`, relays accept `barvis-tw` too); the "What stays"
@@ -19,7 +20,8 @@ installed devices (see [What stays](#what-stays-and-why)).
   one. This is the pattern the hub's `scripts/fork_deploy.sh` already uses for
   `BARVIS_*` → `FORK_*`. The server, the phone, the watches and the hub must keep
   working after each step on its own, in any deploy order.
-- **No data migrations.** No step rewrites rows in `convo.db` or in the hub's data.
+- **No data migrations.** No step rewrites rows in the database (`convo.db`, now `athena.db`)
+  or in the hub's data.
 - **One concern per PR.** Do a mechanical rename as its own PR, with no behaviour
   changes mixed in, so the diff can be reviewed by `git diff -M --stat`.
 - **Do the big renames (steps 3, 6, 10) when no other PR is open** in that repo. They
@@ -192,6 +194,22 @@ home-screen icons pinned by an older version keep working.
 
 ## Step 7: settings `CONVO_*` → `ATHENA_*` (Athena)
 
+**Done** (2026-10-29, cleanup lane 4E) in the server, the eval and scripts, and the PC
+relay: `athena/config.py` reads each setting as `ATHENA_<NAME>` and `CONVO_<NAME>` with one
+custom settings source (no field aliases, no copying of `os.environ`). The environment beats
+`server/.env`, and within each the new name wins, so an eval's `CONVO_DATA_DIR=/tmp/demo`
+in the environment still beats `ATHENA_DATA_DIR` in `.env`. Both names with different
+values: one warning naming the variable and where the used one came from, never a value.
+The ingest token check takes either name. `athena.config.env_setting` reads one setting by
+both names for scripts that don't load `Settings` (`eval/bakeoff.py`; the standalone
+`scripts/meeting_bot_cost.py` and the PC relay's `ATHENA_INGEST_TOKEN` do the same inline).
+Changed from the plan below: `.env.example` keeps the `CONVO_` lines and says at the top
+that `ATHENA_` works too (deploy.sh's `--init` and a test read those lines), and the docs
+keep writing `CONVO_*` with one note each. Not done here: `deploy.sh` and `compose.yml`
+(cleanup lane 4A owns them) still read `CONVO_*` only for the few settings they read
+themselves; `.env.example` lists those, to keep under their old names until they read both.
+The Zepp side service reads no setting; `ci.yml` keeps the old names, which still work.
+
 - About 98 variables. `server/athena/config.py` (pydantic `BaseSettings`,
   `env_prefix="CONVO_"`) reads `ATHENA_<name>` first and falls back to `CONVO_<name>`.
   Do this with a custom settings source or `AliasChoices` per field, not by copying
@@ -215,6 +233,19 @@ home-screen icons pinned by an older version keep working.
   `/health` and an MCP read work.
 
 ## Step 8: database file (Athena)
+
+**Done** (2026-10-29, cleanup lane 4E), differently from the plan below (owner decision in
+the cleanup plan, 4E: no file is ever moved by code). `Settings.db_path` is `athena.db` in
+the data dir, but an existing `convo.db` is opened as it is while no `athena.db` exists, so
+a server that has one keeps using it (with its `-wal`/`-shm` and init-lock files next to
+it) and no empty `athena.db` is created beside it; every process (`serve`, `mcp`, the CLI)
+makes the same choice, with nothing to wait for. Both files: `athena.db` is used and one
+warning says `convo.db` is ignored (the owner decides what to do with it). A fresh data dir
+gets `athena.db`. New setting `CONVO_DB_FILE` / `ATHENA_DB_FILE` names the file explicitly
+(relative to the data dir). `eval/bakeoff.py` resolves the file the same way and
+`scripts/check_migration.py` refuses a file named `athena.db` too. Switching to
+`athena.db` is up to the owner: stop the services, `sqlite3 convo.db ".backup athena.db"`
+(or move the file with its `-wal`/`-shm`), start them again, and update backup jobs.
 
 - `Settings.db_path` becomes `data_dir / "athena.db"`. On start:
   - only `convo.db` exists: rename it, and its `-wal` and `-shm` files, to `athena.db`
@@ -321,6 +352,15 @@ home-screen icons pinned by an older version keep working.
   new path; pairing gives both scope sets.
 
 ## Step 14: Android relay on the new routes (Athena)
+
+**Done in code** (2026-10-29, cleanup lane 4E; Gradle build and the real phone are CI's and
+the owner's): `net/Routes.kt` calls `/api/codex/athena/…`; `HubRoutes` sends a call that gets
+a 404 there to `/api/codex/sound/…` and remembers per hub URL, for the app's lifetime, which
+routes the first answer that shows a route proved (a 2xx, or a 4xx other than 401, 404, 408,
+429). 401, 403, 5xx and network errors never fall back. Health and Test connection, chunk
+upload, session end and the T5 sync's reads and writes all go through it. JVM tests:
+`HubRoutesTest`, `HttpUploaderTest`, `PdaHttpTest`. The PC relay and the T5 firmware don't
+use the hub's `sound` routes (the PC relay uploads to Athena directly).
 
 - `net/Routes.kt` uses `/api/codex/athena/…`. On a `404` from an older hub, it falls
   back to `/api/codex/sound/…` once and remembers which works.

@@ -327,3 +327,4 @@ def server():
 def _no_env_state(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     os.environ.pop("CONVO_INGEST_TOKEN", None)
+    os.environ.pop("ATHENA_INGEST_TOKEN", None)

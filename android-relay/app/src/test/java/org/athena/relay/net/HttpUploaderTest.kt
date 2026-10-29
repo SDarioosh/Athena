@@ -104,8 +104,10 @@ class HttpUploaderTest {
         assertArrayEquals(audio, parts.getValue("audio").second)
     }
 
+    private var hub = HubRoutes()
+
     private fun throughOdysseus() = HttpUploader(base, { token }, log = { _, m -> logs += m },
-        connectTimeoutMs = 2000, readTimeoutMs = 2000, routes = Routes.ODYSSEUS)
+        connectTimeoutMs = 2000, readTimeoutMs = 2000, routes = Routes.ODYSSEUS, hubRoutes = hub)
 
     @Test fun throughOdysseusUsesTheHubRoutes() = runBlocking {
         val up = throughOdysseus()
@@ -115,8 +117,8 @@ class HttpUploaderTest {
         answer = { 200 to """{"ok": true}""" }
         assertEquals(ServerResult.Ok(), up.health())
         assertEquals(ServerResult.Ok(), up.checkToken())
-        assertEquals(listOf("/api/codex/sound/chunk", "/api/codex/sound/sessions/3f9a0c11d2e4b507/end",
-            "/api/codex/sound/health", "/api/codex/sound/health"), requests.map { it.path })
+        assertEquals(listOf("/api/codex/athena/chunk", "/api/codex/athena/sessions/3f9a0c11d2e4b507/end",
+            "/api/codex/athena/health", "/api/codex/athena/health"), requests.map { it.path })
         // Every call carries the token there, health included (it checks the token and the module).
         assertTrue(requests.all { it.headers["authorization"] == listOf("Bearer $token") })
         val parts = parseMultipart(requests[0].headers.getValue("content-type").single(), requests[0].body)
@@ -134,6 +136,87 @@ class HttpUploaderTest {
         answer = { 400 to """{"detail": "codec must be one of ['ogg', 'opus']"}""" }
         val r = up.upload(chunk())
         assertTrue(r is ServerResult.Rejected && r.code == 400 && r.detail.contains("codec"))
+    }
+
+    /** A hub from before the Athena routes: FastAPI's 404 there, the old routes answer. */
+    private fun oldHub(ok: String = """{"ok": true}"""): (HttpExchange) -> Pair<Int, String> = { ex ->
+        if (ex.requestURI.path.startsWith("/api/codex/athena/")) 404 to """{"detail": "Not Found"}""" else 200 to ok
+    }
+
+    @Test fun olderHubFallsBackOnceAndRemembers() = runBlocking {
+        answer = oldHub()
+        val up = throughOdysseus()
+        assertEquals(ServerResult.Ok(), up.health()) // Test connection: green on an older hub
+        assertEquals(ServerResult.Ok(), up.checkToken())
+        assertEquals(ServerResult.Ok(duplicate = false), up.upload(chunk()))
+        assertEquals(ServerResult.Ok(), up.endSession("3f9a0c11d2e4b507"))
+        // The next connection's uploader (same app, same hub) goes straight to the old routes.
+        assertEquals(ServerResult.Ok(), throughOdysseus().health())
+        assertEquals(listOf("/api/codex/athena/health", "/api/codex/sound/health", "/api/codex/sound/health",
+            "/api/codex/sound/chunk", "/api/codex/sound/sessions/3f9a0c11d2e4b507/end", "/api/codex/sound/health"),
+            requests.map { it.path })
+        assertTrue(requests.all { it.headers["authorization"] == listOf("Bearer $token") })
+        // the retried upload is the same multipart body
+        val parts = parseMultipart(requests[3].headers.getValue("content-type").single(), requests[3].body)
+        assertArrayEquals(audio, parts.getValue("audio").second)
+        assertEquals(true, hub.usesOld(base))
+        assertTrue(logs.any { it.startsWith("POST /api/codex/sound/chunk ") })
+    }
+
+    @Test fun olderHubFallbackForTheFirstCallOfAnyKind() = runBlocking {
+        answer = oldHub("""{"ok": true, "stop": false}""")
+        assertEquals(ServerResult.Ok(duplicate = false), throughOdysseus().upload(chunk()))
+        assertEquals(listOf("/api/codex/athena/chunk", "/api/codex/sound/chunk"), requests.map { it.path })
+        // both carry the same audio
+        for (r in requests) {
+            val parts = parseMultipart(r.headers.getValue("content-type").single(), r.body)
+            assertArrayEquals(audio, parts.getValue("audio").second)
+        }
+    }
+
+    @Test fun onlyA404FallsBack() = runBlocking {
+        val cases = mapOf(
+            401 to ServerResult.AuthRejected(401),
+            403 to ServerResult.AuthRejected(403),
+            500 to ServerResult.Transient("HTTP 500"),
+            502 to ServerResult.Transient("HTTP 502"),
+            429 to ServerResult.Transient("HTTP 429"),
+        )
+        for ((code, expected) in cases) {
+            hub = HubRoutes()
+            requests.clear()
+            answer = { code to """{"detail": "x"}""" }
+            assertEquals("HTTP $code", expected, throughOdysseus().health())
+            assertEquals("HTTP $code", listOf("/api/codex/athena/health"), requests.map { it.path })
+        }
+    }
+
+    @Test fun aRejectedTokenDecidesNothing() = runBlocking {
+        // An older hub rejects a bad token before routing: 401 on the new route too.
+        answer = { 401 to """{"error": "Invalid API token"}""" }
+        assertEquals(ServerResult.AuthRejected(401), throughOdysseus().health())
+        assertEquals(null, hub.usesOld(base))
+        // With the token fixed, the same older hub still gets the fallback.
+        answer = oldHub()
+        assertEquals(ServerResult.Ok(), throughOdysseus().health())
+        assertEquals(true, hub.usesOld(base))
+    }
+
+    @Test fun aNewHubsOwn404IsNotRetried() = runBlocking {
+        answer = { 200 to """{"ok": true}""" }
+        val up = throughOdysseus()
+        assertEquals(ServerResult.Ok(), up.health())
+        assertEquals(false, hub.usesOld(base))
+        answer = { 404 to """{"detail": "no such session"}""" }
+        assertEquals(ServerResult.Rejected(404, "no such session"), up.endSession("3f9a0c11d2e4b507"))
+        assertEquals(listOf("/api/codex/athena/health", "/api/codex/athena/sessions/3f9a0c11d2e4b507/end"),
+            requests.map { it.path })
+    }
+
+    @Test fun directRoutesNeverFallBack() = runBlocking {
+        answer = { 404 to """{"detail": "Not Found"}""" }
+        assertTrue(uploader().health() is ServerResult.Rejected)
+        assertEquals(listOf("/health"), requests.map { it.path })
     }
 
     @Test fun duplicateIsOk() = runBlocking {

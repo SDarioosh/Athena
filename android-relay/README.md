@@ -4,9 +4,15 @@ Android app that carries recordings from the LilyGO T-Watch Ultra to the owner's
 Athena server, through Odysseus (paired by QR code) or directly:
 
 ```
-watch (BLE, protocol v1) → this app → POST /api/codex/sound/chunk on Odysseus  → Athena
+watch (BLE, protocol v1) → this app → POST /api/codex/athena/chunk on Odysseus → Athena
                                    or POST /v1/ingest/chunk on Athena (direct fallback)
 ```
+
+Through Odysseus the app calls the hub's `/api/codex/athena/…` routes. A hub from before
+them answers 404 there; the app then sends the same call to the old `/api/codex/sound/…`
+routes (which every hub keeps serving) and remembers that hub's choice until the app
+restarts, so no call is sent twice after the first. Only a 404 falls back: a rejected
+token (401/403), a server error or a network error is reported as it is.
 
 The watch has no Wi-Fi. This app is the only thing that holds a server token. It
 implements [docs/twatch-ble-protocol.md](../docs/twatch-ble-protocol.md) (the contract),
@@ -69,9 +75,10 @@ on the branch you run it from. These are debug-signed builds for sideloading.
    app works too: scan the code there and open (or copy) the `odysseus-pair:` link; the
    relay's Settings opens with it filled in and shows which Odysseus it is for. It never
    pairs from a link without your tap, because any app can open such a link. That's all: the app gets
-   its own Odysseus token (named "Phone relay <date>", scopes `sound:ingest`, `sound:read`,
-   `sound:write`, `calendar:read`, `calendar:write`, `todos:read`, `todos:write`,
-   `insight:read`), stores it encrypted, and from then on sends the watch's audio and the
+   its own Odysseus token (named "Phone relay <date>", scopes `athena:ingest`, `athena:read`,
+   `athena:write` and their old names `sound:*`, `calendar:read`, `calendar:write`,
+   `todos:read`, `todos:write`, `insight:read`; a phone paired with an older hub holds only
+   `sound:*`, which the hub keeps accepting), stores it encrypted, and from then on sends the watch's audio and the
    T5's data through Odysseus. **Test connection** checks Odysseus and, through it,
    Athena. Unpair a phone by revoking its token in Odysseus → Settings → API
    tokens.
@@ -82,7 +89,8 @@ on the branch you run it from. These are debug-signed builds for sideloading.
    that was used, expired or mistyped gets "make a new one".
 
    **Direct (fallback):** untick *Send … through Odysseus* and enter the Athena
-   server URL (for example `http://100.x.y.z:8000`) and its `CONVO_INGEST_TOKEN` instead.
+   server URL (for example `http://100.x.y.z:8000`) and its ingest token (`ATHENA_INGEST_TOKEN`,
+   or `CONVO_INGEST_TOKEN` in an older `server/.env`) instead.
    **Test connection** then checks `/health` and the token with
    `GET /v1/sessions?limit=1`. **Save**.
 2. On the watch, **long-press BOOT** to open the 2-minute sync window. New bonds are only
@@ -108,7 +116,7 @@ token: the phone builds a compact feed and sends it over BLE, and carries the T5
 to the servers.
 
 ```
-paired:  Odysseus /api/codex/sound/{digests,conversations,action-items},
+paired:  Odysseus /api/codex/athena/{digests,conversations,action-items} (older hub: /api/codex/sound/…),
          /api/codex/calendar/events, /api/codex/todos, /api/codex/insight/today and /weights (one ody_ token) → this app → BLE → T5
 direct:  Athena /v1/{digests,conversations,action-items} (ingest token)
          + the Odysseus routes above with an ody_ token

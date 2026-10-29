@@ -30,8 +30,9 @@ Audio (--audio), i.e. how far the people around the wearer are from the mic:
     python eval/recognition.py run --label sim2m --audio sim --distance 2
     python eval/recognition.py run --label sim2m-o16 --audio sim --distance 2 --opus-kbps 16
 
-Settings come from the CONVO_* environment like the server (CONVO_WHISPER_SERVER_URL,
-CONVO_WHISPER_PROMPT, CONVO_DIARIZER, ...); the flags below override them. Results go to
+Settings come from the CONVO_* (or ATHENA_*) environment like the server
+(CONVO_WHISPER_SERVER_URL, CONVO_WHISPER_PROMPT, CONVO_DIARIZER, ...); the flags below
+override them. Results go to
 eval/results/recognition-<label>.json (gitignored).
 
 Metrics, per meeting window and pooled:

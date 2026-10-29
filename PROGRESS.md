@@ -45,7 +45,7 @@ _Last updated: 2026-10-29. Shortened: the Done log and each row's full status ar
 | 20 | Complete forget (`erase_fact`) and retention | built, tested, **owner: Server verification** | [docs/api/mcp.md](docs/api/mcp.md) |
 | 21 | Capture quality (pyannote attribution) | built, default with pyannote, **owner: one real recording** | [docs/omi-audio-quality.md](docs/omi-audio-quality.md) |
 | 22 | Written notes from the hub | built, tested, **owner: Server verification** | [docs/api/ingest.md](docs/api/ingest.md) |
-| 23 | Athena rename in code, settings and services | folded into the cleanup (25), step 1 (links) done | [docs/athena-rename-plan.md](docs/athena-rename-plan.md) |
+| 23 | Athena rename in code, settings and services | folded into the cleanup (25), step 1 (links) done; Phase 4: `ATHENA_*` settings beside `CONVO_*`, `athena.db` (an existing `convo.db` used as is), phone relay on `/api/codex/athena/*` with fallback, built and tested, **owner: Server verification on a data copy and a phone update** | [docs/athena-rename-plan.md](docs/athena-rename-plan.md) |
 | 24 | Zoom meeting bot | built through Phase 5; **owner: real-SDK meeting test** | [docs/zoom-meeting-bot-plan.md](docs/zoom-meeting-bot-plan.md), [meeting-bot/README.md](meeting-bot/README.md) |
 | 10 | End-to-end with real devices | not started | — |
 | 25 | Cleanup of Athena and the hub | in progress: Phases 0 and 1 merged, Phase 2 merged (gate next) | [docs/cleanup-plan.md](docs/cleanup-plan.md) |

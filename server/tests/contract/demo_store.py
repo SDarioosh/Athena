@@ -500,7 +500,7 @@ DIGEST_DATES = ("2026-09-15", "2026-10-14")
 
 
 def build(data_dir: Path) -> None:
-    """Write the contract store into ``data_dir`` (convo.db), with the clock and ids
+    """Write the contract store into ``data_dir`` (athena.db), with the clock and ids
     fixed. Fails if a summary fails."""
     with pytest.MonkeyPatch.context() as mp:
         frozen(mp)

@@ -24,3 +24,4 @@ services:
     environment:
       # Wins over a CONVO_MEETING_BOT_PATH in .env (a native install's host path).
       CONVO_MEETING_BOT_PATH: /opt/athena-meeting-bot/athena-meeting-bot-run
+      ATHENA_MEETING_BOT_PATH: /opt/athena-meeting-bot/athena-meeting-bot-run
