@@ -7,26 +7,31 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import numpy as np
 
-SCHEMA = """
-PRAGMA journal_mode=WAL;
-PRAGMA foreign_keys=ON;
+log = logging.getLogger(__name__)
 
+# The first schema (version 1), frozen. A new database starts from it and then runs
+# every step of MIGRATIONS, the same steps an old database runs, so both end up with the
+# same tables and columns in the same order. Never edit it: a new table, column or index
+# is a new step at the end of MIGRATIONS.
+SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     device TEXT NOT NULL,
@@ -48,9 +53,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     audio_path TEXT,                    -- NULL once audio is deleted
     speech TEXT NOT NULL DEFAULT '[]',  -- JSON [[start,end],...] relative to chunk
     received_at REAL NOT NULL,
-    track TEXT NOT NULL DEFAULT '',     -- '' = no track; else e.g. a Zoom user id
-    track_name TEXT,                    -- the track's display name in this chunk
-    PRIMARY KEY (session_id, track, sequence)  -- sequences count per track
+    PRIMARY KEY (session_id, sequence)
 );
 
 CREATE TABLE IF NOT EXISTS conversations (
@@ -78,8 +81,7 @@ CREATE TABLE IF NOT EXISTS segments (
     ended_at REAL NOT NULL,
     speaker TEXT NOT NULL,
     is_owner INTEGER NOT NULL DEFAULT 0,
-    text TEXT NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'speech'       -- speech | chat (a meeting's chat message)
+    text TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS segments_time ON segments(device, started_at);
 CREATE INDEX IF NOT EXISTS segments_conv ON segments(conversation_id, started_at);
@@ -122,6 +124,58 @@ CREATE TABLE IF NOT EXISTS speakers (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS embeddings (
+    kind TEXT NOT NULL,                       -- conversation|fact|action_item
+    ref_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    model TEXT NOT NULL,
+    vector BLOB NOT NULL,
+    PRIMARY KEY (kind, ref_id)
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
+    kind UNINDEXED, ref_id UNINDEXED, conversation_id UNINDEXED, body,
+    tokenize = 'porter unicode61'
+);
+"""
+
+# Tables and indexes added after the first schema, by the step that adds them. Each
+# statement is IF NOT EXISTS: step 17 runs them all again for databases that missed one.
+
+# Step 2: the line-level full-text index for "what did X say about Y".
+LINE_INDEX_SCHEMA = """
+-- Line-level full-text index for "what did X say about Y" (kept in sync by triggers).
+CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
+    text, content='segments', content_rowid='id', tokenize = 'porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS segments_ai AFTER INSERT ON segments BEGIN
+    INSERT INTO segments_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS segments_ad AFTER DELETE ON segments BEGIN
+    INSERT INTO segments_fts(segments_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS segments_au AFTER UPDATE OF text ON segments BEGIN
+    INSERT INTO segments_fts(segments_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    INSERT INTO segments_fts(rowid, text) VALUES (new.id, new.text);
+END;
+"""
+
+# Step 3: voice samples.
+VOICE_SAMPLES_SCHEMA = """
+-- Several voice samples per speaker (enrollment windows, named speakers); matching uses
+-- the closest few instead of one blended voiceprint. speakers.embedding is their mean.
+CREATE TABLE IF NOT EXISTS voice_samples (
+    id INTEGER PRIMARY KEY,
+    speaker_id INTEGER NOT NULL REFERENCES speakers(id) ON DELETE CASCADE,
+    embedding BLOB NOT NULL,
+    source TEXT NOT NULL,                     -- enrolled|named|legacy
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS voice_samples_speaker ON voice_samples(speaker_id);
+"""
+
+# Step 10: people with a stable id.
+PEOPLE_SCHEMA = """
 -- One row per person (a speaker or someone named in a conversation): a stable id that
 -- survives renames, so the hub can link it to a contact. A rename keeps the id and keeps
 -- the old name as an alias; renaming onto an existing person merges the old row into it
@@ -142,27 +196,11 @@ CREATE TABLE IF NOT EXISTS people_aliases (
     PRIMARY KEY (person_id, alias)
 );
 CREATE INDEX IF NOT EXISTS people_aliases_alias ON people_aliases(alias);
+"""
 
-CREATE TABLE IF NOT EXISTS embeddings (
-    kind TEXT NOT NULL,                       -- conversation|fact|action_item
-    ref_id TEXT NOT NULL,
-    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    model TEXT NOT NULL,
-    vector BLOB NOT NULL,
-    PRIMARY KEY (kind, ref_id)
-);
-
--- Several voice samples per speaker (enrollment windows, named speakers); matching uses
--- the closest few instead of one blended voiceprint. speakers.embedding is their mean.
-CREATE TABLE IF NOT EXISTS voice_samples (
-    id INTEGER PRIMARY KEY,
-    speaker_id INTEGER NOT NULL REFERENCES speakers(id) ON DELETE CASCADE,
-    embedding BLOB NOT NULL,
-    source TEXT NOT NULL,                     -- enrolled|named|legacy
-    created_at REAL NOT NULL
-);
-CREATE INDEX IF NOT EXISTS voice_samples_speaker ON voice_samples(speaker_id);
-
+# Step 17: the tables an older store.py created on every start (CREATE TABLE IF NOT
+# EXISTS in its SCHEMA) without a numbered step.
+LATER_SCHEMA = """
 -- Every conversation that mentioned a fact again ("same" link), so a fact keeps links
 -- to all the transcripts it came from.
 CREATE TABLE IF NOT EXISTS fact_sources (
@@ -272,9 +310,9 @@ CREATE TABLE IF NOT EXISTS meeting_chat (
     PRIMARY KEY (session_id, line_key)
 );
 
--- Live transcription of a meeting while it runs (Zoom bot lane 5D, meeting_live.py): per
--- track, JSON of what is transcribed so far (lines, whisper context, how far). Work in
--- progress only: deleted once the meeting is processed, so the lines live in segments.
+-- Live transcription of a meeting while it runs (meeting_live.py): per track, JSON of
+-- what is transcribed so far (lines, whisper context, how far). Work in progress only:
+-- deleted once the meeting is processed, so the lines live in segments.
 CREATE TABLE IF NOT EXISTS meeting_live (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     track TEXT NOT NULL,
@@ -284,30 +322,10 @@ CREATE TABLE IF NOT EXISTS meeting_live (
 );
 -- The worker's per-tick lookups by status (idle sessions, a meeting in progress).
 CREATE INDEX IF NOT EXISTS sessions_status ON sessions(status);
-
--- Line-level full-text index for "what did X say about Y" (kept in sync by triggers).
-CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
-    text, content='segments', content_rowid='id', tokenize = 'porter unicode61'
-);
-CREATE TRIGGER IF NOT EXISTS segments_ai AFTER INSERT ON segments BEGIN
-    INSERT INTO segments_fts(rowid, text) VALUES (new.id, new.text);
-END;
-CREATE TRIGGER IF NOT EXISTS segments_ad AFTER DELETE ON segments BEGIN
-    INSERT INTO segments_fts(segments_fts, rowid, text) VALUES ('delete', old.id, old.text);
-END;
-CREATE TRIGGER IF NOT EXISTS segments_au AFTER UPDATE OF text ON segments BEGIN
-    INSERT INTO segments_fts(segments_fts, rowid, text) VALUES ('delete', old.id, old.text);
-    INSERT INTO segments_fts(rowid, text) VALUES (new.id, new.text);
-END;
-
-CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
-    kind UNINDEXED, ref_id UNINDEXED, conversation_id UNINDEXED, body,
-    tokenize = 'porter unicode61'
-);
 """
 
 
-# Meeting bots (POST /v1/meetings, convo_server/meetings.py), created by migration 16.
+# Step 16: meeting bots (POST /v1/meetings, convo_server/meetings.py).
 MEETINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS meetings (
     id TEXT PRIMARY KEY,
@@ -469,180 +487,312 @@ def _row(r: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(r) if r is not None else None
 
 
+# ------------------------------------------------------------------ migrations
+# How long a connection waits for another connection's lock before "database is locked"
+# (what Python's sqlite3 module sets by default, now explicit).
+BUSY_TIMEOUT_MS = 5000
+# A write that waited longer than this for the lock is logged.
+LOCK_WAIT_WARN_SECONDS = 1.0
+
+
+def _begin_immediate(c: sqlite3.Connection) -> None:
+    """Start a write transaction, logging a long wait for the write lock."""
+    start = monotonic()
+    c.execute("BEGIN IMMEDIATE")
+    waited = monotonic() - start
+    if waited > LOCK_WAIT_WARN_SECONDS:
+        log.warning("waited %.1f s for the database write lock", waited)
+
+
+def _statements(script: str) -> Iterator[str]:
+    """The statements of an SQL script, one by one (``executescript`` would commit the
+    open transaction first, so migration steps run statements singly)."""
+    buf = ""
+    for line in script.splitlines(keepends=True):
+        buf += line
+        if sqlite3.complete_statement(buf):
+            yield buf.strip()
+            buf = ""
+    if buf.strip() and re.sub(r"--[^\n]*", "", buf).strip():
+        raise ValueError(f"incomplete SQL statement: {buf.strip()[:80]!r}")
+
+
+def _run_script(c: sqlite3.Connection, script: str) -> None:
+    for stmt in _statements(script):
+        c.execute(stmt)
+
+
+def _add_column(c: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    """Add a column unless the table has it already."""
+    cols = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+def _has_table(c: sqlite3.Connection, name: str) -> bool:
+    return c.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                     (name,)).fetchone() is not None
+
+
+# Each step brings the database from the version before it to its own number
+# (MIGRATIONS[n] reaches user_version n). It runs inside the transaction ``migrate``
+# opens, so it must not commit: no ``executescript``, no PRAGMAs that need autocommit.
+
+def _m01_first_schema(c: sqlite3.Connection) -> None:
+    # a new database: the first schema. A database made by the first store.py has these
+    # tables already (it never set user_version, so it is at 0 too).
+    _run_script(c, SCHEMA)
+
+
+def _m02_line_index(c: sqlite3.Connection) -> None:
+    # databases created before the line-level index existed
+    _run_script(c, LINE_INDEX_SCHEMA)
+    c.execute("INSERT INTO segments_fts(segments_fts) VALUES ('rebuild')")
+
+
+def _m03_voice_samples(c: sqlite3.Connection) -> None:
+    # one blended voiceprint per speaker before: keep it as their first sample
+    _run_script(c, VOICE_SAMPLES_SCHEMA)
+    c.execute(
+        "INSERT INTO voice_samples (speaker_id, embedding, source, created_at)"
+        " SELECT id, embedding, 'legacy', created_at FROM speakers WHERE id NOT IN"
+        " (SELECT speaker_id FROM voice_samples)")
+
+
+def _m04_focused_summaries(c: sqlite3.Connection) -> None:
+    # focused summaries: conversation kind, discarded junk, due dates, fact history
+    _add_column(c, "conversations", "kind", "TEXT")
+    _add_column(c, "conversations", "discard_reason", "TEXT")
+    _add_column(c, "action_items", "due_date", "TEXT")  # YYYY-MM-DD
+    _add_column(c, "facts", "status", "TEXT NOT NULL DEFAULT 'current'")
+    _add_column(c, "facts", "superseded_by", "INTEGER")
+
+
+def _m05_session_kind(c: sqlite3.Connection) -> None:
+    # voice notes: a session is a conversation recording or a voice note
+    _add_column(c, "sessions", "kind", f"TEXT NOT NULL DEFAULT '{CONVERSATION}'")
+
+
+def _m06_calendar_items(c: sqlite3.Connection) -> None:
+    # action items for the calendar: kind, time of day (HH:MM local), length,
+    # place, when the row was first stored, and whether the user changed them
+    _add_column(c, "action_items", "kind", "TEXT NOT NULL DEFAULT 'task'")
+    _add_column(c, "action_items", "due_time", "TEXT")
+    _add_column(c, "action_items", "duration_minutes", "INTEGER")
+    _add_column(c, "action_items", "location", "TEXT")
+    _add_column(c, "action_items", "time_unclear", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(c, "action_items", "created_at", "REAL")
+    _add_column(c, "action_items", "edited", "INTEGER NOT NULL DEFAULT 0")
+    c.execute(
+        "UPDATE action_items SET created_at = (SELECT started_at FROM conversations"
+        " WHERE id = action_items.conversation_id) WHERE created_at IS NULL")
+
+
+def _m07_list_name(c: sqlite3.Connection) -> None:
+    # the to-do list the user named for an item ("add milk to my shopping list")
+    _add_column(c, "action_items", "list_name", "TEXT")
+
+
+def _m08_note_title(c: sqlite3.Connection) -> None:
+    # notes from voice notes ("create a note ..."): the note's title
+    _add_column(c, "action_items", "note_title", "TEXT")
+
+
+def _m09_retired_facts(c: sqlite3.Connection) -> None:
+    # facts the owner told the hub to forget (status 'retired'): when and why
+    _add_column(c, "facts", "retired_at", "REAL")
+    _add_column(c, "facts", "retired_reason", "TEXT")
+
+
+def _m10_people(c: sqlite3.Connection) -> None:
+    # people with a stable id: one row per enrolled voice and per name mentioned
+    _run_script(c, PEOPLE_SCHEMA)
+    for r in c.execute("SELECT id, name, is_owner, created_at FROM speakers"
+                       " ORDER BY is_owner DESC, id").fetchall():
+        _ensure_person(c, r["name"], r["id"], bool(r["is_owner"]), r["created_at"])
+    for r in c.execute(
+            "SELECT p.name, MIN(c.started_at) AS first FROM conversation_people p"
+            " JOIN conversations c ON c.id = p.conversation_id"
+            " GROUP BY p.name ORDER BY first").fetchall():
+        _ensure_person(c, r["name"], created_at=r["first"])
+
+
+def _m11_item_titles(c: sqlite3.Connection) -> None:
+    # every action item has a short title, and says whether the user asked for it
+    # (a date, time, list, reminder/event/note or a command word) or it is only a
+    # suggestion; older rows: their text's start, and explicit by date/list/kind
+    _add_column(c, "action_items", "title", "TEXT")
+    _add_column(c, "action_items", "explicit", "INTEGER NOT NULL DEFAULT 0")
+    for r in map(dict, c.execute("SELECT * FROM action_items").fetchall()):
+        c.execute("UPDATE action_items SET title = ?, explicit = ? WHERE id = ?",
+                  (short_title(r.get("note_title"), r["text"]),
+                   int(is_explicit(r)), r["id"]))
+
+
+def _m12_possessive_names(c: sqlite3.Connection) -> None:
+    # names the summary model saved with a possessive ("Marisol's") become the
+    # name ("Marisol"); a person of that name already there absorbs them
+    names = {r[0] for r in c.execute(
+        "SELECT name FROM conversation_people UNION SELECT name FROM people"
+        " WHERE merged_into IS NULL")}
+    for old in sorted(n for n in names if person_name(n) != n and person_name(n)):
+        new = person_name(old)
+        c.execute("UPDATE OR REPLACE conversation_people SET name = ? WHERE name = ?",
+                  (new, old))
+        for r in c.execute("SELECT id, people FROM conversations WHERE people LIKE ?",
+                           (f"%{old}%",)).fetchall():
+            people = json.loads(r["people"])
+            fixed = list(dict.fromkeys(new if p == old else p for p in people))
+            if fixed != people:
+                c.execute("UPDATE conversations SET people = ? WHERE id = ?",
+                          (json.dumps(fixed), r["id"]))
+        if _person_id(c, old) is not None:
+            _rename_person(c, old, new)
+
+
+def _m13_forgetting(c: sqlite3.Connection) -> None:
+    # forgetting erases a fact's words (erase_fact); retention prunes old
+    # transcripts (CONVO_TRANSCRIPT_RETENTION_DAYS)
+    _add_column(c, "facts", "erased_at", "REAL")
+    _add_column(c, "segments", "erased", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(c, "conversations", "transcript_pruned_at", "REAL")
+
+
+def _m14_fact_kind(c: sqlite3.Connection) -> None:
+    # what sort of fact it is (preference, plan, decision, ...: FACT_KINDS), from
+    # the summary model; older facts have none
+    _add_column(c, "facts", "kind", "TEXT")
+
+
+def _m15_chunk_tracks(c: sqlite3.Connection) -> None:
+    # chunks per track (a meeting: one track per participant): sequences count per
+    # track, so the primary key gains the track; SQLite can't change a primary
+    # key, so the table is rebuilt. Older chunks have no track ('').
+    if "track" in {r[1] for r in c.execute("PRAGMA table_info(chunks)")}:
+        return  # created by an older SCHEMA with the track already
+    c.execute(
+        "CREATE TABLE chunks_v15 ("
+        " session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,"
+        " sequence INTEGER NOT NULL, started_at REAL NOT NULL, duration REAL NOT NULL,"
+        " codec TEXT NOT NULL, audio_path TEXT, speech TEXT NOT NULL DEFAULT '[]',"
+        " received_at REAL NOT NULL, track TEXT NOT NULL DEFAULT '', track_name TEXT,"
+        " PRIMARY KEY (session_id, track, sequence))")
+    c.execute(
+        "INSERT INTO chunks_v15 (session_id, sequence, started_at, duration, codec,"
+        " audio_path, speech, received_at, track, track_name)"
+        " SELECT session_id, sequence, started_at, duration, codec, audio_path,"
+        " speech, received_at, '', NULL FROM chunks")
+    c.execute("DROP TABLE chunks")
+    c.execute("ALTER TABLE chunks_v15 RENAME TO chunks")
+
+
+def _m16_meetings(c: sqlite3.Connection) -> None:
+    # meeting bots (POST /v1/meetings): one row per join request. The Zoom
+    # passcode is never stored; the bot's upload token only as a SHA-256 hash,
+    # cleared when the bot exits.
+    _run_script(c, MEETINGS_SCHEMA)
+
+
+def _m17_unnumbered_changes(c: sqlite3.Connection) -> None:
+    # What older versions changed on every start without a step: every table and index
+    # added after the first schema (CREATE ... IF NOT EXISTS; a database that has one
+    # keeps it unchanged) and two columns. Steps 2, 3, 10 and 16 already created most of
+    # these; they are repeated for databases that lack one.
+    had_line_index = _has_table(c, "segments_fts")
+    for script in (LINE_INDEX_SCHEMA, VOICE_SAMPLES_SCHEMA, PEOPLE_SCHEMA,
+                   MEETINGS_SCHEMA, LATER_SCHEMA):
+        _run_script(c, script)
+    if not had_line_index:
+        c.execute("INSERT INTO segments_fts(segments_fts) VALUES ('rebuild')")
+    # voices learned from meetings (meeting_voices.py): which meeting a sample came
+    # from, so processing it again replaces its own samples
+    _add_column(c, "voice_samples", "session_id", "TEXT")
+    # transcript line kind: speech, or chat (a meeting's chat message); older lines
+    # are speech
+    _add_column(c, "segments", "kind", f"TEXT NOT NULL DEFAULT '{SPEECH}'")
+
+
+# The schema's history, in order: MIGRATIONS[n] brings a database to user_version n.
+# Index 0 is an empty database. Add a change only as a new step at the end (AGENTS.md).
+MIGRATIONS: list[Callable[[sqlite3.Connection], None] | None] = [
+    None,
+    _m01_first_schema,
+    _m02_line_index,
+    _m03_voice_samples,
+    _m04_focused_summaries,
+    _m05_session_kind,
+    _m06_calendar_items,
+    _m07_list_name,
+    _m08_note_title,
+    _m09_retired_facts,
+    _m10_people,
+    _m11_item_titles,
+    _m12_possessive_names,
+    _m13_forgetting,
+    _m14_fact_kind,
+    _m15_chunk_tracks,
+    _m16_meetings,
+    _m17_unnumbered_changes,
+]
+SCHEMA_VERSION = len(MIGRATIONS) - 1
+
+
+def migrate(c: sqlite3.Connection) -> int:
+    """Run the steps of MIGRATIONS the database at ``c`` (an autocommit connection,
+    ``isolation_level=None``) has not had, each in its own transaction that also sets
+    ``user_version``: a step that fails leaves the database at the step before, with
+    none of its changes. Returns the version reached."""
+    # The first schema's tables on every start, as older versions did: a database
+    # missing one gets it (CREATE ... IF NOT EXISTS, columns of the first schema only).
+    _in_transaction(c, _m01_first_schema)
+    version = c.execute("PRAGMA user_version").fetchone()[0]
+    for target in range(version + 1, SCHEMA_VERSION + 1):
+        _in_transaction(c, _step(target))
+    return max(version, SCHEMA_VERSION)
+
+
+def _step(target: int) -> Callable[[sqlite3.Connection], None]:
+    def run(c: sqlite3.Connection) -> None:
+        # read again under the write lock: another connection may have run it
+        if c.execute("PRAGMA user_version").fetchone()[0] < target:
+            step = MIGRATIONS[target]
+            assert step is not None
+            step(c)
+            c.execute(f"PRAGMA user_version = {target}")
+    return run
+
+
+def _in_transaction(c: sqlite3.Connection, work: Callable[[sqlite3.Connection], None]) -> None:
+    """Run ``work`` in one write transaction: all of it is committed, or none of it."""
+    _begin_immediate(c)
+    try:
+        work(c)
+    except BaseException:
+        if c.in_transaction:
+            c.execute("ROLLBACK")
+        raise
+    c.execute("COMMIT")
+
+
 class Store:
     def __init__(self, path: Path | str) -> None:
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+        self._conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None,
+                                     timeout=BUSY_TIMEOUT_MS / 1000)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self._conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
         # deleted rows are overwritten, not left in free pages: a forgotten fact or a
         # pruned transcript must not stay readable in the file
         self._conn.execute("PRAGMA secure_delete = ON")
+        self._conn.execute("PRAGMA foreign_keys = ON")
         # The API server and the MCP server open the same database at the same time
         # (deploy starts both): set up and migrate one process at a time.
         with _init_lock(self.path):
-            self._conn.executescript(SCHEMA)
-            self._migrate()
-            # voices learned from meetings (meeting_voices.py): which meeting a sample
-            # came from, so processing it again replaces its own samples
-            self._add_column("voice_samples", "session_id", "TEXT")
-
-    def _migrate(self) -> None:
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 2:
-            # databases created before the line-level index existed
-            self._conn.execute("INSERT INTO segments_fts(segments_fts) VALUES ('rebuild')")
-            self._conn.execute("PRAGMA user_version = 2")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 3:
-            # one blended voiceprint per speaker before: keep it as their first sample
-            self._conn.execute(
-                "INSERT INTO voice_samples (speaker_id, embedding, source, created_at)"
-                " SELECT id, embedding, 'legacy', created_at FROM speakers WHERE id NOT IN"
-                " (SELECT speaker_id FROM voice_samples)")
-            self._conn.execute("PRAGMA user_version = 3")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 4:
-            # focused summaries: conversation kind, discarded junk, due dates, fact history
-            self._add_column("conversations", "kind", "TEXT")
-            self._add_column("conversations", "discard_reason", "TEXT")
-            self._add_column("action_items", "due_date", "TEXT")  # YYYY-MM-DD
-            self._add_column("facts", "status", "TEXT NOT NULL DEFAULT 'current'")
-            self._add_column("facts", "superseded_by", "INTEGER")
-            self._conn.execute("PRAGMA user_version = 4")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 5:
-            # voice notes: a session is a conversation recording or a voice note
-            self._add_column("sessions", "kind", f"TEXT NOT NULL DEFAULT '{CONVERSATION}'")
-            self._conn.execute("PRAGMA user_version = 5")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 6:
-            # action items for the calendar: kind, time of day (HH:MM local), length,
-            # place, when the row was first stored, and whether the user changed them
-            self._add_column("action_items", "kind", "TEXT NOT NULL DEFAULT 'task'")
-            self._add_column("action_items", "due_time", "TEXT")
-            self._add_column("action_items", "duration_minutes", "INTEGER")
-            self._add_column("action_items", "location", "TEXT")
-            self._add_column("action_items", "time_unclear", "INTEGER NOT NULL DEFAULT 0")
-            self._add_column("action_items", "created_at", "REAL")
-            self._add_column("action_items", "edited", "INTEGER NOT NULL DEFAULT 0")
-            self._conn.execute(
-                "UPDATE action_items SET created_at = (SELECT started_at FROM conversations"
-                " WHERE id = action_items.conversation_id) WHERE created_at IS NULL")
-            self._conn.execute("PRAGMA user_version = 6")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 7:
-            # the to-do list the user named for an item ("add milk to my shopping list")
-            self._add_column("action_items", "list_name", "TEXT")
-            self._conn.execute("PRAGMA user_version = 7")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 8:
-            # notes from voice notes ("create a note ..."): the note's title
-            self._add_column("action_items", "note_title", "TEXT")
-            self._conn.execute("PRAGMA user_version = 8")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 9:
-            # facts the owner told the hub to forget (status 'retired'): when and why
-            self._add_column("facts", "retired_at", "REAL")
-            self._add_column("facts", "retired_reason", "TEXT")
-            self._conn.execute("PRAGMA user_version = 9")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 10:
-            # people with a stable id: one row per enrolled voice and per name mentioned
-            c = self._conn
-            for r in c.execute("SELECT id, name, is_owner, created_at FROM speakers"
-                               " ORDER BY is_owner DESC, id").fetchall():
-                _ensure_person(c, r["name"], r["id"], bool(r["is_owner"]), r["created_at"])
-            for r in c.execute(
-                    "SELECT p.name, MIN(c.started_at) AS first FROM conversation_people p"
-                    " JOIN conversations c ON c.id = p.conversation_id"
-                    " GROUP BY p.name ORDER BY first").fetchall():
-                _ensure_person(c, r["name"], created_at=r["first"])
-            c.execute("PRAGMA user_version = 10")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 11:
-            # every action item has a short title, and says whether the user asked for it
-            # (a date, time, list, reminder/event/note or a command word) or it is only a
-            # suggestion; older rows: their text's start, and explicit by date/list/kind
-            c = self._conn
-            self._add_column("action_items", "title", "TEXT")
-            self._add_column("action_items", "explicit", "INTEGER NOT NULL DEFAULT 0")
-            for r in map(dict, c.execute("SELECT * FROM action_items").fetchall()):
-                c.execute("UPDATE action_items SET title = ?, explicit = ? WHERE id = ?",
-                          (short_title(r.get("note_title"), r["text"]),
-                           int(is_explicit(r)), r["id"]))
-            c.execute("PRAGMA user_version = 11")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 12:
-            # names the summary model saved with a possessive ("Marisol's") become the
-            # name ("Marisol"); a person of that name already there absorbs them
-            c = self._conn
-            names = {r[0] for r in c.execute(
-                "SELECT name FROM conversation_people UNION SELECT name FROM people"
-                " WHERE merged_into IS NULL")}
-            for old in sorted(n for n in names if person_name(n) != n and person_name(n)):
-                new = person_name(old)
-                c.execute("UPDATE OR REPLACE conversation_people SET name = ? WHERE name = ?",
-                          (new, old))
-                for r in c.execute("SELECT id, people FROM conversations WHERE people LIKE ?",
-                                   (f"%{old}%",)).fetchall():
-                    people = json.loads(r["people"])
-                    fixed = list(dict.fromkeys(new if p == old else p for p in people))
-                    if fixed != people:
-                        c.execute("UPDATE conversations SET people = ? WHERE id = ?",
-                                  (json.dumps(fixed), r["id"]))
-                if _person_id(c, old) is not None:
-                    _rename_person(c, old, new)
-            c.execute("PRAGMA user_version = 12")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 13:
-            # forgetting erases a fact's words (erase_fact); retention prunes old
-            # transcripts (CONVO_TRANSCRIPT_RETENTION_DAYS)
-            self._add_column("facts", "erased_at", "REAL")
-            self._add_column("segments", "erased", "INTEGER NOT NULL DEFAULT 0")
-            self._add_column("conversations", "transcript_pruned_at", "REAL")
-            self._conn.execute("PRAGMA user_version = 13")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 14:
-            # what sort of fact it is (preference, plan, decision, ...: FACT_KINDS), from
-            # the summary model; older facts have none
-            self._add_column("facts", "kind", "TEXT")
-            self._conn.execute("PRAGMA user_version = 14")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 15:
-            # chunks per track (a meeting: one track per participant): sequences count per
-            # track, so the primary key gains the track; SQLite can't change a primary
-            # key, so the table is rebuilt. Older chunks have no track ('').
-            self._rebuild_chunks_with_track()
-            self._conn.execute("PRAGMA user_version = 15")
-        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 16:
-            # meeting bots (POST /v1/meetings): one row per join request. The Zoom
-            # passcode is never stored; the bot's upload token only as a SHA-256 hash,
-            # cleared when the bot exits.
-            self._conn.executescript(MEETINGS_SCHEMA)
-            self._conn.execute("PRAGMA user_version = 16")
-        # Not a numbered step on purpose (Zoom bot lane 3B): lane 1B takes version 16, and
-        # this only adds a column with a default, which _add_column does at most once.
-        # Meeting chat lines are segments of kind 'chat'; every older line is speech.
-        self._add_column("segments", "kind", f"TEXT NOT NULL DEFAULT '{SPEECH}'")
-
-    def _rebuild_chunks_with_track(self) -> None:
-        c = self._conn
-        if "track" in {r[1] for r in c.execute("PRAGMA table_info(chunks)")}:
-            return  # created by SCHEMA with the track already
-        c.execute("BEGIN IMMEDIATE")
-        try:
-            c.execute(
-                "CREATE TABLE chunks_v15 ("
-                " session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,"
-                " sequence INTEGER NOT NULL, started_at REAL NOT NULL, duration REAL NOT NULL,"
-                " codec TEXT NOT NULL, audio_path TEXT, speech TEXT NOT NULL DEFAULT '[]',"
-                " received_at REAL NOT NULL, track TEXT NOT NULL DEFAULT '', track_name TEXT,"
-                " PRIMARY KEY (session_id, track, sequence))")
-            c.execute(
-                "INSERT INTO chunks_v15 (session_id, sequence, started_at, duration, codec,"
-                " audio_path, speech, received_at, track, track_name)"
-                " SELECT session_id, sequence, started_at, duration, codec, audio_path,"
-                " speech, received_at, '', NULL FROM chunks")
-            c.execute("DROP TABLE chunks")
-            c.execute("ALTER TABLE chunks_v15 RENAME TO chunks")
-        except BaseException:
-            c.execute("ROLLBACK")
-            raise
-        c.execute("COMMIT")
-
-    def _add_column(self, table: str, column: str, decl: str) -> None:
-        cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
-        if column not in cols:
-            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            self._conn.execute("PRAGMA journal_mode = WAL")
+            migrate(self._conn)
 
     def close(self) -> None:
         self._conn.close()
@@ -650,7 +800,7 @@ class Store:
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
+            _begin_immediate(self._conn)
             try:
                 yield self._conn
             except BaseException:
@@ -1166,12 +1316,6 @@ class Store:
     def session_segments(self, session_id: str) -> list[Segment]:
         rows = self._q("SELECT * FROM segments WHERE session_id = ? ORDER BY started_at",
                        (session_id,))
-        return [_segment(r) for r in rows]
-
-    def segments_for_device(self, device: str, since: float, until: float) -> list[Segment]:
-        rows = self._q(
-            "SELECT * FROM segments WHERE device = ? AND started_at >= ? AND started_at <= ?"
-            " ORDER BY started_at", (device, since, until))
         return [_segment(r) for r in rows]
 
     def conversation_segments(self, conversation_id: str) -> list[Segment]:

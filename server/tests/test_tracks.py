@@ -337,7 +337,7 @@ def test_old_database_with_chunks_upgrades(tmp_path):
     old.execute("PRAGMA user_version = 14")
     old.close()
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 16
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 17
     rows = store.chunks("old")
     assert [(c["track"], c["sequence"], c["track_name"], c["audio_path"], c["speech"])
             for c in rows] == [("", 0, None, "/q/000000.opus", [(1.0, 2.5)]),
@@ -358,7 +358,7 @@ def test_old_database_with_chunks_upgrades(tmp_path):
     store.close()
     # opening again is a no-op
     again = Store(path)
-    assert again._conn.execute("PRAGMA user_version").fetchone()[0] == 16
+    assert again._conn.execute("PRAGMA user_version").fetchone()[0] == 17
     again.close()
 
 
@@ -366,7 +366,7 @@ def test_new_database_has_tracked_chunks(tmp_path):
     store = Store(tmp_path / "new.db")
     cols = {r[1] for r in store._conn.execute("PRAGMA table_info(chunks)")}
     assert {"track", "track_name"} <= cols
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 16
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 17
 
 
 # ----------------------------------------------------------------------- relay

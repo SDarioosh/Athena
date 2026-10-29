@@ -43,14 +43,9 @@ class Diff(NamedTuple):
 # Differences between a migrated old database and a fresh one, as they are today.
 # Each one: (fixture, object, aspect, detail) and why. Remove an entry when the drift is
 # fixed; the test fails while an entry is listed that no longer occurs.
-EXPECTED_DIFFERENCES: list[tuple[Diff, str]] = [
-    (Diff(fixture, "segments", "column order",
-          "migrated text,erased,kind | fresh text,kind,erased"),
-     "SCHEMA declares segments.kind inline, so a fresh database adds only `erased` (step "
-     "13) after it; an old one gets `erased` from step 13 and `kind` from the unnumbered "
-     "_add_column after the steps. Code reads segments by column name, not position.")
-    for fixture in OLD_SCHEMAS
-]
+# None today: a fresh database runs the same MIGRATIONS steps as an old one, from the
+# frozen first schema, so both end up identical.
+EXPECTED_DIFFERENCES: list[tuple[Diff, str]] = []
 
 
 # ---------------------------------------------------------------- schema description
