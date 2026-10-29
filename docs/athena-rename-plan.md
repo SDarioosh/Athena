@@ -1,7 +1,8 @@
 # Athena rename: work order
 
-Status: **planned, not started** (written 2026-10-27). Each step below is one PR. Tick
-it off here in the same PR that does it.
+Status: **planned, not started** (written 2026-10-27). Since 2026-10-29 the steps run
+inside the cleanup ([cleanup-plan.md](cleanup-plan.md), "Renaming to Athena" maps each step
+to its lane). Each step below is one PR. Tick it off here in the same PR that does it.
 
 The project was called convo-ai, then barvis-ai, barvis-sound and odysseus-sound. The
 prose already says Athena. This plan renames the old names in code, settings and

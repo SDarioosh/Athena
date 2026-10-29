@@ -34,10 +34,14 @@ lane below.
 2. **No behaviour change unless the lane says so.** Lanes marked *behaviour* change
    output on purpose (bug fixes) and say exactly what changes. Every other lane is a
    refactor: same answers, same stored data, same API bytes.
-3. **Protected names stay** (AGENTS.md "Names" in both repos): `convo_server`, `CONVO_*`,
-   `convo.db`, server name `convo`, `odysseus-sound` stored values, `barvis_*` action ids
-   and state files, `BARVIS_SOUND_*`. Moves keep the old import paths working until the
-   cleanup lane of that phase removes them.
+3. **Protected names stay unless a rename lane changes them** (AGENTS.md "Names" in both
+   repos): `convo_server`, `CONVO_*`, `convo.db`, server name `convo`, `odysseus-sound`
+   stored values, `barvis_*` action ids and state files, `BARVIS_SOUND_*`. Only the lanes
+   marked *rename* (see "Renaming to Athena") change an old name, each following
+   `docs/athena-rename-plan.md`: the old name keeps working, no data migration, and the
+   "don't rename" lists in both AGENTS.md files are updated in the same PR. The names in
+   that plan's "What stays" table never change. Moves keep the old import paths working
+   until the cleanup lane of that phase removes them.
 4. **Old names keep working.** A setting or module that moves keeps its old name readable
    (env alias or a re-export shim) until Phase 4.
 5. **Fictional data only** (`server/scripts/seed_demo.py`). No real recordings, transcripts
@@ -165,15 +169,58 @@ flowchart LR
 | Phase | Goal | Lanes (Athena / hub) | Behaviour change |
 |---|---|---|---|
 | 0 | Tests that pin today's behaviour; hub upstream sync | 0A, 0B / 0C, 0D | none |
-| 1 | Fix the bugs and risks the review found; docs to a usable size | 1A, 1B, 1C, 1E / 1D, 1F | bug fixes only |
-| 2 | Move code into packages, nothing else | 2A, 2B, 2C, 2D / 2E, 2F | none |
+| 1 | Fix the bugs and risks the review found; docs to a usable size; device-side names | 1A, 1B, 1C, 1E, 1G, 1H / 1D, 1F | bug fixes only; device renames keep wire values |
+| 2 | Package `convo_server` → `athena`, then move code into packages, nothing else | 2R, 2A, 2B, 2C, 2D / 2E, 2F | none |
 | 3 | Remove duplication inside the new structure | 3A–3E / 3F–3L | none, except 3B and 3I rerun evals |
-| 4 | One deploy path, shims removed, final docs | 4A, 4B / 4C | deploy (owner decision) |
+| 4 | One deploy path, Athena names for settings, database file, services and hub URLs (old ones still work), shims removed, final docs | 4A, 4B, 4E / 4C, 4D | deploy (owner decision) |
 
 **Feature freeze in Phase 2.** Phase 2 moves files; any open PR then needs a rebase. Merge
 or park feature PRs before it starts. Phases 0, 1, 3 and 4 allow feature work beside
 them; a feature PR that changes tool output updates 0A's snapshots (and 0C's hub fixtures)
 in the same PR pair.
+
+## Renaming to Athena
+
+The old names (convo-ai, barvis-sound, odysseus-sound) are renamed inside this cleanup, by
+the steps of [athena-rename-plan.md](athena-rename-plan.md), each folded into the phase
+where it costs least: a name is renamed in the same phase that already touches its files,
+so no file is churned twice. That plan's rules apply to every *rename* lane (old name keeps
+working, no data migration, one concern per PR, MCP contract unchanged), and its "What
+stays" table is final: the hub's server name `convo`, the stored `"odysseus-sound"`
+values, the Android `applicationId`, the Zepp `appId`, the BLE name `barvis-tw`, its UUIDs
+and Opus tag bytes, the Hermes profiles and the `barvis` branch keep their names, because
+renaming them breaks the owner's data or installed devices.
+
+| Rename plan step | Lane here | Why there |
+|---|---|---|
+| 0 Open questions | answered below | — |
+| 1 Stale links, hub deploy remote lookup | 1E, 1F (links), 1D (`fork_deploy.sh` remote lookup) | those lanes own the docs and the deploy file |
+| 2 MCP server's self-reported name `convo-ai` → `athena` | 1B | tiny; 0A's tool-list snapshot is updated in the same PR on purpose |
+| 3 Python package `convo_server` → `athena`, CLI `athena` (`convo-server` kept) | 2R, first lane of Phase 2 | Phase 2 moves every file anyway; renaming first means 2A–2C move inside `athena/` |
+| 4 PC relay package `barvis_relay` → `athena_relay` | 1G | independent, device side |
+| 5 Firmware macros `BARVIS_*` → `ATHENA_*` (values unchanged) | 1G | independent, device side |
+| 6 Android Kotlin package (not the `applicationId`) | 1H | independent, large mechanical move |
+| 7 Settings `CONVO_*` → `ATHENA_*`, old names still read | 4E | deploy-facing, with 4A |
+| 8 Database file `convo.db` → `athena.db` | 4E | deploy-facing; needs owner answer 0.2 |
+| 9 `deploy.sh` settings, services, Docker project | 4A | 4A rewrites `deploy.sh` anyway |
+| 10 Hub fork files `sound_module_*`, `soundModule.js`, `sound_relay_*` → `athena_*` | 2E (Python), 3J/3K (JS) | 2E moves those files into `fork/athena/`; the JS lanes touch the JS files |
+| 11 Hub settings `SOUND_MODULE_SERVER` and the like → `ATHENA_*` | 3G | 3G builds the one settings table with old aliases |
+| 12 Hub page `/modules/athena`, `/api/modules/athena/*` (old URLs redirect) | 4D | URL change, deploy-facing |
+| 13 Hub relay routes `/api/codex/athena/*`, scopes `athena:*` next to the old | 4D | same |
+| 14 Android relay uses the new routes, falls back to the old | 4E (after 4D) | phone update |
+| 15 Zepp display name "Convo Rec Test" → "Athena Rec Test" (not the `appId`) | 1G | independent, device side |
+| 16 Final docs pass, mark that plan done | 4B, 4C | final docs |
+
+**Rename plan open questions** (its step 0):
+
+1. `SDarioosh/odysseus-expanded` is the hub repo `SDarioosh/Barvis` renamed: both URLs
+   served the same `HEAD` (`168edf3`) on 2026-10-29, and GitHub redirects the old one. Links
+   point to `SDarioosh/odysseus-expanded`.
+2. **Owner:** do any scripts outside these repos use the old names (backups copying
+   `server/data/convo.db`, cron calling `convo-server`, monitoring of `barvis-sound*`
+   services)? Needed before 4A and 4E; their Server verification covers them.
+3. The hub's module doc becomes `docs/fork/modules/athena.md` with a one-line stub at
+   `docs/fork/modules/odysseus-sound.md` (1F), because older PRs and links point there.
 
 ## Shared interfaces
 
@@ -272,6 +319,10 @@ Small, parallel, mostly *behaviour* (fixes). Wave: 1A, 1B, 1C, 1D, 1E, 1F at onc
 - [ ] Mark test-only helpers (`diarize.enrollment_embedding`, `vad.level_dbfs`); FastAPI
   `version` from the package. (`store.py` items are in 1C, which owns that file.)
 - [ ] Replace the 19 lane labels in `convo_server/` comments with plain descriptions.
+- [ ] *Rename* (rename plan step 2): the MCP server reports itself as `athena` (was
+  `convo-ai`); the hub registers it as `convo` and never reads this name (check with
+  `git grep convo-ai` in the hub). MCP patch version bump, note in `server/README.md`, 0A's
+  tool-list snapshot updated in this PR on purpose. `FastAPI(title=…)` says Athena.
 
 **1C Migration registry and store fixes (Athena, data).** Owns `store.py`; depends on 0B.
 - [ ] Ordered `MIGRATIONS` list, each step in `BEGIN IMMEDIATE`, `user_version = index`.
@@ -298,6 +349,9 @@ lines, the three unmarked hooks.
   `today_insight:932`, `notes_evidence:130`, `belief_structure:181`, `insight_outcomes:97`,
   `insight_routines:180`). A test with two writers.
 - [ ] Mark the three unmarked hooks; 0C's expected failures go away.
+- [ ] *Rename* (rename plan step 1): `remote()` in `scripts/fork_deploy.sh` also matches a
+  clone of `SDarioosh/odysseus-expanded` (today it needs `FORK_REMOTE`); a case in
+  `tests/test_fork_deploy.py`.
 - Server verification: render the compose files read-only
   (`docker compose -f docker-compose.yml -f docker/fork.override.yml config`) and check the
   settings are there; production gets it only through `scripts/fork_deploy.sh deploy` after
@@ -314,6 +368,10 @@ Layout.
   built yet").
 - [ ] AGENTS.md Layout gets `meeting-bot/` and `firmware/pda/`. Check links from the hub's
   `docs/fork/modules/odysseus-sound.md` still resolve.
+- [ ] *Rename* (rename plan step 1): links to `SDarioosh/Barvis` point to
+  `SDarioosh/odysseus-expanded`, links to `SDarioosh/barvis-sound` to `SDarioosh/Athena`
+  (past QC and bug-hunt reports stay as records); the `BARVIS_SOUND_REMOTE` comment in
+  `deploy.sh`.
 
 **1F Hub docs (hub).** Owns `FORK.md`, `docs/fork/roadmap.md`, AGENTS.md fork file list.
 - [ ] Split FORK.md: "Hooks into upstream files" (one line per hook: file, function, fork
@@ -322,8 +380,29 @@ Layout.
 - [ ] AGENTS.md and FORK.md link to the generated `docs/fork/files.md` (0C) instead of
   their own lists, which disagree today (23 test files only in AGENTS.md, 4 fork source
   files in neither).
-- [ ] Fix stale repo links (`SDarioosh/barvis-sound` → `SDarioosh/Athena`).
+- [ ] Fix stale repo links (`SDarioosh/barvis-sound` → `SDarioosh/Athena`,
+  `SDarioosh/Barvis` → `SDarioosh/odysseus-expanded`).
+- [ ] *Rename*: `docs/fork/modules/odysseus-sound.md` becomes `docs/fork/modules/athena.md`
+  with a one-line stub at the old path.
 - [ ] roadmap.md: status and links only.
+
+**1G Device-side names (Athena, rename).** Owns `firmware/recorder/tools/`,
+`firmware/recorder/main/` macro names, `zepp-app/` display name. Rename plan steps 4, 5, 15.
+- [ ] `barvis_relay` → `athena_relay`, with a re-export stub at `barvis_relay/` (removed in
+  4B); the relay's state dir becomes `athena-relay` but an existing `barvis-relay` dir is used
+  as is (never moved), tested both ways, so acknowledged chunks aren't uploaded twice.
+- [ ] `BARVIS_UUID` and the `BARVIS_*` Opus tag macros → `ATHENA_*`. **Values unchanged**
+  (UUID bytes, tag bytes, `DEVICE_NAME "barvis-tw"`): a host test compares the BLE service
+  table bytes before and after; host tests and `idf.py build` pass for all three boards.
+- [ ] Zepp display name "Convo Rec Test" → "Athena Rec Test"; `appId` and vendor unchanged.
+- Server verification: flash one watch, check it pairs and uploads with the phone and PC
+  relays unchanged.
+
+**1H Android Kotlin package (Athena, rename).** Owns `android-relay/app/src/`. Rename plan
+step 6: the Kotlin package moves to `org.athena.relay`; the `applicationId`
+(`org.barvis.sound.relay`) stays, so it updates in place. `./gradlew assembleDebug test lint`
+passes. Server verification: install over the existing app; pairing and queued
+recordings survive.
 
 **Gate 1:** all merged; evals at or above baseline; 1A and 1C Server verification passed.
 
@@ -333,7 +412,17 @@ Pure moves and re-exports. No logic, renamed function bodies, or reformatting. E
 test: the full suite and the contract snapshots pass with zero test edits except import
 paths. Feature freeze holds.
 
-Athena 2A, 2B, 2C run at once: each leaves a re-export shim at the old module path, so
+**2R Package rename (Athena, rename).** First, alone (no other Athena PR open). Rename plan
+step 3: `git mv server/convo_server server/athena`, imports in `server/` (code, tests,
+`eval/`, `scripts/`, `Dockerfile`), `pyproject.toml` (`name = "athena-server"`, console
+scripts `athena` and `convo-server`, both `athena.cli:main`, so deployed services keep
+working until 4A), ruff and pytest paths, `ci.yml`, and the AGENTS.md lists. No import stub
+(nothing outside `server/` imports `convo_server`; check both repos). Done when ruff, the
+full suite and the contract snapshots pass, `convo-server --help` and `athena --help` both
+work, and the Docker image builds. The paths in 2A–2D below then read `athena/` for
+`convo_server/`.
+
+Athena 2A, 2B, 2C run at once after 2R: each leaves a re-export shim at the old module path, so
 none needs another's imports. 2D removes the shims after all three merge. Hub 2E runs
 beside them (other repo); 2F after 2E.
 
@@ -365,9 +454,13 @@ beside them (other repo); 2F after 2E.
   (copied in 8 files today). Files named after QA rounds (`test_qc_*`, `*_qa.py`) are
   renamed for what they test.
 
-**2E Hub `fork/` package (hub).** After 0D. One mechanical PR.
+**2E Hub `fork/` package (hub, rename).** After 0D. One mechanical PR.
 - [ ] Move the fork's `src/` and `routes/` files into `fork/` (Shared interfaces). Hooks in
   upstream files change only their import line. Stored file names, action ids and URLs stay.
+- [ ] Rename plan step 10, Python side: the `sound_*` files land under Athena names
+  (`fork/athena/view.py` for `sound_module_view.py`, `fork/athena/routes.py` for
+  `sound_module_routes.py`, `fork/athena/relay_routes.py` for `sound_relay_routes.py`).
+  Route paths (`/modules/sound`, `/api/modules/sound/*`, `/api/codex/sound/*`) stay until 4D.
 - [ ] `scripts/generate_env_reference.py` scans `fork/` too (otherwise upstream's env test
   stops seeing our settings).
 - [ ] 0C's inventory test follows the new paths.
@@ -490,6 +583,19 @@ aliases that nothing reads any more. Any file still over ~800 lines gets a note 
 reason or a follow-up, not a forced split. AGENTS.md Layout and Checks updated to the final
 paths.
 
+**4D Hub URLs and scopes (hub, rename).** Rename plan steps 12 and 13: the page at
+`/modules/athena` (the old URL redirects), `/api/modules/athena/*` beside
+`/api/modules/sound/*`, relay routes `/api/codex/athena/*` and token scopes `athena:*` next
+to the old ones, which stay as aliases for installed phones and existing tokens. Server
+verification on the test instance: old and new URLs, an old-scope token, the phone relay.
+
+**4E Athena settings, database file and phone routes (Athena, rename).** After 4A and 4D.
+Rename plan steps 7, 8 and 14: `ATHENA_*` settings read first with `CONVO_*` still read;
+`athena.db`, with an existing `convo.db` used as is when `athena.db` doesn't exist (never
+moved or copied by code); the Android relay calls `/api/codex/athena/*` and falls back to
+the old routes. Server verification on a copy of the real data folder and a phone update;
+covers the owner's own scripts from open question 2.
+
 **4C Hub finish (hub).** Split `evidence_intake.py` (2,170: schema and migrations vs ledger
 API), `module_action_items.py` (1,419: sync, digest, filing, push) and `today_insight.py`
 (1,140). AGENTS.md lists the `fork/` package instead of files. Add a CI step that reports
@@ -512,9 +618,12 @@ meeting, walk-around recording and handwritten note through the whole system.
 | 1D Hub quick fixes | hub | Gate 0 | all of Phase 1 | test instance |
 | 1E Athena docs | Athena | Gate 0 | all of Phase 1 | — |
 | 1F Hub docs | hub | 0C | all of Phase 1 | — |
-| 2A Meetings package | Athena | Gate 1 | 2B, 2C, 2E | — |
-| 2B Store package | Athena | Gate 1 | 2A, 2C, 2E | — |
-| 2C Summarize package | Athena | Gate 1 | 2A, 2B, 2E | — |
+| 1G Device-side names | Athena | Gate 0 | all of Phase 1 | firmware build, watch reinstall for the Zepp name |
+| 1H Android Kotlin package | Athena | Gate 0 | all of Phase 1 | phone update |
+| 2R Package rename | Athena | Gate 1 | 2E | — |
+| 2A Meetings package | Athena | 2R | 2B, 2C, 2E | — |
+| 2B Store package | Athena | 2R | 2A, 2C, 2E | — |
+| 2C Summarize package | Athena | 2R | 2A, 2B, 2E | — |
 | 2D Imports, tests layout | Athena | 2A, 2B, 2C | 2F | — |
 | 2E Hub package | hub | Gate 1, 0D | 2A–2C | — |
 | 2F Hub tests layout | hub | 2E | 2D | — |
@@ -533,8 +642,10 @@ meeting, walk-around recording and handwritten note through the whole system.
 | 4A Deploy path | Athena | Gate 3 | 4B, 4C | decision, deploy |
 | 4B Shims out | Athena | Gate 3 | 4A, 4C | — |
 | 4C Hub finish | hub | Gate 3 | 4A, 4B | — |
+| 4D Hub URLs and scopes | hub | Gate 3 | 4A, 4B | test instance |
+| 4E Athena settings, DB file, phone routes | Athena | 4A, 4D | 4C | data copy, phone update, owner scripts |
 
-Widest waves: six lanes in Phase 1 and up to ten in Phase 3. Within a repo, two lanes
+Widest waves: eight lanes in Phase 1 and up to ten in Phase 3. Within a repo, two lanes
 that touch the same file never run at once (the "Owns" lists). 3C moves the input checks out
 of `pipeline.py` into `validation.py`, so it goes before 3A, which rewrites `pipeline.py`.
 
@@ -547,7 +658,8 @@ of `pipeline.py` into `validation.py`, so it goes before 3A, which rewrites `pip
 | Feature freeze during Phase 2 (about one phase of PRs)? | Yes; Phases 0, 1, 3 and 4 allow feature work. |
 | REST `GET /v1/action-items` and conversation reads return raw table rows (internal columns leak). Switch to the MCP allowlist? | Later, as its own PR after checking the T5 sync; out of this plan. |
 | Delete `meeting-bot/spike/` (kept in a tag)? | Yes (1A). |
-| `docs/athena-rename-plan.md` renames identifiers in the same files Phase 2 moves. Which first? | The cleanup; the rename after Gate 4, on the new layout (fewer places to rename). |
+| Rename the old names inside this cleanup? | Decided 2026-10-29: yes, step by step in the phases above ("Renaming to Athena"); the "What stays" names never change. |
+| Scripts outside the repos that use old names (rename plan question 2)? | Owner to list before 4A and 4E. |
 
 ## Progress
 
