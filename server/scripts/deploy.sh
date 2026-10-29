@@ -486,7 +486,7 @@ cmd_deploy() {
 called_by_odysseus() {  # started by the hub's deploy script (which deploys Odysseus itself)
   [ -n "${FORK_DEPLOY_RUNNING:-}" ] && return 0
   # hub scripts from before FORK_DEPLOY_RUNNING: look at the parent's command line
-  ps -o args= -p "$PPID" 2>/dev/null \
+  ps -ww -o args= -p "$PPID" 2>/dev/null \
     | grep -qE '(fork_deploy\.sh|barvis_deploy\.sh|odysseus-deploy|barvis-deploy)( |$)'
 }
 

@@ -140,17 +140,22 @@ def test_odysseus_deploy_failure_is_reported(tmp_path):
     assert "Odysseus deploy failed" in r.stderr
 
 
-def test_odysseus_skipped_under_a_hub_script_without_the_marker(tmp_path):
+@pytest.mark.parametrize("columns", [None, "80"])
+def test_odysseus_skipped_under_a_hub_script_without_the_marker(tmp_path, columns):
     # hub scripts from before FORK_DEPLOY_RUNNING: recognized by name (here the
-    # odysseus-deploy link the hub docs set up)
+    # odysseus-deploy link the hub docs set up), also when COLUMNS is exported and shorter
+    # than the caller's command line (ps cut its output to it; pytest-xdist sets 80)
     hub, calls = fake_hub(tmp_path)
-    caller = tmp_path / "odysseus-deploy"
+    caller_dir = tmp_path / ("a-rather-long-folder-name/" * 4)
+    caller_dir.mkdir(parents=True)
+    caller = caller_dir / "odysseus-deploy"
     caller.write_text(f'#!/usr/bin/env bash\nbash "{SCRIPT}" odysseus\necho done\n')
     caller.chmod(0o755)
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("CONVO_", "BARVIS_SOUND_", "FORK_"))}
     r = subprocess.run([str(caller), "deploy"], capture_output=True, text=True, timeout=120,
                        env={**env, "BARVIS_SOUND_ODYSSEUS_DIR": str(hub),
+                            **({"COLUMNS": columns} if columns else {}),
                             "PATH": f"{_no_api_bin()}:{env.get('PATH', '')}",
                             "DOCKER": str(_no_api_bin() / "docker")})
     assert r.returncode == 0, r.stderr
