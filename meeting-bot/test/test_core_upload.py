@@ -3,7 +3,7 @@
 
 Run by ctest: test_core_upload.py --driver <core_driver> --server <fake_ingest_server.py>
 Checks the upload fields, per-track sequences, the queue, retries, 401, "stop", the chat
-call body (server/README.md "Meeting chat, topic and participants") and finish()'s
+call body (docs/api/meetings.md "Meeting chat, topic and participants") and finish()'s
 deadline. Fictional data only.
 """
 
