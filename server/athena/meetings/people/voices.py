@@ -9,7 +9,7 @@ How samples are chosen, per track:
 
 * Only a named participant's own track: not a shared room or device ("Conference Room",
   "iPhone": several voices), decided exactly as transcription does
-  (``meeting_tracks._room_track``: any display name the track ever had), and not an
+  (``transcribe.tracks._room_track``: any display name the track ever had), and not an
   unnamed "Speaker N" track. The owner's track counts
   only when the owner has an enrolled voice (``is_owner``); its samples go to that voice,
   so a meeting never makes a second owner or a non-owner speaker with the owner's name.
@@ -132,7 +132,7 @@ def speech(chunks: Sequence[dict[str, Any]]) -> list[Interval]:
 
 
 def runs(chunks: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Contiguous chunks of one track (same rule as ``Pipeline._runs``)."""
+    """Contiguous chunks of one track (same rule as ``transcribe_engine.runs``)."""
     out: list[list[dict[str, Any]]] = []
     for c in sorted(chunks, key=lambda c: c["sequence"]):
         if out:
@@ -176,7 +176,7 @@ def candidate_windows(own: Sequence[dict[str, Any]], others: Sequence[dict[str, 
 def on_device(name: str) -> bool:
     """Whether a display name puts its person on a personal device ("Anna's iPhone",
     "Kath (mobile)", "iPad von Jan"). "Mac" and "Dell" that are the person's own name
-    ("Mac Example") are not devices (``meeting_names``' rule)."""
+    ("Mac Example") are not devices (``people.names``' rule)."""
     from .names import _DEVICE, _NAME_LIKE_DEVICE, clean_display_name
 
     kept = clean_display_name(name).lower().split()

@@ -87,7 +87,7 @@ class MeetingsRepo:
     # ---------------------------------------------------------------- meetings
     def live_meetings(self) -> list[str]:
         """Meetings being recorded (status 'recording' with a tracked chunk), oldest first.
-        The worker asks this on every tick (meeting_live.py): one query on the status
+        The worker asks this on every tick (meetings/transcribe/live.py): one query on the status
         index, and each candidate's tracked chunk is found on the chunks key."""
         return [r["id"] for r in self._q(
             "SELECT s.id FROM sessions s WHERE s.status = 'recording' AND EXISTS"
@@ -115,7 +115,7 @@ class MeetingsRepo:
                          participants: list[dict[str, Any]] | None = None,
                          now: float | None = None) -> dict[str, Any]:
         """Store a meeting's chat lines and its topic and participants, in one transaction
-        (``POST /v1/sessions/{id}/chat``, ``meeting_chat.py``).
+        (``POST /v1/sessions/{id}/chat``, ``meetings/ingest/chat.py``).
 
         ``lines`` are (line_key, segment): a key already stored for the session is a retry
         and is skipped. New lines become segments of kind CHAT without a conversation;

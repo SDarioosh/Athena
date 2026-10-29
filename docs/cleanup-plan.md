@@ -476,32 +476,47 @@ none needs another's imports. 2D removes the shims after all three merge. Hub 2E
 beside them (other repo); 2F after 2E.
 
 **2A Meetings package (Athena).** Owns the 7 meeting files and `transcribe_engine.py`.
-- [ ] `athena/meetings/` with `bot/` (launcher, zoom auth, links), `ingest/` (track
+- [x] `athena/meetings/` with `bot/` (launcher, zoom auth, links), `ingest/` (track
   rules, late chunks, chat), `transcribe/` (tracks, live, bleed), `people/` (names, voices).
-- [ ] `transcribe_engine.py` (Shared interfaces): the 4 private `Pipeline` helpers the
+- [x] `transcribe_engine.py` (Shared interfaces): the 4 private `Pipeline` helpers the
   meeting code calls become public there; `Pipeline` uses them too. One `runs()` (today
   in 3 places: `pipeline.py:631`, `meeting_live.py:129`, `meeting_voices.py:133`).
-- [ ] Shims at the 7 old paths.
+- [x] Shims at the 7 old paths.
 
 **2B Store package and domain (Athena).** Owns `store.py`, `domain.py`, `db/`.
-- [ ] `domain.py` (Shared interfaces). `athena/db/`: `connection.py`, `migrations.py`
+- [x] `domain.py` (Shared interfaces). `athena/db/`: `connection.py`, `migrations.py`
   (1C's registry), and one repository per area: sessions, conversations, facts, forget,
   action_items, people, voices, meetings, search. `Store` composes them and keeps every
   public method.
-- [ ] `store.py` becomes a shim re-exporting `Store` and the names other modules import.
+- [x] `store.py` becomes a shim re-exporting `Store` and the names other modules import.
 
 **2C Summarize package (Athena).** Owns `llm.py`, `summarize/`.
-- [ ] `summarize/` with `client.py` (`LLMClient`, `LLMError`), `schemas.py`, `prompts.py`,
+- [x] `summarize/` with `client.py` (`LLMClient`, `LLMError`), `schemas.py`, `prompts.py`,
   `summarizer.py`, and `rules/` holding today's functions as they are (commands, notes,
   events, facts, errands). No rule changes yet; that is 3B.
-- [ ] `llm.py` becomes a shim.
+- [x] `llm.py` becomes a shim.
 
 **2D Athena imports and tests layout (Athena).** After 2A–2C.
-- [ ] Update every import to the new paths; shims stay (removed in 4B).
-- [ ] `server/tests/` into `unit/{summarize,store,mcp,api}`, `integration/`, `meetings/`,
+- [x] Update every import to the new paths; shims stay (removed in 4B).
+- [x] `server/tests/` into `unit/{summarize,store,mcp,api}`, `integration/`, `meetings/`,
   `contract/`; shared `make_summarizer` and `llm_transport` fixtures in `conftest.py`
   (copied in 8 files today). Files named after QA rounds (`test_qc_*`, `*_qa.py`) are
   renamed for what they test.
+
+**2A–2D as run.** The three `runs()` copies (`transcribe_engine.runs`, `plan_runs` in
+`meetings/transcribe/live.py`, `runs` in `meetings/people/voices.py`) differ in what they
+yield, so 2A moved them as they were; making them one is Phase 3 work. 2B split `Store` into one
+mixin class per area in `athena/db/` (`Store` inherits them), not composed repositories.
+2C added two modules the plan didn't name: `summarize/storage.py` (turning a summary into
+stored rows) and `summarize/rules/text.py` (text helpers the other rules share). The hub's
+2E also has `fork/hub/`. The shims stay until 4B (not removed by 2D); 2D moved every import
+in `server/` to the new paths, except the tests that check the old paths on purpose
+(`test_store_api`, `test_meetings_package`, `test_convo_server_alias`). Tests are in
+`server/tests/unit/{summarize,store,mcp,api,transcribe}/`, `integration/`, `meetings/`,
+`contract/`, each folder a package (helpers are imported as `tests.conftest`,
+`tests.unit.mcp.test_mcp`); `unit/transcribe/` (audio, VAD, clips, whisper parsing) was
+added because those tests fit none of the four. Fixtures sit next to their tests
+(`unit/store/fixtures/`, `unit/summarize/fixtures/`).
 
 **2E Hub `fork/` package (hub, rename).** After 0D. One mechanical PR.
 - [ ] Move the fork's `src/` and `routes/` files into `fork/` (Shared interfaces). Hooks in

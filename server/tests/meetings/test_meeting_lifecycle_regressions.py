@@ -1,5 +1,5 @@
 """Regressions in the meeting bot's lifecycle (launcher, relay). The bot is
-tests/fake_meeting_bot.py; meeting numbers and keys are fictional."""
+tests/meetings/fake_meeting_bot.py; meeting numbers and keys are fictional."""
 
 from __future__ import annotations
 

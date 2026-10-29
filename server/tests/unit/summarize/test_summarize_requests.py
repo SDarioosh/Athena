@@ -3,11 +3,12 @@
 Prompts and JSON schemas drive the answers: one changed character can change eval scores.
 This test sends a fixed set of fictional recordings through ``Summarizer`` with a fake
 llama-server and compares, byte for byte, every request body (messages and
-``response_format``) and every result with ``tests/fixtures/summarize_requests.json``.
+``response_format``) and every result with
+``tests/unit/summarize/fixtures/summarize_requests.json``.
 
 A change to a prompt, a schema or a rule that is meant to change them rewrites the file:
 
-    UPDATE_SNAPSHOTS=1 pytest tests/test_summarize_requests.py
+    UPDATE_SNAPSHOTS=1 pytest tests/unit/summarize/test_summarize_requests.py
 """
 
 from __future__ import annotations
@@ -236,4 +237,5 @@ def test_summarizer_requests_and_results_are_unchanged() -> None:
         SNAPSHOT.write_text(got, encoding="utf-8")
     want = SNAPSHOT.read_text(encoding="utf-8")
     assert got == want, ("summarizer requests or results changed; if that is meant, "
-                         "UPDATE_SNAPSHOTS=1 pytest tests/test_summarize_requests.py")
+                         "UPDATE_SNAPSHOTS=1 pytest "
+                         "tests/unit/summarize/test_summarize_requests.py")

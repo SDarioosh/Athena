@@ -20,11 +20,11 @@ participant's: no diarizer, no speaker embedder. Then:
   (``Settings.zoom_owner_name_list``) is the owner's (``is_owner=true``), named as the
   owner is everywhere else (enrolled owner voice, else CONVO_OWNER_NAME).
 
-A person's track is finished from what ``meeting_live`` transcribed while the
+A person's track is finished from what ``transcribe.live`` transcribed while the
 meeting ran, plus the windows left; it gives the same lines as transcribing it here.
 
 Imported only by ``Pipeline._transcribe_session`` for a session that has tracks and by
-``meeting_live`` while a meeting records, so a server that never sees a meeting never
+``transcribe.live`` while a meeting records, so a server that never sees a meeting never
 loads this module.
 """
 
@@ -78,7 +78,7 @@ def is_shared_room(name: str | None) -> bool:
     hardware ("Conference Room", "Polycom", "Huddle 4", "Rally Bar"), a bare device with
     no person on it ("iPhone", "Galaxy S23"), a dial-in number or "Zoom user". Not a
     person whose name holds such a word ("Jordan Hall", "Cisco Ramirez") or a personal
-    device ("Kath's iPhone" is Kath). ``meeting_names.is_room_or_hardware`` is
+    device ("Kath's iPhone" is Kath). ``people.names.is_room_or_hardware`` is
     the one rule; this name stays for callers of this module."""
     from ..people.names import is_room_or_hardware
 
@@ -94,7 +94,7 @@ def track_speaker(store: Store, track_info: dict[str, Any],
                   owner_display: str | None = None) -> tuple[str, bool]:
     """Who a track's lines belong to: (speaker name for its segments, is_owner).
 
-    The one place a track becomes a speaker. ``meeting_names.speaker_for_track``
+    The one place a track becomes a speaker. ``people.names.speaker_for_track``
     cleans the display name ("Anna (she/her) | Acme" -> "Anna"), matches it against people
     and their aliases (creating a person when it is new) and keeps every display name as
     an alias. An empty name means the track has no person's name (a device, a room or
@@ -223,14 +223,14 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str, chunks: list[dict[st
     """Lines of a tracked session: each track transcribed on its own and named by its
     track (shared-room tracks by the diarizer), bleed dropped, merged in time order.
 
-    A track of a person is finished from what ``meeting_live`` transcribed while the
+    A track of a person is finished from what ``transcribe.live`` transcribed while the
     meeting ran (the same windows, context and pieces this pass would make), plus the
     windows left; without live work it is transcribed here from the start. Shared-room
     tracks and chunks without a track are always transcribed here, whole.
 
     ``kept``, when given, is filled with each named (not shared-room) track's kept lines
     as (start, end) epoch seconds, after bleed is dropped and before lines are joined:
-    the only speech ``meeting_voices`` learns a voice from (QA BUG-05)."""
+    the only speech ``people.voices`` learns a voice from (QA BUG-05)."""
     from . import live as meeting_live
 
     store, cfg = pipeline.store, pipeline.settings

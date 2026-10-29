@@ -1,5 +1,5 @@
 """Zoom sign-in from Odysseus: /v1/zoom/signin* on the ingest API and the relay's
-/zoom/signin* on the MCP HTTP app. Fake Zoom only (tests/test_zoom_signin.py FakeZoom),
+/zoom/signin* on the MCP HTTP app. Fake Zoom only (tests/meetings/test_zoom_signin.py FakeZoom),
 no network; every id, secret and token is fictional.
 """
 

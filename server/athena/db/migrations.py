@@ -310,7 +310,7 @@ CREATE INDEX IF NOT EXISTS sessions_status ON sessions(status);
 """
 
 
-# Step 16: meeting bots (POST /v1/meetings, athena/meetings.py).
+# Step 16: meeting bots (POST /v1/meetings, athena/meetings/bot/launcher.py).
 MEETINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS meetings (
     id TEXT PRIMARY KEY,
@@ -533,7 +533,7 @@ def _m17_unnumbered_changes(c: sqlite3.Connection) -> None:
         _run_script(c, script)
     if not had_line_index:
         c.execute("INSERT INTO segments_fts(segments_fts) VALUES ('rebuild')")
-    # voices learned from meetings (meeting_voices.py): which meeting a sample came
+    # voices learned from meetings (meetings/people/voices.py): which meeting a sample came
     # from, so processing it again replaces its own samples
     _add_column(c, "voice_samples", "session_id", "TEXT")
     # transcript line kind: speech, or chat (a meeting's chat message); older lines

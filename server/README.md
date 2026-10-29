@@ -149,7 +149,7 @@ other's name; two different named speakers stay apart (often a real interruption
   split by its token times. `CONVO_WHISPER_WINDOW_SECONDS=0` sends every region alone
   (the behaviour before). `CONVO_WHISPER_CONTEXT_WORDS` (0 = off) adds the end of the
   previous clip's text to the prompt; it made the eval worse.
-- Zoom names become people (`athena/meeting_names.py`, imported only by the meeting
+- Zoom names become people (`athena/meetings/people/names.py`, imported only by the meeting
   pipeline, never at startup). Each track's display names are cleaned first: pronouns
   ("(she/her)"), bracketed tags, "| Company", " - Company" (spaced dash only, so
   "Smith-Jones" stays), "@ Company", device suffixes ("Kath's iPhone", "(iPad)"), titles
@@ -172,7 +172,7 @@ other's name; two different named speakers stay apart (often a real interruption
   while `rename_speaker_everywhere("Kath Dlamini", "Kath")` merges them for good. Every
   display name a track used, raw and cleaned, is kept as an alias, so a participant who
   renames mid-meeting stays one person and the next meeting finds them again.
-- Learning voices from meetings (`athena/meeting_voices.py`,
+- Learning voices from meetings (`athena/meetings/people/voices.py`,
   `CONVO_LEARN_MEETING_VOICES`, default true; `false` turns it off; imported only after a
   meeting's lines are stored, and only with the setting on). A named participant's own
   track is one known voice, so a few seconds of it become that person's voice samples and
@@ -712,5 +712,9 @@ the memory; large-v3-q5_0 was no better.
 ```
 
 Tests use fakes for whisper, the LLM and speaker embeddings, and the energy VAD, so they
-run without models. `scripts/smoke_upload.py` uploads real audio files as 30 s Opus
+run without models. They are in `tests/unit/{summarize,store,mcp,api,transcribe}/`,
+`tests/integration/` (the pipeline end to end), `tests/meetings/` (the meeting bot and
+meeting processing) and `tests/contract/` (snapshots of what the hub reads); each folder
+is a package, so a test imports shared helpers as `tests.conftest` or
+`tests.unit.mcp.test_mcp`. `scripts/smoke_upload.py` uploads real audio files as 30 s Opus
 chunks to a running server for an end-to-end check.

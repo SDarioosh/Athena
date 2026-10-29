@@ -72,7 +72,7 @@ def test_idle_does_not_end_a_meeting_whose_bot_still_runs(pipeline):
     still running (an active meetings row) the idle rule must not end the session:
     processing it would answer the bot's next chunk ``stop: true`` and the bot would
     leave the meeting it is still recording. The bot's process ending ends the session
-    (meetings.py); a bot gone silently (server restarted) is ended once its lifetime is
+    (meetings/bot/launcher.py); a bot gone silently (server restarted) is ended once its lifetime is
     surely over."""
     now = T0 + 1000
     _bot_row(pipeline, "zoom-m1", created_at=now - 40)

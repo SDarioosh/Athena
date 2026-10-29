@@ -802,9 +802,9 @@ def _note(kind: str | None, written: dict[str, Any] | None = None) -> str:
 
 def _note_key_points(r: dict[str, Any], summary: dict[str, Any] | None) -> list[str]:
     """JSON rows' ``key_points`` (MCP 0.15.0): for a note that is a whole voice note (its
-    text is the voice note's summary, see ``_lone_note`` in llm.py), the voice note's key
-    points, so the hub's note holds what was said ("Screen: 49 mm x 60 mm"), not only the
-    summary; ``[]`` for every other item."""
+    text is the voice note's summary, see ``_lone_note`` in summarize/rules/notes.py), the
+    voice note's key points, so the hub's note holds what was said ("Screen: 49 mm x
+    60 mm"), not only the summary; ``[]`` for every other item."""
     if r.get("kind") != "note" or r.get("list_name") or not summary:
         return []
     said = " ".join((summary.get("summary") or "").split())

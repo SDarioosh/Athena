@@ -1,4 +1,4 @@
-"""Athena's Zoom sign-in (athena/zoom_signin.py) against a fake Zoom OAuth and API.
+"""Athena's Zoom sign-in (athena/meetings/bot/zoom_signin.py) against a fake Zoom OAuth and API.
 
 No network: every call goes to FakeZoom, an httpx transport. All ids, keys and tokens
 are fictional.

@@ -1,6 +1,6 @@
 """Transcribe a meeting while it runs.
 
-A meeting's tracks (one per participant, ``meeting_tracks``) are transcribed window by
+A meeting's tracks (one per participant, ``transcribe.tracks``) are transcribed window by
 window on the worker's existing ticks while the bot is still uploading, so when the
 meeting ends only the last window of each track and the summary are left.
 
@@ -9,15 +9,15 @@ Nothing new runs for it: no process, thread, timer or poller. ``Worker.tick`` ca
 being recorded?) and imports this module only when the answer is yes.
 
 **Same result as transcribing at the end.** The end-of-meeting pass
-(``meeting_tracks.transcribe_meeting``) runs the same code: it finishes each track's
+(``transcribe.tracks.transcribe_meeting``) runs the same code: it finishes each track's
 state here, starting from nothing when there is none (``CONVO_MEETING_LIVE_TRANSCRIBE``
 off). Live work only does what that pass would do, earlier:
 
-* **Runs** are a track's contiguous chunks, as in ``Pipeline._runs``. While recording,
+* **Runs** are a track's contiguous chunks, as in ``transcribe_engine.runs``. While recording,
   only the gap-free sequence prefix counts (a missing chunk may still arrive). A run is
   closed once the next chunk of the track has arrived and doesn't continue it.
 * **Windows** are planned from the stored VAD spans and chunk lengths with
-  ``Pipeline._plan_windows``, without decoding audio. Planning is greedy, so every window
+  ``transcribe_engine.plan_windows``, without decoding audio. Planning is greedy, so every window
   but the last of an open run is final: a window is cut only when the next speech region
   doesn't fit, and audio that arrives later can only make that region longer. Those
   windows are exactly the ones the end-of-meeting plan has, so whisper hears the same
@@ -29,13 +29,13 @@ off). Live work only does what that pass would do, earlier:
   loudness (dBFS on its own track, for the bleed check) measured from the same samples
   the end pass would read. Bleed is decided at the end over all tracks' pieces (text and
   stored loudness only), and only then are lines joined (``CONVO_JOIN_LINES``), as
-  ``meeting_tracks`` does for every track (QA BUG-04).
+  ``transcribe.tracks`` does for every track (QA BUG-04).
 * **Prompt**: the participants' names whisper is given are those of the tracks known at
   the time. Someone who joins late is only in the prompt of later windows; that is the
   one way a live result can differ from an end-only one (spelling of a name).
 
 **Deferred to the end**: shared-room tracks (any display name they ever had is a room
-or a bare device, by the end pass's own rule, ``meeting_tracks.is_room_track``: diarized
+or a bare device, by the end pass's own rule, ``transcribe.tracks.is_room_track``: diarized
 over the whole track so its "Speaker N" numbering is consistent), tracks with no display
 name yet, and chunks without a track.
 
@@ -92,7 +92,7 @@ UNREADABLE = (OSError, AudioDecodeError, LiveMismatch)
 
 @dataclass
 class Run:
-    """Contiguous chunks of one track (``Pipeline._runs``); ``closed`` when no later chunk
+    """Contiguous chunks of one track (``transcribe_engine.runs``); ``closed`` when no later chunk
     can extend it."""
     chunks: list[dict[str, Any]]
     closed: bool
@@ -128,7 +128,7 @@ class Run:
 
 
 def plan_runs(chunks: list[dict[str, Any]], *, final: bool) -> list[Run]:
-    """A track's runs of contiguous chunks, as ``Pipeline._runs`` cuts them. While the
+    """A track's runs of contiguous chunks, as ``transcribe_engine.runs`` cuts them. While the
     meeting records (``final`` false) only the gap-free sequence prefix is used and the
     last run stays open."""
     from ...transcribe_engine import CONTIGUOUS_TOLERANCE
@@ -196,7 +196,7 @@ class RunAudio:
         return slices[0] if len(slices) == 1 else np.concatenate(slices)
 
     def loudness(self, ref: PieceRef) -> float:
-        """dBFS of a line's audio, as ``meeting_tracks`` measures it on the whole run."""
+        """dBFS of a line's audio, as ``transcribe.tracks`` measures it on the whole run."""
         return rms_db(self.slice(int(ref.start * SAMPLE_RATE), int(ref.end * SAMPLE_RATE)))
 
 
@@ -292,13 +292,13 @@ def track_steps(pipeline: Pipeline, session_id: str, track: str, runs: list[Run]
 def _fold(st: TrackState, got: list[Piece], audio: RunAudio) -> None:
     """Add a window's pieces (in time order) to the track's pieces, each measured.
     Nothing is joined here: bleed is decided on the unjoined pieces at the end, then
-    ``meeting_tracks`` joins the lines kept (QA BUG-04)."""
+    ``transcribe.tracks`` joins the lines kept (QA BUG-04)."""
     st.lines += [_row(p, audio.loudness(p[3])) for p in got]
 
 
 def deferred(info: dict[str, Any], owner_names: list[str]) -> bool:
     """A track left to the end-of-meeting pass: a shared room by the rule that pass uses
-    (``meeting_tracks.is_room_track``: any display name it ever had is a room or a
+    (``transcribe.tracks.is_room_track``: any display name it ever had is a room or a
     device, owner names excepted; QA BUG-01/15), so it is diarized over the whole track
     and its "Speaker N" numbering stays consistent. A track with no display name yet
     waits too: its first chunk can arrive before the name, which may be a room's

@@ -1,6 +1,6 @@
 """An old database upgraded by today's ``Store`` ends up with a fresh database's schema.
 
-Each fixture in ``tests/fixtures/`` is the schema of a database an older version of
+Each fixture in ``tests/unit/store/fixtures/`` is the schema of a database an older version of
 ``store.py`` created (its header names the source commit). The test loads it with that
 version's ``user_version``, adds a few fictional rows, opens it with today's ``Store``
 (which runs the migrations) and compares the result with a database today's ``Store``

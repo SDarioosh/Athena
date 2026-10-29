@@ -4,7 +4,7 @@ test_meetings.py checks that importing the API starts nothing and that a DELETE 
 watcher task. This checks the other end: after a bot leaves on its own, the server is
 back where it was before the join. No new thread, child process, asyncio task, timer,
 loop reader (the pidfd) or file descriptor, and no work dir. The bot is
-tests/fake_meeting_bot.py; data is fictional.
+tests/meetings/fake_meeting_bot.py; data is fictional.
 """
 
 from __future__ import annotations

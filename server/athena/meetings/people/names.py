@@ -69,7 +69,7 @@ _ROOM_RE = re.compile(r"\b(?:conference|meeting|board|huddle|zoom|focus|team)\s*
                       r"^rooms?\b|\brooms?\s*[a-z]?\d|\b(?:boardroom|auditorium)\b",
                       re.IGNORECASE)
 # Rooms and conference hardware (QA BUG-01): a track that can hold several people, never
-# one person. ``is_room_or_hardware`` (and so ``meeting_tracks.is_shared_room``) uses it.
+# one person. ``is_room_or_hardware`` (and so ``transcribe.tracks.is_shared_room``) uses it.
 # Product words with no use as a name match anywhere in the name ("Polycom Trio 8800").
 _HARDWARE_RE = re.compile(r"\b(?:polycom|crestron|logitech|yealink|webex|speakerphone|meetup|"
                           r"zoom\s*rooms?|dial-?in)\b", re.IGNORECASE)
@@ -143,11 +143,11 @@ def is_room_or_hardware(name: str | None) -> bool:
     holds a room word is a person ("Jordan Hall", "Cisco Ramirez"). An empty name says
     nothing and is not a room.
 
-    The one room rule of the meeting pipeline: ``meeting_tracks.is_shared_room`` is this
+    The one room rule of the meeting pipeline: ``transcribe.tracks.is_shared_room`` is this
     function. A bare device counts as shared because nobody on it is known; diarizing is
     the safe side (the diarizer still names enrolled voices, while a wrong name would put
     several people's words on one person). The owner's own Zoom names are never rooms;
-    ``meeting_tracks`` checks those before calling this.
+    ``transcribe.tracks`` checks those before calling this.
     """
     n = " ".join((name or "").split())
     return bool(n) and (looks_like_room(n) or not clean_display_name(n))
@@ -206,7 +206,7 @@ def speaker_for_track(store: Store, track_info: Mapping[str, Any],
     alias picks that person; else a new person is made from the latest cleaned name. All
     display names of the track, raw and cleaned, become aliases of that person. A track
     with no usable name gets ``track_info["placeholder"]`` (default "Unknown") and makes
-    no person. ``meeting_tracks.track_speaker`` calls this.
+    no person. ``transcribe.tracks.track_speaker`` calls this.
 
     The owner keeps their canonical name, never a Zoom display name (owner request, QA
     BUG-07): the enrolled owner voice's name, else ``owner_display`` (callers pass

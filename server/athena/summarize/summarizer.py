@@ -108,7 +108,7 @@ class Summarizer:
         """Return a storage-ready dict (absolute ``source_at`` timestamps).
 
         ``context`` (optional) is a few lines put before every part of the transcript,
-        e.g. a Zoom meeting's topic and participants (``meeting_chat.summary_context``).
+        e.g. a Zoom meeting's topic and participants (``meetings.ingest.chat.summary_context``).
 
         ``known`` (optional) returns the stored facts that may match some candidate facts
         (the pipeline passes the store's): a fact that repeats or updates one of them is

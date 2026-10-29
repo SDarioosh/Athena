@@ -385,7 +385,7 @@ class Pipeline:
 
     def transcribe_live(self) -> int:
         """Transcribe meetings that are still being recorded, window by window, so only
-        their last windows are left when they end (``meeting_live.py``). Called on each
+        their last windows are left when they end (``meetings/transcribe/live.py``). Called on each
         worker tick: with no meeting in progress it costs one indexed query and imports
         nothing; ``CONVO_MEETING_LIVE_TRANSCRIBE=false`` makes it cost nothing. Returns
         how many whisper windows were done."""
@@ -438,7 +438,7 @@ class Pipeline:
 
                 learn_from_meeting(self, session_id, done, kept)
             if any(c["track"] for c in done):
-                # a meeting's live transcript (meeting_live.py) is in its lines now
+                # a meeting's live transcript (meetings/transcribe/live.py) is in its lines now
                 self.store.drop_live_states(session_id)
             if not self.settings.keep_audio:
                 # Only the chunks transcribed here: one uploaded meanwhile waits for the
@@ -665,7 +665,7 @@ class Pipeline:
         conv_id = self.store.save_conversation(have[0] if have else None, device,
                                                [s.id for s in segs if s.id is not None],
                                                absorb=have[1:])
-        # its topic and participants (meeting_chat.py) show on this conversation
+        # its topic and participants (meetings/ingest/chat.py) show on this conversation
         self.store.link_meeting(session_id, conv_id)
         return [conv_id]
 

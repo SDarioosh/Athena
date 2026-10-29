@@ -1,6 +1,6 @@
 """Meeting routes on the MCP HTTP server (lane 4A): forwarded to /v1/meetings, never tools.
 
-Fictional data only; the end-to-end tests start tests/fake_meeting_bot.py, which never
+Fictional data only; the end-to-end tests start tests/meetings/fake_meeting_bot.py, which never
 joins anything.
 """
 
@@ -265,7 +265,7 @@ def test_building_the_mcp_app_skips_meeting_code(tmp_path):
 # ------------------------------------------------- end to end with a fake bot
 @pytest.fixture
 def bot_relay(pipeline, tmp_path, monkeypatch):
-    """Relay → real ingest API (in process) → launcher → tests/fake_meeting_bot.py."""
+    """Relay → real ingest API (in process) → launcher → tests/meetings/fake_meeting_bot.py."""
     s = pipeline.settings
     s.meeting_bot_path, _ = _bot(tmp_path, "record")
     s.meeting_bot_runner = "plain"

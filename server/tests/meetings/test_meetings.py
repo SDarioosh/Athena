@@ -1,6 +1,6 @@
 """Meeting bot launcher (lane 1B): links, join token, routes, bot lifecycle, idle cost.
 
-The bot is tests/fake_meeting_bot.py behind a wrapper script; nothing joins Zoom. All
+The bot is tests/meetings/fake_meeting_bot.py behind a wrapper script; nothing joins Zoom. All
 data is fictional (meeting numbers, keys, passcodes).
 """
 
