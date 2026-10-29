@@ -7,10 +7,8 @@ from __future__ import annotations
 import pytest
 
 from athena.domain import Segment
-from athena.summarize.client import LLMClient
 from athena.summarize.prompts import ACTIONS_SYSTEM, FACTS_SYSTEM, NOTE_ACTIONS_SYSTEM
-from athena.summarize.summarizer import Summarizer
-from tests.conftest import fake_llm_transport
+from tests.conftest import make_summarizer
 
 T0 = 1_760_000_000.0  # Thursday 2025-10-09
 
@@ -34,8 +32,7 @@ def summarize(items: list[dict], said: str, facts: list[dict] | None = None,
               kind: str = "note") -> dict:
     summary = {"title": "Plans", "summary": "s", "key_points": [], "people": [],
                "topics": [], "facts": facts or [], "action_items": items}
-    llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary=summary))
-    return Summarizer(llm, "Me", timezone="Europe/Berlin").summarize(
+    return make_summarizer(summary).summarize(
         [Segment(T0, T0 + 5, said, "Me", True)], kind=kind)
 
 

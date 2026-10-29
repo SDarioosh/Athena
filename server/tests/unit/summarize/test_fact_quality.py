@@ -27,7 +27,7 @@ from athena.summarize.client import LLMClient
 from athena.summarize.prompts import FACTS_SYSTEM, REVIEW_SYSTEM
 from athena.summarize.rules.facts import fact_kind
 from athena.summarize.summarizer import Summarizer
-from tests.conftest import fake_llm_transport
+from tests.conftest import fake_llm_transport, make_summarizer
 from tests.unit.mcp.test_mcp import call
 from tests.unit.store.test_confirmed_facts import T0
 
@@ -42,11 +42,9 @@ def summarize(facts: list[dict], kind: str = "casual", scores: dict[str, int] | 
               items: list[dict] | None = None, **opts) -> dict:
     summary = {"title": "Chat", "summary": "s", "key_points": [], "people": people or [],
                "topics": [], "action_items": items or [], "facts": facts}
-    llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(
-        summary=summary, scores=scores, log=log))
     segments = [Segment(T0 + 10 * i, T0 + 10 * i + 5, line, "Me", True)
                 for i, line in enumerate(LINES)]
-    return Summarizer(llm, "Me", timezone="Europe/Berlin", **opts).summarize(
+    return make_summarizer(summary, scores=scores, log=log, **opts).summarize(
         segments, kind=kind, known=known)
 
 

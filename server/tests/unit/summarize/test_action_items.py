@@ -13,9 +13,7 @@ from athena.db import migrations as migrations_mod
 from athena.db.store import Store
 from athena.domain import Segment
 from athena.mcp_server import build_mcp
-from athena.summarize.client import LLMClient
-from athena.summarize.summarizer import Summarizer
-from tests.conftest import fake_llm_transport
+from tests.conftest import make_summarizer
 from tests.integration.test_voice_notes import conv_of, record
 from tests.unit.mcp.test_mcp import call
 
@@ -38,9 +36,7 @@ def summary(items):
 
 
 def summarizer(items):
-    llm = LLMClient("http://llm.test/v1", "m",
-                    transport=fake_llm_transport(summary=summary(items)))
-    return Summarizer(llm, "Me", timezone="Europe/Berlin")
+    return make_summarizer(summary(items))
 
 
 def note_items(items, said="Meeting with Jason on Wednesday at 12 pm"):

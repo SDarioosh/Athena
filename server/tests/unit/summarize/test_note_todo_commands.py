@@ -6,9 +6,7 @@ command word, so the hub had nothing to file or suggest."""
 from __future__ import annotations
 
 from athena.domain import Segment
-from athena.summarize.client import LLMClient
-from athena.summarize.summarizer import Summarizer
-from tests.conftest import fake_llm_transport
+from tests.conftest import make_summarizer
 
 T0 = 1_760_000_000.0
 
@@ -16,8 +14,7 @@ T0 = 1_760_000_000.0
 def items(lines: list[str], model_items: list[dict]) -> list[dict]:
     summary = {"title": "Fishing permit", "summary": " ".join(lines), "key_points": [],
                "people": [], "topics": [], "facts": [], "action_items": model_items}
-    llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary=summary))
-    summarizer = Summarizer(llm, "Me", timezone="Europe/Berlin", min_words=1)
+    summarizer = make_summarizer(summary, min_words=1)
     segments = [Segment(T0 + 5 * i, T0 + 5 * i + 4, said, "Me", True)
                 for i, said in enumerate(lines)]
     return summarizer.summarize(segments, kind="note")["action_items"]

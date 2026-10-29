@@ -13,10 +13,8 @@ import pytest
 
 from athena.db.store import Store
 from athena.domain import Segment, person_name
-from athena.summarize.client import LLMClient
 from athena.summarize.prompts import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM
-from athena.summarize.summarizer import Summarizer
-from tests.conftest import fake_llm_transport
+from tests.conftest import make_summarizer
 from tests.unit.store.test_confirmed_facts import HOUR, T0, say
 
 
@@ -24,10 +22,9 @@ def summarize(items: list[dict], lines: list[str], kind: str = "casual",
               people: list[str] | None = None) -> dict:
     summary = {"title": "Chat", "summary": "s", "key_points": [], "people": people or [],
                "topics": [], "facts": [], "action_items": items}
-    llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary=summary))
     segments = [Segment(T0 + 10 * i, T0 + 10 * i + 5, text, "Me", True)
                 for i, text in enumerate(lines)]
-    return Summarizer(llm, "Me", timezone="Europe/Berlin").summarize(segments, kind=kind)
+    return make_summarizer(summary).summarize(segments, kind=kind)
 
 
 def test_prompts_say_a_quick_errand_is_not_an_action_item():

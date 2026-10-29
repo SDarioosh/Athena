@@ -5,10 +5,8 @@ it, so the hub puts it on the calendar."""
 from __future__ import annotations
 
 from athena.domain import Segment
-from athena.summarize.client import LLMClient
 from athena.summarize.prompts import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM
-from athena.summarize.summarizer import Summarizer
-from tests.conftest import fake_llm_transport
+from tests.conftest import make_summarizer
 
 T0 = 1_760_000_000.0  # Thursday 2025-10-09, 10:53 in Berlin
 TUESDAY = "2025-10-14"
@@ -18,8 +16,7 @@ def summarize(said: str, model_items: list[dict], kind: str | None = "note",
               facts: list[dict] | None = None) -> dict:
     summary = {"title": "Meeting", "summary": said, "key_points": [], "people": [],
                "topics": [], "facts": facts or [], "action_items": model_items}
-    llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary=summary))
-    summarizer = Summarizer(llm, "Me", timezone="Europe/Berlin", min_words=1)
+    summarizer = make_summarizer(summary, min_words=1)
     return summarizer.summarize([Segment(T0, T0 + 5, said, "Me", True)], kind=kind)
 
 

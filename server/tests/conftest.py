@@ -111,6 +111,16 @@ def fake_llm_transport(summary: dict | None = None, digest: dict | None = None,
     return httpx.MockTransport(handler)
 
 
+def make_summarizer(summary: dict | None = None, *, scores: dict[str, int] | None = None,
+                    log: list | None = None, **opts) -> Summarizer:
+    """The owner "Me"'s summarizer in Europe/Berlin, answered by the fake llama-server
+    (``fake_llm_transport`` with ``summary``, ``scores`` and ``log``); ``opts`` go to
+    ``Summarizer`` (e.g. ``min_words=1``)."""
+    llm = LLMClient("http://llm.test/v1", "m",
+                    transport=fake_llm_transport(summary=summary, log=log, scores=scores))
+    return Summarizer(llm, "Me", timezone="Europe/Berlin", **opts)
+
+
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(ingest_token=TOKEN, data_dir=tmp_path / "data", silence_stop_seconds=60,

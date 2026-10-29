@@ -9,9 +9,7 @@ from __future__ import annotations
 import pytest
 
 from athena.domain import Segment
-from athena.summarize.client import LLMClient
-from athena.summarize.summarizer import Summarizer
-from tests.conftest import fake_llm_transport
+from tests.conftest import make_summarizer
 
 T0 = 1_792_800_000.0 + 8 * 3600  # Saturday 2026-10-24, 10:00 in Berlin
 
@@ -22,8 +20,7 @@ def items(lines: list[str], model_items: list[dict] | None = None,
     default: the rules alone) and writes ``summary``."""
     out = {"title": "Voice note", "summary": summary, "key_points": [], "people": [],
            "topics": [], "facts": [], "action_items": model_items or []}
-    llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary=out))
-    summarizer = Summarizer(llm, "Me", timezone="Europe/Berlin", min_words=1)
+    summarizer = make_summarizer(out, min_words=1)
     segments = [Segment(T0 + 4 * i, T0 + 4 * i + 3, said, "Me", True)
                 for i, said in enumerate(lines)]
     return summarizer.summarize(segments, kind="note")["action_items"]

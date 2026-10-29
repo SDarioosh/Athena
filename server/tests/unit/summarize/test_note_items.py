@@ -14,7 +14,7 @@ from athena.summarize.client import LLMClient
 from athena.summarize.prompts import NOTE_ACTIONS_SYSTEM
 from athena.summarize.summarizer import Summarizer
 from athena.transcribe import TranscriptPiece
-from tests.conftest import fake_llm_transport
+from tests.conftest import fake_llm_transport, make_summarizer
 from tests.integration.test_voice_notes import conv_of, record
 from tests.unit.mcp.test_mcp import call
 
@@ -31,8 +31,7 @@ def summarizer(items: list[dict], said: str = "") -> Summarizer:
     # no summary by default: a lone note keeps its own words (see test_lone_note_*)
     summary = {"title": "Battery", "summary": said, "key_points": [], "people": [],
                "topics": [], "facts": [], "action_items": items}
-    llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary=summary))
-    return Summarizer(llm, "Me", timezone="Europe/Berlin")
+    return make_summarizer(summary)
 
 
 def note_items(items: list[dict], said: str, kind: str = "note") -> list[dict]:
@@ -322,9 +321,7 @@ def test_lone_note_json_has_the_voice_notes_key_points(pipeline, stored):
     summary = {"title": "AMOLED T4-S3 Dimensions", "summary": T4_SUMMARY,
                "key_points": T4_POINTS, "people": [], "topics": [], "facts": [],
                "action_items": []}
-    pipeline.summarizer = Summarizer(
-        LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary=summary)),
-        "Me", timezone="Europe/Berlin")
+    pipeline.summarizer = make_summarizer(summary)
     record(pipeline, "n2", T0 + 3600, "note")
     mcp = build_mcp(pipeline.store, pipeline.settings)
     rows = {r["text"]: r for r in json.loads(call(mcp, "list_action_items", format="json"))}

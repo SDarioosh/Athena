@@ -11,10 +11,9 @@ import pytest
 from athena.db.store import Store
 from athena.domain import Segment, short_title
 from athena.mcp_server import build_mcp
-from athena.summarize.client import LLMClient
 from athena.summarize.summarizer import Summarizer
 from athena.transcribe import TranscriptPiece
-from tests.conftest import fake_llm_transport
+from tests.conftest import make_summarizer
 from tests.integration.test_voice_notes import record
 from tests.unit.mcp.test_mcp import call
 
@@ -24,8 +23,7 @@ T0 = 1_760_000_000.0  # Thursday 2025-10-09
 def summarizer(items: list[dict]) -> Summarizer:
     summary = {"title": "Errands", "summary": "s", "key_points": [], "people": [],
                "topics": [], "facts": [], "action_items": items}
-    llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary=summary))
-    return Summarizer(llm, "Me", timezone="Europe/Berlin")
+    return make_summarizer(summary)
 
 
 def items_of(items: list[dict], said: str, kind: str = "note") -> list[dict]:

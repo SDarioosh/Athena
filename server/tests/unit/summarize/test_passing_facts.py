@@ -15,10 +15,8 @@ from __future__ import annotations
 import pytest
 
 from athena.domain import Segment
-from athena.summarize.client import LLMClient
 from athena.summarize.prompts import FACTS_SYSTEM
-from athena.summarize.summarizer import Summarizer
-from tests.conftest import fake_llm_transport
+from tests.conftest import make_summarizer
 from tests.unit.store.test_confirmed_facts import T0
 
 
@@ -26,10 +24,9 @@ def summarize(facts: list[str], kind: str = "casual") -> list[str]:
     summary = {"title": "Chat", "summary": "s", "key_points": [], "people": [],
                "topics": [], "action_items": [],
                "facts": [{"subject": "Ana", "fact": f, "at_seconds": 0} for f in facts]}
-    llm = LLMClient("http://llm.test/v1", "m", transport=fake_llm_transport(summary=summary))
     segments = [Segment(T0 + 10 * i, T0 + 10 * i + 5, "We talked about a few things.", "Me", True)
                 for i in range(8)]
-    out = Summarizer(llm, "Me", timezone="Europe/Berlin").summarize(segments, kind=kind)
+    out = make_summarizer(summary).summarize(segments, kind=kind)
     return [f["fact"] for f in out["facts"]]
 
 
