@@ -1,7 +1,11 @@
 # Athena rename: work order
 
-Status: **planned, not started** (written 2026-10-27). Each step below is one PR. Tick
-it off here in the same PR that does it.
+Status: **planned, not started** (written 2026-10-27). On 2026-10-29 the owner also chose to
+rename the hub's stored `"odysseus-sound"` values and server name `convo` with a data
+migration (cleanup lane 4F; filed calendar event IDs stay), and the watch's Bluetooth name
+(lane 1I); the "What stays" table below predates that. Since 2026-10-29 the steps run
+inside the cleanup ([cleanup-plan.md](cleanup-plan.md), "Renaming to Athena" maps each step
+to its lane). Each step below is one PR. Tick it off here in the same PR that does it.
 
 The project was called convo-ai, then barvis-ai, barvis-sound and odysseus-sound. The
 prose already says Athena. This plan renames the old names in code, settings and
@@ -326,7 +330,7 @@ is ever renamed, it gets its own plan, with a backup and a rollback.
 | Stored `"odysseus-sound"` values | hub: belief source (`src/evidence_intake.py`), note label (`src/module_action_items.py`, `src/notes_evidence.py`), memory source (`src/today_insight.py`), calendar uid prefix | Needs a migration of the owner's hub data. Anything missed is filed or remembered twice. |
 | Android `applicationId` `org.barvis.sound.relay` | installed phone app | It becomes a separate app: reinstall, pair again, and recordings waiting in the old app are lost. |
 | Zepp `appId` and vendor | installed watch app | It becomes a new app on the watch. |
-| BLE name `barvis-tw`, BLE UUIDs, Opus tag bytes | T-Watch firmware, phone and PC relays | Every watch needs reflashing and pairing again. |
+| BLE UUIDs, Opus tag bytes (the BLE name `barvis-tw` is renamed after all: cleanup lane 1I, relays accept both names first) | T-Watch firmware, phone and PC relays | Every watch needs reflashing and pairing again. |
 | Hermes profiles `convo-ai`, `convo` | owner's Hermes setup, outside these repos | The build loop and eval profile; only the owner can rename them. |
 | Hub branch `barvis` | hub repo, clones, `fork_deploy.sh` default ref | Every clone and the deploy default would need updating, for no visible gain. |
 | `/api/codex/sound/*`, scopes `sound:*` | installed phone relays, existing API tokens | They stay as aliases next to the new names (steps 13, 14). |
