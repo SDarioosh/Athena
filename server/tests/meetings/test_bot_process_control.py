@@ -393,9 +393,7 @@ def test_shutdown_as_container_init(meeting_settings, pipeline, rec, tmp_path,  
 
 
 def test_launcher_module_names() -> None:
-    """Names other code and tests reach through the launcher module (and the package)."""
-    import athena.meetings as package
-
+    """Names other code and tests reach through the launcher module."""
     names = ("Launcher", "MeetingError", "ZoomMeeting", "parse_zoom_link",
              "parse_join_request", "sign_sdk_jwt", "join_token_provider", "memory_bytes",
              "bot_args", "build_command", "bot_env", "check_settings", "parse_state_line",
@@ -407,7 +405,7 @@ def test_launcher_module_names() -> None:
              "MAX_PASSCODE_CHARS", "JOIN_TOKEN_SECONDS", "JOIN_TOKEN_MARGIN_SECONDS",
              "MAX_BOT_SECONDS", "SHUTDOWN_STOP_SECONDS", "log")
     for name in names:
-        assert getattr(package, name) is getattr(meetings, name), name
+        assert hasattr(meetings, name), name
     assert meetings.MAX_LOG_LINE == 4096 and meetings.LineSplitter().limit == 4096
 
 

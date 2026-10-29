@@ -8,28 +8,7 @@
 - ``people/``: display names (``people.names``) and voices learned from meetings
   (``people.voices``).
 
-``athena.meetings`` was the launcher module before it became this package, so its
-names (``Launcher``, ``MeetingError``, ``parse_zoom_link``, ...) are still read here.
-They load the launcher on first use, not on import: a server that never gets a
-meeting request never imports it, and importing ``people`` or ``transcribe`` doesn't
-either. To monkeypatch the launcher, patch ``athena.meetings.bot.launcher``.
+Importing this package loads nothing else: a server that never gets a meeting request
+never imports the launcher (``athena.meetings.bot.launcher``), and importing ``people``
+or ``transcribe`` doesn't either.
 """
-
-from __future__ import annotations
-
-import importlib
-from typing import Any
-
-_SUBPACKAGES = ("bot", "ingest", "people", "transcribe")
-
-
-def __getattr__(name: str) -> Any:
-    if name.startswith("__"):
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    if name in _SUBPACKAGES:  # ``from athena.meetings import people`` loads no launcher
-        return importlib.import_module("." + name, __name__)
-    launcher = importlib.import_module(".bot.launcher", __name__)
-    try:
-        return getattr(launcher, name)
-    except AttributeError:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
