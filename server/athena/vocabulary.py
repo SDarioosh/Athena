@@ -2,7 +2,7 @@
 
 The owner types names and jargon whisper keeps mishearing ("RokTalk, Meshtastic,
 Rokland") as comma-separated text. ``PUT /v1/settings/vocabulary`` stores the list in
-``convo.db`` (``module_settings``); :meth:`Pipeline.whisper_prompt` puts it in whisper's
+the database (``module_settings``); :meth:`Pipeline.whisper_prompt` puts it in whisper's
 prompt from the next recording on, after ``CONVO_WHISPER_PROMPT`` and before the names
 of known speakers. An empty list goes back to no words.
 

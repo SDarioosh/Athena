@@ -12,20 +12,23 @@ server. **Nothing in the data path touches the cloud.**
 - In prose (docs, PR text, comments you add) call the project **Athena**
   (formerly convo-ai, barvis-ai, barvis-sound, odysseus-sound) and the hub **Odysseus**
   ("our Odysseus fork" where it must be told apart from upstream Odysseus).
-- The name `odysseus-sound` also stays where it is data, not prose: the systemd unit
-  text that `server/scripts/deploy.sh` writes (changing it restarts the services), and,
+- The name `odysseus-sound` also stays where it is data, not prose: the compose project
+  name in `server/compose.yml` (until every server has deployed once with the Docker-only
+  `deploy.sh`), and,
   in the hub, the belief source, the label on filed notes, the memory source and
   calendar uid prefixes (stored in the owner's data).
 - **Don't rename code identifiers.** They keep the old name on purpose: the
   `convo_server` package name (the package is now `athena`; `convo_server` stays an alias
-  of it, same module objects, until the cleanup's shim removal), the `convo-server` CLI
-  (installed next to the new `athena`, both run the same code), `CONVO_*` env vars, paths such as
-  `server/data/convo.db`, the hub's server name `convo` (the name Odysseus registered
+  of it, same module objects, until the owner confirms nothing outside the repos uses it:
+  `docs/athena-rename-plan.md` step 16), the `convo-server` CLI
+  (installed next to the new `athena`, both run the same code), the hub's server name `convo` (the name Odysseus registered
   our MCP server under; since MCP 0.20.1 the server reports itself as `athena`, was
   `convo-ai`, and the hub never reads that), the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app's appId and vendor
   `convo-ai` (its display name is now "Athena Rec Test"), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
-  `SDarioosh/Athena`; GitHub redirects the old URL), the `barvis-sound*` service names
-  and `BARVIS_SOUND_*` vars of `server/scripts/deploy.sh`, the Android app ID
+  `SDarioosh/Athena`; GitHub redirects the old URL), the old native units' names
+  `barvis-sound*` (`deploy.sh` still recognises them to switch to Docker), the `BARVIS_SOUND_*`
+  settings of `server/scripts/deploy.sh` (read beside the new `ATHENA_*` names), the compose
+  services `sound-api`/`sound-mcp`, the Android app ID
   `org.barvis.sound.relay`, the BLE UUID bytes and the
   Opus tag text (`BARVIS_SESSION=`…; the macros are now `ATHENA_UUID_BYTES` / `ATHENA_TAG_*` in
   `firmware/recorder/main/wire_ids.h`, values unchanged), and the PC relay's old package
@@ -34,6 +37,13 @@ server. **Nothing in the data path touches the cloud.**
   breaks deployed servers and configs, paired watches, the installed phone app and
   Odysseus. Don't "fix" them ad hoc: the planned rename, step by step with the old
   names still working, is `docs/athena-rename-plan.md`.
+- Old names that keep working for good, beside the new ones: settings are read as
+  `ATHENA_*` and as the old `CONVO_*` (the new name wins when both are set; docs and
+  `.env.example` still write `CONVO_*`); the database is `athena.db` in the data dir, but an
+  existing `convo.db` is opened as it is while no `athena.db` exists (code never moves,
+  copies or renames it); the phone relay calls the hub's `/api/codex/athena/*` and falls
+  back to `/api/codex/sound/*` on a 404 from an older hub (tokens with only `sound:*`
+  scopes keep working). Never drop the old name from any of them.
 - The watch's BLE name is now `athena-tw`. Older firmware advertises `barvis-tw`; the phone
   and PC relays find the watch by its service UUID and accept both names, for good, so
   never drop `barvis-tw` from them.
@@ -42,7 +52,7 @@ server. **Nothing in the data path touches the cloud.**
 
 - Odysseus (our Odysseus fork, AGPL-3.0) is the hub: the one chat and agent UI. This repo
   is a separate program that owns its data. Odysseus reaches it only through our MCP
-  server (or the HTTP API here) and never writes `convo.db` directly.
+  server (or the HTTP API here) and never writes our database directly.
 - The module contract is in the hub repo:
   [docs/fork/modules.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/modules.md).
   How Odysseus connects to us:
@@ -57,11 +67,11 @@ server. **Nothing in the data path touches the cloud.**
   storage, search, digest, MCP server (`athena/mcp_server.py`), frontend eval
   (`server/eval/bakeoff.py`). Storage is `athena/db/` (`Store` in `db/store.py`) with the
   kinds, statuses and name rules in `athena/domain.py`; summaries are `athena/summarize/`;
-  meetings are `athena/meetings/`; the old modules (`athena/store.py`, `athena/llm.py`,
-  `athena/meeting_*.py`, `athena/zoom_signin.py`) only re-export them, so import from
-  the new paths. Tests: `server/tests/unit/`, `integration/`, `meetings/`, `contract/`.
-  `server/scripts/deploy.sh` updates the server and runs it as background services, or as the Docker containers of `server/compose.yml`
-  (`BARVIS_SOUND_RUNNER=docker`); the hub's `scripts/fork_deploy.sh` calls it. See `server/README.md`.
+  meetings are `athena/meetings/` (`bot/`, `ingest/`, `transcribe/`, `people/`).
+  Tests: `server/tests/unit/`, `integration/`, `meetings/`, `contract/`.
+  `server/scripts/deploy.sh` updates the server and runs it as the Docker containers of
+  `server/compose.yml` (Docker only; an older native install is switched only with
+  `ATHENA_RUNNER=docker`); the hub's `scripts/fork_deploy.sh` calls it. See `server/README.md`.
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
   recording feasibility test app; see `zepp-app/README.md`.
 - `firmware/recorder/`: ESP-IDF 5.x firmware for our own recorders, one shared `main/`
@@ -165,7 +175,7 @@ server. **Nothing in the data path touches the cloud.**
    thinking disabled) returns title, summary, key points, action items,
    people, topics, durable facts, each with a source offset. Daily digest per
    `CONVO_TIMEZONE` day.
-7. **Store** — SQLite (`server/data/convo.db`): sessions, chunks, segments,
+7. **Store** — SQLite (`server/data/athena.db`, or an older install's `convo.db`): sessions, chunks, segments,
    conversations, action items, facts, people, digests, speakers, FTS5 index,
    optional embeddings. This is the source of truth; any frontend reads it
    through the MCP server or the API, never the other way round.
@@ -367,8 +377,9 @@ relay tests and the Android build and tests.
   can be swapped.
 - Timestamps are UTC epoch seconds internally, ISO-8601 in the API.
 - Config comes from environment / `server/.env` (gitignored), prefix
-  `CONVO_`. Commit only `.env.example`. The server refuses to start without
-  `CONVO_INGEST_TOKEN`.
+  `ATHENA_` or the old `CONVO_` (both read, in one place: `athena/config.py`). Commit only
+  `.env.example`. The server refuses to start without `CONVO_INGEST_TOKEN` (or
+  `ATHENA_INGEST_TOKEN`).
 - Zepp app: JavaScript, `@zeppos/zeus-cli`, test on the real device.
 - Database schema changes go only through a new numbered step at the end of `MIGRATIONS`
   (`server/athena/db/migrations.py`); never edit `SCHEMA` (the frozen first schema) for a new

@@ -1,5 +1,5 @@
 // Command line and environment of athena-meeting-bot, exactly as the launcher builds them
-// (server/athena/meetings.py docstring, docs/api/meetings.md "Bot contract"). No Zoom SDK
+// (server/athena/meetings/bot/launcher.py docstring, docs/api/meetings.md "Bot contract"). No Zoom SDK
 // here, so the host tests cover it.
 #pragma once
 

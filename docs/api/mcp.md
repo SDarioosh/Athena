@@ -1,6 +1,6 @@
 # MCP tools
 
-Moved here from [server/README.md](../../server/README.md) on 2026-10-29. How to connect Hermes or Odysseus is under "Knowledge layer (MCP)" there; the module contract is in [AGENTS.md](../../AGENTS.md#mcp-tool-contract).
+Moved here from [server/README.md](../../server/README.md) on 2026-10-29. How to connect Hermes or Odysseus is under "Knowledge layer (MCP)" there; the module contract is in [AGENTS.md](../../AGENTS.md#mcp-tool-contract). Settings are written `CONVO_<NAME>` here; each also works as `ATHENA_<NAME>`, which wins when both are set.
 
 ## Version notes
 
@@ -267,7 +267,9 @@ or an API that isn't running is a 502 with a readable `detail`. The relay only f
 HTTP: it never imports the meeting code, so `mcp --http` loads and starts nothing new.
 
 The read routes are for the phone relay's T5 sync when it is paired through Odysseus
-(Odysseus forwards them for a token with `sound:read` / `sound:write`); the MCP token can
+(Odysseus forwards them at `/api/codex/athena/*` for a token with `athena:read` /
+`athena:write`; the old `/api/codex/sound/*` and `sound:*` names keep working, and a hub from
+before the Athena names has only those); the MCP token can
 read the same data through the tools anyway.
 
 Each request is forwarded unchanged to this module's own ingest API

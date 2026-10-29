@@ -1,4 +1,5 @@
-"""server/scripts/deploy.sh: syntax and the systemd units it writes (no services started)."""
+"""server/scripts/deploy.sh: syntax, settings, the hub hand-off and the meeting guard (no
+service or container is started: docker, systemctl and curl are fakes)."""
 
 from __future__ import annotations
 
@@ -22,46 +23,55 @@ _NO_API_BIN: Path | None = None
 
 def _no_api_bin() -> Path:
     """A bin dir whose curl never reaches anything, so a test never asks a real Athena on
-    this machine whether a meeting is running (a developer's server/.env has a real token)."""
+    this machine whether a meeting is running (a developer's server/.env has a real token),
+    and whose systemctl and docker do nothing, so a test never stops a real service or
+    container (on the owner's server the real ones run Athena)."""
     global _NO_API_BIN
     if _NO_API_BIN is None:
         _NO_API_BIN = Path(tempfile.mkdtemp(prefix="deploy-test-bin-"))
-        curl = _NO_API_BIN / "curl"
-        curl.write_text("#!/usr/bin/env bash\nexit 7\n")
-        curl.chmod(0o755)
+        for name, body in (("curl", "exit 7"), ("systemctl", "exit 1"), ("docker", "exit 0"),
+                           ("journalctl", "exit 0")):
+            tool = _NO_API_BIN / name
+            tool.write_text(f"#!/usr/bin/env bash\n{body}\n")
+            tool.chmod(0o755)
+        # no unit files and no pid files of a real install
+        (_NO_API_BIN / "cfg").mkdir()
+        (_NO_API_BIN / "data").mkdir()
     return _NO_API_BIN
 
 
 def run(*args: str, **env: str) -> subprocess.CompletedProcess[str]:
     base = {k: v for k, v in os.environ.items()
-            if not k.startswith(("CONVO_", "BARVIS_SOUND_"))}
+            if not k.startswith(("CONVO_", "BARVIS_SOUND_", "ATHENA_", "FORK_", "DOCKER",
+                                 "COMPOSE_"))}
     # tests that fake their own tools pass PATH; the others get a curl that can't connect
     base["PATH"] = f"{_no_api_bin()}:{base.get('PATH', '')}"
-    # background runner: never touches the real systemd
+    base["XDG_CONFIG_HOME"] = str(_no_api_bin() / "cfg")
+    base["CONVO_DATA_DIR"] = str(_no_api_bin() / "data")
+    base["DOCKER"] = str(_no_api_bin() / "docker")
     return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True,
-                          env={**base, "BARVIS_SOUND_RUNNER": "background", **env},
-                          timeout=30)
+                          env={**base, **env}, timeout=120)
 
 
 def test_syntax():
     assert subprocess.run(["bash", "-n", str(SCRIPT)]).returncode == 0
 
 
-def test_units_follow_config():
-    out = run("units", CONVO_MCP_TOKEN="x" * 20,
-              BARVIS_SOUND_WHISPER_CMD="/opt/whisper-server -m m.bin --port 8178").stdout
-    assert f"WorkingDirectory={SERVER}\n" in out
-    assert f"ExecStart={SERVER}/.venv/bin/convo-server serve\n" in out
-    assert f"ExecStart={SERVER}/.venv/bin/convo-server mcp --http\n" in out
-    assert "ExecStart=/opt/whisper-server -m m.bin --port 8178\n" in out
-    assert out.count("Restart=on-failure") == 3
+def test_units_prints_the_compose_configuration(tmp_path):
+    docker, calls = fake_docker(tmp_path)
+    assert run("units", DOCKER=str(docker)).returncode == 0
+    expected = f"compose --project-directory {SERVER} -f {SERVER}/compose.yml config\n"
+    assert calls.read_text() == expected
 
 
-def test_optional_services_off_without_config():
-    # CONVO_MCP_TOKEN empty overrides any value in a local server/.env
-    out = run("units", CONVO_MCP_TOKEN="", BARVIS_SOUND_WHISPER_CMD="").stdout
-    assert "### barvis-sound.service" in out
-    assert "barvis-sound-mcp" not in out and "barvis-sound-whisper" not in out
+def test_no_systemd_unit_is_written():
+    text = SCRIPT.read_text()
+    assert "[Service]" not in text and "daemon-reload" not in text
+    # the one enable: restore_native, after a failed switch to Docker (units written by an
+    # older deploy.sh, never by this one)
+    assert text.count("systemctl --user enable") == 1
+    assert 'systemctl --user enable -q --now "$n"' in text
+    assert "systemctl --user start" not in text
 
 
 def test_usage_on_unknown_command():
@@ -118,7 +128,7 @@ def test_odysseus_skipped_when_off_or_started_by_the_hub(tmp_path):
 def test_odysseus_not_found_is_a_hint_not_an_error():
     r = run("odysseus", BARVIS_SOUND_ODYSSEUS_DIR="", DOCKER="false")
     assert r.returncode == 0
-    assert "BARVIS_SOUND_ODYSSEUS_DIR" in r.stdout
+    assert "ATHENA_ODYSSEUS_DIR" in r.stdout
 
 
 def test_odysseus_dir_without_deploy_script_fails(tmp_path):
@@ -135,17 +145,24 @@ def test_odysseus_deploy_failure_is_reported(tmp_path):
     assert "Odysseus deploy failed" in r.stderr
 
 
-def test_odysseus_skipped_under_a_hub_script_without_the_marker(tmp_path):
+@pytest.mark.parametrize("columns", [None, "80"])
+def test_odysseus_skipped_under_a_hub_script_without_the_marker(tmp_path, columns):
     # hub scripts from before FORK_DEPLOY_RUNNING: recognized by name (here the
-    # odysseus-deploy link the hub docs set up)
+    # odysseus-deploy link the hub docs set up), also when COLUMNS is exported and shorter
+    # than the caller's command line (ps cut its output to it; pytest-xdist sets 80)
     hub, calls = fake_hub(tmp_path)
-    caller = tmp_path / "odysseus-deploy"
+    caller_dir = tmp_path / ("a-rather-long-folder-name/" * 4)
+    caller_dir.mkdir(parents=True)
+    caller = caller_dir / "odysseus-deploy"
     caller.write_text(f'#!/usr/bin/env bash\nbash "{SCRIPT}" odysseus\necho done\n')
     caller.chmod(0o755)
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("CONVO_", "BARVIS_SOUND_", "FORK_"))}
-    r = subprocess.run([str(caller), "deploy"], capture_output=True, text=True, timeout=30,
-                       env={**env, "BARVIS_SOUND_ODYSSEUS_DIR": str(hub)})
+    r = subprocess.run([str(caller), "deploy"], capture_output=True, text=True, timeout=120,
+                       env={**env, "BARVIS_SOUND_ODYSSEUS_DIR": str(hub),
+                            **({"COLUMNS": columns} if columns else {}),
+                            "PATH": f"{_no_api_bin()}:{env.get('PATH', '')}",
+                            "DOCKER": str(_no_api_bin() / "docker")})
     assert r.returncode == 0, r.stderr
     assert not calls.exists()
 
@@ -191,7 +208,7 @@ def test_docker_refuses_pyannote_without_its_extra(tmp_path):
             CONVO_DIARIZER="pyannote", CONVO_DOCKER_EXTRAS="vad,diarization")
     assert r.returncode == 1
     assert "CONVO_DOCKER_EXTRAS=vad,diarization,pyannote" in r.stderr
-    assert not calls.exists()  # nothing built or started
+    assert calls.read_text() == "compose version\n"  # nothing built or started
 
 
 def test_docker_pyannote_with_its_extra_starts(tmp_path):
@@ -279,13 +296,13 @@ def test_sudo_docker_gets_the_sdk_dir_by_name(tmp_path):
     sudo.chmod(0o755)
     run("start", BARVIS_SOUND_RUNNER="docker", DOCKER=f"{sudo} docker", HOME=str(home),
         CONVO_ZOOM_SDK_KEY="k", CONVO_ZOOM_SDK_SECRET="s")
-    first = calls.read_text().splitlines()[0]
+    first = [c for c in calls.read_text().splitlines() if " --project-directory " in c][0]
     assert first.startswith(f"BARVIS_SOUND_ZOOM_SDK_DIR={sdk} docker compose ")
 
 
 # A meeting in progress: deploy, start and restart refuse while GET /v1/meetings lists an
-# active bot, unless --force (or BARVIS_SOUND_FORCE=1). Fakes: curl (the API), systemctl
-# and loginctl (systemd), docker.
+# active bot, unless --force (or ATHENA_FORCE=1, old name BARVIS_SOUND_FORCE=1). Fakes:
+# curl (the API), systemctl, docker.
 
 INGEST = "fictional-ingest-token-0123456789"
 ACTIVE = ('{"meetings": [{"id": "m1", "state": "recording", "active": true, '
@@ -296,7 +313,7 @@ NONE_ACTIVE = '{"meetings": [{"id": "m0", "state": "ended", "active": false}]}'
 
 
 def fake_system(tmp_path: Path, body: str | None = ACTIVE, code: str = "200") -> dict:
-    """A bin dir with fake curl, systemctl and loginctl; the env that uses it. ``body``
+    """A bin dir with fake curl, systemctl and docker; the env that uses it. ``body``
     None: the API doesn't answer."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -314,18 +331,25 @@ def fake_system(tmp_path: Path, body: str | None = ACTIVE, code: str = "200") ->
           *) exit 0 ;;  # /health
         esac
         """))
-    (bin_dir / "systemctl").write_text(f'#!/usr/bin/env bash\necho "systemctl $*" >> {log}\n')
-    (bin_dir / "loginctl").write_text("#!/usr/bin/env bash\necho yes\n")
+    (bin_dir / "systemctl").write_text(
+        f'#!/usr/bin/env bash\necho "systemctl $*" >> {log}\nexit 1\n')
+    (bin_dir / "docker").write_text(f'#!/usr/bin/env bash\necho "docker $*" >> {log}\n')
     for f in bin_dir.iterdir():
         f.chmod(0o755)
     return {"PATH": f"{bin_dir}:{os.environ['PATH']}", "XDG_CONFIG_HOME": str(tmp_path / "cfg"),
             "CONVO_INGEST_TOKEN": INGEST, "CONVO_MCP_TOKEN": "", "CONVO_PORT": "18765",
-            "BARVIS_SOUND_WHISPER_CMD": "", "BARVIS_SOUND_RUNNER": "systemd"}
+            "DOCKER": str(bin_dir / "docker"), "ATHENA_ZOOM_SDK_DIR": "off"}
 
 
 def calls(tmp_path: Path) -> str:
     log = tmp_path / "log"
     return log.read_text() if log.exists() else ""
+
+
+def changed(tmp_path: Path) -> bool:
+    """Did the script restart, stop, build or start anything?"""
+    return any(f" {verb}" in line for line in calls(tmp_path).splitlines()
+               for verb in ("restart", "stop", "up ", "build", "down", "rm ", "disable"))
 
 
 def test_restart_refused_while_a_bot_is_active(tmp_path):
@@ -334,8 +358,8 @@ def test_restart_refused_while_a_bot_is_active(tmp_path):
     assert "Athena is in a meeting right now" in r.stderr
     assert '"Budget sync (fictional)" (Zoom meeting 81234567890, recording, id m1)' in r.stderr
     assert "m0" not in r.stderr  # an ended meeting is not named
-    assert "deploy.sh restart --force" in r.stderr and "BARVIS_SOUND_FORCE=1" in r.stderr
-    assert "systemctl" not in calls(tmp_path)  # nothing stopped or restarted
+    assert "deploy.sh restart --force" in r.stderr and "ATHENA_FORCE=1" in r.stderr
+    assert not changed(tmp_path)  # nothing stopped or restarted
     # the API is asked with the ingest token, which never goes on curl's command line
     assert "http://127.0.0.1:18765/v1/meetings?limit=100" in calls(tmp_path)
     assert f"stdin Authorization: Bearer {INGEST}" in calls(tmp_path)
@@ -344,13 +368,13 @@ def test_restart_refused_while_a_bot_is_active(tmp_path):
 
 
 def test_restart_with_force_restarts_and_names_the_meeting(tmp_path):
-    for env in ({}, {"BARVIS_SOUND_FORCE": "1"}):
+    for env in ({}, {"ATHENA_FORCE": "1"}, {"BARVIS_SOUND_FORCE": "1"}):
         args = ("restart",) if env else ("restart", "--force")
         r = run(*args, **{**fake_system(tmp_path), **env})
         assert r.returncode == 0, r.stderr
         assert "--force: restarting Athena's API although a meeting bot is active" in r.stdout
         assert "Budget sync (fictional)" in r.stdout
-        assert "systemctl --user restart barvis-sound" in calls(tmp_path)
+        assert f"-f {SERVER}/compose.yml restart" in calls(tmp_path)
         (tmp_path / "log").unlink()
 
 
@@ -358,7 +382,7 @@ def test_restart_without_an_active_bot(tmp_path):
     r = run("restart", **fake_system(tmp_path, NONE_ACTIVE))
     assert r.returncode == 0, r.stderr
     assert "meeting" not in r.stdout + r.stderr
-    assert "systemctl --user restart barvis-sound" in calls(tmp_path)
+    assert f"-f {SERVER}/compose.yml restart" in calls(tmp_path)
 
 
 @pytest.mark.parametrize("body, code, note", [
@@ -370,7 +394,7 @@ def test_restart_goes_on_when_the_api_cannot_tell(tmp_path, body, code, note):
     r = run("restart", **fake_system(tmp_path, body, code))
     assert r.returncode == 0, r.stderr
     assert "note: could not check for a meeting in progress" in r.stdout and note in r.stdout
-    assert "systemctl --user restart barvis-sound" in calls(tmp_path)
+    assert f"-f {SERVER}/compose.yml restart" in calls(tmp_path)
 
 
 def test_no_token_goes_on_with_a_note(tmp_path):
@@ -387,7 +411,8 @@ def test_docker_runner_refuses_and_forces(tmp_path):
     for cmd in ("start", "restart"):
         r = run(cmd, **env)
         assert r.returncode == 1 and f"not running '{cmd}'" in r.stderr
-        assert not docker_calls.exists()
+        assert docker_calls.read_text() == "compose version\n"  # only checked for docker
+        docker_calls.unlink()
     assert " restart" in (run("restart", "--force", **env), docker_calls.read_text())[1]
     assert " up -d --build" in (run("start", "--force", **env), docker_calls.read_text())[1]
 
@@ -408,7 +433,7 @@ def test_deploy_refused_before_the_checkout_moves(tmp_path):
     r = run("deploy", **env)
     assert r.returncode == 1 and "not running 'deploy'" in r.stderr
     assert "deploy.sh deploy --force" in r.stderr
-    assert "fetching" not in r.stdout and "systemctl" not in calls(tmp_path)
+    assert "fetching" not in r.stdout and not changed(tmp_path)
     assert subprocess.run(["git", "-C", str(SERVER), "rev-parse", "HEAD"],
                           capture_output=True, text=True).stdout == head
     # forced, or with the API down, it goes on to the next step (here: the bad remote)
@@ -422,15 +447,20 @@ def test_deploy_refused_before_the_checkout_moves(tmp_path):
 
 def test_force_is_never_read_from_dotenv():
     text = SCRIPT.read_text()
-    assert "env_value BARVIS_SOUND_FORCE" not in text
-    assert 'if [ "${BARVIS_SOUND_FORCE:-}" = 1 ]; then FORCE=1; fi' in text
+    assert "env_value BARVIS_SOUND_FORCE" not in text and "setting ATHENA_FORCE" not in text
+    assert 'if [ "${ATHENA_FORCE-${BARVIS_SOUND_FORCE-}}" = 1 ]; then FORCE=1; fi' in text
+
+
+def test_athena_force_set_to_something_else_wins_over_the_old_name(tmp_path):
+    r = run("restart", **{**fake_system(tmp_path), "ATHENA_FORCE": "0", "BARVIS_SOUND_FORCE": "1"})
+    assert r.returncode == 1 and "not running 'restart'" in r.stderr
 
 
 def test_help_documents_force():
     r = run("--help")
     assert r.returncode == 0
     assert "deploy.sh deploy" in r.stdout and "--force" in r.stdout
-    assert "BARVIS_SOUND_FORCE=1" in r.stdout
+    assert "ATHENA_FORCE=1" in r.stdout and "BARVIS_SOUND_FORCE=1" in r.stdout
 
 
 def test_hub_deploy_during_a_meeting_fails_fast(tmp_path):
@@ -446,9 +476,17 @@ def test_hub_deploy_during_a_meeting_fails_fast(tmp_path):
     env = {**{k: v for k, v in os.environ.items()
               if not k.startswith(("CONVO_", "BARVIS_SOUND_", "FORK_"))},
            **fake_system(tmp_path), "BARVIS_SOUND_REMOTE": "no-such-remote-for-tests"}
-    r = subprocess.run([str(hub)], capture_output=True, text=True, timeout=30, env=env)
+    r = subprocess.run([str(hub)], capture_output=True, text=True, timeout=120, env=env)
     assert "module failed" in r.stdout and "not running 'deploy'" in r.stderr
-    assert "BARVIS_SOUND_FORCE=1 scripts/fork_deploy.sh deploy" in r.stderr
-    r = subprocess.run([str(hub)], capture_output=True, text=True, timeout=30,
-                       env={**env, "BARVIS_SOUND_FORCE": "1"})
-    assert "warning: --force" in r.stdout and "not running" not in r.stderr
+    assert "ATHENA_FORCE=1 scripts/fork_deploy.sh deploy" in r.stderr
+    for force in ("ATHENA_FORCE", "BARVIS_SOUND_FORCE"):
+        r = subprocess.run([str(hub)], capture_output=True, text=True, timeout=120,
+                           env={**env, force: "1"})
+        assert "warning: --force" in r.stdout and "not running" not in r.stderr
+
+
+def test_meeting_check_reads_the_token_under_its_new_name(tmp_path):
+    env = {**fake_system(tmp_path), "ATHENA_INGEST_TOKEN": INGEST, "CONVO_INGEST_TOKEN": ""}
+    r = run("restart", **env)
+    assert r.returncode == 1 and "Athena is in a meeting right now" in r.stderr
+    assert f"stdin Authorization: Bearer {INGEST}" in calls(tmp_path)

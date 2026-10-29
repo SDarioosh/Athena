@@ -1,6 +1,7 @@
 # Athena's Zoom meeting bot in the sound-api container (README "Meeting bot in Docker").
 # Added on top of compose.yml (and compose.gpu.yml) by deploy.sh when server/.env has
-# BARVIS_SOUND_ZOOM_SDK_DIR; by hand, from server/:
+# ATHENA_ZOOM_SDK_DIR (old name BARVIS_SOUND_ZOOM_SDK_DIR) or ~/zoom-sdk holds the SDK;
+# deploy.sh hands the folder over as BARVIS_SOUND_ZOOM_SDK_DIR. By hand, from server/:
 #
 #   BARVIS_SOUND_ZOOM_SDK_DIR=$HOME/zoom-sdk \
 #     docker compose -f compose.yml [-f compose.gpu.yml] -f compose.meeting.yml up -d --build --wait
@@ -18,9 +19,10 @@ services:
     build:
       target: meeting
       additional_contexts:
-        zoomsdk: ${BARVIS_SOUND_ZOOM_SDK_DIR:?set BARVIS_SOUND_ZOOM_SDK_DIR in server/.env to the unpacked Zoom Meeting SDK}
+        zoomsdk: ${BARVIS_SOUND_ZOOM_SDK_DIR:?set BARVIS_SOUND_ZOOM_SDK_DIR to the unpacked Zoom Meeting SDK (deploy.sh sets it from ATHENA_ZOOM_SDK_DIR)}
         meetingbot: ../meeting-bot
     image: odysseus-sound-meeting:${CONVO_DOCKER_TAG:-current}
     environment:
       # Wins over a CONVO_MEETING_BOT_PATH in .env (a native install's host path).
       CONVO_MEETING_BOT_PATH: /opt/athena-meeting-bot/athena-meeting-bot-run
+      ATHENA_MEETING_BOT_PATH: /opt/athena-meeting-bot/athena-meeting-bot-run

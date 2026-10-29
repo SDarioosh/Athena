@@ -1,10 +1,11 @@
 """The old name of the ``athena`` package, kept as an alias.
 
-Commands and imports written before the rename keep working: ``convo_server.store`` is
-the very module object ``athena.store`` (one copy, so module state and monkeypatching
-are shared), and ``python -m convo_server.cli ...`` runs ``athena/cli.py``. Nothing in
-this repo imports ``convo_server``; it is here for the owner's units, cron jobs and
-notes, and is removed once the deploy has moved to the new names.
+Commands and imports written before the rename keep working: ``convo_server.db.store``
+is the very module object ``athena.db.store`` (one copy, so module state and
+monkeypatching are shared), and ``python -m convo_server.cli ...`` runs
+``athena/cli.py``. Nothing in this repo imports ``convo_server``; it is here for the
+owner's units, cron jobs and notes, and is removed once the deploy has moved to the new
+names.
 
 The submodules are found by a meta-path finder, not by files in this folder, so no
 import system path can load a second copy of an ``athena`` module under this name.

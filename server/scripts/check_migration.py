@@ -4,7 +4,9 @@
 Make the copy with SQLite's online backup (safe while the services run), then run this
 on the copy; it never opens any other file:
 
-    sqlite3 server/data/convo.db ".backup /tmp/convo-check.db"
+    sqlite3 server/data/athena.db ".backup /tmp/convo-check.db"
+
+(an older install's database is ``server/data/convo.db``: use that name then).
     cd server && .venv/bin/python scripts/check_migration.py /tmp/convo-check.db
 
 It prints user_version, the tables and each table's row count before and after opening
@@ -53,10 +55,10 @@ def main(argv: list[str] | None = None) -> int:
     if not path.is_file():
         print(f"no such file: {path}")
         return 1
-    if path.name == "convo.db" or any(
+    if path.name in ("athena.db", "convo.db") or any(
             path.with_name(path.name + s).exists() for s in ("-wal", "-shm")):
-        print(f"{path} looks like a live database (named convo.db, or a -wal/-shm file "
-              "next to it). Run this on a copy made with sqlite3 .backup.")
+        print(f"{path} looks like a live database (named athena.db or convo.db, or a "
+              "-wal/-shm file next to it). Run this on a copy made with sqlite3 .backup.")
         return 1
 
     v_before, before = snapshot(path)
