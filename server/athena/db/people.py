@@ -74,6 +74,46 @@ def _person_id(c: sqlite3.Connection, name: str | None) -> int | None:
     return pid
 
 
+# SQLite's NOCASE folds only the 26 ASCII letters
+_NOCASE = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def _person_ids(c: sqlite3.Connection, names: Iterable[str | None]) -> dict[str, int | None]:
+    """``_person_id`` for many names: ``{name: id or None}`` with the same answers, in
+    one query per 400 names plus one for merges (when a match was merged)."""
+    names = list(dict.fromkeys(n or "" for n in names))
+    wanted = sorted({n.strip() for n in names if n.strip()})
+    found: dict[str, list[tuple[bool, int, int, int | None]]] = {}
+    for i in range(0, len(wanted), 400):
+        part = wanted[i:i + 400]
+        marks = ",".join("?" * len(part))
+        for r in c.execute(
+                f"SELECT name AS k, id, merged_into, 0 AS pri FROM people WHERE name IN ({marks})"
+                " UNION ALL SELECT a.alias, p.id, p.merged_into, 1 FROM people_aliases a"
+                f" JOIN people p ON p.id = a.person_id WHERE a.alias IN ({marks})",
+                [*part, *part]):
+            found.setdefault(r["k"].translate(_NOCASE), []).append(
+                (r["merged_into"] is not None, r["pri"], r["id"], r["merged_into"]))
+    best = {k: min(rows) for k, rows in found.items()}
+    merges: dict[int, int] = {}
+    if any(b[3] is not None for b in best.values()):
+        merges = {r["id"]: r["merged_into"] for r in c.execute(
+            "SELECT id, merged_into FROM people WHERE merged_into IS NOT NULL")}
+    out: dict[str, int | None] = {}
+    for name in names:
+        hit = best.get(name.strip().translate(_NOCASE)) if name.strip() else None
+        if hit is None:
+            out[name] = None
+            continue
+        pid, nxt, seen = hit[2], hit[3], set()
+        while nxt is not None and pid not in seen:  # as _person_id follows merged_into
+            seen.add(pid)
+            pid = nxt
+            nxt = merges.get(pid)
+        out[name] = pid
+    return out
+
+
 def _voice_of(c: sqlite3.Connection, name: str) -> sqlite3.Row | None:
     """The speaker row (id, name) of ``name``: the person's linked voice first, else a
     speaker called that in any case (people names are NOCASE, speaker names are not)."""
@@ -386,6 +426,19 @@ class PeopleRepo:
         with self._lock:
             return _person_id(self._conn, name)
 
+    def person_ids(self, names: Iterable[str],
+                   owner_names: Iterable[str] = ()) -> dict[str, int | None]:
+        """``person_id`` for many names at once (``{name: id or None}``, same answers):
+        a few queries in all instead of one or more per name."""
+        names = list(dict.fromkeys(n or "" for n in names))
+        owners = _lower(owner_names)
+        owner = (self.owner_person_id(owner_names)
+                 if any(n.strip().lower() in owners for n in names) else None)
+        out = {n: owner for n in names if owner is not None and n.strip().lower() in owners}
+        with self._lock:
+            out.update(_person_ids(self._conn, [n for n in names if n not in out]))
+        return out
+
     def owner_person_id(self, owner_names: Iterable[str] = ()) -> int | None:
         """The owner's person: the one with the enrolled owner voice; without one, the
         first person whose name or alias is in ``owner_names`` (the configured owner
@@ -470,7 +523,7 @@ class PeopleRepo:
                        " merged_into FROM people ORDER BY id")
         survivor = {r["id"]: r["merged_into"] for r in rows}
         with self._lock:
-            fold = {_person_id(self._conn, n) for n in owner_names} - {None, owner}
+            fold = set(_person_ids(self._conn, owner_names).values()) - {None, owner}
         if owner is None:
             fold = set()
 

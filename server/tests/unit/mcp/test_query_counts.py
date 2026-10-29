@@ -1,9 +1,10 @@
 """How many SQL statements the list tools run, on a seeded fictional store.
 
 list_facts looked up each fact's sources, history and person one query at a time (two
-queries per fact in the text format, one or more per fact in JSON). The results are
-pinned by hash here (on a larger store than the contract snapshots) so fewer queries can
-be shown to give the same output.
+queries per fact in the text format, one or more per fact in JSON, plus one per replaced
+fact and per conversation); now it reads each kind once. The results are pinned by hash
+(on a larger store than the contract snapshots; the hashes were taken on the code before
+batching) so fewer queries are shown to give the same output.
 """
 
 from __future__ import annotations
@@ -61,9 +62,9 @@ def seed(store: Any) -> None:
             store.link_fact(got[0], "same", ids[k % 10][0])
         if k >= 30:
             store.link_fact(got[1], "updates", ids[k - 30][1])
+    assert store.prune_transcripts(T0 + 5 * DAY / 2 - 1)["conversations"] == 5
     store.rename_everywhere("Bob", "Robert")
     store.rename_everywhere("Dave", "Alice")
-    store.prune_transcripts(T0 + 5 * DAY / 2 - 1)
 
 
 @contextmanager
@@ -76,16 +77,18 @@ def counted(store: Any) -> Iterator[list[str]]:
         store._conn.set_trace_callback(None)
 
 
-# (arguments, sha256 of the result, statements before batching)
-CASES: list[tuple[dict[str, Any], str, int]] = [
-    ({"limit": 200}, "a13f9e2410187ade7e42ddbf36e6abd1f5166358d1b7564235e01112997bc92e", 125),
+# (arguments, sha256 of the result, statements before batching, the bound now)
+CASES: list[tuple[dict[str, Any], str, int, int]] = [
+    ({"limit": 200}, "a13f9e2410187ade7e42ddbf36e6abd1f5166358d1b7564235e01112997bc92e",
+     125, 8),
     ({"limit": 200, "format": "json"},
-     "d5d614c2a76d62a3720b8182c35518c13b5c6b28a569b20258c56d7a9d040334", 92),
-    ({"confirmed": True}, "920e9ce05348e044312967bb8bd7c4b094bba919a6cc5082ca467996f9d4ab7a", 46),
+     "d37899d9f07d0ad87980f417d948653723457bc739a66bc20a41f6b176143cc1", 97, 11),
+    ({"confirmed": True}, "920e9ce05348e044312967bb8bd7c4b094bba919a6cc5082ca467996f9d4ab7a",
+     46, 9),
     ({"subject": "Alice", "format": "json"},
-     "2c0f0774a7fc942bdcac4f427327da45d1c1434dceb573117d26a0753c2a514c", 24),
+     "ba2d551eee26a617c9c712373aadc7cc2bf6dfbb8658fc2405fb2c4b22430f3e", 26, 12),
 ]
-PEOPLE = ("d30f518a2d1538015ed2dbf5a76a2a99a5dacd77d0fc5612265a19e8df2dfd6c", 19)
+PEOPLE = ("31a9ba4c04f0c0144a44a67e5bdd7a89266f4d4b4568a05d5edf54b6b2acac6c", 19, 9)
 
 
 @pytest.fixture
@@ -97,14 +100,26 @@ def seeded(pipeline: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     return pipeline
 
 
-@pytest.mark.parametrize("args, digest, before", CASES)
+@pytest.mark.parametrize("args, digest, before, bound", CASES)
 def test_list_facts_queries(seeded: Any, args: dict[str, Any], digest: str,
-                            before: int) -> None:
+                            before: int, bound: int) -> None:
     mcp = build_mcp(seeded.store, seeded.settings)
     with counted(seeded.store) as statements:
         out = call(mcp, "list_facts", **args)
     assert hashlib.sha256(out.encode()).hexdigest() == digest
-    assert len(statements) <= before
+    assert len(statements) <= bound < before
+
+
+@pytest.mark.parametrize("fmt", ["text", "json"])
+def test_list_facts_queries_do_not_grow_with_the_facts(seeded: Any, fmt: str) -> None:
+    mcp = build_mcp(seeded.store, seeded.settings)
+    counts = []
+    for limit in (3, 200):
+        with counted(seeded.store) as statements:
+            call(mcp, "list_facts", limit=limit, format=fmt)
+        counts.append(len(statements))
+    # JSON: two more when a fact's own transcript was pruned (its repeats and their lines)
+    assert counts[0] <= counts[1] <= counts[0] + (2 if fmt == "json" else 0)
 
 
 def test_list_people_queries(seeded: Any) -> None:
@@ -112,4 +127,4 @@ def test_list_people_queries(seeded: Any) -> None:
     with counted(seeded.store) as statements:
         out = call(mcp, "list_people", format="json")
     assert hashlib.sha256(out.encode()).hexdigest() == PEOPLE[0]
-    assert len(statements) <= PEOPLE[1]
+    assert len(statements) <= PEOPLE[2] < PEOPLE[1]

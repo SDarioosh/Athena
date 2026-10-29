@@ -16,6 +16,23 @@ from .matching import _STOPWORDS, _cited_line, _norm
 QUOTE_CHARS = 300
 
 
+def _parts(ids: list[Any], size: int = 500) -> list[list[Any]]:
+    """``ids`` in slices that fit in one statement's parameters."""
+    return [ids[i:i + size] for i in range(0, len(ids), size)]
+
+
+def _chain_end_in(replaced: dict[int, int | None], fact_id: int) -> int:
+    """``_chain_end`` over ``replaced`` ({id: superseded_by} of every superseded fact)
+    instead of one query per step."""
+    seen = {fact_id}
+    while True:
+        nxt = replaced.get(fact_id)
+        if nxt is None or nxt in seen:
+            return fact_id
+        seen.add(nxt)
+        fact_id = nxt
+
+
 class FactsRepo:
     """``Store``'s methods for facts. A mixin: ``Store`` opens the connection
     they use (``tx``, ``_q``, ``_one``, ``_conn``, ``_lock``)."""
@@ -122,6 +139,34 @@ class FactsRepo:
             " FROM fact_sources s JOIN conversations c ON c.id = s.conversation_id"
             " WHERE s.fact_id = ? ORDER BY c.started_at", (fact_id,))
 
+    def fact_history_for(self, ids: Iterable[int]) -> dict[int, list[dict[str, Any]]]:
+        """``fact_history`` for many facts: ``{id: rows}`` (every id, in the same order),
+        one query per 500 ids."""
+        ids = list(dict.fromkeys(ids))
+        out: dict[int, list[dict[str, Any]]] = {i: [] for i in ids}
+        for part in _parts(ids):
+            for r in self._q(
+                    "SELECT f.*, c.title AS conversation_title, c.started_at AS conversation_at"
+                    " FROM facts f JOIN conversations c ON c.id = f.conversation_id"
+                    f" WHERE f.superseded_by IN ({','.join('?' * len(part))})"
+                    " ORDER BY c.started_at DESC, f.id", part):
+                out[r["superseded_by"]].append(r)
+        return out
+
+    def fact_sources_for(self, ids: Iterable[int]) -> dict[int, list[dict[str, Any]]]:
+        """``fact_sources`` for many facts: ``{id: rows}`` (every id, in the same order),
+        one query per 500 ids."""
+        ids = list(dict.fromkeys(ids))
+        out: dict[int, list[dict[str, Any]]] = {i: [] for i in ids}
+        for part in _parts(ids):
+            for r in self._q(
+                    "SELECT s.*, c.title AS conversation_title, c.started_at AS conversation_at"
+                    " FROM fact_sources s JOIN conversations c ON c.id = s.conversation_id"
+                    f" WHERE s.fact_id IN ({','.join('?' * len(part))})"
+                    " ORDER BY c.started_at, s.conversation_id", part):
+                out[r["fact_id"]].append(r)
+        return out
+
     def retire_fact(self, fact_id: int, reason: str = "") -> str | None:
         """Forget a fact (the owner said it's wrong or private): status 'retired', out of
         ``list_facts``, search and the conversation's facts. Returns "retired",
@@ -192,33 +237,45 @@ class FactsRepo:
         transcript line it was said on (``_cited_line``, the line ``erase_fact`` would
         redact), so a reviewer can judge it without opening the transcript. When its own
         conversation has no transcript left (pruned), the newest conversation that said
-        it again is used. None when there is no such line or it was erased. One query per
-        conversation."""
+        it again is used. None when there is no such line or it was erased. At most three
+        queries per 500 facts: their conversations' lines, the repeats of the facts whose
+        own lines are gone, and those repeats' lines."""
         facts = list(facts)
         lines: dict[str, list[sqlite3.Row]] = {}
 
-        def rows(conv_id: str) -> list[sqlite3.Row]:
-            if conv_id not in lines:
+        def load(conv_ids: Iterable[str]) -> None:
+            need = [i for i in dict.fromkeys(conv_ids) if i not in lines]
+            for i in need:
+                lines[i] = []
+            for part in _parts(need):
                 with self._lock:
-                    lines[conv_id] = self._conn.execute(
-                        "SELECT id, session_id, started_at, ended_at, erased, text"
-                        " FROM segments WHERE conversation_id = ? ORDER BY started_at",
-                        (conv_id,)).fetchall()
-            return lines[conv_id]
+                    for r in self._conn.execute(
+                            "SELECT conversation_id, id, session_id, started_at, ended_at,"
+                            " erased, text FROM segments"
+                            f" WHERE conversation_id IN ({','.join('?' * len(part))})"
+                            " ORDER BY conversation_id, started_at, id", part):
+                        lines[r["conversation_id"]].append(r)
+
+        load(f["conversation_id"] for f in facts)
+        repeats: dict[int, list[tuple[str, float | None]]] = {
+            f["id"]: [] for f in facts if not lines[f["conversation_id"]]}
+        for part in _parts(list(repeats)):
+            for r in self._q(
+                    "SELECT s.fact_id, s.conversation_id, s.source_at FROM fact_sources s"
+                    " JOIN conversations c ON c.id = s.conversation_id"
+                    f" WHERE s.fact_id IN ({','.join('?' * len(part))})"
+                    " ORDER BY c.started_at DESC, s.conversation_id", part):
+                repeats[r["fact_id"]].append((r["conversation_id"], r["source_at"]))
+        load(conv_id for said in repeats.values() for conv_id, _ in said)
 
         out: dict[int, str | None] = {}
         for f in facts:
-            said = [(f["conversation_id"], f.get("source_at"))]
-            if not rows(f["conversation_id"]):
-                said += [(r["conversation_id"], r["source_at"]) for r in self._q(
-                    "SELECT s.conversation_id, s.source_at FROM fact_sources s"
-                    " JOIN conversations c ON c.id = s.conversation_id WHERE s.fact_id = ?"
-                    " ORDER BY c.started_at DESC", (f["id"],))]
+            said = [(f["conversation_id"], f.get("source_at")), *repeats.get(f["id"], [])]
             line = None
             for conv_id, at in said:
-                if at is None or not rows(conv_id):
+                if at is None or not lines[conv_id]:
                     continue
-                hit = _cited_line(rows(conv_id), at, f.get("fact") or "")
+                hit = _cited_line(lines[conv_id], at, f.get("fact") or "")
                 if hit is not None and not hit["erased"]:
                     line = " ".join(str(hit["text"] or "").split())[:QUOTE_CHARS] or None
                 break
@@ -250,9 +307,13 @@ class FactsRepo:
             sql += f" AND id IN ({','.join('?' * len(ids))})"
             params += [int(i) for i in ids]
         rows = self._q(sql, params)
-        with self._lock:  # a match on a replaced fact gives the end of its chain
-            current = {_chain_end(self._conn, r["id"]) if r["status"] == "superseded"
-                       else r["id"] for r in rows}
+        # a match on a replaced fact gives the end of its chain (_chain_end, for all of
+        # them from one read of the replaced facts)
+        replaced = {r["id"]: r["superseded_by"] for r in self._q(
+            "SELECT id, superseded_by FROM facts WHERE status = 'superseded'")} \
+            if any(r["status"] == "superseded" for r in rows) else {}
+        current = {_chain_end_in(replaced, r["id"]) if r["status"] == "superseded"
+                   else r["id"] for r in rows}
         if not current:
             return []
         return self._q(

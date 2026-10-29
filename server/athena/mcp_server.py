@@ -303,8 +303,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if fmt_ == "json":
             return json.dumps({"facts": _facts_json(store, settings, rows, written, meetings)},
                               ensure_ascii=False)
-        sources = {x["id"]: store.fact_sources(x["id"]) for x in rows}
-        history = {x["id"]: store.fact_history(x["id"]) for x in rows}
+        sources = store.fact_sources_for(x["id"] for x in rows)
+        history = store.fact_history_for(x["id"] for x in rows)
         written.update(store.written_notes_for(
             _convs(r for rs in (*sources.values(), *history.values()) for r in rs)))
         return fmt.facts(f, rows, confirmed, sources, history, written, meetings,
@@ -485,8 +485,8 @@ def _facts_json(store: Store, settings: Settings, rows: list[dict[str, Any]],
     owners |= OWNER_WORDS | {settings.owner_name.strip().lower()} - {""}
     owner_id = store.owner_person_id(_owner_names(settings))
     quotes = store.fact_quotes(rows)
-    person_ids = {x["subject"] or "": store.person_id(x["subject"] or "") for x in rows
-                  if serializers.about(x["subject"], owners, people) == "person"}
+    person_ids = store.person_ids(x["subject"] or "" for x in rows
+                                  if serializers.about(x["subject"], owners, people) == "person")
     return [serializers.fact(x, settings, owners=owners, people=people, owner_id=owner_id,
                              person_ids=person_ids, quotes=quotes, written=written,
                              meetings=meetings) for x in rows]
@@ -497,10 +497,11 @@ def _people_json(store: Store, speaker_stats: list[dict[str, Any]],
     """list_people(format="json"): every person not merged into another, in the text
     mode's order (speakers by last heard, then people mentioned by last mention, then
     people never seen, by name). Unnamed 'Speaker N' labels have no person row."""
-    names = _owner_names(settings)
-    ordered = serializers.people_order(speaker_stats, store.mentioned_people(),
-                                       store.people(names),
-                                       lambda name: store.person_id(name, names))
+    names, mentioned = _owner_names(settings), store.mentioned_people()
+    ids = store.person_ids([s["name"] for s in speaker_stats]
+                           + [p["name"] for p in mentioned], names)
+    ordered = serializers.people_order(speaker_stats, mentioned, store.people(names),
+                                       lambda name: ids[name])
     return [serializers.person(p, settings) for p in ordered]
 
 
