@@ -1,4 +1,4 @@
-"""A meeting's chat, topic and participants (Zoom bot plan, lane 3B).
+"""A meeting's chat, topic and participants.
 
 The bot sends them in one call when the meeting ends: ``POST /v1/sessions/{id}/chat``.
 

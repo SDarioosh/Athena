@@ -433,7 +433,7 @@ class Pipeline:
             self.store.replace_segments(session_id, sess["device"], segments, ranges)
             if (self.settings.learn_meeting_voices and not note and segments
                     and self.store.has_tracks(session_id)):
-                # Lane 2C: voice samples from named meeting tracks, while audio is here
+                # voice samples from named meeting tracks, while the audio is here
                 from .meeting_voices import learn_from_meeting
 
                 learn_from_meeting(self, session_id, done, kept)

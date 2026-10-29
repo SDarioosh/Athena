@@ -1,4 +1,4 @@
-"""Transcribe a meeting while it runs (Zoom bot plan, lane 5D).
+"""Transcribe a meeting while it runs.
 
 A meeting's tracks (one per participant, ``meeting_tracks``) are transcribed window by
 window on the worker's existing ticks while the bot is still uploading, so when the

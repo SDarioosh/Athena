@@ -1,4 +1,4 @@
-"""Zoom display names to people (Zoom bot plan, lane 2B).
+"""Zoom display names to people.
 
 A meeting session holds one track per Zoom participant (``Store.tracks``). This module
 turns a track's display names into the speaker name written on its lines:
@@ -206,7 +206,7 @@ def speaker_for_track(store: Store, track_info: Mapping[str, Any],
     alias picks that person; else a new person is made from the latest cleaned name. All
     display names of the track, raw and cleaned, become aliases of that person. A track
     with no usable name gets ``track_info["placeholder"]`` (default "Unknown") and makes
-    no person. Lane 2A calls this through ``meeting_tracks.track_speaker``.
+    no person. ``meeting_tracks.track_speaker`` calls this.
 
     The owner keeps their canonical name, never a Zoom display name (owner request, QA
     BUG-07): the enrolled owner voice's name, else ``owner_display`` (callers pass
