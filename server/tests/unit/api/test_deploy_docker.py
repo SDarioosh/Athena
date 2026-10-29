@@ -618,3 +618,34 @@ def test_own_compose_project_name_never_takes_athena_down(tmp_path):
     assert r.returncode == 0, r.stderr
     assert not any(" down" in c or c.endswith(" build") for c in e.log())
     assert (e.fake / "project-odysseus-sound").exists() and (e.fake / "project-athena").exists()
+
+
+def test_failed_switch_starts_the_native_services_again(tmp_path):
+    # The images built, the native units were stopped, then the containers did not come up:
+    # Athena must not be left down. The containers go, the checkout returns to the old
+    # commit and the native units start again.
+    e = Env(tmp_path)
+    repo, script = checkout(tmp_path)
+    before = head(repo)
+    e.native_unit("barvis-sound", server=repo / "server")
+    (e.fake / "up-fails").touch()
+    r = run_script(script, "deploy", env={**e.env, "ATHENA_RUNNER": "docker",
+                                          "COMPOSE_PROFILES": "whisper-gpu"})
+    assert r.returncode == 1
+    log = e.log()
+    stop = log.index("systemctl --user disable -q --now barvis-sound")
+    again = log.index("systemctl --user enable -q --now barvis-sound")
+    assert stop < again
+    assert any(" down" in c for c in log[stop:again])
+    assert head(repo) == before
+    assert "native services run again" in r.stderr
+
+
+def test_failed_switch_on_start_starts_the_native_services_again(tmp_path):
+    e = Env(tmp_path)
+    e.native_unit("barvis-sound")
+    (e.fake / "up-fails").touch()
+    r = run_script(SCRIPT, "start", env={**e.env, "ATHENA_RUNNER": "docker",
+                                         "COMPOSE_PROFILES": "whisper-gpu"})
+    assert r.returncode == 1
+    assert "systemctl --user enable -q --now barvis-sound" in e.log()

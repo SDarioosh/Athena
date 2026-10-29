@@ -287,7 +287,10 @@ nothing), then stops and disables the native services, keeping their unit files 
 refuses, so the switch never leaves recordings untranscribed. Only this checkout's native
 services are stopped (a unit's `WorkingDirectory`, the pid files in its data dir): a copy
 next to the real install never stops the real one, and with a compose project name of its
-own (`COMPOSE_PROJECT_NAME`) never takes Athena's containers down either.
+own (`COMPOSE_PROJECT_NAME`) never takes Athena's containers down either. If the containers
+don't come up healthy, it takes them down, returns the checkout to the old commit and starts
+the native systemd services again, so Athena isn't left down (background processes from
+the older script can't be restarted that way; start them as before).
 
 ### Back to the native install
 

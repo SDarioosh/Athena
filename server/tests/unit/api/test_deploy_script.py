@@ -67,7 +67,11 @@ def test_units_prints_the_compose_configuration(tmp_path):
 def test_no_systemd_unit_is_written():
     text = SCRIPT.read_text()
     assert "[Service]" not in text and "daemon-reload" not in text
-    assert "systemctl --user enable" not in text and "systemctl --user start" not in text
+    # the one enable: restore_native, after a failed switch to Docker (units written by an
+    # older deploy.sh, never by this one)
+    assert text.count("systemctl --user enable") == 1
+    assert 'systemctl --user enable -q --now "$n"' in text
+    assert "systemctl --user start" not in text
 
 
 def test_usage_on_unknown_command():

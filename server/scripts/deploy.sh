@@ -144,6 +144,7 @@ set_compose_files() {  # the compose files for this checkout
 
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 SERVICES=(serve mcp whisper)
+RETIRED=()  # native units this run stopped to switch to Docker
 
 unit_name() {
   case $1 in serve) echo barvis-sound ;; *) echo "barvis-sound-$1" ;; esac
@@ -214,12 +215,24 @@ retire_native() {  # stop what a native deploy of this checkout started; its uni
       fi
       log "stopping native $name (it runs in Docker now; its unit file stays)"
       systemctl --user disable -q --now "$name" 2>/dev/null || true
+      RETIRED+=("$name")
     fi
     if bg_running "$s"; then
       log "stopping background $name (it runs in Docker now)"
       bg_stop "$s"
     fi
   done
+}
+
+restore_native() {  # the switch failed after retire_native: start the native units again
+  local n
+  [ ${#RETIRED[@]} -gt 0 ] || return 1
+  log "Docker did not come up: taking the containers down and starting the native services again"
+  dc down --remove-orphans >/dev/null 2>&1 || true
+  for n in "${RETIRED[@]}"; do
+    systemctl --user enable -q --now "$n" || log "could not start $n again (systemctl --user status $n)"
+  done
+  RETIRED=()
 }
 
 whisper_chosen() {  # a whisper container profile, or a whisper-server outside Docker
@@ -495,6 +508,11 @@ cmd_deploy() {
     deploy_odysseus
     return 0
   fi
+  if [ ${#RETIRED[@]} -gt 0 ]; then  # a failed switch: back to the old commit, run natively
+    [ "$PREV" = "$NEW" ] || git -C "$REPO_DIR" checkout -q --detach "$PREV"
+    restore_native
+    die "switching to Docker failed, so the native services run again at $(git -C "$REPO_DIR" rev-parse --short HEAD); see the logs above, fix the settings and rerun"
+  fi
   if [ "$PREV" != "$NEW" ]; then
     log "rolling back to $(git -C "$REPO_DIR" rev-parse --short "$PREV")"
     git -C "$REPO_DIR" checkout -q --detach "$PREV"
@@ -575,11 +593,13 @@ main() {  # one function, so bash has read all of it before a deploy moves this 
   case "${1:-}" in
     deploy) shift; cmd_deploy "$@" ;;
     start)
-      load_config; check_runner start; guard_meetings start; zoom_sdk_notes; docker_up ;;
+      load_config; check_runner start; guard_meetings start; zoom_sdk_notes
+      docker_up || { restore_native && die "switching to Docker failed, so the native services run again"; exit 1; } ;;
     restart)
       load_config; check_runner restart; guard_meetings restart
       # after a checkout moved by hand, a former project still holds the ports: switch over
-      if native_here || old_projects; then docker_up
+      if native_here || old_projects; then
+        docker_up || { restore_native && die "switching to Docker failed, so the native services run again"; exit 1; }
       else dc restart && dc up -d --wait --wait-timeout 300; fi ;;
     stop)
       load_config; check_runner stop
