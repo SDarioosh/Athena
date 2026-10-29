@@ -1,6 +1,7 @@
 # Zoom bot spike (Phase 0): findings
 
-Status: **template, prepared by lane 0A; the owner's run fills it in.** Fields to fill are
+Status: **template, prepared by lane 0A; the owner's run fills it in.** (2026-10-29: the owner's join test of 2026-10-27 is in
+[PROGRESS.md](../PROGRESS.md) and the changelog, not filled in here; tests B and D are still open.) Fields to fill are
 marked `____`. Plan: [zoom-meeting-bot-plan.md](zoom-meeting-bot-plan.md), Phase 0, as
 updated in PR #118 (the bot is mainly for other people's meetings) and PR #119 (the bot
 leaves when the meeting ends). Owner's decisions (2026-10-27): the bot sends Zoom's

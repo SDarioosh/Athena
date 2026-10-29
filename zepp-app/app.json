@@ -2,7 +2,7 @@
   "configVersion": "v3",
   "app": {
     "appId": 1092611,
-    "appName": "Convo Rec Test",
+    "appName": "Athena Rec Test",
     "appType": "app",
     "version": {
       "code": 6,
@@ -46,7 +46,7 @@
   },
   "i18n": {
     "en-US": {
-      "appName": "Convo Rec Test"
+      "appName": "Athena Rec Test"
     }
   },
   "defaultLanguage": "en-US",

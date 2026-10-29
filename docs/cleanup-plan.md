@@ -1,6 +1,6 @@
 # Athena and Odysseus cleanup: phased plan
 
-As of 2026-10-28. Status: plan, nothing started. Covers both repos: Athena (this repo) and
+As of 2026-10-28. Status (2026-10-29): **in progress**: Phase 0's Athena lanes merged, Phase 1 running. Covers both repos: Athena (this repo) and
 our Odysseus fork (`SDarioosh/odysseus-expanded`, hub side in its
 `docs/fork/cleanup-plan.md`, which points here). Each lane is sized for one Claude
 subagent, one branch and one PR. An **overseer** session runs the lanes, checks each
