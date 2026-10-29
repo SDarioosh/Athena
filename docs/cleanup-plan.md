@@ -751,13 +751,13 @@ of `pipeline.py` into `validation.py`, so it goes before 3A, which rewrites `pip
 
 | Question | Recommendation |
 |---|---|
-| One deploy path: Docker only, keep `systemd` as a thin unit, drop `background`? | Yes (4A). |
+| One deploy path: Docker only, keep `systemd` as a thin unit, drop `background`? | Decided 2026-10-29: yes, Docker only (4A). |
 | Upstream sync before the hub refactor? | Yes (0D before 2E). |
 | Feature freeze during Phase 2 (about one phase of PRs)? | Yes; Phases 0, 1, 3 and 4 allow feature work. |
 | REST `GET /v1/action-items` and conversation reads return raw table rows (internal columns leak). Switch to the MCP allowlist? | Later, as its own PR after checking the T5 sync; out of this plan. |
 | Delete `meeting-bot/spike/` (kept in a tag)? | Yes (1A). |
 | Rename the old names inside this cleanup? | Decided 2026-10-29: yes, step by step in the phases above ("Renaming to Athena"), including the watch's Bluetooth name (1I) and the hub's stored names (4F). Hidden IDs (BLE UUIDs, app IDs, filed calendar event IDs) stay. |
-| Scripts outside the repos that use old names (rename plan question 2)? | Owner to list before 4A and 4E. |
+| Scripts outside the repos that use old names (rename plan question 2)? | Answered 2026-10-29: none the owner knows of. Phase 4 still keeps the old names working (`convo_server` alias, `convo-server` CLI, `CONVO_*`, an existing `convo.db`, the `barvis-sound*` units until 4A migrates them); 4B removes only internal re-export shims nothing imports. Removing the `convo_server` alias and `convo-server` CLI is left for later, its own PR. |
 
 ## Progress
 
