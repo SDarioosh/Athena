@@ -38,9 +38,9 @@ lane below.
    repos): `convo_server`, `CONVO_*`, `convo.db`, server name `convo`, `odysseus-sound`
    stored values, `barvis_*` action ids and state files, `BARVIS_SOUND_*`. Only the lanes
    marked *rename* (see "Renaming to Athena") change an old name, each following
-   `docs/athena-rename-plan.md`: the old name keeps working, no data migration, and the
-   "don't rename" lists in both AGENTS.md files are updated in the same PR. The names in
-   that plan's "What stays" table never change. Moves keep the old import paths working
+   `docs/athena-rename-plan.md`: the old name keeps working, no data migration except 4F,
+   and the "don't rename" lists in both AGENTS.md files are updated in the same PR. The
+   hidden IDs listed under "Renaming to Athena" never change. Moves keep the old import paths working
    until the cleanup lane of that phase removes them.
 4. **Old names keep working.** A setting or module that moves keeps its old name readable
    (env alias or a re-export shim) until Phase 4.
@@ -169,10 +169,10 @@ flowchart LR
 | Phase | Goal | Lanes (Athena / hub) | Behaviour change |
 |---|---|---|---|
 | 0 | Tests that pin today's behaviour; hub upstream sync | 0A, 0B / 0C, 0D | none |
-| 1 | Fix the bugs and risks the review found; docs to a usable size; device-side names | 1A, 1B, 1C, 1E, 1G, 1H / 1D, 1F | bug fixes only; device renames keep wire values |
+| 1 | Fix the bugs and risks the review found; docs to a usable size; device-side names | 1A, 1B, 1C, 1E, 1G, 1H, 1I / 1D, 1F | bug fixes only; device renames keep wire values |
 | 2 | Package `convo_server` → `athena`, then move code into packages, nothing else | 2R, 2A, 2B, 2C, 2D / 2E, 2F | none |
 | 3 | Remove duplication inside the new structure | 3A–3E / 3F–3L | none, except 3B and 3I rerun evals |
-| 4 | One deploy path, Athena names for settings, database file, services and hub URLs (old ones still work), shims removed, final docs | 4A, 4B, 4E / 4C, 4D | deploy (owner decision) |
+| 4 | One deploy path, Athena names for settings, database file, services, hub URLs and the hub's stored names (old ones still work), shims removed, final docs | 4A, 4B, 4E / 4C, 4D, 4F | deploy (owner decision); 4F migrates hub data |
 
 **Feature freeze in Phase 2.** Phase 2 moves files; any open PR then needs a rebase. Merge
 or park feature PRs before it starts. Phases 0, 1, 3 and 4 allow feature work beside
@@ -185,11 +185,15 @@ The old names (convo-ai, barvis-sound, odysseus-sound) are renamed inside this c
 the steps of [athena-rename-plan.md](athena-rename-plan.md), each folded into the phase
 where it costs least: a name is renamed in the same phase that already touches its files,
 so no file is churned twice. That plan's rules apply to every *rename* lane (old name keeps
-working, no data migration, one concern per PR, MCP contract unchanged), and its "What
-stays" table is final: the hub's server name `convo`, the stored `"odysseus-sound"`
-values, the Android `applicationId`, the Zepp `appId`, the BLE name `barvis-tw`, its UUIDs
-and Opus tag bytes, the Hermes profiles and the `barvis` branch keep their names, because
-renaming them breaks the owner's data or installed devices.
+working, no data migration, one concern per PR, MCP contract unchanged). Two lanes go
+further, decided by the owner on 2026-10-29 because the owner sees these names: the
+watch's Bluetooth name `barvis-tw` (1I, relays accept both names first) and the hub's
+stored `"odysseus-sound"` values and server name `convo` (4F, the one data migration in
+this plan, with backup, dry run and rollback). These hidden IDs keep their names, because
+renaming them would break installed devices or duplicate the owner's data for nothing the
+owner sees: the BLE UUIDs and Opus tag bytes, the Android `applicationId` (the app already
+shows as "Athena Relay"), the Zepp `appId`, the IDs of calendar events already filed (see
+4F), the Hermes profiles and the `barvis` branch.
 
 | Rename plan step | Lane here | Why there |
 |---|---|---|
@@ -210,6 +214,8 @@ renaming them breaks the owner's data or installed devices.
 | 14 Android relay uses the new routes, falls back to the old | 4E (after 4D) | phone update |
 | 15 Zepp display name "Convo Rec Test" → "Athena Rec Test" (not the `appId`) | 1G | independent, device side |
 | 16 Final docs pass, mark that plan done | 4B, 4C | final docs |
+| (new) Watch Bluetooth name `barvis-tw` → `athena-tw` | 1I | after 1G and 1H: relays first, then firmware |
+| (new) Hub stored names `"odysseus-sound"` → `"athena"`, server `convo` → `athena` | 4F | data migration, after 4D and 3G |
 
 **Rename plan open questions** (its step 0):
 
@@ -404,6 +410,22 @@ step 6: the Kotlin package moves to `org.athena.relay`; the `applicationId`
 passes. Server verification: install over the existing app; pairing and queued
 recordings survive.
 
+**1I Watch Bluetooth name (Athena, rename, devices).** After 1G and 1H (it touches the
+files they own). The name in the phone's Bluetooth list becomes `athena-tw`.
+- [ ] Step 1, relays: the Android relay and the PC relay find a watch named `athena-tw` **or**
+  `barvis-tw` (scan filter, saved pairing, user-facing hints such as `RelayService.kt`'s
+  "barvis-tw in Android's Bluetooth settings" text). The UUIDs stay the scan's main key
+  where they already are. Tests for both names.
+- [ ] Step 2, firmware: `DEVICE_NAME "athena-tw"` in `firmware/recorder/main/ble_sync.c`;
+  `docs/twatch-ble-protocol.md` lists both names and says relays accept both. UUIDs and Opus
+  tag bytes unchanged (1G's byte check still passes).
+- [ ] Order for the owner, written in the PR: install the updated phone app (and PC relay)
+  **first**, then flash the watches. A watch flashed before the phone update would not be
+  found until the phone is updated; nothing is lost, its recordings wait on the watch.
+- Server verification: phone updated, then one watch flashed: it shows as `athena-tw`,
+  reconnects (re-pair only if Android asks), drains its queue; an unflashed watch still
+  works with the updated phone.
+
 **Gate 1:** all merged; evals at or above baseline; 1A and 1C Server verification passed.
 
 ## Phase 2: structure (moves only)
@@ -596,6 +618,36 @@ moved or copied by code); the Android relay calls `/api/codex/athena/*` and fall
 the old routes. Server verification on a copy of the real data folder and a phone update;
 covers the owner's own scripts from open question 2.
 
+**4F Hub stored names (hub, rename, data migration).** After 4D and 3G. The owner sees
+these names on filed notes, the Wisdom (beliefs) and memory pages, Settings → MCP and
+approval cards; after 4F they read Athena.
+- [ ] Step 1, code reads both: every place that matches a stored `"odysseus-sound"` (note
+  label in `module_action_items.py` and `notes_evidence.py`, belief source in
+  `evidence_intake.py` and `belief_consolidation.py`, memory source in `today_insight.py`,
+  and the other readers 0C's inventory and a `git grep` find) accepts `"athena"` too, and
+  writes `"athena"` for new data. The trusted-server check, `/athena` skill (`mcp:<name>`),
+  task lookups and the module setup accept the server under `athena` or `convo`.
+- [ ] **Calendar event IDs never change.** `_event_uid` (`module_action_items.py`) hashes
+  `odysseus-sound:item:<server>:<id>`; that input is frozen as a constant
+  (`odysseus-sound:item:convo:`), whatever the server is called, so no filed event is
+  duplicated on the owner's calendars. A test pins today's uids.
+- [ ] Step 2, migration script `scripts/athena_names_migrate.py`: `--dry-run` (default; lists
+  every row and file it would change, with counts), `--apply` (first writes a timestamped
+  backup of `DATA_DIR` files it touches, then changes them in one transaction per database),
+  `--rollback <backup>`. Idempotent: a second run changes nothing. It changes: the note
+  labels, belief and memory sources, the MCP server's registered name and every place keyed
+  by it (approvals, per-tool disables, the trusted-server setting in the env files that
+  `modules_setup.py` manages, the `/athena` skill's `mcp:` line, the action-items state
+  file's keys). It never touches chat history: old chats keep showing `convo` tool names.
+- [ ] Tests on a fictional hub data folder built with today's code: dry run lists, apply
+  changes, second apply is a no-op, rollback restores byte-identical files, and every fork
+  test passes against both the old and the migrated data.
+- Server verification: on the **test instance** with a copy of the data folder the owner
+  makes: dry run, apply, check notes, Wisdom, memory, Settings → MCP, a `/athena` question,
+  one filed calendar event (same event, not a duplicate), rollback, apply again. Production
+  only after that, by the owner: `scripts/fork_deploy.sh deploy`, then the script with
+  `--dry-run`, then `--apply`.
+
 **4C Hub finish (hub).** Split `evidence_intake.py` (2,170: schema and migrations vs ledger
 API), `module_action_items.py` (1,419: sync, digest, filing, push) and `today_insight.py`
 (1,140). AGENTS.md lists the `fork/` package instead of files. Add a CI step that reports
@@ -620,6 +672,7 @@ meeting, walk-around recording and handwritten note through the whole system.
 | 1F Hub docs | hub | 0C | all of Phase 1 | — |
 | 1G Device-side names | Athena | Gate 0 | all of Phase 1 | firmware build, watch reinstall for the Zepp name |
 | 1H Android Kotlin package | Athena | Gate 0 | all of Phase 1 | phone update |
+| 1I Watch Bluetooth name | Athena | 1G, 1H | 1A–1F | phone update, then reflash |
 | 2R Package rename | Athena | Gate 1 | 2E | — |
 | 2A Meetings package | Athena | 2R | 2B, 2C, 2E | — |
 | 2B Store package | Athena | 2R | 2A, 2C, 2E | — |
@@ -644,8 +697,9 @@ meeting, walk-around recording and handwritten note through the whole system.
 | 4C Hub finish | hub | Gate 3 | 4A, 4B | — |
 | 4D Hub URLs and scopes | hub | Gate 3 | 4A, 4B | test instance |
 | 4E Athena settings, DB file, phone routes | Athena | 4A, 4D | 4C | data copy, phone update, owner scripts |
+| 4F Hub stored names | hub | 4D, 3G | 4A, 4B, 4E | test-instance run on a data copy, then production |
 
-Widest waves: eight lanes in Phase 1 and up to ten in Phase 3. Within a repo, two lanes
+Widest waves: eight lanes at once in Phase 1 (1I follows 1G and 1H) and up to ten in Phase 3. Within a repo, two lanes
 that touch the same file never run at once (the "Owns" lists). 3C moves the input checks out
 of `pipeline.py` into `validation.py`, so it goes before 3A, which rewrites `pipeline.py`.
 
@@ -658,7 +712,7 @@ of `pipeline.py` into `validation.py`, so it goes before 3A, which rewrites `pip
 | Feature freeze during Phase 2 (about one phase of PRs)? | Yes; Phases 0, 1, 3 and 4 allow feature work. |
 | REST `GET /v1/action-items` and conversation reads return raw table rows (internal columns leak). Switch to the MCP allowlist? | Later, as its own PR after checking the T5 sync; out of this plan. |
 | Delete `meeting-bot/spike/` (kept in a tag)? | Yes (1A). |
-| Rename the old names inside this cleanup? | Decided 2026-10-29: yes, step by step in the phases above ("Renaming to Athena"); the "What stays" names never change. |
+| Rename the old names inside this cleanup? | Decided 2026-10-29: yes, step by step in the phases above ("Renaming to Athena"), including the watch's Bluetooth name (1I) and the hub's stored names (4F). Hidden IDs (BLE UUIDs, app IDs, filed calendar event IDs) stay. |
 | Scripts outside the repos that use old names (rename plan question 2)? | Owner to list before 4A and 4E. |
 
 ## Progress
