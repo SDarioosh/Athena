@@ -1,6 +1,6 @@
 # Athena and Odysseus cleanup: phased plan
 
-As of 2026-10-28. Status (2026-10-29): **in progress**: Phases 0 and 1 merged, Phase 2 next. Covers both repos: Athena (this repo) and
+As of 2026-10-28. Status (2026-10-29): **in progress**: Phases 0 and 1 merged; Phase 2 merged except its gate. Covers both repos: Athena (this repo) and
 our Odysseus fork (`SDarioosh/odysseus-expanded`, hub side in its
 `docs/fork/cleanup-plan.md`, which points here). Each lane is sized for one Claude
 subagent, one branch and one PR. An **overseer** session runs the lanes, checks each
@@ -472,7 +472,7 @@ work, and the Docker image builds. The paths in 2A–2D below then read `athena/
 `convo_server/`.
 
 Athena 2A, 2B, 2C run at once after 2R: each leaves a re-export shim at the old module path, so
-none needs another's imports. 2D removes the shims after all three merge. Hub 2E runs
+none needs another's imports. 2D moves every import to the new paths after all three merge; the shims stay until 4B. Hub 2E runs
 beside them (other repo); 2F after 2E.
 
 **2A Meetings package (Athena).** Owns the 7 meeting files and `transcribe_engine.py`.

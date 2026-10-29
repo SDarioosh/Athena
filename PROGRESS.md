@@ -48,7 +48,7 @@ _Last updated: 2026-10-29. Shortened: the Done log and each row's full status ar
 | 23 | Athena rename in code, settings and services | folded into the cleanup (25), step 1 (links) done | [docs/athena-rename-plan.md](docs/athena-rename-plan.md) |
 | 24 | Zoom meeting bot | built through Phase 5; **owner: real-SDK meeting test** | [docs/zoom-meeting-bot-plan.md](docs/zoom-meeting-bot-plan.md), [meeting-bot/README.md](meeting-bot/README.md) |
 | 10 | End-to-end with real devices | not started | — |
-| 25 | Cleanup of Athena and the hub | in progress: Athena Phase 0 merged, Phase 1 running | [docs/cleanup-plan.md](docs/cleanup-plan.md) |
+| 25 | Cleanup of Athena and the hub | in progress: Phases 0 and 1 merged, Phase 2 merged (gate next) | [docs/cleanup-plan.md](docs/cleanup-plan.md) |
 
 ## Next
 
