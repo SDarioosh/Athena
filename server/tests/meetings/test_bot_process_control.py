@@ -409,3 +409,16 @@ def test_launcher_module_names() -> None:
     for name in names:
         assert getattr(package, name) is getattr(meetings, name), name
     assert meetings.MAX_LOG_LINE == 4096 and meetings.LineSplitter().limit == 4096
+
+
+def test_process_module_is_generic() -> None:
+    """``process.py`` imports nothing of Athena: no settings, store or meeting rules."""
+    from types import ModuleType
+
+    from athena.meetings.bot import process
+
+    assert not [n for n, v in vars(process).items()
+                if isinstance(v, ModuleType) and v.__name__.startswith("athena")]
+    src = Path(process.__file__).read_text()
+    assert "from ..." not in src and "import athena" not in src
+    assert "Settings" not in src and "store" not in src.lower()

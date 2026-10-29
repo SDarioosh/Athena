@@ -6,7 +6,8 @@ never gets one never imports this module. Nothing here runs between meetings:
 - The bot (``CONVO_MEETING_BOT_PATH``, ``athena-meeting-bot`` in ``meeting-bot/``) is a child
   process started on request, under safety caps (``systemd-run --user --scope`` with
   ``CPUQuota``, ``MemoryMax`` and ``RuntimeMaxSec`` when that works, else ``nice 10`` and
-  ``RLIMIT_AS``).
+  ``RLIMIT_AS``). The generic process control (start, caps, pidfd, output, stop) is in
+  ``process.py``; this module has the join rules, the store rows and the tokens.
 - One asyncio task per running bot, on the server's own event loop, reads the bot's
   status lines from its stdout and waits for it to exit (a pidfd on the loop, so no
   thread). The task ends when the bot does; no thread, timer or poller is left.
@@ -57,7 +58,6 @@ import os
 import re
 import secrets
 import shutil
-import signal
 import subprocess
 import time
 import uuid
@@ -70,6 +70,8 @@ from urllib.parse import parse_qs, urlsplit
 from ...config import Settings
 from ...db.store import Store
 from ...domain import MEETING_ACTIVE
+from . import process
+from .process import LineSplitter  # noqa: F401  (read here by tests and older code)
 
 log = logging.getLogger("athena.meetings")  # its name before the move
 
@@ -83,7 +85,7 @@ LIFETIME_GRACE_SECONDS = 60.0  # beyond --max-seconds before the bot is killed
 # the launcher (SIGTERM, then SIGKILL after STOP_GRACE_SECONDS) always stops it first
 SYSTEMD_MARGIN_SECONDS = STOP_GRACE_SECONDS + 20.0
 READER_DRAIN_SECONDS = 2.0  # after the bot exited, for its last status lines
-MAX_LOG_LINE = 4096  # a longer stdout line is dropped whole, never parsed
+MAX_LOG_LINE = process.MAX_LINE  # a longer stdout line is dropped whole, never parsed
 MAX_TITLE_CHARS = 200
 MAX_PASSCODE_CHARS = 128
 JOIN_TOKEN_SECONDS = 7200  # a ZAK or OBF token lasts about 2 h (zoom_signin.py)
@@ -106,8 +108,7 @@ _PASSCODE = re.compile(r"^[!-~]{1,128}$")  # printable ASCII, no spaces
 _CPU = re.compile(r"^\d{1,5}%$")
 _MEMORY = re.compile(r"^(\d+)([KMGT]?)$", re.IGNORECASE)
 # Environment the bot keeps from the server's (nothing else: no CONVO_* secrets).
-_KEEP_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TZ", "TMPDIR",
-             "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS")
+_KEEP_ENV = process.KEEP_ENV
 
 
 class MeetingError(Exception):
@@ -300,18 +301,14 @@ def build_command(settings: Settings, runner: str, bot: Path, args: list[str],
     if runner == "systemd":
         lifetime = math.ceil(settings.max_session_seconds + LIFETIME_GRACE_SECONDS
                              + SYSTEMD_MARGIN_SECONDS)
-        return ["systemd-run", "--user", "--scope", "--quiet", "--collect",
-                f"--unit={unit}", "-p", f"CPUQuota={settings.meeting_bot_cpu}",
-                "-p", f"MemoryMax={settings.meeting_bot_memory}",
-                "-p", f"RuntimeMaxSec={lifetime}", "nice", "-n", "10", str(bot), *args]
-    nice = shutil.which("nice")
-    return [nice, "-n", "10", str(bot), *args] if nice else [str(bot), *args]
+        return process.scope_command([str(bot), *args], unit=unit,
+                                     cpu=settings.meeting_bot_cpu,
+                                     memory=settings.meeting_bot_memory,
+                                     runtime_max=lifetime)
+    return process.nice_command([str(bot), *args])
 
 
-def bot_env(secrets_env: dict[str, str]) -> dict[str, str]:
-    env = {k: os.environ[k] for k in _KEEP_ENV if k in os.environ}
-    env.update({k: v for k, v in secrets_env.items() if v})
-    return env
+bot_env = process.child_env  # the bot's environment: _KEEP_ENV plus its secrets
 
 
 def check_settings(settings: Settings) -> Path:
@@ -366,38 +363,8 @@ def final_state(last: tuple[str, str | None] | None, code: int,
     return ("ended", "exited") if code == 0 else ("failed", "bot_crashed")
 
 
-def runtime_limit_kill(code: int, ran_for: float, max_seconds: float) -> bool:
-    """Was the bot stopped by an outside runtime limit (systemd's ``RuntimeMaxSec``):
-    killed by SIGTERM or SIGKILL after its max duration had passed?"""
-    return code in (-signal.SIGTERM, -signal.SIGKILL) and ran_for >= max_seconds
-
-
-class LineSplitter:
-    """Bytes in, complete lines out. A line longer than MAX_LOG_LINE is dropped whole,
-    up to and including its newline, so its tail is never read as a line of its own."""
-
-    def __init__(self, limit: int = MAX_LOG_LINE) -> None:
-        self.limit, self.buf, self.skipping = limit, b"", False
-
-    def feed(self, data: bytes) -> list[bytes]:
-        self.buf += data
-        lines = []
-        while True:
-            nl = self.buf.find(b"\n")
-            if nl < 0:
-                if len(self.buf) > self.limit:  # too long already: drop until its end
-                    self.buf, self.skipping = b"", True
-                return lines
-            line, self.buf = self.buf[:nl], self.buf[nl + 1:]
-            if self.skipping:
-                self.skipping = False
-            elif len(line) <= self.limit:
-                lines.append(line)
-
-    def end(self) -> list[bytes]:
-        """At EOF: a last line without a newline, unless it is being dropped."""
-        line, self.buf = self.buf, b""
-        return [line] if line and not self.skipping and len(line) <= self.limit else []
+# Was the bot stopped by an outside runtime limit (systemd's ``RuntimeMaxSec``)?
+runtime_limit_kill = process.killed_by_runtime_limit
 
 
 def out(row: dict[str, Any]) -> dict[str, Any]:
@@ -413,23 +380,8 @@ def out(row: dict[str, Any]) -> dict[str, Any]:
             "ended_at": iso(row["ended_at"])}
 
 
-def _alive(pid: int | None, session_id: str) -> bool:
-    """Is ``pid`` still the bot of ``session_id`` (not a reused pid)?"""
-    if not pid:
-        return False
-    try:
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
-    except FileNotFoundError:
-        return False
-    except OSError:  # no /proc: only ask whether the pid exists
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
-    return session_id.encode() in cmdline.split(b"\0")
+# Is ``pid`` still the bot of ``session_id`` (its argv has it), not a reused pid?
+_alive = process.alive
 
 
 # ------------------------------------------------------------------ launcher
@@ -520,9 +472,7 @@ class Launcher:
                                       join_token=join_token is not None), unit)
         try:
             work_dir.mkdir(parents=True, exist_ok=True)
-            proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                    env=env, cwd=work_dir, close_fds=True,
-                                    start_new_session=True)
+            proc = process.spawn(argv, env, work_dir)
         except OSError as e:
             log.error("meeting %s: could not start the bot: %s", mid, e)
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -610,24 +560,20 @@ class Launcher:
         if self._runner is None:  # probed once per server process, on the first join
             ok = False
             if shutil.which("systemd-run"):
-                code = await _run_quick(["systemd-run", "--user", "--scope", "--quiet",
-                                         "--collect", "true"], bot_env({}))
+                code = await _run_quick(process.scope_probe_command(), bot_env({}))
                 ok = code == 0
             self._runner = "systemd" if ok else "plain"
             log.info("meeting bots use the %s runner", self._runner)
         return self._runner
 
     def _cap_plain(self, pid: int) -> None:
-        import resource
-
         limit = memory_bytes(self.settings.meeting_bot_memory)
         try:
-            resource.prlimit(pid, resource.RLIMIT_AS, (limit, limit))
+            process.cap_memory(pid, limit)
         except (OSError, ValueError) as e:  # the bot may already have exited
             log.warning("could not cap the meeting bot's memory: %s", e)
         if not shutil.which("nice"):
-            with contextlib.suppress(OSError):
-                os.setpriority(os.PRIO_PROCESS, pid, 10)
+            process.lower_priority(pid)
 
     async def _watch(self, run: _Running) -> None:
         loop = asyncio.get_running_loop()
@@ -642,8 +588,7 @@ class Launcher:
                 await self._terminate(run, "max_duration")
             code = await run.exited
             # helpers the bot left in its process group go too (they may hold stdout)
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(run.proc.pid, signal.SIGKILL)
+            process.kill_group(run.proc.pid)
             try:
                 await asyncio.wait_for(reader, READER_DRAIN_SECONDS)
             except TimeoutError:
@@ -654,8 +599,7 @@ class Launcher:
             # the row first (DELETE answers with it), then the slower scope cleanup
             self._finish_run(run, code)
             if run.runner == "systemd":
-                await _run_quick(["systemctl", "--user", "stop", f"{run.unit}.scope"],
-                                 bot_env({}))
+                await _run_quick(process.scope_stop_command(run.unit), bot_env({}))
         except asyncio.CancelledError:
             reader.cancel()
             _unwatch_exit(loop, run.exited)
@@ -670,23 +614,13 @@ class Launcher:
             run.done.set()
 
     async def _read(self, run: _Running) -> None:
-        loop = asyncio.get_running_loop()
-        stream = asyncio.StreamReader(limit=2 * MAX_LOG_LINE, loop=loop)
+        def on_line(line: str) -> None:
+            parsed = parse_state_line(line)
+            if parsed is not None:
+                self._on_state(run, *parsed)
+
         assert run.proc.stdout is not None
-        transport, _ = await loop.connect_read_pipe(
-            lambda: asyncio.StreamReaderProtocol(stream, loop=loop), run.proc.stdout)
-        lines = LineSplitter()
-        try:
-            while True:
-                data = await stream.read(MAX_LOG_LINE)
-                for raw in lines.feed(data) if data else lines.end():
-                    parsed = parse_state_line(raw.decode("utf-8", "replace"))
-                    if parsed is not None:
-                        self._on_state(run, *parsed)
-                if not data:
-                    return
-        finally:
-            transport.close()
+        await process.read_lines(run.proc.stdout, on_line)
 
     def _on_state(self, run: _Running, state: str, reason: str | None) -> None:
         if run.last and run.last[0] in TERMINAL:
@@ -708,30 +642,16 @@ class Launcher:
         if run.stop_reason is None:
             run.stop_reason = reason
             self.store.update_meeting(run.id, stop_requested_at=time.time())
-        with contextlib.suppress(ProcessLookupError):
-            run.proc.send_signal(signal.SIGTERM)
-        try:
-            await asyncio.wait_for(asyncio.shield(run.exited), self.stop_grace)
-        except TimeoutError:
-            log.warning("meeting %s: bot ignored SIGTERM, killing it", run.id)
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(run.proc.pid, signal.SIGKILL)
-            await asyncio.shield(run.exited)
+        await process.terminate(
+            run.proc, run.exited, self.stop_grace,
+            lambda: log.warning("meeting %s: bot ignored SIGTERM, killing it", run.id))
 
     async def _stop_orphan(self, row: dict[str, Any]) -> None:
         pid, sid = row["pid"], row["session_id"]
         self.store.update_meeting(row["id"], stop_requested_at=time.time())
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.kill(pid, signal.SIGTERM)
-        deadline = time.monotonic() + self.stop_grace
-        while _alive(pid, sid) and time.monotonic() < deadline:
-            await asyncio.sleep(0.2)
-        if _alive(pid, sid):
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(pid, signal.SIGKILL)
+        await process.stop_pid(pid, sid, self.stop_grace)
         if row["unit"]:
-            await _run_quick(["systemctl", "--user", "stop", f"{row['unit']}.scope"],
-                             bot_env({}))
+            await _run_quick(process.scope_stop_command(row["unit"]), bot_env({}))
         shutil.rmtree(self.settings.data_dir / "meetings" / row["id"], ignore_errors=True)
         self._finish_row(row["id"], sid, "ended", "stopped")
 
@@ -751,68 +671,12 @@ class Launcher:
         self.pipeline.end_session(session_id, f"meeting_{reason}")
 
 
-def _exit_kills_bots() -> bool:
-    """Is this process its PID namespace's init (PID 1 in a container)? When it exits,
-    the kernel SIGKILLs every other process of the namespace, bots included."""
-    return os.getpid() == 1
+# Is this process its PID namespace's init (PID 1 in a container)? When it exits, the
+# kernel SIGKILLs every other process of the namespace, bots included.
+_exit_kills_bots = process.is_pid_namespace_init
 
-
-# --------------------------------------------------- child exit, no thread
-def _watch_exit(loop: asyncio.AbstractEventLoop, proc: subprocess.Popen[bytes],
-                fut: asyncio.Future[int]) -> None:
-    """Resolve ``fut`` with the exit code when ``proc`` exits, reaping it. Uses a pidfd
-    on the event loop (Linux 5.3+): no thread. Without pidfd: a 0.5 s check on the loop,
-    only while the bot runs."""
-    def reap() -> bool:
-        code = proc.poll()
-        if code is None:
-            return False
-        if not fut.done():
-            fut.set_result(code)
-        return True
-
-    try:
-        pidfd = os.pidfd_open(proc.pid)
-    except (AttributeError, OSError):
-        async def poll() -> None:
-            while not reap():
-                await asyncio.sleep(0.5)
-        task = loop.create_task(poll())
-        fut.add_done_callback(lambda _: task.cancel())
-        return
-
-    # the done callback removes the reader and closes the pidfd, exactly once
-    loop.add_reader(pidfd, reap)
-    fut.add_done_callback(lambda _: _close_pidfd(loop, pidfd))
-    reap()  # it may have exited before the reader was added
-
-
-def _close_pidfd(loop: asyncio.AbstractEventLoop, pidfd: int) -> None:
-    with contextlib.suppress(Exception):
-        loop.remove_reader(pidfd)
-    with contextlib.suppress(OSError):
-        os.close(pidfd)
-
-
-def _unwatch_exit(loop: asyncio.AbstractEventLoop, fut: asyncio.Future[int]) -> None:
-    if not fut.done():
-        fut.cancel()  # its done callback closes the pidfd
-
-
-async def _run_quick(argv: list[str], env: dict[str, str], timeout: float = 5.0) -> int:
-    """Run a short helper (systemd probe, scope stop) without blocking the loop or
-    starting a thread; its exit code, or -1."""
-    try:
-        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, env=env, close_fds=True)
-    except OSError:
-        return -1
-    loop = asyncio.get_running_loop()
-    fut: asyncio.Future[int] = loop.create_future()
-    _watch_exit(loop, proc, fut)
-    try:
-        return await asyncio.wait_for(fut, timeout)
-    except TimeoutError:
-        proc.kill()
-        proc.wait()
-        return -1
+# Child exit on the event loop (a pidfd, no thread) and short helpers: process.py.
+_watch_exit = process.watch_exit
+_close_pidfd = process.close_pidfd
+_unwatch_exit = process.unwatch_exit
+_run_quick = process.run_quick
