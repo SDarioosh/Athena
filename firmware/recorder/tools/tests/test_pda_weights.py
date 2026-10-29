@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from barvis_relay import pda_feed as f
-from barvis_relay import pda_sync as s
-from barvis_relay.pda_calendar import OdysseusCalendar
-from barvis_relay.pda_insight import OdysseusInsight
-from barvis_relay.pda_todos import OdysseusTodos
+from athena_relay import pda_feed as f
+from athena_relay import pda_sync as s
+from athena_relay.pda_calendar import OdysseusCalendar
+from athena_relay.pda_insight import OdysseusInsight
+from athena_relay.pda_todos import OdysseusTodos
 from ody_fake import ODY_TOKEN, WEIGHTS, FakeOdysseus
 from pda_fakes import NOW, TOKEN, FakeApiServer, FakeT5
 
@@ -91,7 +91,7 @@ def test_malformed_answers(answer) -> None:
 
 @pytest.mark.parametrize("mode", ["missing", "forbidden", "error", "text"])
 def test_a_failure_keeps_the_last_good_table(api_server, ody, caplog, mode) -> None:
-    caplog.set_level(logging.INFO, "barvis_relay.pda")
+    caplog.set_level(logging.INFO, "athena_relay.pda")
     ody.weights_mode = mode
     feed = build(api_server, ody, last_weights=TABLE)
     assert feed["weights"] == TABLE and "insight" in feed  # never fails the feed

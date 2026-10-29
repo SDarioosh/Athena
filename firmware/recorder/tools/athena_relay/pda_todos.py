@@ -18,7 +18,7 @@ from typing import Any, Protocol
 
 from .uploader import RETRY, Uploader, UploadError
 
-log = logging.getLogger("barvis_relay.pda")
+log = logging.getLogger("athena_relay.pda")
 
 TODOS = "/api/codex/todos"
 

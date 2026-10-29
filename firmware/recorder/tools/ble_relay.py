@@ -65,12 +65,12 @@ import stat
 import sys
 from pathlib import Path
 
-from barvis_relay import drain as d
-from barvis_relay import protocol as p
-from barvis_relay.anchors import Anchors, default_state_dir
-from barvis_relay.uploader import Uploader
+from athena_relay import drain as d
+from athena_relay import protocol as p
+from athena_relay.anchors import Anchors, default_state_dir
+from athena_relay.uploader import Uploader
 
-log = logging.getLogger("barvis_relay.ble")
+log = logging.getLogger("athena_relay.ble")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LINK_RETRY_SECONDS = 5
 SCAN_ERROR_RETRY_SECONDS = 30

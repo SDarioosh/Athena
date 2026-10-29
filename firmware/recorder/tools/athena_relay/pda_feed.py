@@ -32,7 +32,7 @@ from typing import Any, Protocol
 from .pda_insight import MALFORMED
 from .uploader import SKIP, Uploader, UploadError
 
-log = logging.getLogger("barvis_relay.pda")
+log = logging.getLogger("athena_relay.pda")
 
 FEED_VERSION = 1
 FEED_MAX = 32 * 1024  # bytes of encoded JSON (§4.1)

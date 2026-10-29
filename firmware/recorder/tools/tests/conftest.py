@@ -21,8 +21,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from barvis_relay import drain as d  # noqa: E402
-from barvis_relay import protocol as p  # noqa: E402
+from athena_relay import drain as d  # noqa: E402
+from athena_relay import protocol as p  # noqa: E402
 
 TOKEN = "fictional-test-token-7f3a9c"
 T0_MS = 1_792_411_200_000  # 2026-10-19T12:00:00Z

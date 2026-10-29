@@ -25,7 +25,7 @@ from . import protocol as p
 from .anchors import Anchors
 from .uploader import AUTH, SKIP, Uploader, UploadError
 
-log = logging.getLogger("barvis_relay")
+log = logging.getLogger("athena_relay")
 
 # Modes
 UPLOAD = "upload"

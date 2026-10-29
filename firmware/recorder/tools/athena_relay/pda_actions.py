@@ -29,7 +29,7 @@ from typing import Any, Protocol
 from .pda_feed import TITLE_MAX, ServerApi, cut, iso_to_z, quote
 from .uploader import AUTH, SKIP, UploadError
 
-log = logging.getLogger("barvis_relay.pda")
+log = logging.getLogger("athena_relay.pda")
 
 MAX_ACTION_JSON = 400
 PAGE_SECONDS = 600  # transcript page (§4.3: 10 minutes)

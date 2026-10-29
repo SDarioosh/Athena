@@ -22,7 +22,7 @@ from typing import Any
 from .pda_actions import CalAdd
 from .uploader import RETRY, SKIP, Uploader, UploadError
 
-log = logging.getLogger("barvis_relay.pda")
+log = logging.getLogger("athena_relay.pda")
 
 EVENTS = "/api/codex/calendar/events"
 

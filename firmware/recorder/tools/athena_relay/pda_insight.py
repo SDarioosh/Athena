@@ -26,7 +26,7 @@ from typing import Any, Protocol
 
 from .uploader import SKIP, Uploader, UploadError
 
-log = logging.getLogger("barvis_relay.pda")
+log = logging.getLogger("athena_relay.pda")
 
 INSIGHT = "/api/codex/insight/today"
 WEIGHTS = "/api/codex/insight/weights"
