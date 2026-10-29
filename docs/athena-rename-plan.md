@@ -1,6 +1,6 @@
 # Athena rename: work order
 
-Status: **planned, not started** (written 2026-10-27). On 2026-10-29 the owner also chose to
+Status: **step 1 in progress** (Athena's links done 2026-10-29), the other steps not started (written 2026-10-27). On 2026-10-29 the owner also chose to
 rename the hub's stored `"odysseus-sound"` values and server name `convo` with a data
 migration (cleanup lane 4F; filed calendar event IDs stay), and the watch's Bluetooth name
 (lane 1I); the "What stays" table below predates that. Since 2026-10-29 the steps run

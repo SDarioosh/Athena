@@ -1,5 +1,7 @@
 # convo-ai knowledge frontend: Hermes Agent vs Odysseus vs Hybrid (own SQLite + MCP)
 
+Status: **decided** (2026-10-18): the hybrid, with an Odysseus fork as the frontend ([decisions-log.md](decisions-log.md)).
+
 *Decision document. Researched 2026-10-18 against the copies installed on this machine:
 Hermes Agent v0.22.2 (git `d923a5eb`, 2026-10-15) at `~/.hermes/hermes-agent`, and
 Odysseus (git `0590edd4`, 2026-10-16, `HARNESS_VERSION` 0.20.19) at `~/models/odysseus`.

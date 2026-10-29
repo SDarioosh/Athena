@@ -21,7 +21,7 @@
 # services above are stopped.
 #
 # Settings: environment, or BARVIS_SOUND_* lines in server/.env (all optional):
-#   BARVIS_SOUND_REMOTE       git remote (default: the one pointing at */barvis-sound or */barvis-ai)
+#   BARVIS_SOUND_REMOTE       git remote (default: the one pointing at */Athena, */barvis-sound or */barvis-ai)
 #   BARVIS_SOUND_BRANCH       branch to follow (default: main)
 #   BARVIS_SOUND_EXTRAS       pip extras (default: vad,diarization; +pyannote if CONVO_DIARIZER=pyannote)
 #   BARVIS_SOUND_WHISPER_CMD  full whisper-server command line, absolute path first
