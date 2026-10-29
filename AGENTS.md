@@ -18,8 +18,9 @@ server. **Nothing in the data path touches the cloud.**
   calendar uid prefixes (stored in the owner's data).
 - **Don't rename code identifiers.** They keep the old name on purpose: the
   `convo_server` package, the `convo-server` CLI, `CONVO_*` env vars, paths such as
-  `server/data/convo.db`, the MCP server name `convo-ai`, the hub's server name
-  `convo`, the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app ("Convo Rec Test", vendor
+  `server/data/convo.db`, the hub's server name `convo` (the name Odysseus registered
+  our MCP server under; since MCP 0.20.1 the server reports itself as `athena`, was
+  `convo-ai`, and the hub never reads that), the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app ("Convo Rec Test", vendor
   `convo-ai`), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
   `SDarioosh/Athena`; GitHub redirects the old URL), the `barvis-sound*` service names
   and `BARVIS_SOUND_*` vars of `server/scripts/deploy.sh`, the Android app ID
