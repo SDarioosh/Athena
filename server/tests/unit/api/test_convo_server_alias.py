@@ -19,7 +19,7 @@ def _run(*args: str, cwd: Path = SERVER) -> subprocess.CompletedProcess[str]:
                           timeout=120)
 
 
-@pytest.mark.parametrize("name", ["store", "config", "mcp_server", "api", "cli", "pipeline"])
+@pytest.mark.parametrize("name", ["db.store", "config", "mcp_server", "api", "cli", "pipeline"])
 def test_old_name_gives_the_same_module(name: str) -> None:
     import importlib
 
@@ -33,14 +33,14 @@ def test_old_name_gives_the_same_module(name: str) -> None:
 
 
 def test_from_imports_and_attributes() -> None:
+    from convo_server.db import store
     from convo_server.mcp_server import INSTRUCTIONS
 
     import athena.mcp_server
     import convo_server
-    from convo_server import store
 
     assert INSTRUCTIONS is athena.mcp_server.INSTRUCTIONS
-    assert store is sys.modules["athena.store"]
+    assert store is sys.modules["athena.db.store"]
     assert convo_server.mcp_server is athena.mcp_server
     assert convo_server.__doc__ and "alias" in convo_server.__doc__
     with pytest.raises(AttributeError):
@@ -64,11 +64,11 @@ def test_old_name_first_in_a_fresh_interpreter() -> None:
     """Imported through the old name first, each module still loads once."""
     code = textwrap.dedent("""
         import sys
-        import convo_server.store, convo_server.api
-        import athena.store, athena.api
-        assert convo_server.store is athena.store
+        import convo_server.db.store, convo_server.api
+        import athena.db.store, athena.api
+        assert convo_server.db.store is athena.db.store
         assert convo_server.api is athena.api
-        assert athena.store.__spec__.name == "athena.store"
+        assert athena.db.store.__spec__.name == "athena.db.store"
         assert not [m for m in sys.modules if m.startswith("convo_server.")
                     and sys.modules[m] is not sys.modules["athena." + m.split(".", 1)[1]]]
         print("ok")
@@ -119,9 +119,9 @@ def test_venv_installed_before_the_rename(tmp_path: Path) -> None:
             pass
         else:
             raise SystemExit("athena importable without the alias: the test proves nothing")
-        import convo_server.store
-        import athena.store
-        assert convo_server.store is athena.store
+        import convo_server.db.store
+        import athena.db.store
+        assert convo_server.db.store is athena.db.store
         assert athena.__file__ == os.path.join(server, "athena", "__init__.py")
         print("ok")
     """)

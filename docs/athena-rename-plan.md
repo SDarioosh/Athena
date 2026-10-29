@@ -113,10 +113,10 @@ clone of the current URL.
 **Done** (2026-10-29): the package is `athena` (distribution `athena-server`), console
 scripts `athena` and `convo-server` (both `athena.cli:main`). Changed from the plan below:
 `convo_server` stays as an alias package (`server/convo_server/__init__.py`, a meta-path
-finder: `convo_server.store is athena.store`, `python -m convo_server.cli` works, and a
+finder: `convo_server.db.store is athena.db.store`, `python -m convo_server.cli` works, and a
 venv installed before the rename that knows only the `convo_server` folder still finds
-`athena`), because commands outside the repos may use the old name; it goes with the
-other shims (step 16, cleanup lane 4B). The hub's docs name `convo_server` paths in
+`athena`), because commands outside the repos may use the old name; cleanup lane 4B
+kept it (step 16). The hub's docs name `convo_server` paths in
 comments only (`docs/fork/sandbox.md` imports `convo_server.mcp_server`, which the alias
 keeps working). Tested in `server/tests/unit/api/test_convo_server_alias.py`.
 
@@ -339,6 +339,21 @@ The real-device install is in that PR's Server verification.
 - Real device: install over the current app and record one chunk.
 
 ## Step 16: final pass (both repos)
+
+**Athena part, cleanup lane 4B** (2026-10-29): removed the module shims the package split
+left at old paths, after `git grep` found no importer in either repo (code, tests, eval,
+scripts, meeting bot, relays, CI, Docker, the hub's docs): `athena/store.py` (now
+`athena/db/` and `athena/domain.py`), `athena/llm.py` (now `athena/summarize/`),
+`athena/meeting_chat.py`, `meeting_live.py`, `meeting_names.py`, `meeting_tracks.py`,
+`meeting_voices.py` and `zoom_signin.py` (now `athena/meetings/...`), and the launcher
+names `athena.meetings` still served from its time as the launcher module (now
+`athena.meetings.bot.launcher`). The loggers keep their old names (`athena.meeting_live`
+...), so log filters still match. Kept, by owner decision (old names keep working through
+Phase 4): the `convo_server` alias package (it now aliases only paths that exist:
+`convo_server.db.store`, not `convo_server.store`), the `convo-server` CLI, the
+`barvis_relay` stub and the `CONVO_*` settings (Athena has no other old-name setting
+aliases). They go in a later PR of their own once the owner confirms that no unit, cron
+job, profile or note outside the repos uses them.
 
 - Remove the `barvis_relay` stub (step 4) if nothing still uses it.
 - Remove the `convo_server` alias package (step 3) once the owner confirms no unit, cron

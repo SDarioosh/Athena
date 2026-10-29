@@ -43,7 +43,7 @@ first tracked chunk reopens it (`recording` again, no stop reason). Errors (400)
 ^[A-Za-z0-9._:-]{1,64}$`, `track_name is longer than 200 characters`, `track_name needs a
 track`. `POST /v1/ingest/chunk.json` takes the same two fields.
 
-**Meeting lines** (`athena/meeting_tracks.py`, imported only when a session with
+**Meeting lines** (`athena/meetings/transcribe/tracks.py`, imported only when a session with
 tracks is processed). Each track's VAD speech goes to whisper on its own (whisper's
 context never crosses tracks; the participants' names are added to its prompt for
 spelling), and every line from a track is that participant's:
@@ -82,7 +82,7 @@ spelling), and every line from a track is that participant's:
   of the round that reached `CONVO_MAX_SESSION_SECONDS` are kept. A retry of a stored
   chunk is `duplicate: true` as before. Sessions without tracks still take late chunks
   and transcribe them on the next pass.
-- Live transcription (`athena/meeting_live.py`, `CONVO_MEETING_LIVE_TRANSCRIBE`,
+- Live transcription (`athena/meetings/transcribe/live.py`, `CONVO_MEETING_LIVE_TRANSCRIBE`,
   default true): while a meeting records, the worker's existing 15 s tick transcribes each
   person's track window by window, so when it ends only the last window of each track (and
   any shared-room track) is left before the summary, which starts in the same tick. No

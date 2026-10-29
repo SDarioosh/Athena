@@ -18,7 +18,8 @@ server. **Nothing in the data path touches the cloud.**
   calendar uid prefixes (stored in the owner's data).
 - **Don't rename code identifiers.** They keep the old name on purpose: the
   `convo_server` package name (the package is now `athena`; `convo_server` stays an alias
-  of it, same module objects, until the cleanup's shim removal), the `convo-server` CLI
+  of it, same module objects, until the owner confirms nothing outside the repos uses it:
+  `docs/athena-rename-plan.md` step 16), the `convo-server` CLI
   (installed next to the new `athena`, both run the same code), `CONVO_*` env vars, paths such as
   `server/data/convo.db`, the hub's server name `convo` (the name Odysseus registered
   our MCP server under; since MCP 0.20.1 the server reports itself as `athena`, was
@@ -57,9 +58,8 @@ server. **Nothing in the data path touches the cloud.**
   storage, search, digest, MCP server (`athena/mcp_server.py`), frontend eval
   (`server/eval/bakeoff.py`). Storage is `athena/db/` (`Store` in `db/store.py`) with the
   kinds, statuses and name rules in `athena/domain.py`; summaries are `athena/summarize/`;
-  meetings are `athena/meetings/`; the old modules (`athena/store.py`, `athena/llm.py`,
-  `athena/meeting_*.py`, `athena/zoom_signin.py`) only re-export them, so import from
-  the new paths. Tests: `server/tests/unit/`, `integration/`, `meetings/`, `contract/`.
+  meetings are `athena/meetings/` (`bot/`, `ingest/`, `transcribe/`, `people/`).
+  Tests: `server/tests/unit/`, `integration/`, `meetings/`, `contract/`.
   `server/scripts/deploy.sh` updates the server and runs it as background services, or as the Docker containers of `server/compose.yml`
   (`BARVIS_SOUND_RUNNER=docker`); the hub's `scripts/fork_deploy.sh` calls it. See `server/README.md`.
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
