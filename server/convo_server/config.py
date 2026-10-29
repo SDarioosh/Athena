@@ -5,12 +5,23 @@ Every variable is prefixed with ``CONVO_``. See ``.env.example``.
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+log = logging.getLogger(__name__)
+
+# Meeting settings checked only when a meeting is requested (meetings.check_settings), so
+# a wrong value turns meetings off but never stops the server; at startup it is a warning.
+MEETING_CHOICES: dict[str, tuple[str, ...]] = {
+    "meeting_bot_runner": ("auto", "systemd", "plain"),
+    "meeting_track_codec": ("opus", "wav"),
+    "zoom_join_token": ("auto", "zak", "obf", "none"),
+}
 
 
 class Settings(BaseSettings):
@@ -234,13 +245,13 @@ class Settings(BaseSettings):
     meeting_bot_path: Path | None = None
     # How the bot is started: "systemd" (systemd-run --user --scope with CPU, memory and
     # lifetime caps), "plain" (nice 10 + RLIMIT_AS) or "auto" (systemd when it works).
-    meeting_bot_runner: Literal["auto", "systemd", "plain"] = "auto"
+    meeting_bot_runner: str = "auto"
     meeting_bot_max: int = Field(default=1, ge=1)  # bots at a time; more answers 409 busy
     meeting_bot_cpu: str = "200%"  # systemd CPUQuota (safety cap, systemd runner only)
     meeting_bot_memory: str = "2G"  # systemd MemoryMax, or RLIMIT_AS with the plain runner
     meeting_alone_seconds: float = 60.0  # leave after being the only participant this long
     meeting_waiting_room_seconds: float = 600.0  # give up in the waiting room after this
-    meeting_track_codec: Literal["opus", "wav"] = "opus"  # per-participant tracks (opus: 32 kbps)
+    meeting_track_codec: str = "opus"  # per-participant tracks: "opus" (32 kbps) or "wav"
     # The owner's Zoom Meeting SDK app credentials; the join token is signed locally.
     zoom_sdk_key: str | None = None
     zoom_sdk_secret: str | None = None
@@ -253,7 +264,7 @@ class Settings(BaseSettings):
     zoom_client_id: str | None = None
     zoom_client_secret: str | None = None
     zoom_redirect_url: str | None = None
-    zoom_join_token: Literal["auto", "zak", "obf", "none"] = "auto"
+    zoom_join_token: str = "auto"
 
     @property
     def base_url(self) -> str:
@@ -273,6 +284,16 @@ class Settings(BaseSettings):
             self.speaker_split_min_seconds = 0.3 if py else 1.5
         if self.speaker_line_check is None:
             self.speaker_line_check = py
+        return self
+
+    @model_validator(mode="after")
+    def _warn_meeting_choices(self) -> Settings:
+        """Warn (never fail) about a meeting setting a meeting request would refuse."""
+        for name, allowed in MEETING_CHOICES.items():
+            value = getattr(self, name)
+            if value not in allowed:
+                log.warning("CONVO_%s=%r is not one of %s: meetings will be refused until it "
+                            "is fixed", name.upper(), value, ", ".join(allowed))
         return self
 
     @field_validator("ingest_token", "mcp_token")
