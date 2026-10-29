@@ -174,22 +174,44 @@ unit_on() {  # the native unit $1 exists and is enabled (starts at boot) or runn
   systemctl --user -q is-enabled "$1" 2>/dev/null || systemctl --user -q is-active "$1" 2>/dev/null
 }
 
-native_services() {  # sets NATIVE: what an older native deploy still runs; status 1 if nothing
-  local s name
-  NATIVE=()
+unit_dir_of() {  # the checkout the native unit $1 runs (its WorkingDirectory)
+  sed -n 's/^WorkingDirectory=//p' "$UNIT_DIR/$1.service" 2>/dev/null | head -n 1
+}
+
+native_services() {  # sets NATIVE (what an older native deploy still runs, here or in another
+                     # checkout) and NATIVE_HERE (how many of them are this checkout's); status 1 if none
+  local s name dir
+  NATIVE=() NATIVE_HERE=0
   for s in "${SERVICES[@]}"; do
     name=$(unit_name "$s")
-    if unit_on "$name"; then NATIVE+=("$name (systemd user service, $UNIT_DIR/$name.service)"); fi
-    if bg_running "$s"; then NATIVE+=("$name (background process $(cat "$(pid_file "$s")"), $(pid_file "$s"))"); fi
+    if unit_on "$name"; then
+      dir=$(unit_dir_of "$name")
+      if [ "$dir" = "$SERVER_DIR" ]; then
+        NATIVE+=("$name (systemd user service, $UNIT_DIR/$name.service)")
+        NATIVE_HERE=$((NATIVE_HERE + 1))
+      else
+        NATIVE+=("$name (systemd user service of another checkout: ${dir:-unknown}; never stopped from here)")
+      fi
+    fi
+    if bg_running "$s"; then
+      NATIVE+=("$name (background process $(cat "$(pid_file "$s")"), $(pid_file "$s"))")
+      NATIVE_HERE=$((NATIVE_HERE + 1))
+    fi
   done
   [ ${#NATIVE[@]} -gt 0 ]
 }
 
-retire_native() {  # stop what a native deploy started; its unit files stay for a way back
+native_here() { native_services && [ "$NATIVE_HERE" -gt 0 ]; }
+
+retire_native() {  # stop what a native deploy of this checkout started; its unit files stay for a way back
   local s name
   for s in "${SERVICES[@]}"; do
     name=$(unit_name "$s")
     if unit_on "$name"; then
+      if [ "$(unit_dir_of "$name")" != "$SERVER_DIR" ]; then
+        log "leaving native $name alone: it runs $(unit_dir_of "$name"), not this checkout"
+        continue
+      fi
       log "stopping native $name (it runs in Docker now; its unit file stays)"
       systemctl --user disable -q --now "$name" 2>/dev/null || true
     fi
@@ -245,7 +267,7 @@ check_runner() {  # $1 the command; refuses before anything is stopped, built or
     } >&2
     exit 1
   fi
-  if [ "$RUNNER" = docker ] && native_services && ! whisper_chosen; then
+  if [ "$RUNNER" = docker ] && native_here && ! whisper_chosen; then
     {
       echo "error: not running '$1': switching to Docker stops the native services, but no whisper is chosen for Docker. Nothing was changed."
       how_to_switch
@@ -294,6 +316,9 @@ docker_preflight() {  # settings the containers would crash on, said before buil
 old_projects() {  # sets OLD: other compose project names of Athena that have containers
   local p
   OLD=()
+  # a project name of its own (COMPOSE_PROJECT_NAME, e.g. a test copy next to the real
+  # one) never takes another project down
+  [[ " ${PROJECTS[*]} " == *" $PROJECT "* ]] || return 1
   for p in "${PROJECTS[@]}"; do
     [ "$p" != "$PROJECT" ] || continue
     if [ -n "$(docker_raw ps -aq --filter "label=com.docker.compose.project=$p" 2>/dev/null </dev/null)" ]; then
@@ -318,7 +343,7 @@ docker_up() {  # build, (re)create what changed, wait until every container is h
   # Switching from a native install or a former project name: build first, so a failed
   # build leaves the running Athena alone; take the old one down only right before the new
   # one starts on the same ports.
-  if native_services || old_projects; then switch=1; fi
+  if native_here || old_projects; then switch=1; fi
   if [ -n "$switch" ]; then
     log "building the images before switching"
     dc build || { log "build failed; nothing was stopped"; return 1; }
@@ -554,7 +579,7 @@ main() {  # one function, so bash has read all of it before a deploy moves this 
     restart)
       load_config; check_runner restart; guard_meetings restart
       # after a checkout moved by hand, a former project still holds the ports: switch over
-      if native_services || old_projects; then docker_up
+      if native_here || old_projects; then docker_up
       else dc restart && dc up -d --wait --wait-timeout 300; fi ;;
     stop)
       load_config; check_runner stop

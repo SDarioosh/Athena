@@ -284,7 +284,10 @@ then `server/scripts/deploy.sh deploy`. It builds the images first (a failed bui
 nothing), then stops and disables the native services, keeping their unit files and
 `.venv` for the way back, and starts the containers on the same ports, with the same
 `.env` and data dir, so Odysseus reaches MCP at the same URL. Without a whisper choice it
-refuses, so the switch never leaves recordings untranscribed.
+refuses, so the switch never leaves recordings untranscribed. Only this checkout's native
+services are stopped (a unit's `WorkingDirectory`, the pid files in its data dir): a copy
+next to the real install never stops the real one, and with a compose project name of its
+own (`COMPOSE_PROJECT_NAME`) never takes Athena's containers down either.
 
 ### Back to the native install
 

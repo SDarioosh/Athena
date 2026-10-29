@@ -110,12 +110,16 @@ class Env:
     def clear(self) -> None:
         (self.fake / "log").unlink(missing_ok=True)
 
-    def native_unit(self, name: str, enabled: bool = True) -> Path:
-        """An older native deploy's unit file (and, if enabled, its unit is running)."""
+    def native_unit(self, name: str, enabled: bool = True, server: Path = SERVER) -> Path:
+        """An older native deploy's unit file for the checkout ``server`` (and, if enabled,
+        its unit is running)."""
         unit_dir = self.cfg / "systemd" / "user"
         unit_dir.mkdir(parents=True, exist_ok=True)
         unit = unit_dir / f"{name}.service"
-        unit.write_text("# Written by odysseus-sound server/scripts/deploy.sh\n")
+        unit.write_text("# Written by odysseus-sound server/scripts/deploy.sh; rerun it instead"
+                        f" of editing.\n[Unit]\nDescription=odysseus-sound serve\n\n[Service]\n"
+                        f"WorkingDirectory={server}\nExecStart={server}/.venv/bin/convo-server"
+                        " serve\n")
         if enabled:
             with (self.fake / "enabled").open("a") as f:
                 f.write(name + "\n")
@@ -369,7 +373,7 @@ def test_explicit_docker_on_a_native_install_needs_a_whisper_choice(tmp_path):
 def test_explicit_docker_migration_through_deploy(tmp_path):
     e = Env(tmp_path)
     repo, script = checkout(tmp_path)
-    e.native_unit("barvis-sound")
+    e.native_unit("barvis-sound", server=repo / "server")
     r = run_script(script, "deploy", env={**e.env, "ATHENA_RUNNER": "docker",
                                           "COMPOSE_PROFILES": "whisper-gpu"})
     assert r.returncode == 0, r.stderr
@@ -584,3 +588,33 @@ def test_hub_status_on_a_new_machine_does_not_fail(tmp_path):
     with open(os.devnull) as devnull:
         r = run_script(SCRIPT, "status", env=e.env, stdin=devnull)
     assert r.returncode == 0 and "still running natively" not in r.stdout
+
+
+# --- a copy next to the real install never touches it -----------------------------------
+
+def test_native_unit_of_another_checkout_is_never_stopped(tmp_path):
+    e = Env(tmp_path)
+    other = tmp_path / "production" / "server"
+    e.native_unit("barvis-sound", server=other)
+    # auto still refuses (it can't tell which install is meant) and says whose it is
+    r = run_script(SCRIPT, "start", env=e.env)
+    assert r.returncode == 1
+    assert f"barvis-sound (systemd user service of another checkout: {other}" in r.stderr
+    assert changes(e) == []
+    # docker: this checkout starts, the other one's unit is left alone, no whisper needed
+    r = run_script(SCRIPT, "start", env={**e.env, "ATHENA_RUNNER": "docker"})
+    assert r.returncode == 0, r.stderr
+    assert f"leaving native barvis-sound alone: it runs {other}" not in r.stdout  # no switch
+    assert not any(" disable" in c for c in e.log())
+    assert not any(c.endswith(" build") for c in e.log())
+
+
+def test_own_compose_project_name_never_takes_athena_down(tmp_path):
+    e = Env(tmp_path)
+    e.old_project("odysseus-sound")
+    e.old_project("athena")
+    r = run_script(SCRIPT, "start", env={**e.env, "COMPOSE_PROJECT_NAME": "athena-test",
+                                         "BARVIS_SOUND_ZOOM_SDK_DIR": "off"})
+    assert r.returncode == 0, r.stderr
+    assert not any(" down" in c or c.endswith(" build") for c in e.log())
+    assert (e.fake / "project-odysseus-sound").exists() and (e.fake / "project-athena").exists()
