@@ -66,7 +66,7 @@ export function withMic(onGranted, onDenied) {
   })
   if (result === GRANTED) finish(true)
   else if (result === 1) {
-    finish(false, 'microphone cannot be requested: allow it for Convo Rec Test in the watch or Zepp app settings, or reinstall')
+    finish(false, 'microphone cannot be requested: allow it for Athena Rec Test in the watch or Zepp app settings, or reinstall')
   }
   // result 0: the watch shows a prompt and the callback decides.
 }
