@@ -30,6 +30,14 @@ build dir, and the binary carries an old-style RPATH (`--disable-new-dtags`) to 
 `qt_libs` and `qt_libs/Qt/lib`, so it runs without `LD_LIBRARY_PATH` on the machine it was
 built on. It needs the SDK's system libraries (`SDK_LIBS` in `server/Dockerfile`).
 
+**On the server** the bot is not built by hand: `server/scripts/deploy.sh`, which runs
+Athena in Docker only, builds it into the `sound-api` image when it finds the SDK
+(`ATHENA_ZOOM_SDK_DIR`, or `~/zoom-sdk`), next to its start script
+(`server/docker/athena-meeting-bot-run`, which the launcher runs) and the SDK
+(`server/README.md` "Meeting bot in Docker"). The hand build above is for development and
+the tests; to run it outside Docker, point `CONVO_MEETING_BOT_PATH` at a copy of that start
+script with the binary and a `zoomsdk` link to the SDK next to it.
+
 **Sandbox / CI without the SDK:** `-DZOOM_SDK_DIR=$PWD/meeting-bot/bot/sdkstub` builds the
 bot against our own stub headers and a fake `libmeetingsdk.so` (`sdkstub/stub_meetingsdk.cpp`).
 They are written by us for compile checks, are not Zoom's headers, and the binary never

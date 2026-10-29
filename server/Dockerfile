@@ -1,10 +1,10 @@
-# odysseus-sound server image: `convo-server serve` and `convo-server mcp --http`.
+# Athena server image: `convo-server serve` and `convo-server mcp --http`.
 # Built and run by compose.yml (README "Docker"). Settings come from server/.env at run
 # time; nothing secret is baked in.
 #
 # Stages: `server` is the image (the default target, the last stage, is exactly it).
 # `meeting` adds the Zoom meeting bot on top; only compose.meeting.yml builds it, for
-# sound-api, when BARVIS_SOUND_ZOOM_SDK_DIR is set (README "Meeting bot in Docker").
+# sound-api, when ATHENA_ZOOM_SDK_DIR is set (README "Meeting bot in Docker").
 # Without that target BuildKit skips the bot stages and needs no SDK.
 ARG BASE=python:3.12-slim
 # Libraries the Zoom Meeting SDK and its bundled Qt load (meeting-bot/spike/Dockerfile,

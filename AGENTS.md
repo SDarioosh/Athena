@@ -12,8 +12,9 @@ server. **Nothing in the data path touches the cloud.**
 - In prose (docs, PR text, comments you add) call the project **Athena**
   (formerly convo-ai, barvis-ai, barvis-sound, odysseus-sound) and the hub **Odysseus**
   ("our Odysseus fork" where it must be told apart from upstream Odysseus).
-- The name `odysseus-sound` also stays where it is data, not prose: the systemd unit
-  text that `server/scripts/deploy.sh` writes (changing it restarts the services), and,
+- The name `odysseus-sound` also stays where it is data, not prose: the compose project
+  name in `server/compose.yml` (until every server has deployed once with the Docker-only
+  `deploy.sh`), and,
   in the hub, the belief source, the label on filed notes, the memory source and
   calendar uid prefixes (stored in the owner's data).
 - **Don't rename code identifiers.** They keep the old name on purpose: the
@@ -24,8 +25,10 @@ server. **Nothing in the data path touches the cloud.**
   our MCP server under; since MCP 0.20.1 the server reports itself as `athena`, was
   `convo-ai`, and the hub never reads that), the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app's appId and vendor
   `convo-ai` (its display name is now "Athena Rec Test"), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
-  `SDarioosh/Athena`; GitHub redirects the old URL), the `barvis-sound*` service names
-  and `BARVIS_SOUND_*` vars of `server/scripts/deploy.sh`, the Android app ID
+  `SDarioosh/Athena`; GitHub redirects the old URL), the old native units' names
+  `barvis-sound*` (`deploy.sh` still recognises them to switch to Docker), the `BARVIS_SOUND_*`
+  settings of `server/scripts/deploy.sh` (read beside the new `ATHENA_*` names), the compose
+  services `sound-api`/`sound-mcp`, the Android app ID
   `org.barvis.sound.relay`, the BLE UUID bytes and the
   Opus tag text (`BARVIS_SESSION=`…; the macros are now `ATHENA_UUID_BYTES` / `ATHENA_TAG_*` in
   `firmware/recorder/main/wire_ids.h`, values unchanged), and the PC relay's old package
@@ -66,8 +69,9 @@ server. **Nothing in the data path touches the cloud.**
   kinds, statuses and name rules in `athena/domain.py`; summaries are `athena/summarize/`;
   meetings are `athena/meetings/` (`bot/`, `ingest/`, `transcribe/`, `people/`).
   Tests: `server/tests/unit/`, `integration/`, `meetings/`, `contract/`.
-  `server/scripts/deploy.sh` updates the server and runs it as background services, or as the Docker containers of `server/compose.yml`
-  (`BARVIS_SOUND_RUNNER=docker`); the hub's `scripts/fork_deploy.sh` calls it. See `server/README.md`.
+  `server/scripts/deploy.sh` updates the server and runs it as the Docker containers of
+  `server/compose.yml` (Docker only; an older native install is switched only with
+  `ATHENA_RUNNER=docker`); the hub's `scripts/fork_deploy.sh` calls it. See `server/README.md`.
 - `zepp-app/`: Zepp OS Mini Program for the T-Rex 3 Pro. Currently the
   recording feasibility test app; see `zepp-app/README.md`.
 - `firmware/recorder/`: ESP-IDF 5.x firmware for our own recorders, one shared `main/`
