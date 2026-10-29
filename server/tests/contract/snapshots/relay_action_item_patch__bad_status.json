@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "status must be open, done or dismissed"
+  },
+  "content_type": "application/json",
+  "status": 400
+}

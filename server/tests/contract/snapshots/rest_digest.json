@@ -1,0 +1,22 @@
+{
+  "body": {
+    "conversation_ids": [
+      "000000000000000000000000c0de000a"
+    ],
+    "date": "2026-10-14",
+    "headline": "1 recording(s): 1:1 with Alice: vendor contracts",
+    "highlights": [
+      "Alice's move date is January 12",
+      "Budget cut now ten percent"
+    ],
+    "open_action_items": [
+      "Take over Alice's vendor contracts"
+    ],
+    "people": [
+      "Alice"
+    ],
+    "summary": "Alice moves to Berlin on January 12; the user takes over her vendor contracts and the budget cut is now ten percent."
+  },
+  "content_type": "application/json",
+  "status": 200
+}

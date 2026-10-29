@@ -1,0 +1,4 @@
+2 facts (times are Europe/Berlin). When answering, put the link next to each fact you use:
+- [Jonas] Jonas is allergic to peanuts (learned 2026-10-10) https://athena.example.org/view/000000000000000000000000c0de0007?sig=8edf69b52fa708eab051a1fa25d7c16b#t=32
+- [Jonas] Jonas runs the Lisbon marathon in December (learned 2026-10-10, until 2026-12-31) https://athena.example.org/view/000000000000000000000000c0de0007?sig=8edf69b52fa708eab051a1fa25d7c16b#t=0
+When answering, put the link next to each fact you use.

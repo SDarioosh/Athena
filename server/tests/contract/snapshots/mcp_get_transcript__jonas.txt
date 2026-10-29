@@ -1,0 +1,7 @@
+"Dinner with Jonas" 2026-10-10 20:00:00 https://athena.example.org/view/000000000000000000000000c0de0007?sig=8edf69b52fa708eab051a1fa25d7c16b
+#39 [0s] Jonas: I signed up for the Lisbon marathon in December, training every morning now.
+#40 [8s] Me: That's ambitious! How far are you running?
+#41 [16s] Jonas: Thirty kilometers on Sundays. Also you have to read The Overstory, best book I read this year.
+#42 [24s] Me: Adding it to my list. Do you want the satay?
+#43 [32s] Jonas: No thanks, I'm allergic to peanuts, remember?
+When answering, put the link next to each fact you use. To show the transcript, give the link above and a short summary; don't copy these lines into your answer.

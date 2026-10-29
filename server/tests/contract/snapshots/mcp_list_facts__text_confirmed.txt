@@ -1,0 +1,5 @@
+1 confirmed facts (times are Europe/Berlin). When answering, put the link next to each fact you use:
+- [Alice] Alice is moving to the Berlin office in January (learned 2026-09-15, until 2027-01-31) https://athena.example.org/view/000000000000000000000000c0de0001?sig=2b54669d195fa8debf17a886d696a0f8#t=48
+  said again 2026-10-14 https://athena.example.org/view/000000000000000000000000c0de000a?sig=db3160667ccbc7cacc4fcb11ef4c9c29#t=0
+  said again 2026-10-15 https://athena.example.org/view/000000000000000000000000c0de000b?sig=542deeea6dba480d67ea4cf40d41cd20#t=8
+When answering, put the link next to each fact you use.

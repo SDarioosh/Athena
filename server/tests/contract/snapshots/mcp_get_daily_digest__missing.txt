@@ -1,0 +1,1 @@
+No digest for 2026-01-01. Try search_conversations with since/until = 2026-01-01.

@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "meeting not found"
+  },
+  "content_type": "application/json",
+  "status": 404
+}

@@ -1,0 +1,5 @@
+1 online meetings (times are Europe/Berlin). When answering, put the link next to each fact you use:
+- 2026-10-09 18:00–18:01 "Community newsletter relaunch" (Online meeting: Community newsletter relaunch) id 000000000000000000000000c0de0006; people: Priya Example, Me, Lena Example, Omar Example; participants: Priya Example, Me, Lena Example, Omar Example
+  The newsletter shrinks to three sections and moves to Sunday mornings; the first new issue goes out on November 15.
+  https://athena.example.org/view/000000000000000000000000c0de0006?sig=4ff0f4e12e20c0b810670e02f2c84ede
+When answering, put the link next to each fact you use.

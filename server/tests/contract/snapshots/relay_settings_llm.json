@@ -1,0 +1,14 @@
+{
+  "body": {
+    "available": [
+      "demo-model",
+      "demo-model-large"
+    ],
+    "base_url": "http://llm.test/v1",
+    "default_model": "demo-model",
+    "model": "demo-model",
+    "override": null
+  },
+  "content_type": "application/json",
+  "status": 200
+}

@@ -1,0 +1,1 @@
+Renamed Ben to Alice in 3 lines across 1 conversations; their summaries will be redone. Ben (person id 8) is merged into Alice, whose person id 2 is kept.

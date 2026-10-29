@@ -1,0 +1,538 @@
+{
+  "body": {
+    "conversations": [
+      {
+        "device": "handwriting",
+        "discard_reason": null,
+        "ended_at": "2026-10-19T17:00:03+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de0010",
+        "key_points": [
+          "Oat milk",
+          "Coffee beans"
+        ],
+        "kind": "note",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de0010?sig=f37e0f894ce8e26e700f7fa3b2682b26",
+        "meeting": null,
+        "people": [
+          "Me",
+          "Maria",
+          "Mom"
+        ],
+        "started_at": "2026-10-19T17:00:00+00:00",
+        "status": "summarized",
+        "summary": "Buy oat milk and coffee beans, and ask Maria which cake Mom likes.",
+        "title": "Weekend errands",
+        "topics": [
+          "errands"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de0010/transcript",
+        "written": {
+          "link": "https://hub.example.org/notes/demo-1",
+          "source_id": "hub-note:demo-1",
+          "title": "Weekend errands"
+        }
+      },
+      {
+        "device": "twatch",
+        "discard_reason": null,
+        "ended_at": "2026-10-19T07:30:07+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de000f",
+        "key_points": [],
+        "kind": "note",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de000f?sig=b34e1741b3252c301ac79aef85a70e52",
+        "meeting": null,
+        "people": [
+          "Me",
+          "Mom"
+        ],
+        "started_at": "2026-10-19T07:30:00+00:00",
+        "status": "summarized",
+        "summary": "Reminder to call Mom about the birthday dinner tomorrow at 6 p.m.",
+        "title": "Call Mom",
+        "topics": [
+          "family"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de000f/transcript",
+        "written": null
+      },
+      {
+        "device": "omi",
+        "discard_reason": null,
+        "ended_at": "2026-10-18T09:00:31+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de000e",
+        "key_points": [
+          "Rye bread at four",
+          "Closed on Monday"
+        ],
+        "kind": "casual",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de000e?sig=c0004010f631faed0298639d8f2816b7",
+        "meeting": null,
+        "people": [
+          "Me"
+        ],
+        "started_at": "2026-10-18T09:00:00+00:00",
+        "status": "summarized",
+        "summary": "The rye bread is ready at four; the bakery is closed on Monday.",
+        "title": "At the bakery",
+        "topics": [
+          "shopping"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de000e/transcript",
+        "written": null
+      },
+      {
+        "device": "omi",
+        "discard_reason": "tv_or_media",
+        "ended_at": "2026-10-17T21:00:31+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de000d",
+        "key_points": [],
+        "kind": "other",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de000d?sig=57015eaee6dba84b896ca785e4c4882e",
+        "meeting": null,
+        "people": [],
+        "started_at": "2026-10-17T21:00:00+00:00",
+        "status": "discarded",
+        "summary": null,
+        "title": null,
+        "topics": [],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de000d/transcript",
+        "written": null
+      },
+      {
+        "device": "omi",
+        "discard_reason": null,
+        "ended_at": "2026-10-16T20:00:31+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de000c",
+        "key_points": [
+          "Twelve guests",
+          "Aunt Rosa comes by train"
+        ],
+        "kind": "casual",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de000c?sig=3bda567d315255a7dd432e82127f4a6e",
+        "meeting": null,
+        "people": [
+          "Maria",
+          "Me",
+          "Aunt Rosa"
+        ],
+        "started_at": "2026-10-16T20:00:00+00:00",
+        "status": "summarized",
+        "summary": "Casa Lupo is booked for twelve guests on November 8 at 7 p.m.; the user picks up Aunt Rosa from the station.",
+        "title": "Birthday dinner plans",
+        "topics": [
+          "family",
+          "birthday"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de000c/transcript",
+        "written": null
+      },
+      {
+        "device": "twatch",
+        "discard_reason": null,
+        "ended_at": "2026-10-15T07:40:15+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de000b",
+        "key_points": [
+          "Cooking school near the river"
+        ],
+        "kind": "note",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de000b?sig=542deeea6dba480d67ea4cf40d41cd20",
+        "meeting": null,
+        "people": [
+          "Me",
+          "Alice"
+        ],
+        "started_at": "2026-10-15T07:40:00+00:00",
+        "status": "summarized",
+        "summary": "A pasta-making cooking class for the team offsite instead of the escape room; ask Alice before she leaves for Berlin.",
+        "title": "Offsite idea: cooking class",
+        "topics": [
+          "offsite"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de000b/transcript",
+        "written": null
+      },
+      {
+        "device": "trex3pro",
+        "discard_reason": null,
+        "ended_at": "2026-10-14T15:00:39+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de000a",
+        "key_points": [
+          "Alice's move date is January 12",
+          "Budget cut now ten percent"
+        ],
+        "kind": "meeting",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de000a?sig=db3160667ccbc7cacc4fcb11ef4c9c29",
+        "meeting": null,
+        "people": [
+          "Alice",
+          "Me"
+        ],
+        "started_at": "2026-10-14T15:00:00+00:00",
+        "status": "summarized",
+        "summary": "Alice moves to Berlin on January 12; the user takes over her vendor contracts and the budget cut is now ten percent.",
+        "title": "1:1 with Alice: vendor contracts",
+        "topics": [
+          "work",
+          "budget"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de000a/transcript",
+        "written": null
+      },
+      {
+        "device": "zoom",
+        "discard_reason": null,
+        "ended_at": "2026-10-13T15:00:50+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de0009",
+        "key_points": [
+          "Second supplier is cheaper"
+        ],
+        "kind": "meeting",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de0009?sig=47f586de44c8f2155c5cdc4605779495",
+        "meeting": {
+          "participants": [
+            {
+              "is_owner": false,
+              "joined_at": "2026-10-13T15:00:00+00:00",
+              "left_at": "2026-10-13T15:00:50+00:00",
+              "name": "Sam Example",
+              "person_id": null,
+              "zoom_name": "Sam Example"
+            },
+            {
+              "is_owner": true,
+              "joined_at": "2026-10-13T15:00:00+00:00",
+              "left_at": "2026-10-13T15:00:50+00:00",
+              "name": "Me",
+              "person_id": 1,
+              "zoom_name": "Me"
+            },
+            {
+              "is_owner": false,
+              "joined_at": "2026-10-13T15:00:00+00:00",
+              "left_at": "2026-10-13T15:00:50+00:00",
+              "name": "Dana Example",
+              "person_id": 3,
+              "zoom_name": "Dana Example"
+            },
+            {
+              "is_owner": false,
+              "joined_at": "2026-10-13T15:00:00+00:00",
+              "left_at": "2026-10-13T15:00:50+00:00",
+              "name": "Kai Example",
+              "person_id": null,
+              "zoom_name": "Kai Example"
+            },
+            {
+              "is_owner": false,
+              "joined_at": "2026-10-13T15:00:00+00:00",
+              "left_at": "2026-10-13T15:00:50+00:00",
+              "name": "Rafael Example",
+              "person_id": null,
+              "zoom_name": "Rafael Example"
+            }
+          ],
+          "topic": "Q4 budget review: community garden"
+        },
+        "people": [
+          "Sam Example",
+          "Me",
+          "Kai Example",
+          "Dana Example"
+        ],
+        "started_at": "2026-10-13T15:00:00+00:00",
+        "status": "summarized",
+        "summary": "The tool shed goes to the second supplier for about 3200 euros; the user confirms the order by Friday.",
+        "title": "Community garden budget",
+        "topics": [
+          "garden"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de0009/transcript",
+        "written": null
+      },
+      {
+        "device": "twatch",
+        "discard_reason": null,
+        "ended_at": "2026-10-11T08:15:15+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de0008",
+        "key_points": [
+          "New brake pads before winter",
+          "Check the rear light"
+        ],
+        "kind": "note",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de0008?sig=845d63239f52e6af45d691d8bd533d92",
+        "meeting": null,
+        "people": [
+          "Me"
+        ],
+        "started_at": "2026-10-11T08:15:00+00:00",
+        "status": "summarized",
+        "summary": "The bike needs new brake pads before winter; ask at the bike shop on Lindenstrasse and check the rear light.",
+        "title": "Bike brake pads",
+        "topics": [
+          "bike"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de0008/transcript",
+        "written": null
+      },
+      {
+        "device": "omi",
+        "discard_reason": null,
+        "ended_at": "2026-10-10T18:00:39+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de0007",
+        "key_points": [
+          "Lisbon marathon in December",
+          "Read The Overstory"
+        ],
+        "kind": "casual",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de0007?sig=8edf69b52fa708eab051a1fa25d7c16b",
+        "meeting": null,
+        "people": [
+          "Jonas",
+          "Me"
+        ],
+        "started_at": "2026-10-10T18:00:00+00:00",
+        "status": "summarized",
+        "summary": "Jonas is training for the Lisbon marathon and recommended The Overstory.",
+        "title": "Dinner with Jonas",
+        "topics": [
+          "running",
+          "books"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de0007/transcript",
+        "written": null
+      },
+      {
+        "device": "zoom",
+        "discard_reason": null,
+        "ended_at": "2026-10-09T16:01:00+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de0006",
+        "key_points": [
+          "Three sections and a photo of the month",
+          "Sent on Sunday mornings"
+        ],
+        "kind": "meeting",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de0006?sig=4ff0f4e12e20c0b810670e02f2c84ede",
+        "meeting": {
+          "participants": [
+            {
+              "is_owner": false,
+              "joined_at": "2026-10-09T16:00:00+00:00",
+              "left_at": "2026-10-09T16:01:00+00:00",
+              "name": "Priya Example",
+              "person_id": null,
+              "zoom_name": "Priya Example"
+            },
+            {
+              "is_owner": true,
+              "joined_at": "2026-10-09T16:00:00+00:00",
+              "left_at": "2026-10-09T16:01:00+00:00",
+              "name": "Me",
+              "person_id": 1,
+              "zoom_name": "Me"
+            },
+            {
+              "is_owner": false,
+              "joined_at": "2026-10-09T16:00:00+00:00",
+              "left_at": "2026-10-09T16:01:00+00:00",
+              "name": "Lena Example",
+              "person_id": null,
+              "zoom_name": "Lena Example"
+            },
+            {
+              "is_owner": false,
+              "joined_at": "2026-10-09T16:00:00+00:00",
+              "left_at": "2026-10-09T16:01:00+00:00",
+              "name": "Omar Example",
+              "person_id": null,
+              "zoom_name": "Omar Example"
+            }
+          ],
+          "topic": "Community newsletter relaunch"
+        },
+        "people": [
+          "Priya Example",
+          "Me",
+          "Lena Example",
+          "Omar Example"
+        ],
+        "started_at": "2026-10-09T16:00:00+00:00",
+        "status": "summarized",
+        "summary": "The newsletter shrinks to three sections and moves to Sunday mornings; the first new issue goes out on November 15.",
+        "title": "Community newsletter relaunch",
+        "topics": [
+          "newsletter"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de0006/transcript",
+        "written": null
+      },
+      {
+        "device": "trex3pro",
+        "discard_reason": null,
+        "ended_at": "2026-10-07T09:30:39+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de0005",
+        "key_points": [
+          "API migration done",
+          "Client demo on October 23"
+        ],
+        "kind": "meeting",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de0005?sig=8f6c5a9e76beab44dcf8c55c6b3035a6",
+        "meeting": null,
+        "people": [
+          "Ben",
+          "Alice",
+          "Me"
+        ],
+        "started_at": "2026-10-07T09:30:00+00:00",
+        "status": "summarized",
+        "summary": "Ben finished the API migration; the client demo moved to October 23 and the user will review Ben's pull request.",
+        "title": "Standup: API migration and client demo",
+        "topics": [
+          "work"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de0005/transcript",
+        "written": null
+      },
+      {
+        "device": "trex3pro",
+        "discard_reason": null,
+        "ended_at": "2026-10-03T11:00:39+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de0004",
+        "key_points": [
+          "Rent rises to 1520 euros",
+          "Renewal due October 31"
+        ],
+        "kind": "appointment",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de0004?sig=2b5cbffcbc727c29bfb8d2f7b20b8066",
+        "meeting": null,
+        "people": [
+          "Tom",
+          "Me"
+        ],
+        "started_at": "2026-10-03T11:00:00+00:00",
+        "status": "summarized",
+        "summary": "Tom raises the rent from 1450 to 1520 euros from January and needs the signed renewal by October 31; he will fix the bathroom fan.",
+        "title": "Lease renewal and rent increase",
+        "topics": [
+          "housing"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de0004/transcript",
+        "written": null
+      },
+      {
+        "device": "omi",
+        "discard_reason": null,
+        "ended_at": "2026-09-30T14:00:39+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de0003",
+        "key_points": [
+          "Crown needed",
+          "Avoid hard food until then"
+        ],
+        "kind": "appointment",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de0003?sig=78af3b41afd383997de9db47a584d3c8",
+        "meeting": null,
+        "people": [
+          "Dr. Patel",
+          "Me"
+        ],
+        "started_at": "2026-09-30T14:00:00+00:00",
+        "status": "summarized",
+        "summary": "Dr. Patel found a cracked lower left molar that needs a crown; the follow-up is on October 21 at 9 a.m.",
+        "title": "Dentist: cracked molar",
+        "topics": [
+          "health"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de0003/transcript",
+        "written": null
+      },
+      {
+        "device": "trex3pro",
+        "discard_reason": null,
+        "ended_at": "2026-09-22T19:30:47+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de0002",
+        "key_points": [
+          "Dinner at Casa Lupo",
+          "Photo album as the gift"
+        ],
+        "kind": "casual",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de0002?sig=7b03dc7f7b65fca7db9ee25815324434",
+        "meeting": null,
+        "people": [
+          "Maria",
+          "Me",
+          "Mom"
+        ],
+        "started_at": "2026-09-22T19:30:00+00:00",
+        "status": "summarized",
+        "summary": "Maria and the user planned a dinner for Mom's seventieth birthday at Casa Lupo; the user takes care of the gift.",
+        "title": "Mom's seventieth birthday",
+        "topics": [
+          "family",
+          "birthday"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de0002/transcript",
+        "written": null
+      },
+      {
+        "device": "trex3pro",
+        "discard_reason": null,
+        "ended_at": "2026-09-15T10:01:03+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de0001",
+        "key_points": [
+          "Q4 budget cut by fifteen percent",
+          "Alice moves to Berlin in January"
+        ],
+        "kind": "meeting",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de0001?sig=2b54669d195fa8debf17a886d696a0f8",
+        "meeting": null,
+        "people": [
+          "Alice",
+          "Me"
+        ],
+        "started_at": "2026-09-15T10:00:00+00:00",
+        "status": "summarized",
+        "summary": "Alice said finance is cutting the Q4 budget by fifteen percent; the user will send a revised spreadsheet by Friday.",
+        "title": "Q4 budget cut",
+        "topics": [
+          "budget",
+          "Berlin"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de0001/transcript",
+        "written": null
+      }
+    ]
+  },
+  "content_type": "application/json",
+  "status": 200
+}

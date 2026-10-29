@@ -1,0 +1,43 @@
+{
+  "body": {
+    "conversation_id": "000000000000000000000000c0de0009",
+    "segments": [
+      {
+        "at": "2026-10-13T15:00:16+00:00",
+        "is_owner": false,
+        "kind": "speech",
+        "offset": 16.0,
+        "speaker": "Sam Example",
+        "text": "That's more than we planned. Dana, do you have the updated sheet?"
+      },
+      {
+        "at": "2026-10-13T15:00:21+00:00",
+        "is_owner": false,
+        "kind": "chat",
+        "offset": 21.0,
+        "speaker": "Dana Example",
+        "text": "Here's the updated sheet: https://files.example.org/garden-budget-v3.xlsx"
+      },
+      {
+        "at": "2026-10-13T15:00:24+00:00",
+        "is_owner": false,
+        "kind": "chat",
+        "offset": 24.0,
+        "speaker": "Dana Example",
+        "text": "Tab 2 has the shed quotes from both suppliers."
+      },
+      {
+        "at": "2026-10-13T15:00:30+00:00",
+        "is_owner": false,
+        "kind": "speech",
+        "offset": 30.0,
+        "speaker": "Kai Example",
+        "text": "The second supplier is cheaper, about three thousand two hundred."
+      }
+    ],
+    "started_at": "2026-10-13T15:00:00+00:00",
+    "title": "Community garden budget"
+  },
+  "content_type": "application/json",
+  "status": 200
+}

@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "Zoom sign-in is not set up: CONVO_ZOOM_CLIENT_ID, CONVO_ZOOM_CLIENT_SECRET, CONVO_ZOOM_REDIRECT_URL missing in server/.env (the Zoom Marketplace app's OAuth client id, secret and redirect URL)"
+  },
+  "content_type": "application/json",
+  "status": 501
+}
