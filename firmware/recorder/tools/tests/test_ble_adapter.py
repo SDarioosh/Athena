@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 
 import ble_relay
-from barvis_relay import drain as d
-from barvis_relay import protocol as p
-from barvis_relay.anchors import Anchors
-from barvis_relay.uploader import Uploader
+from athena_relay import drain as d
+from athena_relay import protocol as p
+from athena_relay.anchors import Anchors
+from athena_relay.uploader import Uploader
 from conftest import TOKEN, FakeWatch, make_session
 
 

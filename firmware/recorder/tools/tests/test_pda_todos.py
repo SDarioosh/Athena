@@ -7,10 +7,10 @@ import asyncio
 import json
 
 import pytest
-from barvis_relay import pda_actions as a
-from barvis_relay import pda_feed as f
-from barvis_relay import pda_sync as s
-from barvis_relay.pda_todos import OdysseusTodos
+from athena_relay import pda_actions as a
+from athena_relay import pda_feed as f
+from athena_relay import pda_sync as s
+from athena_relay.pda_todos import OdysseusTodos
 from ody_fake import ODY_TOKEN, TODOS, FakeOdysseus
 from pda_fakes import NOW, TOKEN, FakeApiServer, FakeT5
 

@@ -26,7 +26,7 @@ import urllib.request
 import uuid
 from typing import Any
 
-log = logging.getLogger("barvis_relay.uploader")
+log = logging.getLogger("athena_relay.uploader")
 
 RETRY = "retry"
 AUTH = "auth"

@@ -17,19 +17,25 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-log = logging.getLogger("barvis_relay.anchors")
+log = logging.getLogger("athena_relay.anchors")
 
 KEEP_SECONDS = 60 * 24 * 3600  # forget anchors of sessions not seen for 60 days
 
 
 def default_state_dir() -> Path:
+    """`<state base>/athena-relay`; a relay set up before the rename keeps using its existing
+    `barvis-relay` dir as is (never moved or copied), so acknowledged chunks' anchors and the
+    PDA's feed hash carry on."""
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
     elif sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support"
     else:
         base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
-    return base / "barvis-relay"
+    new, old = base / "athena-relay", base / "barvis-relay"
+    if not new.exists() and old.is_dir():
+        return old
+    return new
 
 
 class Anchors:

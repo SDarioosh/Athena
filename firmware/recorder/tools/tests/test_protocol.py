@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from barvis_relay import protocol as p
+from athena_relay import protocol as p
 
 
 def h(s: str) -> bytes:

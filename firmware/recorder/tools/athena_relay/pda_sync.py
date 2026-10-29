@@ -39,7 +39,7 @@ from .pda_feed import (
 )
 from .uploader import AUTH, UploadError
 
-log = logging.getLogger("barvis_relay.pda")
+log = logging.getLogger("athena_relay.pda")
 
 # Outcomes of one connection (the same words as drain.py)
 DONE = "done"
