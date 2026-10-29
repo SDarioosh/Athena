@@ -2,7 +2,7 @@
 
 Status: **v1, implemented** by the recorder firmware (`firmware/recorder/main/ble_*`), the
 PC test relay (`firmware/recorder/tools/ble_relay.py`) and the Android relay app
-(`android-relay/`). Nothing here is verified on hardware yet (see the end).
+(`android-relay/`). Verified on the watch with the PC relay (PROGRESS round 14); the Android relay is not yet tested on a phone (checked 2026-10-29).
 
 This document is the contract between those three. If code and this document disagree,
 fix one of them in the same PR. Plan context: [t-watch-ultra-plan.md](t-watch-ultra-plan.md)

@@ -1,6 +1,6 @@
 # Athena rename: work order
 
-Status: **planned, not started** (written 2026-10-27). On 2026-10-29 the owner also chose to
+Status: **step 1 in progress** (Athena's links done 2026-10-29), the other steps not started (written 2026-10-27). On 2026-10-29 the owner also chose to
 rename the hub's stored `"odysseus-sound"` values and server name `convo` with a data
 migration (cleanup lane 4F; filed calendar event IDs stay), and the watch's Bluetooth name
 (lane 1I); the "What stays" table below predates that. Since 2026-10-29 the steps run
@@ -126,6 +126,10 @@ clone of the current URL.
 
 ## Step 4: PC relay package (Athena)
 
+**Done** (2026-10-29): `athena_relay`, with `barvis_relay/` as a stub that aliases each
+submodule (`barvis_relay.uploader is athena_relay.uploader`); the state dir rule is tested
+for old dir only, new only, both and neither (`tools/tests/test_relay_names.py`).
+
 - `git mv firmware/recorder/tools/barvis_relay firmware/recorder/tools/athena_relay`,
   then change the imports in `ble_relay.py`, `pda_relay.py`, the tests (`tools/tests/`,
   10 files), the one `server/tests` file and `ci.yml`.
@@ -140,6 +144,11 @@ clone of the current URL.
 
 ## Step 5: firmware macros (Athena)
 
+**Done** (2026-10-29): the Opus tags were string literals in `session_rec.c`, not macros; they
+and the UUID bytes are now `ATHENA_TAG_*` and `ATHENA_UUID_BYTES` in `main/wire_ids.h`,
+with the same bytes. `test/test_wire_ids.c` pins every UUID and tag byte against literals
+copied from the firmware before the rename. `idf.py build` runs in CI.
+
 - In `firmware/recorder/main/ble_sync.c` and the other files that use them (13 files),
   rename `BARVIS_UUID` and the `BARVIS_*` Opus tag macros to `ATHENA_*`.
 - **The values stay the same:** the UUID bytes, the Opus tag bytes and
@@ -150,6 +159,12 @@ clone of the current URL.
   `ble_uuid128_t` dump in a host test, or the `.rodata` of `ble_sync.o`).
 
 ## Step 6: Android Kotlin package (Athena)
+
+Status: **done** (cleanup branch `feature/cleanup-1h`); the real-device check is in its PR.
+Kept on purpose: the `applicationId`, the intent action strings
+`org.barvis.sound.relay.*`, the Keystore alias `barvis_relay_token_v1`, and an
+`activity-alias` named `org.barvis.sound.relay.ui.MainActivity` for the launcher entry, so
+home-screen icons pinned by an older version keep working.
 
 - Move `android-relay/app/src/{main,test}/java/org/barvis/sound/relay` to
   `org/athena/relay` (57 files), change the `package` and `import` lines, and set
@@ -302,6 +317,9 @@ clone of the current URL.
   (both a new hub and a hub from before step 13).
 
 ## Step 15: Zepp test app name (Athena)
+
+**Done** (2026-10-29), also the page title, the settings heading and the microphone hint.
+The real-device install is in that PR's Server verification.
 
 - `zepp-app/app.json`: `appName` "Convo Rec Test" becomes "Athena Rec Test", in both
   places. `appId` (1092611) and the vendor stay the same, so the watch treats it as the

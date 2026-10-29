@@ -10,18 +10,18 @@ import logging
 from typing import Any
 
 import pytest
-from barvis_relay import pda_feed as f
-from barvis_relay import pda_sync as s
-from barvis_relay.pda_calendar import OdysseusCalendar
-from barvis_relay.pda_insight import (
+from athena_relay import pda_feed as f
+from athena_relay import pda_sync as s
+from athena_relay.pda_calendar import OdysseusCalendar
+from athena_relay.pda_insight import (
     MALFORMED,
     NO_SCOPE,
     NOT_YET,
     OLD_HUB,
     OdysseusInsight,
 )
-from barvis_relay.pda_todos import OdysseusTodos
-from barvis_relay.uploader import AUTH, RETRY
+from athena_relay.pda_todos import OdysseusTodos
+from athena_relay.uploader import AUTH, RETRY
 from ody_fake import INSIGHT, ODY_TOKEN, FakeOdysseus
 from pda_fakes import NOW, TOKEN, FakeApiServer, FakeT5
 
@@ -148,7 +148,7 @@ def test_caps(api_server, ody) -> None:
     ("none", NOT_YET), ("forbidden", NO_SCOPE), ("missing", OLD_HUB), ("text", MALFORMED),
 ])
 def test_no_insight_leaves_it_out(api_server, ody, caplog, mode, why) -> None:
-    caplog.set_level(logging.INFO, "barvis_relay.pda")
+    caplog.set_level(logging.INFO, "athena_relay.pda")
     ody.insight_mode = mode
     feed = build(api_server, ody)
     assert "insight" not in feed and feed["todos"] and feed["calendar"]

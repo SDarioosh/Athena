@@ -48,17 +48,17 @@ import sys
 import time
 from pathlib import Path
 
-from barvis_relay import pda_protocol as q
-from barvis_relay import pda_sync as s
-from barvis_relay.anchors import default_state_dir
-from barvis_relay.pda_actions import NoCalendar
-from barvis_relay.pda_calendar import OdysseusCalendar
-from barvis_relay.pda_feed import HttpApi, resolve_tz
-from barvis_relay.pda_insight import OdysseusInsight
-from barvis_relay.pda_todos import OdysseusTodos
-from barvis_relay.protocol import iso_ms
+from athena_relay import pda_protocol as q
+from athena_relay import pda_sync as s
+from athena_relay.anchors import default_state_dir
+from athena_relay.pda_actions import NoCalendar
+from athena_relay.pda_calendar import OdysseusCalendar
+from athena_relay.pda_feed import HttpApi, resolve_tz
+from athena_relay.pda_insight import OdysseusInsight
+from athena_relay.pda_todos import OdysseusTodos
+from athena_relay.protocol import iso_ms
 
-log = logging.getLogger("barvis_relay.pda_ble")
+log = logging.getLogger("athena_relay.pda_ble")
 NOT_FOUND = 4
 LINK_RETRY_SECONDS = 5
 SCAN_ERROR_RETRY_SECONDS = 30

@@ -1,8 +1,8 @@
-# Convo Rec Test (T-Rex 3 Pro)
+# Athena Rec Test (T-Rex 3 Pro)
 
 A Zepp OS Mini Program for checking whether the T-Rex 3 Pro can record conversations
 in 30-second Opus chunks **with the screen on and with the screen off**. It also checks
-whether the phone can upload those chunks to the convo-ai server over Tailscale. The full
+whether the phone can upload those chunks to the Athena server over Tailscale. The full
 recording app is built after these results are in.
 
 ## Why this test matters
@@ -57,7 +57,7 @@ press **STOP**. Write down the five result lines.
 **Test B: screen OFF, 10 min.** Press **Screen OFF** and lower your wrist. Don't touch
 the watch for 10 min. Then raise your wrist:
 - If the app is showing, press **STOP**.
-- If you see the watch face instead, open *Convo Rec Test* again. It notices the
+- If you see the watch face instead, open *Athena Rec Test* again. It notices the
   interrupted recording, logs the gap and resumes. Press **STOP**.
 
 Write down the result lines and whether the app or the watch face appeared on wake.
@@ -115,7 +115,7 @@ Real-device checks still open: see "Voice profile" in PROGRESS.md and the PR.
   app lists `device:os.mic` in `app.json` and asks for it (`@zos/app`
   `requestPermission`) when you press a test button. If the watch shows a prompt, pick
   **Allow**. If it still shows `ERROR mic permission: …`, allow the microphone for
-  Convo Rec Test in the watch's app settings, or uninstall the app and install it again.
+  Athena Rec Test in the watch's app settings, or uninstall the app and install it again.
 - **HTTP vs HTTPS:** Android may block plain `http://` from the Zepp app. If Ping fails
   with a network error, use HTTPS via Tailscale (`tailscale serve --https=443
   http://127.0.0.1:8000` on the server, then `https://<host>.<tailnet>.ts.net` as the URL).

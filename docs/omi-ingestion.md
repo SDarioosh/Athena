@@ -1,5 +1,7 @@
 # Omi pendant → self-hosted ingestion: research notes
 
+Status: **research done; the Omi relay is not built** (optional, after the XIAO; checked 2026-10-29).
+
 Date: 2026-10-18. Source snapshots read locally: `BasedHardware/omi` @ `5448885` (2026-10-17),
 `SimpleOpenSoftware/chronicle` `dev` @ `e5d5a16` (2026-09-22), `Ushadow-io/chronicle` `main` @ `087a106` (2026-01-06).
 Constraint applied throughout: **no audio, transcript, or summary may leave the LAN.**

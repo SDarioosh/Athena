@@ -1,6 +1,7 @@
 # Athena Zoom bot: phased plan
 
-As of 2026-10-27. Status: plan, nothing built yet. Each lane below is sized for one Claude
+As of 2026-10-27. Status (2026-10-29): **built through Phase 5** (server, bot and hub merged; the Phase 0 join test ran on
+the owner's server on 2026-10-27); the bot's newer SDK calls and one real meeting still need the owner's test. Each lane below is sized for one Claude
 subagent, one branch and one PR.
 
 ## Goal and priorities
