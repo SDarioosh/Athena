@@ -258,8 +258,9 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 24 kbps VBR, complexity 1) -> 30 s Ogg
 ### Drain from a PC: `tools/ble_relay.py`
 
 The phone's part, for testing before (or instead of) the Android app. Needs Python 3.10+
-and a Bluetooth adapter. The token comes from `CONVO_INGEST_TOKEN` or `--token-file`
-(there is no `--token` option, so it never lands in shell history).
+and a Bluetooth adapter. The token comes from `ATHENA_INGEST_TOKEN` (or its old name
+`CONVO_INGEST_TOKEN`) or `--token-file` (there is no `--token` option, so it never lands in
+shell history).
 
 ```bash
 python3 -m venv ~/.venvs/barvis-relay
@@ -274,13 +275,13 @@ python3 -m venv ~/.venvs/barvis-relay
 ~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py --list
 
 export BARVIS_SERVER=http://<server>:8000
-export CONVO_INGEST_TOKEN=...            # or --token-file ~/.config/barvis/token (chmod 600)
+export ATHENA_INGEST_TOKEN=...           # or --token-file ~/.config/barvis/token (chmod 600)
 ~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py --once   # drain once
 ~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py          # keep relaying
 ```
 
 Windows (PowerShell): `py -m venv $HOME\venvs\barvis-relay`, then
-`$env:BARVIS_SERVER="http://<server>:8000"; $env:CONVO_INGEST_TOKEN="..."` and
+`$env:BARVIS_SERVER="http://<server>:8000"; $env:ATHENA_INGEST_TOKEN="..."` and
 `& $HOME\venvs\barvis-relay\Scripts\python firmware\recorder\tools\ble_relay.py --once`.
 
 Other options: `--list` (show the watch's status and queue, change nothing), `--dry-run
