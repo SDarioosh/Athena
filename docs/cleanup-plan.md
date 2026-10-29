@@ -29,7 +29,7 @@ lane below.
 
 1. **No contract change.** No MCP tool name, argument, annotation, link format, auth, relay
    path, JSON field or stored identifier changes in this plan. The MCP version stays at
-   0.19.0. A lane that finds it needs one stops and writes `ESCALATE:`; the owner decides
+   0.20.0. A lane that finds it needs one stops and writes `ESCALATE:`; the owner decides
    and it becomes its own coordinated PR pair per the versioning rules.
 2. **No behaviour change unless the lane says so.** Lanes marked *behaviour* change
    output on purpose (bug fixes) and say exactly what changes. Every other lane is a
@@ -72,14 +72,14 @@ Testing is layered so a lane can't be green alone and break the whole.
   Known upstream failures (`tests/KNOWN_FAILURES.md`) are not ours; judge a failure on a
   clean `barvis` worktree.
 
-**Baseline, measured 2026-10-28 in the sandbox on `main` after MCP 0.19.0 and on `barvis` after the Share button** (Phase 0 adds the eval scores):
+**Baseline, measured 2026-10-29 in the sandbox on `main` after MCP 0.20.0 (enroll my voice) and on current `barvis`** (Phase 0 adds the eval scores):
 
 | Check | Result |
 |---|---|
 | Athena `ruff check .` | clean |
-| Athena `pytest -q` (server) | 1,571 passed, 3 skipped, ~3 min |
-| Hub fork tests (70 files added since the last upstream base) plus the focused trio | 1,899 passed, ~5.3 min |
-| Hub vs upstream `dev` | 39 commits behind (last base 2026-10-22); 0D catches up |
+| Athena `pytest -q` (server) | 1,598 passed, 3 skipped, ~3.5 min |
+| Hub fork tests (73 files added since the last upstream base) plus the focused trio | 1,931 passed, ~5.3 min |
+| Hub vs upstream `dev` | 66 commits behind (last base 2026-10-22), 21 hooked upstream files changed upstream; 0D catches up, first |
 
 **Evals at every phase gate:** `server/eval/bakeoff.py --frontend odysseus` (sandbox
 subset), `server/eval/voice_commands.py`, and in the hub `scripts/module_slash_eval.py`,
@@ -235,8 +235,9 @@ Nothing changes in behaviour. Wave 1: 0A, 0B, 0C, 0D at once (0C's fixture step 
   changes, the hub's fixtures are refreshed in the same PR pair.
 
 **0D Upstream sync (hub).** Own PR per `docs/fork/upstream-sync.md`.
-- [ ] Merge upstream `dev` into `barvis` (last sync 2026-10-23; 12 of the 37 hooked upstream
-  files changed since), fast-forward the `dev` mirror (still at `9712a54`).
+- [ ] Merge upstream `dev` into `barvis` (last sync 2026-10-23; on 2026-10-29 66 commits
+  behind, 21 hooked upstream files changed upstream, and growing daily), fast-forward the
+  `dev` mirror (still at `9712a54`). Start it first: every day adds conflicts.
 - [ ] Focused trio, all fork tests and the known-failures check pass.
 - Goes before Phase 2, so the big move doesn't also fight a stale base.
 
@@ -275,12 +276,13 @@ Small, parallel, mostly *behaviour* (fixes). Wave: 1A, 1B, 1C, 1D, 1E, 1F at onc
 **1C Migration registry and store fixes (Athena, data).** Owns `store.py`; depends on 0B.
 - [ ] Ordered `MIGRATIONS` list, each step in `BEGIN IMMEDIATE`, `user_version = index`.
   Steps 2–16 keep their numbers and effect; the two unnumbered changes
-  (`voice_samples.session_id`, `segments.kind`) become step 17, idempotent for databases that
+  (`voice_samples.session_id`, `segments.kind`) and the tables `SCHEMA` creates with `IF NOT
+  EXISTS` after v1 (among them `voice_enrollment`, added 2026-10-28) become step 17, idempotent for databases that
   already have them.
 - [ ] Set `PRAGMA busy_timeout` explicitly and log lock waits over 1 s; remove the unused
   `store.segments_for_device`.
-- [ ] Freeze `SCHEMA` as the v1 schema; new columns only through migrations. 0B's expected
-  failures go away.
+- [ ] Freeze `SCHEMA` as the v1 schema; new tables and columns only through migrations.
+  0B's expected failures go away.
 - [ ] A rule in AGENTS.md: one lane at a time takes the next migration number, recorded in
   its PR title.
 - Server verification: run the migration on a **copy** of the real `convo.db`; compare
@@ -444,7 +446,8 @@ After 3G's `settings.py` exists (3G merges its settings module first, as its fir
 `fork/upstream.py`, hooks in `app.py`, `builtin_actions.py`, `task_scheduler.py`.
 - [ ] Task table (action, handler, housekeeping default, silent, model-backed): ~30 hook
   lines become 3. Action ids unchanged.
-- [ ] `fork.routes.mount(app)`: 9 `include_router` hooks become 1, same order.
+- [ ] `fork.routes.mount(app)`: the fork's `include_router` hooks in `app.py` (10 since the
+  voice-enroll routes) become 1, same order.
 - [ ] `fork/upstream.py`: the only place that touches upstream private names (10 imports,
   8 `_connections`/`_tools` reads today).
 
@@ -550,4 +553,4 @@ of `pipeline.py` into `validation.py`, so it goes before 3A, which rewrites `pip
 
 | Gate | Date | Athena tests | Hub fork tests | Bakeoff subset | voice_commands | Hub evals | Notes |
 |---|---|---|---|---|---|---|---|
-| Baseline | 2026-10-28 | 1,571 passed, 3 skipped | 1,899 passed (fork + trio) | Phase 0 | Phase 0 | Phase 0 | sandbox |
+| Baseline | 2026-10-29 | 1,598 passed, 3 skipped | 1,931 passed (fork + trio) | Phase 0 | Phase 0 | Phase 0 | sandbox |
