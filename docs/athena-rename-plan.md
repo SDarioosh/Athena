@@ -160,6 +160,12 @@ copied from the firmware before the rename. `idf.py build` runs in CI.
 
 ## Step 6: Android Kotlin package (Athena)
 
+Status: **done** (cleanup branch `feature/cleanup-1h`); the real-device check is in its PR.
+Kept on purpose: the `applicationId`, the intent action strings
+`org.barvis.sound.relay.*`, the Keystore alias `barvis_relay_token_v1`, and an
+`activity-alias` named `org.barvis.sound.relay.ui.MainActivity` for the launcher entry, so
+home-screen icons pinned by an older version keep working.
+
 - Move `android-relay/app/src/{main,test}/java/org/barvis/sound/relay` to
   `org/athena/relay` (57 files), change the `package` and `import` lines, and set
   `namespace = "org.athena.relay"` in `app/build.gradle.kts`.
