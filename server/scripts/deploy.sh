@@ -8,6 +8,8 @@
 #   server/scripts/deploy.sh status         # services, health, checkout
 #   server/scripts/deploy.sh logs [serve|mcp|whisper]
 #   server/scripts/deploy.sh units          # print the systemd units it would install
+#   deploy, start and restart refuse while a meeting bot is active (the restart would end
+#   the meeting); add --force (or BARVIS_SOUND_FORCE=1) to restart anyway.
 #
 # Runs as your normal user (no sudo) from any directory. Services (names keep the old
 # barvis-sound prefix on purpose: deployed units and settings depend on them):
@@ -40,6 +42,8 @@
 #                             (h/zoom_sdk.h); off (or empty): no meeting bot
 #   BARVIS_SOUND_ODYSSEUS_DIR the Odysseus checkout whose scripts/fork_deploy.sh runs after a
 #                             deploy, or off (default: found from the running Odysseus container)
+#   BARVIS_SOUND_FORCE        1: as --force (environment only, never read from .env); the way
+#                             to force it through the hub's fork_deploy.sh, which passes no flags
 set -euo pipefail
 
 SERVER_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -414,6 +418,63 @@ check_services() {  # wait until every configured service answers
   return $ok
 }
 
+# --- a meeting in progress ------------------------------------------------------------
+
+# Restarting the API ends the meetings its bots are in: in Docker the API asks them to
+# leave as it stops, natively they may go down with it, and their uploads fail while it is
+# down. So deploy, start and restart ask GET /v1/meetings first (with CONVO_INGEST_TOKEN)
+# and refuse while a bot is active, unless --force. An API that doesn't answer is in no
+# meeting: then they go on as before and say so.
+FORCE=""
+if [ "${BARVIS_SOUND_FORCE:-}" = 1 ]; then FORCE=1; fi
+
+active_meetings() {  # sets MEETINGS (one line per active bot); status 1 + MEETINGS_NOTE if unknown
+  local token url out code
+  MEETINGS="" MEETINGS_NOTE=""
+  url="http://$(probe_host "$HOST"):$PORT/v1/meetings?limit=100"
+  token=$(env_value CONVO_INGEST_TOKEN "")
+  if [ -z "$token" ]; then MEETINGS_NOTE="no CONVO_INGEST_TOKEN to ask $url"; return 1; fi
+  # the token goes in on stdin, never on a command line (ps shows those to every user)
+  if ! out=$(printf 'Authorization: Bearer %s\n' "$token" \
+             | curl -s -m 5 -H @- -w '\n%{http_code}' "$url" 2>/dev/null); then
+    MEETINGS_NOTE="Athena's API is not answering on $url"
+    return 1
+  fi
+  code=${out##*$'\n'}
+  if [ "$code" != 200 ]; then MEETINGS_NOTE="$url answered HTTP $code"; return 1; fi
+  if ! MEETINGS=$(printf '%s' "${out%$'\n'*}" | python3 -c '
+import json, sys
+for m in json.load(sys.stdin)["meetings"]:
+    if m.get("active"):
+        title = " ".join(str(m.get("title") or "untitled").split())
+        print("\"%s\" (Zoom meeting %s, %s, id %s)"
+              % (title, m.get("meeting_id"), m.get("state"), m.get("id")))
+' 2>/dev/null); then
+    MEETINGS_NOTE="could not read the meetings list from $url"
+    return 1
+  fi
+}
+
+guard_meetings() {  # $1: deploy | start | restart; exits non-zero while a bot is active
+  if ! active_meetings; then
+    log "note: could not check for a meeting in progress ($MEETINGS_NOTE); going on"
+    return 0
+  fi
+  [ -n "$MEETINGS" ] || return 0
+  if [ -n "$FORCE" ]; then
+    log "warning: --force: restarting Athena's API although a meeting bot is active; this ends:"
+    printf '%s\n' "$MEETINGS" | sed 's/^/  - /'
+    return 0
+  fi
+  {
+    echo "error: not running '$1': Athena is in a meeting right now, and restarting its API would end the recording:"
+    printf '%s\n' "$MEETINGS" | sed 's/^/  - /'
+    echo "Let the meeting end (or stop the bot from Odysseus' meeting box: DELETE /v1/meetings/<id>), then run it again."
+    echo "To restart anyway: server/scripts/deploy.sh $1 --force (through the hub: BARVIS_SOUND_FORCE=1 scripts/fork_deploy.sh deploy)."
+  } >&2
+  exit 1
+}
+
 # --- install --------------------------------------------------------------------------
 
 first_env() {  # create server/.env with fresh tokens on a new machine
@@ -532,6 +593,7 @@ update_checkout() {  # $1 ref or empty; sets PREV and NEW
 
 cmd_deploy() {
   load_config
+  guard_meetings deploy
   [ "$RUNNER" = docker ] || check_ports
   update_checkout "${1:-}"
   first_env
@@ -652,9 +714,14 @@ docker_cmd() {  # start | restart | stop | logs | units for the docker runner
   esac
 }
 
+args=()  # --force anywhere on the command line (deploy, start, restart)
+for a in "$@"; do if [ "$a" = --force ]; then FORCE=1; else args+=("$a"); fi; done
+set -- ${args[@]+"${args[@]}"}
+
 case "${1:-}" in
   deploy) shift; cmd_deploy "$@" ;;
-  start|restart|stop|logs|units) load_config; [ "$RUNNER" != docker ] || { docker_cmd "$@"; exit; } ;;&
+  start|restart) load_config; guard_meetings "$1"; [ "$RUNNER" != docker ] || { docker_cmd "$@"; exit; } ;;&
+  stop|logs|units) load_config; [ "$RUNNER" != docker ] || { docker_cmd "$@"; exit; } ;;&
   odysseus) load_config; deploy_odysseus ;;
   start) load_config; apply_services; check_services ;;
   restart) load_config; for s in "${SERVICES[@]}"; do enabled "$s" && is_running "$s" && stop_service "$s"; done; apply_services; check_services ;;
@@ -662,5 +729,6 @@ case "${1:-}" in
   status) cmd_status ;;
   logs) load_config; show_logs "${2:-serve}" "${@:3}" ;;
   units) load_config; for s in "${SERVICES[@]}"; do enabled "$s" && { echo "### $(unit_name "$s").service"; render_unit "$s"; }; done; true ;;
-  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  -h|--help|help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

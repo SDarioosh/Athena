@@ -245,6 +245,17 @@ It works from any directory and needs no sudo. `deploy`:
    password), or set `BARVIS_SOUND_ODYSSEUS_DIR=/path/to/odysseus` in `server/.env`;
    `off` skips this step. If no Odysseus is found, it says so and stops there.
 
+**During a meeting** `deploy`, `start` and `restart` refuse to run: restarting the API
+would end the recording. They ask `GET /v1/meetings` (with `CONVO_INGEST_TOKEN`) first; if
+a bot is active they stop with an error naming the meeting (title, Zoom number, state, id)
+and change nothing, not even the checkout. Let the meeting end (or stop the bot), then run
+it again, or add `--force` to restart anyway (`server/scripts/deploy.sh deploy --force`).
+The hub's `scripts/fork_deploy.sh` passes no flags: there, `BARVIS_SOUND_FORCE=1
+scripts/fork_deploy.sh deploy` does the same (read from the environment only, never from
+`.env`). Without forcing, the hub run deploys Odysseus and ends with "module deploy
+failed" pointing at this message. If the API doesn't answer (not running, no token, an
+error), there is no meeting to protect: the command goes on as before and prints a note.
+
 Everything is read from `server/.env` (settings: bottom of `.env.example`). Without
 systemd it starts background processes instead (pid files and logs in
 `data/run/`, `data/logs/`). It stops with an error if a port is already taken, e.g. by a
