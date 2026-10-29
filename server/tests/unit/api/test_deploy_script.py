@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -262,3 +263,174 @@ def test_sudo_docker_gets_the_sdk_dir_by_name(tmp_path):
         CONVO_ZOOM_SDK_KEY="k", CONVO_ZOOM_SDK_SECRET="s")
     first = calls.read_text().splitlines()[0]
     assert first.startswith(f"BARVIS_SOUND_ZOOM_SDK_DIR={sdk} docker compose ")
+
+
+# A meeting in progress: deploy, start and restart refuse while GET /v1/meetings lists an
+# active bot, unless --force (or BARVIS_SOUND_FORCE=1). Fakes: curl (the API), systemctl
+# and loginctl (systemd), docker.
+
+INGEST = "fictional-ingest-token-0123456789"
+ACTIVE = ('{"meetings": [{"id": "m1", "state": "recording", "active": true, '
+          '"meeting_id": "81234567890", "title": "Budget  sync (fictional)"}, '
+          '{"id": "m0", "state": "ended", "active": false, "meeting_id": "123456789", '
+          '"title": null}]}')
+NONE_ACTIVE = '{"meetings": [{"id": "m0", "state": "ended", "active": false}]}'
+
+
+def fake_system(tmp_path: Path, body: str | None = ACTIVE, code: str = "200") -> dict:
+    """A bin dir with fake curl, systemctl and loginctl; the env that uses it. ``body``
+    None: the API doesn't answer."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = tmp_path / "log"
+    (tmp_path / "body.json").write_text(body or "")
+    (bin_dir / "curl").write_text(textwrap.dedent(f"""\
+        #!/usr/bin/env bash
+        url="${{@: -1}}"
+        case $url in
+          */v1/meetings*)
+            echo "curl $*" >> {log}
+            echo "stdin $(cat)" >> {log}
+            {"exit 7" if body is None else ""}
+            cat {tmp_path / "body.json"}; printf '\\n%s' {code} ;;
+          *) exit 0 ;;  # /health
+        esac
+        """))
+    (bin_dir / "systemctl").write_text(f'#!/usr/bin/env bash\necho "systemctl $*" >> {log}\n')
+    (bin_dir / "loginctl").write_text("#!/usr/bin/env bash\necho yes\n")
+    for f in bin_dir.iterdir():
+        f.chmod(0o755)
+    return {"PATH": f"{bin_dir}:{os.environ['PATH']}", "XDG_CONFIG_HOME": str(tmp_path / "cfg"),
+            "CONVO_INGEST_TOKEN": INGEST, "CONVO_MCP_TOKEN": "", "CONVO_PORT": "18765",
+            "BARVIS_SOUND_WHISPER_CMD": "", "BARVIS_SOUND_RUNNER": "systemd"}
+
+
+def calls(tmp_path: Path) -> str:
+    log = tmp_path / "log"
+    return log.read_text() if log.exists() else ""
+
+
+def test_restart_refused_while_a_bot_is_active(tmp_path):
+    r = run("restart", **fake_system(tmp_path))
+    assert r.returncode == 1
+    assert "Athena is in a meeting right now" in r.stderr
+    assert '"Budget sync (fictional)" (Zoom meeting 81234567890, recording, id m1)' in r.stderr
+    assert "m0" not in r.stderr  # an ended meeting is not named
+    assert "deploy.sh restart --force" in r.stderr and "BARVIS_SOUND_FORCE=1" in r.stderr
+    assert "systemctl" not in calls(tmp_path)  # nothing stopped or restarted
+    # the API is asked with the ingest token, which never goes on curl's command line
+    assert "http://127.0.0.1:18765/v1/meetings?limit=100" in calls(tmp_path)
+    assert f"stdin Authorization: Bearer {INGEST}" in calls(tmp_path)
+    assert INGEST not in "".join(line for line in calls(tmp_path).splitlines(True)
+                                 if line.startswith("curl "))
+
+
+def test_restart_with_force_restarts_and_names_the_meeting(tmp_path):
+    for env in ({}, {"BARVIS_SOUND_FORCE": "1"}):
+        args = ("restart",) if env else ("restart", "--force")
+        r = run(*args, **{**fake_system(tmp_path), **env})
+        assert r.returncode == 0, r.stderr
+        assert "--force: restarting Athena's API although a meeting bot is active" in r.stdout
+        assert "Budget sync (fictional)" in r.stdout
+        assert "systemctl --user restart barvis-sound" in calls(tmp_path)
+        (tmp_path / "log").unlink()
+
+
+def test_restart_without_an_active_bot(tmp_path):
+    r = run("restart", **fake_system(tmp_path, NONE_ACTIVE))
+    assert r.returncode == 0, r.stderr
+    assert "meeting" not in r.stdout + r.stderr
+    assert "systemctl --user restart barvis-sound" in calls(tmp_path)
+
+
+@pytest.mark.parametrize("body, code, note", [
+    (None, "200", "Athena's API is not answering on http://127.0.0.1:18765/v1/meetings"),
+    ('{"detail": "unauthorized"}', "401", "answered HTTP 401"),
+    ("not json", "200", "could not read the meetings list"),
+])
+def test_restart_goes_on_when_the_api_cannot_tell(tmp_path, body, code, note):
+    r = run("restart", **fake_system(tmp_path, body, code))
+    assert r.returncode == 0, r.stderr
+    assert "note: could not check for a meeting in progress" in r.stdout and note in r.stdout
+    assert "systemctl --user restart barvis-sound" in calls(tmp_path)
+
+
+def test_no_token_goes_on_with_a_note(tmp_path):
+    r = run("restart", **{**fake_system(tmp_path), "CONVO_INGEST_TOKEN": ""})
+    assert r.returncode == 0, r.stderr
+    assert "no CONVO_INGEST_TOKEN" in r.stdout
+    assert "/v1/meetings" not in calls(tmp_path)
+
+
+def test_docker_runner_refuses_and_forces(tmp_path):
+    docker, docker_calls = fake_docker(tmp_path)
+    env = {**fake_system(tmp_path), "BARVIS_SOUND_RUNNER": "docker", "DOCKER": str(docker),
+           "BARVIS_SOUND_ZOOM_SDK_DIR": "off"}
+    for cmd in ("start", "restart"):
+        r = run(cmd, **env)
+        assert r.returncode == 1 and f"not running '{cmd}'" in r.stderr
+        assert not docker_calls.exists()
+    assert " restart" in (run("restart", "--force", **env), docker_calls.read_text())[1]
+    assert " up -d --build" in (run("start", "--force", **env), docker_calls.read_text())[1]
+
+
+def test_docker_runner_without_an_active_bot(tmp_path):
+    docker, docker_calls = fake_docker(tmp_path)
+    r = run("restart", **{**fake_system(tmp_path, NONE_ACTIVE), "BARVIS_SOUND_RUNNER": "docker",
+                          "DOCKER": str(docker)})
+    assert r.returncode == 0, r.stderr
+    assert " restart" in docker_calls.read_text()
+
+
+def test_deploy_refused_before_the_checkout_moves(tmp_path):
+    head = subprocess.run(["git", "-C", str(SERVER), "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout
+    # a remote that doesn't exist: if the check let it through, the fetch would fail
+    env = {**fake_system(tmp_path), "BARVIS_SOUND_REMOTE": "no-such-remote-for-tests"}
+    r = run("deploy", **env)
+    assert r.returncode == 1 and "not running 'deploy'" in r.stderr
+    assert "deploy.sh deploy --force" in r.stderr
+    assert "fetching" not in r.stdout and "systemctl" not in calls(tmp_path)
+    assert subprocess.run(["git", "-C", str(SERVER), "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout == head
+    # forced, or with the API down, it goes on to the next step (here: the bad remote)
+    r = run("deploy", "--force", **env)
+    assert "warning: --force" in r.stdout and "not running" not in r.stderr
+    r = run("deploy", **{**fake_system(tmp_path, None), "BARVIS_SOUND_REMOTE":
+                         "no-such-remote-for-tests"})
+    assert "note: could not check for a meeting in progress" in r.stdout
+    assert "not running" not in r.stderr
+
+
+def test_force_is_never_read_from_dotenv():
+    text = SCRIPT.read_text()
+    assert "env_value BARVIS_SOUND_FORCE" not in text
+    assert 'if [ "${BARVIS_SOUND_FORCE:-}" = 1 ]; then FORCE=1; fi' in text
+
+
+def test_help_documents_force():
+    r = run("--help")
+    assert r.returncode == 0
+    assert "deploy.sh deploy" in r.stdout and "--force" in r.stdout
+    assert "BARVIS_SOUND_FORCE=1" in r.stdout
+
+
+def test_hub_deploy_during_a_meeting_fails_fast(tmp_path):
+    """The hub's fork_deploy.sh runs each module as ``FORK_DEPLOY_RUNNING=1 <deploy.sh>
+    deploy < /dev/null`` (no flags) and reports a failed module at its end: the refusal
+    must come at once (no prompt, no wait), and BARVIS_SOUND_FORCE=1 passes through."""
+    hub = tmp_path / "fork_deploy.sh"
+    hub.write_text(textwrap.dedent(f"""\
+        #!/usr/bin/env bash
+        FORK_DEPLOY_RUNNING=1 bash {SCRIPT} deploy < /dev/null || echo "module failed"
+        """))
+    hub.chmod(0o755)
+    env = {**{k: v for k, v in os.environ.items()
+              if not k.startswith(("CONVO_", "BARVIS_SOUND_", "FORK_"))},
+           **fake_system(tmp_path), "BARVIS_SOUND_REMOTE": "no-such-remote-for-tests"}
+    r = subprocess.run([str(hub)], capture_output=True, text=True, timeout=30, env=env)
+    assert "module failed" in r.stdout and "not running 'deploy'" in r.stderr
+    assert "BARVIS_SOUND_FORCE=1 scripts/fork_deploy.sh deploy" in r.stderr
+    r = subprocess.run([str(hub)], capture_output=True, text=True, timeout=30,
+                       env={**env, "BARVIS_SOUND_FORCE": "1"})
+    assert "warning: --force" in r.stdout and "not running" not in r.stderr
