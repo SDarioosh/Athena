@@ -209,63 +209,102 @@ other's name; two different named speakers stay apart (often a real interruption
   `_NO_SPEECH_THOLD`, `_LOGPROB_THOLD`, `_ENTROPY_THOLD`, `_CARRY_INITIAL_PROMPT`,
   `_TEMPERATURE_INC`. They override whatever whisper-server was started with.
 
-## Deploy: one command, runs in the background
+## Deploy: one command, runs in Docker
 
 ```bash
-server/scripts/deploy.sh deploy     # update to origin/main, install, restart, check; then Odysseus
+server/scripts/deploy.sh deploy     # update to origin/main, build, restart, check; then Odysseus
 server/scripts/deploy.sh odysseus   # only update Odysseus
-server/scripts/deploy.sh status     # what runs and whether it answers
+server/scripts/deploy.sh status     # containers, checkout, an older native install
 server/scripts/deploy.sh logs mcp   # serve | mcp | whisper; add -f to follow
 server/scripts/deploy.sh stop       # start | restart | stop
 ```
 
-It works from any directory and needs no sudo. `deploy`:
+Athena runs as the containers of `server/compose.yml` (next section); Docker is the one
+deploy path (owner decision, 2026-10-29). It works from any directory, as your user
+(`sudo docker` only if `docker` needs it). `deploy`:
 
-1. Refuses tracked local changes, fetches the remote and fast-forwards `main` (or checks
+1. Checks that `docker compose` works, and refuses an older native install that still runs
+   unless you asked for the switch (below). Nothing is changed when it refuses.
+2. Refuses tracked local changes, fetches the remote and fast-forwards `main` (or checks
    out the ref you pass).
-2. Creates `server/.env` with new tokens if there is none, then creates or updates
-   `.venv` (`uv` if installed) with the `vad,diarization` extras (`+pyannote` when
-   `CONVO_DIARIZER=pyannote`).
-3. Runs these as systemd **user** services that start at boot (it turns on
-   `loginctl enable-linger`) and restart on a crash:
-
-   | service | runs | when |
-   |---|---|---|
-   | `barvis-sound` | `convo-server serve` | always |
-   | `barvis-sound-mcp` | `convo-server mcp --http` | `CONVO_MCP_TOKEN` is set |
-   | `barvis-sound-whisper` | `BARVIS_SOUND_WHISPER_CMD` | that is set |
-
-   `serve` and MCP restart on every deploy; whisper only when its command changed. A
-   session interrupted by the restart is processed again.
-4. Waits until each answers (`/health`, `/mcp`, the whisper URL). If the new commit
-   doesn't come up, it checks out the previous one and restarts that.
+3. Creates `server/.env` with new tokens if there is none.
+4. Builds the images and (re)creates what changed (`docker compose up -d --build
+   --remove-orphans --wait`), and waits until every container is healthy. If the new
+   commit doesn't come up, it checks out the previous one and starts that. The containers
+   have `restart: unless-stopped`, so Docker starts them at boot and after a crash; no
+   systemd unit is written.
 5. Updates Odysseus: runs `scripts/fork_deploy.sh deploy` in the Odysseus checkout, which
    rebuilds and restarts Odysseus (without running this script again). The checkout is
-   found from the running Odysseus container (`sudo docker ps`, so it may ask for your
-   password), or set `BARVIS_SOUND_ODYSSEUS_DIR=/path/to/odysseus` in `server/.env`;
-   `off` skips this step. If no Odysseus is found, it says so and stops there.
+   found from the running Odysseus container (`docker ps`), or set
+   `ATHENA_ODYSSEUS_DIR=/path/to/odysseus` in `server/.env`; `off` skips this step. If no
+   Odysseus is found, it says so and stops there.
+
+A deploy runs the `deploy.sh` that was on disk when it started, also after it moved the
+checkout, so a change to `deploy.sh` takes effect from the deploy after the one that
+brought it.
 
 **During a meeting** `deploy`, `start` and `restart` refuse to run: restarting the API
 would end the recording. They ask `GET /v1/meetings` (with `CONVO_INGEST_TOKEN`) first; if
 a bot is active they stop with an error naming the meeting (title, Zoom number, state, id)
 and change nothing, not even the checkout. Let the meeting end (or stop the bot), then run
 it again, or add `--force` to restart anyway (`server/scripts/deploy.sh deploy --force`).
-The hub's `scripts/fork_deploy.sh` passes no flags: there, `BARVIS_SOUND_FORCE=1
+The hub's `scripts/fork_deploy.sh` passes no flags: there, `ATHENA_FORCE=1
 scripts/fork_deploy.sh deploy` does the same (read from the environment only, never from
-`.env`). Without forcing, the hub run deploys Odysseus and ends with "module deploy
-failed" pointing at this message. If the API doesn't answer (not running, no token, an
-error), there is no meeting to protect: the command goes on as before and prints a note.
+`.env`; `BARVIS_SOUND_FORCE=1` works too). Without forcing, the hub run deploys Odysseus
+and ends with "module deploy failed" pointing at this message. If the API doesn't answer
+(not running, no token, an error), there is no meeting to protect: the command goes on as
+before and prints a note.
 
-Everything is read from `server/.env` (settings: bottom of `.env.example`). Without
-systemd it starts background processes instead (pid files and logs in
-`data/run/`, `data/logs/`). It stops with an error if a port is already taken, e.g. by a
-`serve` you started by hand: stop that first. The hub's `scripts/fork_deploy.sh deploy`
-also runs this script before it rebuilds Odysseus, so either command updates both
+Settings are read from the environment or `server/.env` (bottom of `.env.example`):
+`ATHENA_RUNNER` (`docker`, or `auto`, the default), `ATHENA_REMOTE`, `ATHENA_BRANCH`,
+`ATHENA_ZOOM_SDK_DIR`, `ATHENA_ODYSSEUS_DIR`, `ATHENA_FORCE`. Each is also read under its
+old name `BARVIS_SOUND_*` (`BARVIS_SOUND_RUNNER`, …): the environment wins over `.env`,
+and within one of them the `ATHENA_*` name wins. The native runner's
+`BARVIS_SOUND_EXTRAS` and `BARVIS_SOUND_WHISPER_CMD` are not used any more (the image takes
+`CONVO_DOCKER_EXTRAS`; whisper is a container or `CONVO_DOCKER_WHISPER_URL`). The hub's
+`scripts/fork_deploy.sh deploy` also runs this script before it rebuilds Odysseus, so
+either command updates both
 ([hub docs/fork/deploy.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/deploy.md)).
+
+### Switching from the native install
+
+An older `deploy.sh` ran Athena natively: systemd user services `barvis-sound`,
+`barvis-sound-mcp` and `barvis-sound-whisper` (or background processes with pid files in
+`data/run/`). While one of them still runs (or is enabled), `deploy`, `start`, `restart`
+and `stop` refuse with `ATHENA_RUNNER` unset or `auto`, list what runs and change nothing;
+`status` shows it too. A runner set to `systemd` or `background` is an error as well. To
+switch, in `server/.env`:
+
+```bash
+ATHENA_RUNNER=docker               # BARVIS_SOUND_RUNNER=docker works too
+COMPOSE_PROFILES=whisper-gpu       # or whisper-cpu; or CONVO_DOCKER_WHISPER_URL=... (next section)
+```
+
+then `server/scripts/deploy.sh deploy`. It builds the images first (a failed build stops
+nothing), then stops and disables the native services, keeping their unit files and
+`.venv` for the way back, and starts the containers on the same ports, with the same
+`.env` and data dir, so Odysseus reaches MCP at the same URL. Without a whisper choice it
+refuses, so the switch never leaves recordings untranscribed.
+
+### Back to the native install
+
+```bash
+cd ~/projects/<athena>            # the repo
+docker compose -p odysseus-sound -f server/compose.yml down   # data stays in server/data
+git checkout --detach d718bb6     # the last commit whose deploy.sh runs Athena natively
+# in server/.env: remove ATHENA_RUNNER=docker, set BARVIS_SOUND_RUNNER=systemd
+server/scripts/deploy.sh deploy d718bb6
+```
+
+The compose project is still called `odysseus-sound` (images `odysseus-sound*`).
+`deploy.sh` already handles the rename to `athena`: it builds, then takes the other
+name's containers down right before the new ones start (and the other way after a
+rollback), never during a meeting. The rename itself comes once every server has deployed
+with this `deploy.sh`, because the first deploy after a change runs the old one.
 
 ## Docker
 
-The same services as containers, from `server/compose.yml`, configured by the same
+Athena's services as containers, from `server/compose.yml`, configured by
 `server/.env`:
 
 | container | runs | notes |
@@ -277,7 +316,7 @@ The same services as containers, from `server/compose.yml`, configured by the sa
 
 llama-server stays outside Docker. Loopback URLs in `.env`
 (`CONVO_LLM_BASE_URL=http://127.0.0.1:8082/v1`, `CONVO_EMBED_BASE_URL`) are pointed at
-the Docker host by the image's entrypoint, so the same `.env` works both ways. The
+the Docker host by the image's entrypoint, so a native install's `.env` works as is. The
 server must listen on an address containers reach: `0.0.0.0`, or the Docker bridge
 (`172.17.0.1`) through a forwarder. Data stays in `CONVO_DATA_DIR` on the host, mounted
 at `/data`; the containers run as `PUID:PGID` (default `1000:1000`, see `id -u`), so the
@@ -302,11 +341,10 @@ curl -L -o data/whisper-models/ggml-large-v3-turbo-q5_0.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
 ```
 
-Then either let `deploy.sh` run it (`BARVIS_SOUND_RUNNER=docker` in `.env`; it stops the
-native services first and rolls back like before), or run Compose yourself:
+Then let `deploy.sh` run it (above), or run Compose yourself:
 
 ```bash
-server/scripts/deploy.sh deploy        # with BARVIS_SOUND_RUNNER=docker
+server/scripts/deploy.sh deploy
 server/scripts/deploy.sh status        # docker compose ps
 server/scripts/deploy.sh logs whisper  # serve | mcp | whisper
 
@@ -325,7 +363,9 @@ and paths outside the data dir (put a Parakeet model under `data/` and set
 `CONVO_PARAKEET_MODEL_DIR=/data/...`). pyannote needs `CONVO_DOCKER_EXTRAS=vad,diarization,pyannote`
 (`deploy.sh` refuses to build without it when `CONVO_DIARIZER=pyannote`) and runs on CPU
 unless the API has the GPU, below. A stdio MCP client (Hermes) still uses the native `.venv`; it can
-read the same data dir next to the containers.
+read the same data dir next to the containers. `deploy.sh` no longer installs into `.venv`,
+so update it by hand when you use it (Setup above; the editable install follows the
+checkout, only new dependencies need the install).
 
 ### pyannote on the GPU
 
@@ -351,15 +391,16 @@ prints `True`.
 The Zoom meeting bot ([Meeting bot](../docs/api/meetings.md#meeting-bot), source in `meeting-bot/`) is built
 only when `deploy.sh` finds the unpacked Zoom Meeting SDK for Linux (the folder with
 `h/`, `libmeetingsdk.so` and `qt_libs/`; proprietary, so it stays outside the repo).
-Unpack it to `~/zoom-sdk` and that's all: with `BARVIS_SOUND_ZOOM_SDK_DIR` unset (neither
-in the environment nor in `server/.env`), `deploy.sh` uses `$HOME/zoom-sdk` when
+Unpack it to `~/zoom-sdk` and that's all: with `ATHENA_ZOOM_SDK_DIR` (old name
+`BARVIS_SOUND_ZOOM_SDK_DIR`) unset, neither in the environment nor in `server/.env`,
+`deploy.sh` uses `$HOME/zoom-sdk` when
 `$HOME/zoom-sdk/h/zoom_sdk.h` exists and says so in one line (`$HOME` of the user running
 `deploy.sh`; with `sudo docker` the folder is passed to compose on sudo's command line).
 Elsewhere, or to turn the bot off:
 
 ```bash
-BARVIS_SOUND_ZOOM_SDK_DIR=/home/you/zoom-sdk   # another folder; ~ and $HOME work too
-BARVIS_SOUND_ZOOM_SDK_DIR=off                  # no meeting bot even with ~/zoom-sdk (empty works too)
+ATHENA_ZOOM_SDK_DIR=/home/you/zoom-sdk   # another folder; ~ and $HOME work too
+ATHENA_ZOOM_SDK_DIR=off                  # no meeting bot even with ~/zoom-sdk (empty works too)
 CONVO_ZOOM_SDK_KEY=...                         # the Meeting SDK app's credentials
 CONVO_ZOOM_SDK_SECRET=...
 ```
@@ -390,21 +431,12 @@ them. Without an SDK (none found, or `off`) the image is exactly as before (no S
 libraries) and meetings answer 501.
 
 ```bash
-server/scripts/deploy.sh deploy   # BARVIS_SOUND_RUNNER=docker
-# by hand, from server/:
+server/scripts/deploy.sh deploy
+# by hand, from server/ (compose.meeting.yml reads the folder as BARVIS_SOUND_ZOOM_SDK_DIR):
 BARVIS_SOUND_ZOOM_SDK_DIR=$HOME/zoom-sdk docker compose -f compose.yml \
   -f compose.gpu.yml -f compose.meeting.yml up -d --build --wait   # leave out gpu if off
 docker compose exec sound-api /opt/athena-meeting-bot/athena-meeting-bot-run --ldd
 ```
-
-Native runners (`systemd`, `background`): with the SDK found (as above), `deploy.sh`
-builds the bot in `$CONVO_DATA_DIR/meeting-bot/build` (outside git; log in
-`data/logs/meeting-bot-build.log`), puts the same start script there with a `zoomsdk`
-link to the SDK, and adds `CONVO_MEETING_BOT_PATH=<that dir>/athena-meeting-bot-run` to
-`server/.env` if it has none. It needs `sudo apt install build-essential cmake pkg-config
-libglib2.0-dev libcurl4-openssl-dev libopus-dev libopusenc-dev libogg-dev` plus the SDK's
-libraries (`SDK_LIBS` in the Dockerfile; Ubuntu 24.04 has the same names). A missing
-tool or a failed build is a warning: Athena is deployed anyway, without a new bot.
 
 ### Meeting bot cost check
 

@@ -1,8 +1,8 @@
-# odysseus-sound in Docker (README "Docker"). From server/:
+# Athena in Docker (README "Docker"). From server/:
 #
 #   docker compose up -d --build --wait
 #
-# Settings: server/.env, the same file a native install uses. Compose reads it twice: as
+# Settings: server/.env, which deploy.sh reads too. Compose reads it twice: as
 # the services' environment (env_file) and for the ${...} values below. The CONVO_DOCKER_*
 # lines at the bottom of .env.example only matter here.
 #
@@ -14,6 +14,11 @@
 # With neither profile, set CONVO_DOCKER_WHISPER_URL to a whisper-server outside Docker.
 # llama-server stays outside Docker: loopback URLs in .env (http://127.0.0.1:8082/v1)
 # are pointed at the Docker host by the image's entrypoint.
+#
+# The project keeps the name odysseus-sound for now. deploy.sh already handles a rename
+# to athena (it builds, then takes the other name's containers down right before starting
+# these), but the first deploy after a change runs the deploy.sh that was on disk before
+# it, which doesn't; so the name changes only once every server has run this deploy.sh.
 name: odysseus-sound
 
 x-sound: &sound
