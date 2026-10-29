@@ -6,7 +6,7 @@ Moved here from [server/README.md](../../server/README.md) on 2026-10-29. The bo
 
 Athena can join a Zoom meeting as a participant named "Athena" and record one track per
 participant (the bot itself, `athena-meeting-bot`, is lane 1A of
-`docs/zoom-meeting-bot-plan.md`). The launcher (`athena/meetings.py`) is imported
+`docs/zoom-meeting-bot-plan.md`). The launcher (`athena/meetings/bot/launcher.py`) is imported
 on the first meeting request; nothing about it runs between meetings: no service, thread,
 timer or poller. Same bearer token as every route.
 
@@ -97,7 +97,7 @@ app join a meeting hosted by another Zoom account only on behalf of a signed-in 
    Athena is signed in and which join token the next meeting gets. Delete the file to
    sign out.
 
-The routes behind Odysseus's button (`athena/zoom_signin.py`, imported on the first
+The routes behind Odysseus's button (`athena/meetings/bot/zoom_signin.py`, imported on the first
 sign-in request; bearer `CONVO_INGEST_TOKEN` like every `/v1` route). The MCP HTTP app
 forwards `GET /zoom/signin`, `POST /zoom/signin/start` and `POST /zoom/signin/finish`
 unchanged (status and JSON) with the ingest token, behind the MCP token, like `/meetings`;
@@ -263,6 +263,6 @@ told apart by join time), each by their person's current name, then everyone els
 or seen in the chat, in order of first line. A participant Zoom shows only as a device or
 room ("iPhone", "Zoom user") whose lines are named "Speaker N" (no person) is listed by
 those speakers instead of twice; with one such participant they take its `zoom_name` and
-times. `athena/meeting_chat.py`
+times. `athena/meetings/ingest/chat.py`
 is imported on the first chat call (or when a meeting is summarized), never at startup.
 

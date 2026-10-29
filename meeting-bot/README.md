@@ -9,7 +9,7 @@ its code is in git history (`git show b96332dce842:meeting-bot/spike/`).
 
 The Zoom side: joins one meeting as "Athena" with the Zoom Meeting SDK for Linux, feeds each
 participant's raw audio, the participant list, the chat and the topic to `athena::Core`,
-and leaves on its own. The launcher (`server/athena/meetings.py`) starts it per
+and leaves on its own. The launcher (`server/athena/meetings/bot/launcher.py`) starts it per
 meeting; nothing of it runs between meetings. Its command line, environment and status
 lines are the launcher's "Bot contract" in `docs/api/meetings.md`.
 

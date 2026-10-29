@@ -1,7 +1,7 @@
 # Athena server
 
 The Python package is `athena`, with the CLI `athena`. The old names keep working:
-`convo_server` is an alias of the package (`import convo_server.store` and
+`convo_server` is an alias of the package (`import convo_server.db.store` and
 `python -m convo_server.cli` give the same modules), and the `convo-server` CLI runs the
 same code, so deployed services and cron jobs need no change. The env prefix `CONVO_`
 keeps the project's old name, convo-ai. Don't rename it.
