@@ -233,6 +233,15 @@ home-screen icons pinned by an older version keep working.
 
 ## Step 9: deploy.sh, services and Docker (Athena)
 
+**Partly done** (2026-10-29, cleanup lane 4A): `deploy.sh` runs Docker only and reads
+`ATHENA_*` settings beside `BARVIS_SOUND_*` (new name wins). Native units are no longer
+written, so their rename is moot; `deploy.sh` still recognises `barvis-sound*` units to switch
+to Docker. The compose project and image keep the name `odysseus-sound` and the services
+`sound-api`/`sound-mcp` stay: a deploy runs the script that was on disk when it started, so an
+old script would start a second project on the same ports. Follow-up: `name: athena` and the
+image names, after every server has deployed this version once (the new script already
+handles both project names).
+
 - `BARVIS_SOUND_*` settings become `ATHENA_*` (`ATHENA_REMOTE`, `ATHENA_BRANCH`,
   `ATHENA_EXTRAS`, `ATHENA_WHISPER_CMD`, `ATHENA_RUNNER`, `ATHENA_ODYSSEUS_DIR`). The
   old names are still read.
