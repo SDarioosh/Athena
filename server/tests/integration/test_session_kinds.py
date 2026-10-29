@@ -654,6 +654,29 @@ def race_tracked_chunk_during_processing_of_silence_stop(r: Run) -> None:
     r.process()
 
 
+def race_tracked_chunk_before_the_chunks_are_listed(r: Run) -> None:
+    """The first tracked chunk of a session stopped on silence comes after the pass
+    started but before it listed the chunks: transcribed track by track, its voice
+    learned, filed as a meeting."""
+    r.ingest("s1", 0, 0, chunk((0, tone(300, 5))), device="bot-test")
+    r.ingest("s1", 1, 30, QUIET, device="bot-test")
+    r.ingest("s1", 2, 60, QUIET, device="bot-test")
+    original, fired = r.store.chunks, []
+
+    def chunks(session_id, track=None):
+        if not fired and r.store.get_session(session_id)["status"] == "processing":
+            fired.append(1)
+            r.ingest("s1", 0, 90, chunk((0, tone(500, 25))), device="bot-test", track="t1",
+                     name="Bo Example")
+        return original(session_id, track)
+
+    r.store.chunks = chunks
+    r.process()
+    r.store.chunks = original
+    r.end("s1")
+    r.process()
+
+
 def race_chat_during_processing(r: Run) -> None:
     r.ingest("m1", 0, 0, chunk((0, tone(300, 5))), device="zoom", track="a",
              name="Alice Example")
@@ -676,7 +699,8 @@ SCENARIOS: dict[str, Callable[[Run], None]] = {f.__name__: f for f in [
     enrollment,
     race_late_meeting_chunk_before_worker, race_meeting_closed_between_check_and_store,
     race_meeting_chunk_during_processing, race_plain_chunk_during_processing,
-    race_tracked_chunk_during_processing_of_silence_stop, race_chat_during_processing,
+    race_tracked_chunk_during_processing_of_silence_stop,
+    race_tracked_chunk_before_the_chunks_are_listed, race_chat_during_processing,
 ]}
 
 
