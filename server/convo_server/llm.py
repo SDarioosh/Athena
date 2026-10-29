@@ -1684,7 +1684,7 @@ _DECIDED = re.compile(r"(?<!not\s)(?<!n't\s)(?<!never\s)(?<!yet\s)"
 # Friday to stay free" are facts.
 _NAME = r"[A-Z][\w'-]*(?:\s+(?:[A-Z][\w'-]*|van|von|de|der|da|del|di|le|la))*"
 _TITLE = r"(?:(?:Dr|Mr|Mrs|Ms|Mx|Prof)\.?\s+)"
-_ASKED = re.compile(
+_ASKED_SOMEONE = re.compile(
     r"\b(?:asked|asks|told|tells|reminded|reminds)\s+"
     r"(?:" + _TITLE + r"?" + _NAME + r"(?:\s+(?:and|&)\s+" + _NAME + r")?"
     r"|me|him|her|them|us|someone|somebody|(?:the|my|our|his|her|their)\s+[a-z]+)"
@@ -1709,8 +1709,8 @@ def _hedged(text: str) -> bool:
 
 
 def _request(text: str, people: Iterable[str]) -> bool:
-    """A request to someone else (see ``_ASKED``, ``_WANTS``)."""
-    if _ASKED.search(text):
+    """A request to someone else (see ``_ASKED_SOMEONE``, ``_WANTS``)."""
+    if _ASKED_SOMEONE.search(text):
         return True
     names = {n.strip().lower() for p in people for n in (p, p.split()[0] if p.split() else "")}
     for m in _WANTS.finditer(text):
