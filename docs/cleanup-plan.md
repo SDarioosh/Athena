@@ -1,6 +1,6 @@
 # Athena and Odysseus cleanup: phased plan
 
-As of 2026-10-28. Status (2026-10-29): **in progress**: Phase 0's Athena lanes merged, Phase 1 running. Covers both repos: Athena (this repo) and
+As of 2026-10-28. Status (2026-10-29): **in progress**: Phases 0 and 1 merged, Phase 2 next. Covers both repos: Athena (this repo) and
 our Odysseus fork (`SDarioosh/odysseus-expanded`, hub side in its
 `docs/fork/cleanup-plan.md`, which points here). Each lane is sized for one Claude
 subagent, one branch and one PR. An **overseer** session runs the lanes, checks each
@@ -428,6 +428,33 @@ files they own). The name in the phone's Bluetooth list becomes `athena-tw`.
 
 **Gate 1:** all merged; evals at or above baseline; 1A and 1C Server verification passed.
 
+## Phase 0 and 1 as run (notes for later phases)
+
+- **Evals.** Bakeoff Q4 and Q9 depend on today's date; gates use the date-independent subset
+  `--only 1 6 13 16 17 20`. Model evals run only on an idle machine, before and after code
+  back to back (same model, same seeded data); deterministic evals (belief, insight, ink)
+  every gate. Watch item from Gate 1: the small model's degenerate-stream abort fired 4 times
+  after the upstream sync and 0 times before, with identical prompts and unchanged abort code;
+  treated as sampling noise unless the owner's server eval (SDarioosh/odysseus-expanded#135,
+  step 4) shows a drop.
+- **0B** found one schema difference (segments column order); **1C** removed it: `MIGRATIONS`
+  registry, one transaction per step, step 17, `SCHEMA` frozen as v1. A concurrent-open test
+  (6 processes × 10 rounds) passed.
+- **0C** found six unmarked hooks, not three; **1D** marked them.
+- **1B:** the three meeting settings warn at startup instead of failing (a bad value must not
+  stop recording); the backend settings fail at startup as before.
+- **1E** did not move plan or decision docs (links from the hub and from running lanes); it
+  moved only the dated QC reports to `docs/archive/`.
+- **1A:** the `bot_stub_scenarios` flake was a timer race in the test's stub SDK (also on
+  main); fixed in the stub. The tag `meeting-bot-spike-phase0` could not be pushed from the
+  sandbox (tags are refused); `docs/meeting-bot-spike.md` names the commit (`b96332d`).
+- **Assignments moved** to keep parallel lanes off each other's files: the PC relay and Android
+  tests read 1A's `ingest-client-cases.json` in a follow-up lane **1J** (after 1A, 1G, 1H), not
+  in 1A.
+- **Phase 2 decision:** 2R keeps `convo_server` importable as a thin alias of `athena` (ground
+  rule 4: old names keep working), so `python -m convo_server…` in the owner's units, cron jobs
+  or Hermes profile keeps working; 4B removes it after the owner confirms nothing uses it.
+
 ## Phase 2: structure (moves only)
 
 Pure moves and re-exports. No logic, renamed function bodies, or reformatting. Each lane's
@@ -720,3 +747,5 @@ of `pipeline.py` into `validation.py`, so it goes before 3A, which rewrites `pip
 | Gate | Date | Athena tests | Hub fork tests | Bakeoff subset | voice_commands | Hub evals | Notes |
 |---|---|---|---|---|---|---|---|
 | Baseline | 2026-10-29 | 1,598 passed, 3 skipped | 1,931 passed (fork + trio) | Phase 0 | Phase 0 | Phase 0 | sandbox |
+| Gate 0 | 2026-10-29 | 1,759 passed, 3 skipped (+0A, 0B) | 1,964 passed (+0C, after 0D) | 1/3 (`1 9 16`; noisy, see notes) | 8/8 partial | belief 19/19 · 80/80, insight 53/53, ink CER 7.6% / WER 12.5% | qwen3-4b, CPU contention during the run |
+| Gate 1 | 2026-10-29 | 1,805 passed, 3 skipped; PC relay 251; firmware host 20/20; meeting bot 2/2 + 4/4 | 1,995 passed (+1D) | A/B `1 6 13 16 17 20`: before 3/6, after 5/6 | first 25: 25/25 both | unchanged; `/athena` slash eval 2/6 both | idle machine, A/B back to back; Athena MCP output byte-identical A vs B |
