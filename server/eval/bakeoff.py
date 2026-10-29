@@ -255,8 +255,12 @@ def main() -> int:
     ap.add_argument("--only", type=int, nargs="*", help="question numbers (1-based)")
     args = ap.parse_args()
 
-    data_dir = Path(os.environ["CONVO_DATA_DIR"])
-    ids = conv_ids(data_dir / "convo.db")
+    from athena.config import env_setting, resolve_db_path
+
+    data_dir = env_setting("DATA_DIR")
+    if data_dir is None:
+        raise SystemExit("set CONVO_DATA_DIR (or ATHENA_DATA_DIR) to the seeded data dir")
+    ids = conv_ids(resolve_db_path(Path(data_dir)))
     todo = [(i, item[0]) for i, item in enumerate(QUESTIONS, 1) if not args.only or i in args.only]
     out_dir = Path(__file__).parent / "results"
     out_dir.mkdir(exist_ok=True)
@@ -292,7 +296,7 @@ def main() -> int:
     else:
         # PYTHONPATH too, so a run from another checkout serves that checkout's code
         env = {k: v for k, v in os.environ.items()
-               if k.startswith("CONVO_") or k == "PYTHONPATH"}
+               if k.startswith(("CONVO_", "ATHENA_")) or k == "PYTHONPATH"}
         env["PATH"] = os.environ.get("PATH", "/usr/bin:/bin")
 
         async def go():

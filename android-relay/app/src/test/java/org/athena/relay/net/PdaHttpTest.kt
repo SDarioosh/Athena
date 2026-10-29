@@ -51,15 +51,15 @@ class PdaHttpTest {
     @Test fun convoApiThroughOdysseus() = runBlocking {
         val t = FakeTransport { m, url ->
             when {
-                url.endsWith("/api/codex/sound/health") -> HttpAnswer(200, """{"ok": true}""")
-                url.contains("/api/codex/sound/conversations?") -> HttpAnswer(200, """{"conversations": []}""")
-                url.contains("/api/codex/sound/action-items?") -> HttpAnswer(200, """{"action_items": []}""")
-                url.contains("/api/codex/sound/digests/") && m == "GET" -> HttpAnswer(200, """{"date": "2026-10-19"}""")
+                url.endsWith("/api/codex/athena/health") -> HttpAnswer(200, """{"ok": true}""")
+                url.contains("/api/codex/athena/conversations?") -> HttpAnswer(200, """{"conversations": []}""")
+                url.contains("/api/codex/athena/action-items?") -> HttpAnswer(200, """{"action_items": []}""")
+                url.contains("/api/codex/athena/digests/") && m == "GET" -> HttpAnswer(200, """{"date": "2026-10-19"}""")
                 m == "PATCH" || m == "POST" -> HttpAnswer(200, """{"ok": true}""")
                 else -> HttpAnswer(404, """{"detail": "Not Found"}""")
             }
         }
-        val api = ConvoHttpApi("http://hub:7000", { token }, t, { _, msg -> logs += msg }, Routes.ODYSSEUS)
+        val api = ConvoHttpApi("http://hub:7000", { token }, t, { _, msg -> logs += msg }, Routes.ODYSSEUS, HubRoutes())
         assertEquals(ServerResult.Ok(), api.health())
         assertTrue(api.conversations(100, 5) is ApiResult.Ok)
         assertTrue(api.openActionItems() is ApiResult.Ok)
@@ -68,17 +68,58 @@ class PdaHttpTest {
         assertEquals(ServerResult.Ok(), api.setActionItemStatus(4, "done"))
         assertEquals(ServerResult.Ok(), api.makeDigest("2026-10-19"))
         assertEquals(listOf(
-            "GET http://hub:7000/api/codex/sound/health",
-            "GET http://hub:7000/api/codex/sound/conversations?since=100&limit=5",
-            "GET http://hub:7000/api/codex/sound/action-items?status=open",
-            "GET http://hub:7000/api/codex/sound/digests/2026-10-19",
-            "GET http://hub:7000/api/codex/sound/conversations/c%201",
-            "PATCH http://hub:7000/api/codex/sound/action-items/4",
-            "POST http://hub:7000/api/codex/sound/digests/2026-10-19",
+            "GET http://hub:7000/api/codex/athena/health",
+            "GET http://hub:7000/api/codex/athena/conversations?since=100&limit=5",
+            "GET http://hub:7000/api/codex/athena/action-items?status=open",
+            "GET http://hub:7000/api/codex/athena/digests/2026-10-19",
+            "GET http://hub:7000/api/codex/athena/conversations/c%201",
+            "PATCH http://hub:7000/api/codex/athena/action-items/4",
+            "POST http://hub:7000/api/codex/athena/digests/2026-10-19",
         ), t.calls.map { "${it.first} ${it.second}" })
         // Through Odysseus even health carries the token.
         assertTrue(t.calls.all { it.third["Authorization"] == "Bearer $token" })
         noLeak()
+    }
+
+    @Test fun convoApiOnAnOlderHubUsesTheOldRoutes() = runBlocking {
+        val t = FakeTransport { m, url ->
+            when {
+                url.contains("/api/codex/athena/") -> HttpAnswer(404, """{"detail": "Not Found"}""")
+                url.endsWith("/api/codex/sound/health") -> HttpAnswer(200, """{"ok": true}""")
+                url.contains("/api/codex/sound/conversations?") -> HttpAnswer(200, """{"conversations": []}""")
+                url.contains("/api/codex/sound/action-items?") -> HttpAnswer(200, """{"action_items": []}""")
+                m == "PATCH" -> HttpAnswer(200, """{"ok": true}""")
+                else -> HttpAnswer(404, """{"detail": "conversation not found"}""")
+            }
+        }
+        val hub = HubRoutes()
+        val api = ConvoHttpApi("http://hub:7000/", { token }, t, { _, msg -> logs += msg }, Routes.ODYSSEUS, hub)
+        assertEquals(ServerResult.Ok(), api.health())
+        assertTrue(api.conversations(100, 5) is ApiResult.Ok)
+        assertTrue(api.conversation("c1") is ApiResult.Fail) // the module's own 404: no second try
+        // a later connection (the T5 syncs again) remembers the hub
+        val again = ConvoHttpApi("http://hub:7000", { token }, t, { _, msg -> logs += msg }, Routes.ODYSSEUS, hub)
+        assertTrue(again.openActionItems() is ApiResult.Ok)
+        assertEquals(ServerResult.Ok(), again.setActionItemStatus(4, "done"))
+        assertEquals(listOf(
+            "GET http://hub:7000/api/codex/athena/health",
+            "GET http://hub:7000/api/codex/sound/health",
+            "GET http://hub:7000/api/codex/sound/conversations?since=100&limit=5",
+            "GET http://hub:7000/api/codex/sound/conversations/c1",
+            "GET http://hub:7000/api/codex/sound/action-items?status=open",
+            "PATCH http://hub:7000/api/codex/sound/action-items/4",
+        ), t.calls.map { "${it.first} ${it.second}" })
+        assertTrue(t.calls.all { it.third["Authorization"] == "Bearer $token" })
+        noLeak()
+    }
+
+    @Test fun convoApiNetworkErrorDecidesNothing() = runBlocking {
+        val t = FakeTransport { _, _ -> throw IOException("connect timed out") }
+        val hub = HubRoutes()
+        val api = ConvoHttpApi("http://hub:7000", { token }, t, { _, msg -> logs += msg }, Routes.ODYSSEUS, hub)
+        assertTrue(api.health() is ServerResult.Transient)
+        assertEquals(1, t.calls.size)
+        assertNull(hub.usesOld("http://hub:7000"))
     }
 
     @Test fun calendarList() = runBlocking {

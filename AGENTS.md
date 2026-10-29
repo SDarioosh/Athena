@@ -21,8 +21,7 @@ server. **Nothing in the data path touches the cloud.**
   `convo_server` package name (the package is now `athena`; `convo_server` stays an alias
   of it, same module objects, until the owner confirms nothing outside the repos uses it:
   `docs/athena-rename-plan.md` step 16), the `convo-server` CLI
-  (installed next to the new `athena`, both run the same code), `CONVO_*` env vars, paths such as
-  `server/data/convo.db`, the hub's server name `convo` (the name Odysseus registered
+  (installed next to the new `athena`, both run the same code), the hub's server name `convo` (the name Odysseus registered
   our MCP server under; since MCP 0.20.1 the server reports itself as `athena`, was
   `convo-ai`, and the hub never reads that), the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app's appId and vendor
   `convo-ai` (its display name is now "Athena Rec Test"), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
@@ -38,6 +37,13 @@ server. **Nothing in the data path touches the cloud.**
   breaks deployed servers and configs, paired watches, the installed phone app and
   Odysseus. Don't "fix" them ad hoc: the planned rename, step by step with the old
   names still working, is `docs/athena-rename-plan.md`.
+- Old names that keep working for good, beside the new ones: settings are read as
+  `ATHENA_*` and as the old `CONVO_*` (the new name wins when both are set; docs and
+  `.env.example` still write `CONVO_*`); the database is `athena.db` in the data dir, but an
+  existing `convo.db` is opened as it is while no `athena.db` exists (code never moves,
+  copies or renames it); the phone relay calls the hub's `/api/codex/athena/*` and falls
+  back to `/api/codex/sound/*` on a 404 from an older hub (tokens with only `sound:*`
+  scopes keep working). Never drop the old name from any of them.
 - The watch's BLE name is now `athena-tw`. Older firmware advertises `barvis-tw`; the phone
   and PC relays find the watch by its service UUID and accept both names, for good, so
   never drop `barvis-tw` from them.
@@ -46,7 +52,7 @@ server. **Nothing in the data path touches the cloud.**
 
 - Odysseus (our Odysseus fork, AGPL-3.0) is the hub: the one chat and agent UI. This repo
   is a separate program that owns its data. Odysseus reaches it only through our MCP
-  server (or the HTTP API here) and never writes `convo.db` directly.
+  server (or the HTTP API here) and never writes our database directly.
 - The module contract is in the hub repo:
   [docs/fork/modules.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/modules.md).
   How Odysseus connects to us:
@@ -169,7 +175,7 @@ server. **Nothing in the data path touches the cloud.**
    thinking disabled) returns title, summary, key points, action items,
    people, topics, durable facts, each with a source offset. Daily digest per
    `CONVO_TIMEZONE` day.
-7. **Store** — SQLite (`server/data/convo.db`): sessions, chunks, segments,
+7. **Store** — SQLite (`server/data/athena.db`, or an older install's `convo.db`): sessions, chunks, segments,
    conversations, action items, facts, people, digests, speakers, FTS5 index,
    optional embeddings. This is the source of truth; any frontend reads it
    through the MCP server or the API, never the other way round.
@@ -371,8 +377,9 @@ relay tests and the Android build and tests.
   can be swapped.
 - Timestamps are UTC epoch seconds internally, ISO-8601 in the API.
 - Config comes from environment / `server/.env` (gitignored), prefix
-  `CONVO_`. Commit only `.env.example`. The server refuses to start without
-  `CONVO_INGEST_TOKEN`.
+  `ATHENA_` or the old `CONVO_` (both read, in one place: `athena/config.py`). Commit only
+  `.env.example`. The server refuses to start without `CONVO_INGEST_TOKEN` (or
+  `ATHENA_INGEST_TOKEN`).
 - Zepp app: JavaScript, `@zeppos/zeus-cli`, test on the real device.
 - Database schema changes go only through a new numbered step at the end of `MIGRATIONS`
   (`server/athena/db/migrations.py`); never edit `SCHEMA` (the frozen first schema) for a new

@@ -1,17 +1,26 @@
 """Server configuration, loaded from environment variables / server/.env.
 
-Every variable is prefixed with ``CONVO_``. See ``.env.example``.
+Every variable is prefixed with ``ATHENA_`` or its old name ``CONVO_``; both work. See
+``.env.example``. Where a setting is given more than once, the environment beats
+server/.env, and within each the ``ATHENA_`` name beats the ``CONVO_`` one.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    EnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 log = logging.getLogger(__name__)
 
@@ -24,14 +33,102 @@ MEETING_CHOICES: dict[str, tuple[str, ...]] = {
 }
 
 
+# Setting names: the new prefix first, then the old one, which keeps working.
+PREFIXES = ("ATHENA_", "CONVO_")
+# The database file in the data dir: the new name, or the old one when only it exists.
+DB_NAME, OLD_DB_NAME = "athena.db", "convo.db"
+_warned: set[str] = set()
+
+
+def env_setting(name: str, default: str | None = None) -> str | None:
+    """One setting straight from the environment, for scripts that don't load Settings:
+    ``ATHENA_<name>``, else ``CONVO_<name>``, else ``default``."""
+    for prefix in PREFIXES:
+        value = os.environ.get(prefix + name)
+        if value is not None:
+            return value
+    return default
+
+
+def resolve_db_path(data_dir: Path) -> Path:
+    """``athena.db`` in ``data_dir``; an existing ``convo.db`` is used as it is while no
+    ``athena.db`` exists. The file is never moved, copied or renamed here."""
+    new, old = data_dir / DB_NAME, data_dir / OLD_DB_NAME
+    if new.exists():
+        if old.exists() and str(old) not in _warned:
+            _warned.add(str(old))
+            log.warning("both %s and %s exist: using %s, %s is ignored", new, old, new, old)
+        return new
+    return old if old.exists() else new
+
+
+class _NewNamesFirst(PydanticBaseSettingsSource):
+    """The environment and .env read under both prefixes: environment before .env, and
+    ``ATHENA_`` before ``CONVO_`` within each. A setting given under both names with
+    different values is logged once, by name only (tokens are settings too)."""
+
+    def __init__(self, settings_cls: type[BaseSettings],
+                 sources: list[tuple[str, str, PydanticBaseSettingsSource]]) -> None:
+        super().__init__(settings_cls)
+        self.sources = sources
+
+    def get_field_value(self, field, field_name):  # type: ignore[no-untyped-def]
+        return None, field_name, False  # unused: __call__ does the work
+
+    def __call__(self) -> dict[str, Any]:
+        fields = self.settings_cls.model_fields
+        merged: dict[str, Any] = {}
+        given: dict[str, list[tuple[str, str, Any]]] = {}
+        for prefix, place, source in self.sources:
+            for name, value in source().items():
+                if name in fields:
+                    merged.setdefault(name, value)
+                    given.setdefault(name, []).append((prefix, place, value))
+        for name, seen in given.items():
+            prefix, place, used = seen[0]
+            if (len({p for p, _, _ in seen}) > 1 and any(v != used for _, _, v in seen)
+                    and name not in _warned):
+                _warned.add(name)
+                key = name.upper()
+                log.warning("ATHENA_%s and CONVO_%s are both set, to different values; "
+                            "using %s%s from %s", key, key, prefix, key, place)
+        return merged
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CONVO_", env_file=".env", extra="ignore")
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """``ATHENA_*`` beside ``CONVO_*`` (the old names, still read); arguments first."""
+        assert isinstance(dotenv_settings, DotEnvSettingsSource)
+        new_env = EnvSettingsSource(settings_cls, env_prefix="ATHENA_")
+        new_dotenv = DotEnvSettingsSource(
+            settings_cls, env_file=dotenv_settings.env_file,
+            env_file_encoding=dotenv_settings.env_file_encoding, env_prefix="ATHENA_")
+        both = _NewNamesFirst(settings_cls, [
+            ("ATHENA_", "the environment", new_env),
+            ("CONVO_", "the environment", env_settings),
+            ("ATHENA_", ".env", new_dotenv),
+            ("CONVO_", ".env", dotenv_settings),
+        ])
+        return init_settings, both, file_secret_settings
 
     # --- ingestion / auth ---
     # Shared token every device sends as `Authorization: Bearer <token>`.
     # No default on purpose: the server refuses to start without one.
     ingest_token: str = Field(min_length=16)
     data_dir: Path = Path("data")
+    # The SQLite database: unset = athena.db in data_dir, or the old convo.db there while
+    # no athena.db exists (used as it is, never moved). A relative path is in data_dir.
+    db_file: Path | None = None
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -300,7 +397,8 @@ class Settings(BaseSettings):
     @classmethod
     def _not_placeholder(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is not None and v.lower().startswith("change-me"):
-            raise ValueError(f"CONVO_{info.field_name.upper()} still has the placeholder value")
+            name = info.field_name.upper()
+            raise ValueError(f"CONVO_{name} (or ATHENA_{name}) still has the placeholder value")
         return v
 
     @property
@@ -317,7 +415,11 @@ class Settings(BaseSettings):
 
     @property
     def db_path(self) -> Path:
-        return self.data_dir / "convo.db"
+        """CONVO_DB_FILE when set (relative to the data dir), else athena.db there, or an
+        existing convo.db while no athena.db exists (resolve_db_path)."""
+        if self.db_file is not None:
+            return self.data_dir / self.db_file
+        return resolve_db_path(self.data_dir)
 
     @property
     def model_cache(self) -> Path:

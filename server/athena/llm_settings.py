@@ -1,7 +1,7 @@
 """Which model writes the summaries, changeable at run time (the hub's settings page).
 
 ``CONVO_LLM_MODEL`` in ``.env`` is the default. ``PUT /v1/settings/llm`` stores another
-model in ``convo.db`` (``module_settings``), and the running worker uses it from the next
+model in the database (``module_settings``), and the running worker uses it from the next
 summary on; ``null`` goes back to the default.
 
 Only the model name changes: the LLM server (``CONVO_LLM_BASE_URL``) stays what ``.env``

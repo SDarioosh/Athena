@@ -29,6 +29,21 @@ uv pip install -p .venv/bin/python -e ".[vad,diarization,dev]"
 cp .env.example .env              # then set CONVO_INGEST_TOKEN and endpoints
 ```
 
+**Setting names.** Every setting is read as `ATHENA_<NAME>` and as its old name
+`CONVO_<NAME>` (the docs and `.env.example` still write the old one; both keep working).
+The environment beats `server/.env`; within each, `ATHENA_` beats `CONVO_`, and a setting
+given under both names with different values is logged once at startup, by name only
+(never the value). The server refuses to start without the ingest token under either name.
+In Docker, keep the settings `compose.yml` and `deploy.sh` read themselves under their
+`CONVO_` names for now (listed at the top of `.env.example`).
+
+**Database file.** `athena.db` in the data dir (`CONVO_DATA_DIR`, default `data`). An
+older install's `data/convo.db` is opened as it is while no `athena.db` exists: nothing is
+moved, copied or renamed, and its `-wal`/`-shm` files stay next to it. With both files,
+`athena.db` is used and a warning says `convo.db` is ignored. `CONVO_DB_FILE` (or
+`ATHENA_DB_FILE`) names the file explicitly (relative paths are in the data dir). Backups
+should copy whichever of the two exists.
+
 Requirements outside Python:
 
 - `ffmpeg` (decodes Opus/Ogg/anything)
@@ -37,7 +52,7 @@ Requirements outside Python:
 - llama-server with an OpenAI-compatible API (`CONVO_LLM_BASE_URL`, `CONVO_LLM_MODEL`).
   `CONVO_LLM_MODEL` is the default; the hub's settings page (Settings → AI Defaults →
   Background & summaries) can pick another model the LLM server lists
-  (`PUT /v1/settings/llm {"model": name | null}`, stored in `convo.db`, used from the
+  (`PUT /v1/settings/llm {"model": name | null}`, stored in the database, used from the
   next summary on; `null` goes back to `.env`). The LLM server's URL only comes from
   `.env`.
 - optional: a second llama-server with `--embeddings` for semantic search
@@ -124,7 +139,7 @@ other's name; two different named speakers stay apart (often a real interruption
   default on), so they are spelled right, plus `CONVO_WHISPER_PROMPT` (empty by default)
   and the words set in the hub's settings (Settings → AI Defaults → "Transcription
   vocabulary": comma-separated, at most 50, `GET`/`PUT /v1/settings/vocabulary
-  {"words": "RokTalk, Meshtastic" | [...] | null}`, stored in `convo.db`, used from the
+  {"words": "RokTalk, Meshtastic" | [...] | null}`, stored in the database, used from the
   next recording on). Order: `CONVO_WHISPER_PROMPT`, the words, then the names.
   Measured on AMI (`eval/recognition.py`): the names made WER and DER slightly better;
   a 12-word vocabulary list in `CONVO_WHISPER_PROMPT` broke whisper's timestamps (lines
@@ -190,7 +205,7 @@ other's name; two different named speakers stay apart (often a real interruption
     murmur, is never learned), never while another track has VAD speech (±0.5 s): no
     crosstalk, no bleed of someone else's voice. Up to 12 windows spread over
     the meeting are decoded and the 3 loudest are embedded.
-  - Storage: `voice_samples` rows in `convo.db` with `source='meeting'` and the meeting's
+  - Storage: `voice_samples` rows in the database with `source='meeting'` and the meeting's
     session id; voiceprints never leave the server. A person keeps at most 3 meeting
     samples (the oldest are replaced first; processing a meeting again replaces its own);
     enrolled and named samples are never replaced. Matching uses them like every other

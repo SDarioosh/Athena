@@ -18,7 +18,8 @@ import java.security.SecureRandom
 
 /**
  * Talks to the owner's Athena server (server/athena/api.py), directly or through
- * Odysseus ([routes]), with [HttpURLConnection]. Only [baseUrl] is ever contacted; redirects are not followed so the
+ * Odysseus ([routes]; a hub without the Athena routes gets the old ones, [hubRoutes]), with
+ * [HttpURLConnection]. Only [baseUrl] is ever contacted; redirects are not followed so the
  * token can't be sent anywhere else. The token is read from [token] per request and never
  * logged. Timeouts stay below the watch's 30 s idle disconnect (§7.2): an upload that is
  * cut off just gets uploaded again next time and answered `duplicate`.
@@ -30,26 +31,30 @@ class HttpUploader(
     private val connectTimeoutMs: Int = 10_000,
     private val readTimeoutMs: Int = 25_000,
     private val routes: Routes = Routes.DIRECT,
+    private val hubRoutes: HubRoutes = HubRoutes.SHARED,
 ) : Uploader {
     private val base = baseUrl.trimEnd('/')
 
-    override suspend fun health(): ServerResult = request("GET", routes.health, auth = routes.healthNeedsToken).also {
-        log.log(Level.INFO, "GET ${routes.health} -> ${describe(it)}")
+    override suspend fun health(): ServerResult {
+        val (path, r) = routed("GET", routes.health, auth = routes.healthNeedsToken)
+        log.log(Level.INFO, "GET $path -> ${describe(r)}")
+        return r
     }
 
     /** Settings "test connection": validates the token with a cheap authenticated read. */
-    suspend fun checkToken(): ServerResult =
-        request("GET", routes.tokenCheck, auth = true, needOkField = false).also {
-            log.log(Level.INFO, "GET ${routes.tokenCheck} -> ${describe(it)}")
-        }
+    suspend fun checkToken(): ServerResult {
+        val (path, r) = routed("GET", routes.tokenCheck, auth = true, needOkField = false)
+        log.log(Level.INFO, "GET $path -> ${describe(r)}")
+        return r
+    }
 
     override suspend fun upload(chunk: ChunkUpload): ServerResult {
         val boundary = "----barvis" + ByteArray(12).also { SecureRandom().nextBytes(it) }
             .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
         val body = multipart(boundary, chunk)
-        val r = request("POST", routes.chunk, auth = true,
+        val (path, r) = routed("POST", routes.chunk, auth = true,
             body = body, contentType = "multipart/form-data; boundary=$boundary")
-        log.log(Level.INFO, "POST ${routes.chunk} session ${chunk.sessionId} seq ${chunk.sequence}" +
+        log.log(Level.INFO, "POST $path session ${chunk.sessionId} seq ${chunk.sequence}" +
             (if (chunk.kind != null) " kind ${chunk.kind}" else "") + " " +
             "(${chunk.audio.size} B) -> ${describe(r)}")
         return r
@@ -57,8 +62,7 @@ class HttpUploader(
 
     override suspend fun endSession(sessionId: String): ServerResult {
         require(SESSION_ID.matches(sessionId)) { "bad session id" }
-        val path = routes.end(sessionId)
-        val r = request("POST", path, auth = true, body = ByteArray(0))
+        val (path, r) = routed("POST", routes.end(sessionId), auth = true, body = ByteArray(0))
         log.log(Level.INFO, "POST $path -> ${describe(r)}")
         return r
     }
@@ -87,6 +91,18 @@ class HttpUploader(
         line("")
         line("--$boundary--")
         return out.toByteArray()
+    }
+
+    /** [request] on the hub's routes ([HubRoutes]); answers the path used and the result. */
+    private suspend fun routed(
+        method: String,
+        path: String,
+        auth: Boolean,
+        body: ByteArray? = null,
+        contentType: String? = null,
+        needOkField: Boolean = true,
+    ): Pair<String, ServerResult> = hubRoutes.call<Pair<String, ServerResult>>(base, path, { statusOf(it.second) }) { p ->
+        p to request(method, p, auth, body, contentType, needOkField)
     }
 
     private suspend fun request(
@@ -144,6 +160,14 @@ class HttpUploader(
             code in 300..399 -> ServerResult.Transient("HTTP $code redirect (not followed; check the URL)")
             code in 400..499 -> ServerResult.Rejected(code, DETAIL.find(body)?.groupValues?.get(1)?.take(200) ?: "")
             else -> ServerResult.Transient("HTTP $code")
+        }
+
+        /** The HTTP status behind a result, where it says one (not for network errors or 5xx). */
+        fun statusOf(r: ServerResult): Int? = when (r) {
+            is ServerResult.Ok -> 200
+            is ServerResult.Rejected -> r.code
+            is ServerResult.AuthRejected -> r.code
+            is ServerResult.Transient -> null
         }
 
         fun describe(r: ServerResult): String = when (r) {
