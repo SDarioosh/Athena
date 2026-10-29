@@ -923,24 +923,36 @@ class Worker(threading.Thread):
             log.info("requeued %d session(s) interrupted by a restart", n)
         super().start()
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 10.0) -> None:
+        """Ask the loop to end and wait up to ``timeout`` seconds for the current pass
+        to finish (a long transcription may outlast it; the thread is a daemon)."""
         self._stop_evt.set()
+        if self.is_alive() and self is not threading.current_thread():
+            self.join(timeout)
+            if self.is_alive():
+                log.warning("worker still busy %.0f s after stop; not waiting longer", timeout)
 
     def run(self) -> None:  # pragma: no cover - timing loop
         while not self._stop_evt.wait(self.interval):
             self.tick()
 
     def tick(self, now: float | None = None) -> None:
-        """One worker pass (``run`` calls this every ``interval`` seconds)."""
-        try:
-            self.pipeline.finalize_idle(now)
-            self.pipeline.process_pending(now)
-            self.pipeline.transcribe_live()  # after ended sessions: a finished one first
-            self.pipeline.rewrite_forgotten()
-            self._maybe_digest()
-            self._maybe_prune()
-        except Exception:
-            log.exception("worker iteration failed")
+        """One worker pass (``run`` calls this every ``interval`` seconds). Each step
+        runs on its own, so one that fails doesn't skip the ones after it."""
+        steps: list[tuple[str, Any]] = [
+            ("finalize_idle", lambda: self.pipeline.finalize_idle(now)),
+            ("process_pending", lambda: self.pipeline.process_pending(now)),
+            # after ended sessions: a finished one first
+            ("transcribe_live", self.pipeline.transcribe_live),
+            ("rewrite_forgotten", self.pipeline.rewrite_forgotten),
+            ("digest", self._maybe_digest),
+            ("prune", self._maybe_prune),
+        ]
+        for name, step in steps:
+            try:
+                step()
+            except Exception:
+                log.exception("worker step %s failed", name)
 
     def _maybe_prune(self) -> None:
         """Retention, at most once an hour (it only matters by the day)."""
