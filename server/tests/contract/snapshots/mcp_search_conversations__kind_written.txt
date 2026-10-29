@@ -1,0 +1,5 @@
+1 written notes (times are Europe/Berlin). When answering, put the link next to each fact you use:
+- 2026-10-19 19:00–19:00 "Weekend errands" (written by hand: https://hub.example.org/notes/demo-1) id 000000000000000000000000c0de0010; people: Me, Maria, Mom
+  Buy oat milk and coffee beans, and ask Maria which cake Mom likes.
+  https://athena.example.org/view/000000000000000000000000c0de0010?sig=f37e0f894ce8e26e700f7fa3b2682b26
+When answering, put the link next to each fact you use.

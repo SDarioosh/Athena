@@ -1,0 +1,98 @@
+server: {"name": "convo-ai", "version": "0.20.0"}
+
+instructions:
+These tools search the user's own recorded conversations (transcripts with speaker names and timestamps, summaries, action items, facts, daily digests). Use them for any question about what someone said, decided, promised or mentioned, and before answering from memory. Questions about the user's plans, appointments and the people they know ("What is Jonas allergic to?") are answered from these recordings too: search (list_facts, search_transcripts) before saying you don't know, and search instead of offering to. Ground every claim in tool results and include the link given with it. Dates are in the user's timezone; pass dates as YYYY-MM-DD.
+
+Finding a conversation: when the user points at a conversation by its topic ("the one about AI glasses", "when we talked about the lease"), call search_conversations once with just the topic words (query="AI glasses"); it matches titles and summaries as well as what was said. Its results already show each conversation's title and summary: pick the match from them and answer with its link. Call get_conversation only for key points, action items or facts, and get_transcript only for exact wording the summary doesn't have. If nothing matches, try other words for the topic once, then search_transcripts. Don't call a tool again with the same arguments: you already have that result.
+
+Naming speakers: when the user says who an unnamed speaker was ("Speaker 2 was Kath", "Speaker 1 and Speaker 3 were both Sam"), that is a request to save the name, not a claim to check. Find the conversation (search_conversations by date), call name_speaker once for each label, then say which labels were renamed (it also renames that voice in other conversations when it is sure). Fixing speakers: a name that is wrong or misspelled everywhere -> rename_speaker_everywhere; one line given to the wrong person -> reassign_line with the line's # number from get_transcript or search_transcripts. list_unnamed_speakers shows voices nobody has named yet, with quotes and a guess.
+
+Voice notes: recordings the user made for themselves (an idea, a reminder) are voice notes, marked "(voice note)" after the title. When the user asks about their voice notes, notes or memos, call search_conversations with kind="note" (no query needed for the latest ones). Notes the user wrote by hand are notes too, marked "(written by hand: <link>)" instead; that link opens the handwritten page. kind="voice" keeps only voice notes, kind="written" only handwritten ones.
+
+Online meetings: a meeting is marked "(Online meeting: <topic>)" after its title and lists its participants (everyone in the meeting, also those who never spoke). A line "Dana (chat): ..." was typed in the meeting chat, not said. For "who was in the X meeting" call search_conversations with the topic words and answer from its participants. To list the user's online meetings, call search_conversations with kind="meeting".
+
+Showing a transcript: when the user asks to see or read a transcript, answer with its link and a short summary of who said what; don't copy the transcript lines into your answer (the link opens the full transcript). Quote only the lines the user asks about.
+
+## erase_fact
+Forget a fact completely: everything retire_fact does, and its words are erased
+        where they were said. The transcript line that said it reads "[forgotten]" (in its
+        conversation and in every later one that said it again), the conversation's
+        summary is rewritten without it, and its digest is written again. Can't be undone.
+        Only when the user asks.
+
+## get_conversation
+Summary, key points, action items and facts of one conversation, with links.
+
+## get_daily_digest
+The daily digest for a date: headline, summary, highlights, open action items.
+
+## get_transcript
+Transcript lines of a conversation, for exact wording. To find a conversation or
+        say what it was about, use search_conversations / get_conversation instead.
+        start/end are seconds from its start (end -1 = to the end). Each line starts with
+        its #number (for reassign_line) and its [seconds from the start]. To show a
+        transcript, give its link and a short summary; don't copy the lines into your
+        answer.
+
+## list_action_items
+Action items from conversations and voice notes (default: open ones), newest
+        first; person keeps those the person owns, is named in, or was in the conversation
+        of. Each is a task, an event (meeting, appointment) or a reminder, with its due
+        date and time of day if known, and the to-do list the user named for it. The JSON
+        format also lists notes the user asked a voice note to save (kind "note", with
+        note_title and, in list_name, the notes to add it to); the text format doesn't.
+        Each JSON row has mine: false when someone else owns the item (the hub leaves
+        those out of the user's to-dos), a short title and explicit: true when the user
+        asked for the item (a date or time, a named list, a reminder, event or note, or a
+        command such as "remind me" or "add a task"), false for one the summary only suggests.
+        Each JSON row also has with: the other people in the item's conversation, those
+        the item names first.
+
+## list_facts
+Durable facts learned from conversations (preferences, plans, relationships...).
+        Only the latest version of each fact; older values it replaced are listed under it.
+
+## list_people
+Speakers heard in transcripts (named, enrolled, and unnamed 'Speaker N' labels)
+        and people mentioned in conversations.
+
+## list_unnamed_speakers
+Voices nobody has named yet ('Speaker N'), newest first: a few of their lines,
+        the conversation, and who they sound like if anyone known is close. Use to ask the
+        user "who is this?"; save the answer with name_speaker.
+
+## name_speaker
+Save who an unnamed speaker was: rename 'Speaker N' to a real name in one
+        conversation. Call it whenever the user says who a speaker was ("Speaker 2 was
+        Alice"); call it once per label (two labels may get the same name). The summary is
+        redone with the name; with remember_voice, future recordings recognise them.
+
+## reassign_line
+Fix one transcript line that was given to the wrong speaker.
+
+## rename_speaker_everywhere
+Rename a speaker in ALL conversations, e.g. to fix a misspelled or wrong name
+        ("it's Kath, not Kat"). If new_name already exists the two become one person.
+        For an unnamed 'Speaker N' use name_speaker (those labels are per conversation).
+
+## retire_fact
+Forget a fact the user says is wrong or should not be kept. It disappears from
+        list_facts and search, and stays forgotten when it is said again or its
+        conversation is re-summarized. Only when the user asks.
+
+## search_conversations
+Find conversations and voice notes by topic words, a person who spoke or was
+        mentioned, and/or a date range (best match first with a query, else newest first).
+        The first step for "the conversation about X": pass only the topic words; titles
+        and summaries are searched as well as what was said. For the user's voice notes
+        (memos, notes to self) set kind="note". Returns titles, summaries and links, often
+        enough to answer; use get_conversation for details.
+
+## search_transcripts
+Find what was actually said: transcript lines filtered by speaker and date range,
+        optionally matching words. Use for "what did X say (about Y) (on/last DATE)".
+        Without a query, lines are returned in time order.
+
+## update_action_item
+Change an action item: mark it done/dismissed (or reopen it), or change its kind,
+        due date, time of day, to-do list or title. Only when the user asks.

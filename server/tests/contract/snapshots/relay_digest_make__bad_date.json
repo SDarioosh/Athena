@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "date must be YYYY-MM-DD"
+  },
+  "content_type": "application/json",
+  "status": 400
+}

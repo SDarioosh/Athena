@@ -1,0 +1,94 @@
+{
+  "body": {
+    "conversations": [
+      {
+        "device": "omi",
+        "discard_reason": null,
+        "ended_at": "2026-10-16T20:00:31+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de000c",
+        "key_points": [
+          "Twelve guests",
+          "Aunt Rosa comes by train"
+        ],
+        "kind": "casual",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de000c?sig=3bda567d315255a7dd432e82127f4a6e",
+        "meeting": null,
+        "people": [
+          "Maria",
+          "Me",
+          "Aunt Rosa"
+        ],
+        "started_at": "2026-10-16T20:00:00+00:00",
+        "status": "summarized",
+        "summary": "Casa Lupo is booked for twelve guests on November 8 at 7 p.m.; the user picks up Aunt Rosa from the station.",
+        "title": "Birthday dinner plans",
+        "topics": [
+          "family",
+          "birthday"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de000c/transcript",
+        "written": null
+      },
+      {
+        "device": "twatch",
+        "discard_reason": null,
+        "ended_at": "2026-10-15T07:40:15+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de000b",
+        "key_points": [
+          "Cooking school near the river"
+        ],
+        "kind": "note",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de000b?sig=542deeea6dba480d67ea4cf40d41cd20",
+        "meeting": null,
+        "people": [
+          "Me",
+          "Alice"
+        ],
+        "started_at": "2026-10-15T07:40:00+00:00",
+        "status": "summarized",
+        "summary": "A pasta-making cooking class for the team offsite instead of the escape room; ask Alice before she leaves for Berlin.",
+        "title": "Offsite idea: cooking class",
+        "topics": [
+          "offsite"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de000b/transcript",
+        "written": null
+      },
+      {
+        "device": "trex3pro",
+        "discard_reason": null,
+        "ended_at": "2026-10-14T15:00:39+00:00",
+        "error": null,
+        "id": "000000000000000000000000c0de000a",
+        "key_points": [
+          "Alice's move date is January 12",
+          "Budget cut now ten percent"
+        ],
+        "kind": "meeting",
+        "link": "https://athena.example.org/view/000000000000000000000000c0de000a?sig=db3160667ccbc7cacc4fcb11ef4c9c29",
+        "meeting": null,
+        "people": [
+          "Alice",
+          "Me"
+        ],
+        "started_at": "2026-10-14T15:00:00+00:00",
+        "status": "summarized",
+        "summary": "Alice moves to Berlin on January 12; the user takes over her vendor contracts and the budget cut is now ten percent.",
+        "title": "1:1 with Alice: vendor contracts",
+        "topics": [
+          "work",
+          "budget"
+        ],
+        "transcript_pruned_at": null,
+        "transcript_url": "/v1/conversations/000000000000000000000000c0de000a/transcript",
+        "written": null
+      }
+    ]
+  },
+  "content_type": "application/json",
+  "status": 200
+}

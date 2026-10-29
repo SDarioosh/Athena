@@ -1,0 +1,10 @@
+"untitled" 2026-09-15 12:00:00 https://athena.example.org/view/000000000000000000000000c0de0001?sig=2b54669d195fa8debf17a886d696a0f8
+#1 [0s] Alice: Morning. So finance came back on the Q4 budget and it's not great.
+#2 [8s] Me: How bad is it?
+#3 [16s] Alice: They're cutting our budget by fifteen percent. Marketing takes most of the hit.
+#4 [24s] Me: Okay. I'll rework the spreadsheet with the new numbers.
+#5 [32s] Alice: Great, can you send me the revised spreadsheet by Friday?
+#6 [40s] Me: Yes, I'll send it by Friday.
+#7 [48s] Alice: [forgotten]
+#8 [56s] Me: Wow, congratulations! We'll miss you here.
+When answering, put the link next to each fact you use. To show the transcript, give the link above and a short summary; don't copy these lines into your answer.

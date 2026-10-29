@@ -1,0 +1,85 @@
+{
+  "body": {
+    "action_items": [
+      {
+        "conversation_id": "000000000000000000000000c0de0010",
+        "created_at": "2026-10-20T12:00:00+00:00",
+        "due": null,
+        "due_date": null,
+        "due_time": null,
+        "duration_minutes": null,
+        "edited": 0,
+        "explicit": true,
+        "id": 17,
+        "kind": "task",
+        "list_name": "Groceries",
+        "location": null,
+        "note_title": null,
+        "owner": "Me",
+        "source_at": "2026-10-19T17:00:01+00:00",
+        "source_url": "https://athena.example.org/view/000000000000000000000000c0de0010?sig=f37e0f894ce8e26e700f7fa3b2682b26#t=1",
+        "status": "open",
+        "text": "Buy oat milk and coffee beans",
+        "time_unclear": false,
+        "title": "Buy oat milk and coffee beans"
+      },
+      {
+        "conversation_id": "000000000000000000000000c0de0010",
+        "created_at": "2026-10-20T12:00:00+00:00",
+        "due": null,
+        "due_date": null,
+        "due_time": null,
+        "duration_minutes": null,
+        "edited": 0,
+        "explicit": false,
+        "id": 18,
+        "kind": "task",
+        "list_name": null,
+        "location": null,
+        "note_title": null,
+        "owner": "Me",
+        "source_at": "2026-10-19T17:00:02+00:00",
+        "source_url": "https://athena.example.org/view/000000000000000000000000c0de0010?sig=f37e0f894ce8e26e700f7fa3b2682b26#t=2",
+        "status": "open",
+        "text": "Ask Maria which cake Mom likes",
+        "time_unclear": false,
+        "title": "Ask Maria which cake Mom likes"
+      }
+    ],
+    "device": "handwriting",
+    "discard_reason": null,
+    "ended_at": "2026-10-19T17:00:03+00:00",
+    "error": null,
+    "facts": [],
+    "forget_pending": false,
+    "id": "000000000000000000000000c0de0010",
+    "key_points": [
+      "Oat milk",
+      "Coffee beans"
+    ],
+    "kind": "note",
+    "link": "https://athena.example.org/view/000000000000000000000000c0de0010?sig=f37e0f894ce8e26e700f7fa3b2682b26",
+    "meeting": null,
+    "people": [
+      "Me",
+      "Maria",
+      "Mom"
+    ],
+    "started_at": "2026-10-19T17:00:00+00:00",
+    "status": "summarized",
+    "summary": "Buy oat milk and coffee beans, and ask Maria which cake Mom likes.",
+    "title": "Weekend errands",
+    "topics": [
+      "errands"
+    ],
+    "transcript_pruned_at": null,
+    "transcript_url": "/v1/conversations/000000000000000000000000c0de0010/transcript",
+    "written": {
+      "link": "https://hub.example.org/notes/demo-1",
+      "source_id": "hub-note:demo-1",
+      "title": "Weekend errands"
+    }
+  },
+  "content_type": "application/json",
+  "status": 200
+}

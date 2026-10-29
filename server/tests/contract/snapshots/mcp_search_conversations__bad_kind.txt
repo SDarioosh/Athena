@@ -1,0 +1,1 @@
+bad kind 'podcast'; use 'note', 'voice', 'written', 'conversation', 'meeting', 'in_person' or ''

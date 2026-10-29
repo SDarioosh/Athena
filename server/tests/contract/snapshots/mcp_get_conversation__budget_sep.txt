@@ -1,0 +1,10 @@
+"Q4 budget cut" — 2026-09-15 12:00–12:01 (Europe/Berlin), device trex3pro, type meeting
+Speakers: Alice, Me. People: Alice, Me
+Link: https://athena.example.org/view/000000000000000000000000c0de0001?sig=2b54669d195fa8debf17a886d696a0f8
+Summary: Alice said finance is cutting the Q4 budget by fifteen percent; the user will send a revised spreadsheet by Friday.
+* Q4 budget cut by fifteen percent
+* Alice moves to Berlin in January
+Action #1 [open]: Send Alice the revised budget spreadsheet (owner Me) due 2026-09-18 (Friday) https://athena.example.org/view/000000000000000000000000c0de0001?sig=2b54669d195fa8debf17a886d696a0f8#t=32
+Fact [Alice]: Alice is moving to the Berlin office in January https://athena.example.org/view/000000000000000000000000c0de0001?sig=2b54669d195fa8debf17a886d696a0f8#t=48
+Fact [Q4 budget]: The Q4 budget cut is fifteen percent https://athena.example.org/view/000000000000000000000000c0de0001?sig=2b54669d195fa8debf17a886d696a0f8#t=16
+When answering, put the link next to each fact you use.

@@ -1,0 +1,8 @@
+6 open action items (times are Europe/Berlin). When answering, put the link next to each fact you use:
+- #9 [open] Read The Overstory (owner Me) — from "Dinner with Jonas" 2026-10-10 20:00 https://athena.example.org/view/000000000000000000000000c0de0007?sig=8edf69b52fa708eab051a1fa25d7c16b#t=16
+- #7 [open] Set up the new newsletter template in the mailing tool (owner Me) — from "Community newsletter relaunch" (Online meeting: Community newsletter relaunch) 2026-10-09 18:00 https://athena.example.org/view/000000000000000000000000c0de0006?sig=4ff0f4e12e20c0b810670e02f2c84ede#t=41
+- #8 [open] Write the welcome email for new readers (owner Omar Example) — from "Community newsletter relaunch" (Online meeting: Community newsletter relaunch) 2026-10-09 18:00 https://athena.example.org/view/000000000000000000000000c0de0006?sig=4ff0f4e12e20c0b810670e02f2c84ede#t=55
+- #6 [open] Review Ben's pull request (owner Me) due 2026-10-07 (today) — from "Standup: API migration and client demo" 2026-10-07 11:30 https://athena.example.org/view/000000000000000000000000c0de0005?sig=8f6c5a9e76beab44dcf8c55c6b3035a6#t=24
+- #4 [open] Return the signed lease renewal to Tom (owner Me) due 2026-10-31 (October thirty-first) — from "Lease renewal and rent increase" 2026-10-03 13:00 https://athena.example.org/view/000000000000000000000000c0de0004?sig=2b5cbffcbc727c29bfb8d2f7b20b8066#t=16
+- #5 [open] Fix the bathroom fan (owner Tom) due next week — from "Lease renewal and rent increase" 2026-10-03 13:00 https://athena.example.org/view/000000000000000000000000c0de0004?sig=2b5cbffcbc727c29bfb8d2f7b20b8066#t=32
+When answering, put the link next to each fact you use.

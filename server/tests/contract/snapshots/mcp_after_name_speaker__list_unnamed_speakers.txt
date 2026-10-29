@@ -1,0 +1,3 @@
+1 unnamed speakers (times are Europe/Berlin). When answering, put the link next to each fact you use:
+- Speaker 2 in "untitled" 2026-10-17 23:00 (conversation id 000000000000000000000000c0de000d), 1 lines
+  #67 "In sport, the home side won three to one after a late goal in the final minutes." https://athena.example.org/view/000000000000000000000000c0de000d?sig=57015eaee6dba84b896ca785e4c4882e#t=16

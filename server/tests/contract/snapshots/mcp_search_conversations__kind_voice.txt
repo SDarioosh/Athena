@@ -1,0 +1,11 @@
+3 voice notes (times are Europe/Berlin). When answering, put the link next to each fact you use:
+- 2026-10-19 09:30–09:30 "Call Mom" (voice note) id 000000000000000000000000c0de000f; people: Me, Mom
+  Reminder to call Mom about the birthday dinner tomorrow at 6 p.m.
+  https://athena.example.org/view/000000000000000000000000c0de000f?sig=b34e1741b3252c301ac79aef85a70e52
+- 2026-10-15 09:40–09:40 "Offsite idea: cooking class" (voice note) id 000000000000000000000000c0de000b; people: Me, Alice
+  A pasta-making cooking class for the team offsite instead of the escape room; ask Alice before she leaves for Berlin.
+  https://athena.example.org/view/000000000000000000000000c0de000b?sig=542deeea6dba480d67ea4cf40d41cd20
+- 2026-10-11 10:15–10:15 "Bike brake pads" (voice note) id 000000000000000000000000c0de0008; people: Me
+  The bike needs new brake pads before winter; ask at the bike shop on Lindenstrasse and check the rear light.
+  https://athena.example.org/view/000000000000000000000000c0de0008?sig=845d63239f52e6af45d691d8bd533d92
+When answering, put the link next to each fact you use.

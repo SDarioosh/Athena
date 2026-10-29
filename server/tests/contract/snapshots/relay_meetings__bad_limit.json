@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "limit must be a whole number from 1 to 100"
+  },
+  "content_type": "application/json",
+  "status": 400
+}

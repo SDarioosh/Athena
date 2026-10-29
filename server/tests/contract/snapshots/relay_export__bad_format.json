@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "format must be one of md, html"
+  },
+  "content_type": "application/json",
+  "status": 400
+}

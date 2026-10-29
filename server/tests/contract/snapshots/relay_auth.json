@@ -1,0 +1,19 @@
+{
+  "ingest_token": {
+    "body": "unauthorized",
+    "content_type": "text/plain",
+    "status": 401
+  },
+  "no_token": {
+    "body": "unauthorized",
+    "content_type": "text/plain",
+    "status": 401
+  },
+  "query_token": {
+    "body": {
+      "ok": true
+    },
+    "content_type": "application/json",
+    "status": 200
+  }
+}
