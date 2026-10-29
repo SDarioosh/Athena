@@ -247,7 +247,7 @@ systemd it starts background processes instead (pid files and logs in
 `data/run/`, `data/logs/`). It stops with an error if a port is already taken, e.g. by a
 `serve` you started by hand: stop that first. The hub's `scripts/fork_deploy.sh deploy`
 also runs this script before it rebuilds Odysseus, so either command updates both
-([hub docs/fork/deploy.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/deploy.md)).
+([hub docs/fork/deploy.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/deploy.md)).
 
 ## Docker
 

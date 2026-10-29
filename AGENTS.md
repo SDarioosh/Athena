@@ -3,8 +3,8 @@
 Athena (formerly "convo-ai", then "barvis-ai", then "barvis-sound", then
 "odysseus-sound") is a private conversation-memory system and the first **Odysseus
 module**. Wearables capture audio; this Ubuntu server transcribes, diarizes and
-summarizes it with local models; [Odysseus](https://github.com/SDarioosh/Barvis), our
-Odysseus fork (repo `SDarioosh/Barvis`), answers questions about it through our MCP
+summarizes it with local models; [Odysseus](https://github.com/SDarioosh/odysseus-expanded), our
+Odysseus fork (repo `SDarioosh/odysseus-expanded`, formerly `SDarioosh/Barvis`), answers questions about it through our MCP
 server. **Nothing in the data path touches the cloud.**
 
 ## Names: prose vs code
@@ -35,9 +35,9 @@ server. **Nothing in the data path touches the cloud.**
   is a separate program that owns its data. Odysseus reaches it only through our MCP
   server (or the HTTP API here) and never writes `convo.db` directly.
 - The module contract is in the hub repo:
-  [docs/fork/modules.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules.md).
+  [docs/fork/modules.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/modules.md).
   How Odysseus connects to us:
-  [docs/fork/modules/odysseus-sound.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules/odysseus-sound.md).
+  [docs/fork/modules/odysseus-sound.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/modules/odysseus-sound.md).
 - Never copy Odysseus code (upstream or our fork) into this repo. Talking over MCP keeps
   the AGPL out of this module.
 
@@ -282,7 +282,7 @@ server. **Nothing in the data path touches the cloud.**
   page say the transcript was removed.
 - **Changing a tool name, an argument, an annotation, the link format, or the auth is a
   breaking change.** It needs a coordinated hub PR (module doc, preset text) per the
-  [versioning rules](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules.md#versioning),
+  [versioning rules](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/modules.md#versioning),
   and a rerun of `server/eval/bakeoff.py --frontend odysseus`: a few questions in the
   sandbox stack, and the full run listed under Server verification for the owner. Put
   the scores in both PRs. Current server score: 9/20, target ≥ 15/20.
@@ -306,7 +306,7 @@ server. **Nothing in the data path touches the cloud.**
 - The sandbox runs the whole system on CPU with fictional data: llama-server with a
   small model, whisper-server, `convo-server serve` and `mcp --http`, Odysseus on
   `127.0.0.1:7010`, and the eval. Steps, timings and known issues:
-  [hub docs/fork/sandbox.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/sandbox.md).
+  [hub docs/fork/sandbox.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/sandbox.md).
 - Small-model scores only compare with other sandbox runs. The real score
   (`qwen3.5-35b` on the server) is measured by the owner.
 - Use only fictional data (`server/scripts/seed_demo.py`). Never ask for or use real
@@ -316,7 +316,7 @@ server. **Nothing in the data path touches the cloud.**
 
 - Every PR that can change answers, the pipeline on real audio, devices or deployment
   has a **Server verification** section: exact commands, the expected result, and
-  real-device steps ([format](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/sandbox.md#server-verification)).
+  real-device steps ([format](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/sandbox.md#server-verification)).
 - The owner runs it and pastes the result into the PR; continue from that result.
 - Never write steps that touch the owner's production Odysseus install (Docker,
   `~/models/odysseus`, port 7000). Server-side evals target the Odysseus test

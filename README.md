@@ -1,7 +1,7 @@
 # Athena
 
 Private conversation memory, and the first module of
-[Odysseus](https://github.com/SDarioosh/Barvis) (our Odysseus fork), a personal, fully
+[Odysseus](https://github.com/SDarioosh/odysseus-expanded) (our Odysseus fork), a personal, fully
 local AI system.
 
 Wearables record conversations. A server on the owner's machine transcribes them
@@ -14,4 +14,4 @@ through an MCP server. Nothing in the data path uses the cloud.
 - Server: [server/README.md](server/README.md); API and MCP tools: [docs/api/](docs/api/mcp.md)
 - Watch app: [zepp-app/README.md](zepp-app/README.md)
 - How Odysseus uses this module:
-  [hub docs/fork/modules/odysseus-sound.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules/odysseus-sound.md)
+  [hub docs/fork/modules/odysseus-sound.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/modules/odysseus-sound.md)
