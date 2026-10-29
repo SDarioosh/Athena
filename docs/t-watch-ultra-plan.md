@@ -2,7 +2,7 @@
 
 Status: **milestone 1 verified on the owner's watch (2026-10-19). The BLE upload path
 (milestones 5 and 6: Opus chunks, queue, BLE service, PC relay, Android app) is built and
-tested off-device, not yet on hardware** (§11). Milestones 2–4 (power, mic quality, speech
+run on the watch with the PC relay; the Android relay is not yet tested on a phone** (§11, checked 2026-10-29). Milestones 2–4 (power, mic quality, speech
 gate) are still open.
 
 ## Why this watch
