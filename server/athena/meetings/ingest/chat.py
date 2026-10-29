@@ -30,8 +30,10 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...domain import CHAT, ZOOM_DEVICE, Segment
-from ...pipeline import MAX_TITLE_CHARS, MAX_TRACK_NAME_CHARS, TRACK, validate_id
 from ...timeutil import parse_instant
+from ...validation import EARLIEST as _EARLIEST
+from ...validation import LATEST as _LATEST
+from ...validation import MAX_TITLE_CHARS, MAX_TRACK_NAME_CHARS, TRACK, validate_id
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...pipeline import Pipeline
@@ -40,8 +42,6 @@ MAX_CHAT_BYTES = 1_000_000  # request body
 MAX_CHAT_LINES = 2_000
 MAX_CHAT_LINE_CHARS = 4_000  # longer messages are cut
 MAX_PARTICIPANTS = 1_000
-# times must be plausible: 2000-01-01 .. 2100-01-01 UTC
-_EARLIEST, _LATEST = 946_684_800.0, 4_102_444_800.0
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 # One chat call at a time adds lines to a finished meeting's conversation, so two calls

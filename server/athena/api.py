@@ -66,17 +66,12 @@ from .config import Settings
 from .diarize import enroll_voice, load_voices
 from .domain import UNSET
 from .links import render_conversation, transcript_link, verify
-from .pipeline import (
-    MAX_LINK_CHARS,
-    MAX_TEXT_CHARS,
-    MAX_TITLE_CHARS,
-    Pipeline,
-    Worker,
-)
+from .pipeline import Pipeline, Worker
 from .search import search
 from .speakers import relabel_matches
 from .summarize.client import LLMError
 from .timeutil import iso, parse_instant
+from .validation import MAX_LINK_CHARS, MAX_TEXT_CHARS, MAX_TITLE_CHARS
 
 log = logging.getLogger(__name__)
 MAX_CHUNK_BYTES = 25 * 1024 * 1024
