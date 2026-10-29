@@ -1,0 +1,84 @@
+{
+ "audio_files": [],
+ "rows": {
+  "chunks": [
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000030.0,
+    "sequence": 0,
+    "session_id": "s1",
+    "speech": "[]",
+    "started_at": 1760000000.0,
+    "track": "",
+    "track_name": null
+   }
+  ],
+  "people": [
+   {
+    "created_at": 1760000000.0,
+    "id": 1,
+    "is_owner": 1,
+    "merged_into": null,
+    "name": "Me",
+    "speaker_id": 1
+   }
+  ],
+  "sessions": [
+   {
+    "device": "omi",
+    "error": null,
+    "id": "s1",
+    "kind": "conversation",
+    "last_chunk_at": 1760000030.0,
+    "last_speech_at": null,
+    "received_at": 1760000030.0,
+    "started_at": 1760000000.0,
+    "status": "done",
+    "stop_reason": "client"
+   }
+  ],
+  "speakers": [
+   {
+    "created_at": 1760000000.0,
+    "embedding": "sha256:96a50e6c30a75949",
+    "id": 1,
+    "is_owner": 1,
+    "name": "Me"
+   }
+  ],
+  "voice_samples": [
+   {
+    "created_at": 1760000000.0,
+    "embedding": "sha256:96a50e6c30a75949",
+    "id": 1,
+    "session_id": null,
+    "source": "enrolled",
+    "speaker_id": 1
+   }
+  ]
+ },
+ "steps": [
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": null,
+    "session_seconds": 30.0,
+    "speech_seconds": 0,
+    "stop": false,
+    "trailing_silence_seconds": 30.0
+   },
+   "step": "ingest s1 -#0 @0"
+  },
+  {
+   "out": true,
+   "step": "end s1"
+  },
+  {
+   "out": 1,
+   "step": "process_pending"
+  }
+ ]
+}
