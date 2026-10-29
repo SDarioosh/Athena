@@ -1,4 +1,5 @@
-"""Regression tests for bugs found in the 2026-10 bug hunt (see docs/bug-hunt-2026-10.md)."""
+"""Regression tests for bugs found in the 2026-10 bug hunt
+(see docs/archive/bug-hunt-2026-10.md)."""
 
 from __future__ import annotations
 

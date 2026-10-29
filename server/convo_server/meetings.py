@@ -13,7 +13,7 @@ never gets one never imports this module. Nothing here runs between meetings:
 - After a server restart, rows still marked active are checked on the next meeting
   request (is the pid still that bot?); there is no startup scan.
 
-Bot contract (the bot codes against it; also in ``server/README.md``)::
+Bot contract (the bot codes against it; also in ``docs/api/meetings.md``)::
 
     <bot> --meeting-id <digits> --session-id <id> --upload-url <http://127.0.0.1:port>
           --name Athena --max-seconds <s> --alone-seconds <s> --waiting-room-seconds <s>
