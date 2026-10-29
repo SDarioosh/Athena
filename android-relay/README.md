@@ -229,7 +229,7 @@ If the app crashes, the next start shows the error with a **Copy** button
 ## Code layout
 
 ```
-app/src/main/java/org/barvis/sound/relay/
+app/src/main/java/org/athena/relay/
   protocol/   pure Kotlin: GATT UUIDs, command/response/entry/status/info codec (§3–§5);
               Glance.kt: the T5 PDA's glance protocol (t5-pda-plan §3)
   relay/      pure Kotlin: DrainSession (§6) over WatchLink + Uploader, Backoff, ScanThrottle,
