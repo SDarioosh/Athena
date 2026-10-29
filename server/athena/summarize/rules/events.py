@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from ...dates import resolve_due, resolve_time
-from ...store import NOTE_ITEM, short_title
+from ...domain import NOTE_ITEM, short_title
 from .commands import _split_commands, _starts_command
 from .text import _SENTENCE_END, _WHEN_WORDS, _content_words, _meridiem, _overlaps
 

@@ -400,9 +400,9 @@ def test_meeting_chat_is_imported_only_on_a_chat_call(tmp_path):
         with TestClient(app) as c:
             c.headers["Authorization"] = "Bearer {TOKEN}"
             assert c.get("/v1/sessions").status_code == 200
-            assert "athena.meeting_chat" not in sys.modules, "loaded at startup"
+            assert "athena.meetings.ingest.chat" not in sys.modules, "loaded at startup"
             assert c.post("/v1/sessions/x/chat", json={{}}).status_code == 404
-            assert "athena.meeting_chat" in sys.modules
+            assert "athena.meetings.ingest.chat" in sys.modules
         import threading
         # AnyIO's worker threads are told to stop when the loop closes but may take a
         # moment to exit; wait for them so only a thread left behind for good counts

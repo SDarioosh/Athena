@@ -309,7 +309,7 @@ def test_worker_tick_imports_no_meeting_code_and_starts_nothing(tmp_path):
                            data=wav(tone(300, 5), silence(10), tone(500, 5), silence(10)),
                            track="1", track_name="Person A")
         w.tick()
-        assert "athena.meeting_live" in sys.modules
+        assert "athena.meetings.transcribe.live" in sys.modules
         assert t.calls == 3, t.calls  # all but the last window, during the meeting
         p.end_session("m"); w.tick()
         assert t.calls == 4, t.calls

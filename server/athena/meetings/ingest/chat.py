@@ -31,8 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ...domain import CHAT, ZOOM_DEVICE, Segment
 from ...pipeline import MAX_TITLE_CHARS, MAX_TRACK_NAME_CHARS, TRACK, validate_id
-from ...store import CHAT, ZOOM_DEVICE, Segment
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...pipeline import Pipeline

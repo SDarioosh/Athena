@@ -182,17 +182,17 @@ def test_meeting_never_imports_pyannote_and_plain_sessions_never_import_meeting_
         p.ingest_chunk(device="omi", session_id="s", sequence=0, started_at=1e9,
                        codec="wav", data=wav(tone(300, 5), silence(25)))
         p.end_session("s"); p.process_session("s")
-        assert "athena.meeting_tracks" not in sys.modules, "plain session"
+        assert "athena.meetings.transcribe.tracks" not in sys.modules, "plain session"
         for i, f in enumerate((300, 500)):
             p.ingest_chunk(device="zoom", session_id="m", sequence=0, started_at=2e9,
                            codec="wav", data=wav(tone(f, 5), silence(25)),
                            track=str(i), track_name="Person " + "AB"[i])
         p.end_session("m"); p.process_session("m")
-        assert "athena.meeting_tracks" in sys.modules
+        assert "athena.meetings.transcribe.tracks" in sys.modules
         speaker_models = ("athena.diarize_pyannote", "pyannote", "speechbrain")
         bad = [m for m in sys.modules if m.startswith(speaker_models)]
         assert not bad, bad
-        assert "athena.meeting_voices" not in sys.modules, "learning is off"
+        assert "athena.meetings.people.voices" not in sys.modules, "learning is off"
         print([x.speaker for x in p.store.session_segments("m")])
 
         class EmbedderOnly:
@@ -215,7 +215,7 @@ def test_meeting_never_imports_pyannote_and_plain_sessions_never_import_meeting_
                                                  silence(18 - at)),
                            track=str(i), track_name="Person " + "AB"[i])
         p.end_session("m2"); p.process_session("m2")
-        assert "athena.meeting_voices" in sys.modules
+        assert "athena.meetings.people.voices" in sys.modules
         bad = [m for m in sys.modules if m.startswith(speaker_models)]
         assert not bad, bad
         assert Trap.embedder.clips == [3 * 16000] * 6, Trap.embedder.clips

@@ -417,8 +417,8 @@ def test_building_the_apps_imports_no_zoom_code(tmp_path) -> None:
         mcp = build_mcp(Store(s.db_path), s)
         add_ingest_routes(mcp, s)
         BearerAuth(mcp.streamable_http_app(), s.mcp_token)
-        bad = [m for m in sys.modules if m in ("athena.zoom_signin",
-                                               "athena.meetings")]
+        bad = [m for m in sys.modules if m in ("athena.meetings.bot.zoom_signin",
+                                               "athena.meetings.bot.launcher")]
         assert not bad, bad
         print("ok")
     """)

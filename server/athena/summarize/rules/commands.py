@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 from ...dates import resolve_time
-from ...store import NOTE_ITEM, clean_list_name, is_explicit, short_title
+from ...domain import NOTE_ITEM, clean_list_name, is_explicit, short_title
 from ..schemas import ActionItem
 from ..storage import _item_storage
 from .notes import _NOTE_COMMAND, _NOTES_PHRASE, _note_storage

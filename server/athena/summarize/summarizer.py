@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from .. import relevance_rules
 from ..dates import resolve_due, resolve_time
-from ..store import NOTE_ITEM, Segment, clean_list_name
+from ..domain import NOTE_ITEM, Segment, clean_list_name
 from .client import LLMClient, LLMError
 from .prompts import (
     ACTIONS_SYSTEM,

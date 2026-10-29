@@ -21,7 +21,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from athena.store import SCHEMA_VERSION, Store
+from athena.db.migrations import SCHEMA_VERSION
+from athena.db.store import Store
 
 
 def snapshot(path: Path) -> tuple[int, dict[str, int]]:

@@ -68,7 +68,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from ...config import Settings
-from ...store import MEETING_ACTIVE, Store
+from ...db.store import Store
+from ...domain import MEETING_ACTIVE
 
 log = logging.getLogger("athena.meetings")  # its name before the move
 

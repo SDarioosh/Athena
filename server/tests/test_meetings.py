@@ -518,8 +518,8 @@ def test_api_import_starts_nothing_and_skips_meeting_code(tmp_path) -> None:
         c = TestClient(app)
         assert c.get("/health").json() == {{"ok": True}}
         assert c.post("/v1/ingest/chunk").status_code == 401
-        assert "athena.meetings" not in sys.modules, "meetings imported"
-        assert "athena.zoom_signin" not in sys.modules, "zoom sign-in imported"
+        assert "athena.meetings.bot.launcher" not in sys.modules, "meetings imported"
+        assert "athena.meetings.bot.zoom_signin" not in sys.modules, "zoom sign-in imported"
         # TestClient's own portal thread may take a moment to finish
         for t in threading.enumerate():
             if t is not threading.main_thread():

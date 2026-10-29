@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .store import Segment
+from .domain import Segment
 
 
 def split_on_gaps(segments: Sequence[Segment], gap_seconds: float) -> list[list[Segment]]:

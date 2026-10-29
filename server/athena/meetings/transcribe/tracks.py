@@ -42,12 +42,12 @@ import numpy as np
 from ... import transcribe_engine
 from ...audio import SAMPLE_RATE
 from ...diarize import PieceRef, SpeakerLabel, load_voices, rms_db
+from ...domain import Segment
 from ...lines import join_lines
-from ...store import Segment
 
 if TYPE_CHECKING:  # pragma: no cover
+    from ...db.store import Store
     from ...pipeline import Pipeline
-    from ...store import Store
 
 log = logging.getLogger("athena.meeting_tracks")  # its name before the move
 

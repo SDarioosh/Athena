@@ -28,7 +28,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ...store import Store
+    from ...db.store import Store
 
 # Label for a track with no usable name; the existing unnamed-speaker flow skips it and
 # ``name_speaker`` can rename it. ``speakers_for_tracks`` numbers them "Speaker N".

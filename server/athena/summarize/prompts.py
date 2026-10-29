@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..store import Segment
+from ..domain import Segment
 
 COMMON = """Lines look like "[73] Speaker: text" where the number is the offset in seconds \
 from the start of the conversation. "{owner}" is the user (the person wearing the \

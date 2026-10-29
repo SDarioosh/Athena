@@ -253,7 +253,7 @@ def test_building_the_mcp_app_skips_meeting_code(tmp_path):
         mcp = build_mcp(Store(s.db_path), s)
         add_ingest_routes(mcp, s)
         app = BearerAuth(mcp.streamable_http_app(), s.mcp_token)
-        assert "athena.meetings" not in sys.modules, "meetings imported"
+        assert "athena.meetings.bot.launcher" not in sys.modules, "meetings imported"
         assert threading.active_count() == 1, threading.enumerate()
         print("ok")
     """)

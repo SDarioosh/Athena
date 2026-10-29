@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from ..store import NOTE_ITEM, clean_list_name, person_name, short_title
+from ..domain import NOTE_ITEM, clean_list_name, person_name, short_title
 from .rules.facts import fact_kind
 from .rules.notes import _note_storage
 from .rules.text import _NAME_WORD

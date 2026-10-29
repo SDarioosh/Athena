@@ -95,8 +95,8 @@ sys.path.insert(0, str(_server_dir()))
 from athena import audio as audio_mod  # noqa: E402
 from athena.audio import SAMPLE_RATE  # noqa: E402
 from athena.config import Settings  # noqa: E402
+from athena.db.store import Store  # noqa: E402
 from athena.pipeline import Pipeline  # noqa: E402
-from athena.store import Store  # noqa: E402
 from athena.vad import make_vad  # noqa: E402
 
 try:
