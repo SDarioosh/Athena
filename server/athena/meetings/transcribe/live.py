@@ -62,6 +62,7 @@ import numpy as np
 from ...audio import SAMPLE_RATE, AudioDecodeError
 from ...clips import Window
 from ...diarize import PieceRef, rms_db
+from ...transcribe_engine import load_chunk, plan_windows, whisper_window
 from ...vad import Span
 from ..people.names import clean_display_name
 from .tracks import is_room_track, is_shared_room, meeting_prompt
@@ -117,7 +118,7 @@ class Run:
         for c, n in zip(self.chunks, self.sizes, strict=True):
             spans += [Span(offset + s, offset + e) for s, e in c["speech"]]
             offset += n / SAMPLE_RATE
-        return pipeline._plan_windows(spans, sum(self.sizes) / SAMPLE_RATE)
+        return plan_windows(pipeline.settings, spans, sum(self.sizes) / SAMPLE_RATE)
 
     def final_windows(self, pipeline: Pipeline) -> list[Window]:
         """The windows no later audio can change: all of a closed run, all but the last
@@ -130,7 +131,7 @@ def plan_runs(chunks: list[dict[str, Any]], *, final: bool) -> list[Run]:
     """A track's runs of contiguous chunks, as ``Pipeline._runs`` cuts them. While the
     meeting records (``final`` false) only the gap-free sequence prefix is used and the
     last run stays open."""
-    from ...pipeline import CONTIGUOUS_TOLERANCE
+    from ...transcribe_engine import CONTIGUOUS_TOLERANCE
 
     ordered = sorted((c for c in chunks if c["audio_path"]), key=lambda c: c["sequence"])
     if not final:
@@ -168,7 +169,7 @@ class RunAudio:
 
     def _chunk(self, i: int) -> np.ndarray:
         if i not in self._pcm:
-            pcm = self.pipeline._load_chunk(self.run.chunks[i])
+            pcm = load_chunk(self.run.chunks[i])
             n = self.sizes[i]
             if abs(pcm.size - n) > SIZE_TOLERANCE:
                 raise LiveMismatch(f"chunk {self.run.chunks[i]['sequence']}: "
@@ -273,8 +274,9 @@ def track_steps(pipeline: Pipeline, session_id: str, track: str, runs: list[Run]
             w = todo[st.windows]
             if text_prompt is None:
                 text_prompt = prompt()
-            got, _, context = pipeline._whisper_window(run.first, start, w, audio.extract(w),
-                                                       text_prompt, st.context)
+            got, _, context = whisper_window(pipeline.settings, pipeline.transcriber,
+                                             run.first, start, w, audio.extract(w),
+                                             text_prompt, st.context)
             got.sort(key=lambda p: p[0])  # as the end pass sorts the track's pieces
             _fold(st, got, audio)
             st.windows, st.until, st.context = st.windows + 1, w.parts[-1][1], context
@@ -350,7 +352,7 @@ def _readable(pipeline: Pipeline, chunks: list[dict[str, Any]]) -> list[dict[str
         if not c["audio_path"]:
             continue
         try:
-            pcm = pipeline._load_chunk(c)
+            pcm = load_chunk(c)
         except (OSError, AudioDecodeError) as e:
             log.warning("chunk %s of track %s left out: %s", c["sequence"], c["track"], e)
             continue

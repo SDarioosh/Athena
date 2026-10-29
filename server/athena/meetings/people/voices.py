@@ -53,6 +53,7 @@ import numpy as np
 
 from ...audio import SAMPLE_RATE
 from ...diarize import rms_db
+from ...transcribe_engine import load_chunk
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...pipeline import Pipeline
@@ -202,7 +203,7 @@ class _Audio:
                 continue
             key = (c.get("track") or "", c["sequence"])
             if key not in self.cache:
-                self.cache[key] = self.pipeline._load_chunk(c)
+                self.cache[key] = load_chunk(c)
             pcm = self.cache[key]
             parts.append(pcm[int(max(0.0, start - c0) * SAMPLE_RATE):
                              int(max(0.0, end - c0) * SAMPLE_RATE)])

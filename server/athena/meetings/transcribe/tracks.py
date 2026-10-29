@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ... import transcribe_engine
 from ...audio import SAMPLE_RATE
 from ...diarize import PieceRef, SpeakerLabel, load_voices, rms_db
 from ...lines import join_lines
@@ -283,7 +284,7 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str, chunks: list[dict[st
         pieces: list[tuple[float, float, str, PieceRef]] = []
         words: list[list[tuple[float, float, str]]] = []
         context = ""  # whisper's context starts again on every track
-        for run_start, audio, speech in pipeline._runs(by_track[track]):
+        for run_start, audio, speech in transcribe_engine.runs(by_track[track]):
             runs.append(audio)
             got_pieces, got_words, context = pipeline._whisper_run(
                 len(runs) - 1, run_start, audio, speech, prompt, context)
