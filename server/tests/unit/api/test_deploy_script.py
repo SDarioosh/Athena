@@ -22,21 +22,31 @@ _NO_API_BIN: Path | None = None
 
 def _no_api_bin() -> Path:
     """A bin dir whose curl never reaches anything, so a test never asks a real Athena on
-    this machine whether a meeting is running (a developer's server/.env has a real token)."""
+    this machine whether a meeting is running (a developer's server/.env has a real token),
+    and whose systemctl and docker do nothing, so a test never stops a real service or
+    container (on the owner's server the real ones run Athena)."""
     global _NO_API_BIN
     if _NO_API_BIN is None:
         _NO_API_BIN = Path(tempfile.mkdtemp(prefix="deploy-test-bin-"))
-        curl = _NO_API_BIN / "curl"
-        curl.write_text("#!/usr/bin/env bash\nexit 7\n")
-        curl.chmod(0o755)
+        for name, body in (("curl", "exit 7"), ("systemctl", "exit 1"), ("docker", "exit 0"),
+                           ("journalctl", "exit 0")):
+            tool = _NO_API_BIN / name
+            tool.write_text(f"#!/usr/bin/env bash\n{body}\n")
+            tool.chmod(0o755)
+        # no unit files and no pid files of a real install
+        (_NO_API_BIN / "cfg").mkdir()
+        (_NO_API_BIN / "data").mkdir()
     return _NO_API_BIN
 
 
 def run(*args: str, **env: str) -> subprocess.CompletedProcess[str]:
     base = {k: v for k, v in os.environ.items()
-            if not k.startswith(("CONVO_", "BARVIS_SOUND_"))}
+            if not k.startswith(("CONVO_", "BARVIS_SOUND_", "ATHENA_", "FORK_", "DOCKER",
+                                 "COMPOSE_"))}
     # tests that fake their own tools pass PATH; the others get a curl that can't connect
     base["PATH"] = f"{_no_api_bin()}:{base.get('PATH', '')}"
+    base["XDG_CONFIG_HOME"] = str(_no_api_bin() / "cfg")
+    base["CONVO_DATA_DIR"] = str(_no_api_bin() / "data")
     # background runner: never touches the real systemd
     return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True,
                           env={**base, "BARVIS_SOUND_RUNNER": "background", **env},
