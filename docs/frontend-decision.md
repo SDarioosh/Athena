@@ -12,7 +12,7 @@ No `.env`, `auth.json` or other credential files were read.*
 ## Decision (owner, 2026-10-18)
 
 - **Knowledge layer: hybrid.** Our SQLite store is the source of truth, exposed by our MCP
-  server (`server/convo_server/mcp_server.py`).
+  server (`server/athena/mcp_server.py`).
 - **Frontend: Odysseus, as our own fork** (repo `SDarioosh/Barvis`; the fork was called
   Barvis until 2026-10-19 and is now simply Odysseus). The fork is modified to work with our
   system and kept in sync with upstream (see "Odysseus fork plan" below).

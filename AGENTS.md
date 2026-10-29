@@ -17,7 +17,9 @@ server. **Nothing in the data path touches the cloud.**
   in the hub, the belief source, the label on filed notes, the memory source and
   calendar uid prefixes (stored in the owner's data).
 - **Don't rename code identifiers.** They keep the old name on purpose: the
-  `convo_server` package, the `convo-server` CLI, `CONVO_*` env vars, paths such as
+  `convo_server` package name (the package is now `athena`; `convo_server` stays an alias
+  of it, same module objects, until the cleanup's shim removal), the `convo-server` CLI
+  (installed next to the new `athena`, both run the same code), `CONVO_*` env vars, paths such as
   `server/data/convo.db`, the hub's server name `convo` (the name Odysseus registered
   our MCP server under; since MCP 0.20.1 the server reports itself as `athena`, was
   `convo-ai`, and the hub never reads that), the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app's appId and vendor
@@ -50,9 +52,9 @@ server. **Nothing in the data path touches the cloud.**
 
 ## Layout
 
-- `server/`: Python 3.11+ package `convo_server`: ingestion API, VAD,
+- `server/`: Python 3.11+ package `athena` (old name `convo_server`, an alias): ingestion API, VAD,
   transcription, diarization, conversation splitting, summaries, SQLite
-  storage, search, digest, MCP server (`convo_server/mcp_server.py`), frontend eval
+  storage, search, digest, MCP server (`athena/mcp_server.py`), frontend eval
   (`server/eval/bakeoff.py`). `server/scripts/deploy.sh` updates the server and runs it
   as background services, or as the Docker containers of `server/compose.yml`
   (`BARVIS_SOUND_RUNNER=docker`); the hub's `scripts/fork_deploy.sh` calls it. See `server/README.md`.
@@ -166,7 +168,7 @@ server. **Nothing in the data path touches the cloud.**
 
 ## MCP tool contract
 
-`server/convo_server/mcp_server.py` is the interface Odysseus depends on.
+`server/athena/mcp_server.py` is the interface Odysseus depends on.
 
 | Tool | Annotation |
 |---|---|
@@ -183,7 +185,7 @@ server. **Nothing in the data path touches the cloud.**
 - HTTP auth accepts `Authorization: Bearer` or `?access_token=` (`BearerAuth`); Odysseus
   can only use the query form.
 - The MCP HTTP app also has plain HTTP routes, behind the same `BearerAuth`
-  (`server/convo_server/ingest_relay.py`): uploads (`POST /ingest/chunk`,
+  (`server/athena/ingest_relay.py`): uploads (`POST /ingest/chunk`,
   `POST /sessions/{session_id}/end`), written notes (`POST /ingest/text`,
   `DELETE /ingest/text/{source_id}`, MCP 0.12.0) and the few API reads the relay's T5
   sync uses (`READ_ROUTES`: `/health`, conversations, transcript, action items, digests), plus
@@ -299,7 +301,7 @@ server. **Nothing in the data path touches the cloud.**
 | Work | Where |
 |---|---|
 | Capture, ingestion, VAD, transcription, diarization, splitting, summaries, storage | `server/` here |
-| MCP tools, their results and links | `server/convo_server/mcp_server.py` here (contract rules above) |
+| MCP tools, their results and links | `server/athena/mcp_server.py` here (contract rules above) |
 | Watch app | `zepp-app/` here |
 | Watch/pendant firmware, BLE protocol, phone and PC relays | this repo (`firmware/`, `android-relay/`, `docs/twatch-ble-protocol.md`) |
 | Eval questions and scoring | `server/eval/bakeoff.py` here |
@@ -365,7 +367,7 @@ relay tests and the Android build and tests.
   `CONVO_INGEST_TOKEN`.
 - Zepp app: JavaScript, `@zeppos/zeus-cli`, test on the real device.
 - Database schema changes go only through a new numbered step at the end of `MIGRATIONS`
-  (`server/convo_server/store.py`); never edit `SCHEMA` (the frozen first schema) for a new
+  (`server/athena/store.py`); never edit `SCHEMA` (the frozen first schema) for a new
   table, column or index. One PR at a time takes the next number and names it in its
   title (e.g. "migration 18: …").
 - Small, focused commits with descriptive messages.

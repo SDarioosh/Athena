@@ -239,10 +239,10 @@ Fixed here so parallel lanes code against the same thing. Changing one needs the
 - **Ingest client cases (1A):** `docs/api/ingest-client-cases.json`, rows of
   `{status, body, expect: "ok"|"retry"|"drop"|"stop_uploads"}`. Every uploader's tests (C++ bot,
   PC relay, Android, Zepp) read this one file.
-- **Transcription engine (2A):** `convo_server/transcribe_engine.py` exposes
+- **Transcription engine (2A):** `athena/transcribe_engine.py` exposes
   `load_chunk`, `runs`, `plan_windows`, `whisper_window`, public, used by `Pipeline` and the
   meeting code. One `runs()` rule only.
-- **Domain module (2B):** `convo_server/domain.py` holds kinds, statuses, `Segment`,
+- **Domain module (2B):** `athena/domain.py` holds kinds, statuses, `Segment`,
   `short_title`, `is_explicit`, `person_name`, `clean_*_name`, `name_kind(name) -> person |
   device | room` and the one unnamed-speaker pattern. Nothing in `domain.py` imports the
   store.
@@ -324,7 +324,7 @@ Small, parallel, mostly *behaviour* (fixes). Wave: 1A, 1B, 1C, 1D, 1E, 1F at onc
   `.env.example` (17 missing today) and add them.
 - [ ] Mark test-only helpers (`diarize.enrollment_embedding`, `vad.level_dbfs`); FastAPI
   `version` from the package. (`store.py` items are in 1C, which owns that file.)
-- [ ] Replace the 19 lane labels in `convo_server/` comments with plain descriptions.
+- [ ] Replace the 19 lane labels in `athena/` comments with plain descriptions.
 - [ ] *Rename* (rename plan step 2): the MCP server reports itself as `athena` (was
   `convo-ai`); the hub registers it as `convo` and never reads this name (check with
   `git grep convo-ai` in the hub). MCP patch version bump, note in `server/README.md`, 0A's
@@ -476,7 +476,7 @@ none needs another's imports. 2D removes the shims after all three merge. Hub 2E
 beside them (other repo); 2F after 2E.
 
 **2A Meetings package (Athena).** Owns the 7 meeting files and `transcribe_engine.py`.
-- [ ] `convo_server/meetings/` with `bot/` (launcher, zoom auth, links), `ingest/` (track
+- [ ] `athena/meetings/` with `bot/` (launcher, zoom auth, links), `ingest/` (track
   rules, late chunks, chat), `transcribe/` (tracks, live, bleed), `people/` (names, voices).
 - [ ] `transcribe_engine.py` (Shared interfaces): the 4 private `Pipeline` helpers the
   meeting code calls become public there; `Pipeline` uses them too. One `runs()` (today
@@ -484,7 +484,7 @@ beside them (other repo); 2F after 2E.
 - [ ] Shims at the 7 old paths.
 
 **2B Store package and domain (Athena).** Owns `store.py`, `domain.py`, `db/`.
-- [ ] `domain.py` (Shared interfaces). `convo_server/db/`: `connection.py`, `migrations.py`
+- [ ] `domain.py` (Shared interfaces). `athena/db/`: `connection.py`, `migrations.py`
   (1C's registry), and one repository per area: sessions, conversations, facts, forget,
   action_items, people, voices, meetings, search. `Store` composes them and keeps every
   public method.

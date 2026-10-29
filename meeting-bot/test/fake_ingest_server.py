@@ -9,7 +9,7 @@ case: the first chunk call gets --case, one row of docs/api/ingest-client-cases.
 ({"status", "body"}; status 0 closes the connection unanswered, a string body is sent as
 text, a 3xx carries a Location header); every later call is answered as in "ok".
 Prints the port on its first stdout line. Every request is appended to DIR/requests.jsonl
-(chunk audio saved next to it); the routes and answers mimic server/convo_server/api.py.
+(chunk audio saved next to it); the routes and answers mimic server/athena/api.py.
 """
 
 from __future__ import annotations

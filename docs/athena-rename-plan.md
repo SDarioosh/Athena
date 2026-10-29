@@ -110,6 +110,16 @@ clone of the current URL.
 
 ## Step 3: Python package and CLI (Athena)
 
+**Done** (2026-10-29): the package is `athena` (distribution `athena-server`), console
+scripts `athena` and `convo-server` (both `athena.cli:main`). Changed from the plan below:
+`convo_server` stays as an alias package (`server/convo_server/__init__.py`, a meta-path
+finder: `convo_server.store is athena.store`, `python -m convo_server.cli` works, and a
+venv installed before the rename that knows only the `convo_server` folder still finds
+`athena`), because commands outside the repos may use the old name; it goes with the
+other shims (step 16, cleanup lane 4B). The hub's docs name `convo_server` paths in
+comments only (`docs/fork/sandbox.md` imports `convo_server.mcp_server`, which the alias
+keeps working). Tested in `server/tests/test_convo_server_alias.py`.
+
 - `git mv server/convo_server server/athena`, and change the imports in `server/`
   (about 50 files), `server/Dockerfile`, `server/eval/`, `server/scripts/`, and the
   `server/tests` file that imports the PC relay.
@@ -182,7 +192,7 @@ home-screen icons pinned by an older version keep working.
 
 ## Step 7: settings `CONVO_*` → `ATHENA_*` (Athena)
 
-- About 98 variables. `server/convo_server/config.py` (pydantic `BaseSettings`,
+- About 98 variables. `server/athena/config.py` (pydantic `BaseSettings`,
   `env_prefix="CONVO_"`) reads `ATHENA_<name>` first and falls back to `CONVO_<name>`.
   Do this with a custom settings source or `AliasChoices` per field, not by copying
   `os.environ`.
@@ -331,6 +341,8 @@ The real-device install is in that PR's Server verification.
 ## Step 16: final pass (both repos)
 
 - Remove the `barvis_relay` stub (step 4) if nothing still uses it.
+- Remove the `convo_server` alias package (step 3) once the owner confirms no unit, cron
+  job or profile outside the repos uses `convo_server`.
 - `AGENTS.md` in both repos: the "don't rename" lists keep only the names under
   [What stays](#what-stays-and-why).
 - Remove the `/api/modules/sound/*` aliases (step 12) if the owner agrees. Keep the

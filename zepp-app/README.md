@@ -109,7 +109,7 @@ Real-device checks still open: see "Voice profile" in PROGRESS.md and the PR.
 - **Recorder output format (answered):** the T-Rex 3 Pro writes raw Opus packets with
   no container, each `[u32 BE length][u32 BE encoder final range][packet]` (the
   `opus_demo` layout), SILK wideband, mono, 60 ms per packet, about 1.3 KB/s. ffmpeg
-  can't probe that, so the server wraps it in Ogg first (`server/convo_server/opus_packets.py`).
+  can't probe that, so the server wraps it in Ogg first (`server/athena/opus_packets.py`).
 - **Microphone permission:** the `@zos/media` docs don't mention one, but the watch
   refuses to record with `PERMISSION DENIED device:os.mic` without it. Since 0.1.1 the
   app lists `device:os.mic` in `app.json` and asks for it (`@zos/app`

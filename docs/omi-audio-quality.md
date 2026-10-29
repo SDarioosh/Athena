@@ -103,7 +103,7 @@ Notes:
 
 ## 3. Where we stand
 
-- `server/convo_server/audio.py` decodes to 16 kHz mono with no level change.
+- `server/athena/audio.py` decodes to 16 kHz mono with no level change.
 - `pipeline.ingest_chunk` runs `SileroVAD(threshold=0.5)` on that raw level, and **only
   VAD speech spans reach whisper**. A quiet speaker across the room that Silero scores
   below 0.5 is never transcribed, and nothing logs it.
