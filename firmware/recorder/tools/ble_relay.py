@@ -15,7 +15,8 @@ Setup (once; Python 3.10+, a Bluetooth LE adapter):
 
 The token comes from the ATHENA_INGEST_TOKEN environment variable (or its old name
 CONVO_INGEST_TOKEN, which still works) or --token-file (a file holding only the token);
-there is deliberately no --token option, so it can't end up in your shell history. The server URL comes from --server or BARVIS_SERVER.
+there is deliberately no --token option, so it can't end up in your shell history. The server
+URL comes from --server or BARVIS_SERVER.
 
 First pairing. The watch accepts new bonds only in its 2-minute sync window (hold BOOT, or
 `ble pair` on the console) and shows a 6-digit code on its screen, which you type on the PC.
