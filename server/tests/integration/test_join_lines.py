@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from conftest import tone
-from test_pipeline import ingest
-
 from athena.diarize import UNSURE_LABEL, PieceRef, SpeakerLabel
 from athena.lines import ends_sentence, join_lines
+from tests.conftest import tone
+from tests.integration.test_pipeline import ingest
 
 ME, BOB = SpeakerLabel("Me", True), SpeakerLabel("Bob", False)
 UNSURE = SpeakerLabel(UNSURE_LABEL, False)

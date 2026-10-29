@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from athena.config import Settings
 from athena.meetings.bot import launcher as meetings
 
-ENV_EXAMPLE = Path(__file__).resolve().parents[1] / ".env.example"
+ENV_EXAMPLE = Path(__file__).resolve().parents[3] / ".env.example"
 TOKEN = "t" * 32
 
 

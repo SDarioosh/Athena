@@ -3,13 +3,12 @@ and kept audio go, summaries, facts and action items stay. Fictional data."""
 
 from __future__ import annotations
 
-from test_confirmed_facts import DAY, T0
-from test_erase_fact import conversation, erase, rewriter
-from test_mcp import call, process_two_speakers
-
 from athena.links import render_conversation
 from athena.mcp_server import build_mcp
 from athena.pipeline import Worker
+from tests.unit.mcp.test_mcp import call, process_two_speakers
+from tests.unit.store.test_confirmed_facts import DAY, T0
+from tests.unit.store.test_erase_fact import conversation, erase, rewriter
 
 
 def retention(pipeline, days: int):

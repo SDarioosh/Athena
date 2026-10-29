@@ -13,13 +13,13 @@ curiosity; code drops curiosity about how or what something is. Fictional data."
 from __future__ import annotations
 
 import pytest
-from conftest import fake_llm_transport
-from test_confirmed_facts import T0
 
 from athena.domain import Segment
 from athena.summarize.client import LLMClient
 from athena.summarize.prompts import FACTS_SYSTEM
 from athena.summarize.summarizer import Summarizer
+from tests.conftest import fake_llm_transport
+from tests.unit.store.test_confirmed_facts import T0
 
 
 def summarize(facts: list[str], kind: str = "casual") -> list[str]:

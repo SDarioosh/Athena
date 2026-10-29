@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-SERVER = Path(__file__).parents[1]
+SERVER = Path(__file__).parents[2]
 sys.path.insert(0, str(SERVER / "scripts"))
 
 import meeting_bot_cost as cost  # noqa: E402

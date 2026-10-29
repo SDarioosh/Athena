@@ -19,7 +19,6 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import TOKEN, tone, wav
 
 from athena.meetings.bot import launcher as meetings
 from athena.meetings.bot.launcher import (
@@ -33,6 +32,7 @@ from athena.meetings.bot.launcher import (
     parse_zoom_link,
     sign_sdk_jwt,
 )
+from tests.conftest import TOKEN, tone, wav
 
 FAKE_BOT = Path(__file__).with_name("fake_meeting_bot.py")
 SDK_KEY = "fictional-sdk-key"
@@ -528,7 +528,7 @@ def test_api_import_starts_nothing_and_skips_meeting_code(tmp_path) -> None:
         print("ok")
     """)
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
-                       cwd=Path(__file__).parents[1], timeout=60)
+                       cwd=Path(__file__).parents[2], timeout=60)
     assert r.stdout.strip() == "ok", r.stderr
 
 

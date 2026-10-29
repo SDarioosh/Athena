@@ -3,11 +3,10 @@ idle rules, one conversation per meeting, chat lines. Fictional data only."""
 
 from __future__ import annotations
 
-from conftest import silence, wav
-from test_meeting_chat import chat
-from test_meeting_tracks import ALICE, BO, T0, ScriptedWhisper
-
 from athena.domain import CHAT
+from tests.conftest import silence, wav
+from tests.meetings.test_meeting_chat import chat
+from tests.meetings.test_meeting_tracks import ALICE, BO, T0, ScriptedWhisper
 
 SILENT_1S = wav(silence(1))
 
@@ -107,7 +106,8 @@ def test_two_participants_with_one_name_teach_no_voice(pipeline):
     (in fact the second track's replaced the first's), and the relabel would put that
     name on strangers in other recordings. Neither track is learned."""
     import numpy as np
-    from conftest import SAMPLE_RATE, tone
+
+    from tests.conftest import SAMPLE_RATE, tone
 
     def track(start, secs, freq):
         out = np.zeros(30 * SAMPLE_RATE, np.float32)

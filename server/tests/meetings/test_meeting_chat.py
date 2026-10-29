@@ -12,16 +12,16 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from conftest import TOKEN
-from test_mcp import call
-from test_meeting_tracks import ALICE, BO, CLEO, T0, ScriptedWhisper
 
 from athena.db.store import Store
 from athena.domain import CHAT, SPEECH, Segment
 from athena.mcp_server import build_mcp
 from athena.summarize.prompts import format_transcript
+from tests.conftest import TOKEN
+from tests.meetings.test_meeting_tracks import ALICE, BO, CLEO, T0, ScriptedWhisper
+from tests.unit.mcp.test_mcp import call
 
-SERVER = Path(__file__).resolve().parents[1]
+SERVER = Path(__file__).resolve().parents[2]
 DANA = "16782336"  # in the meeting, typed in chat, never spoke (no track)
 LINK = "https://example.org/files/budget-v3.xlsx"
 

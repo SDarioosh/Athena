@@ -6,12 +6,12 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import ToneEmbedder, tone
-from test_mcp import call
 
 from athena.domain import Segment
 from athena.links import transcript_link
 from athena.mcp_server import build_mcp
+from tests.conftest import ToneEmbedder, tone
+from tests.unit.mcp.test_mcp import call
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 HOUR, DAY = 3600.0, 86400.0

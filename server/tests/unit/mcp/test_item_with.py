@@ -5,13 +5,12 @@ from __future__ import annotations
 
 import json
 
-from conftest import ToneEmbedder, tone
-from test_confirmed_facts import HOUR, T0
-from test_mcp import call
-
 from athena.db.store import Store
 from athena.domain import Segment
 from athena.mcp_server import build_mcp
+from tests.conftest import ToneEmbedder, tone
+from tests.unit.mcp.test_mcp import call
+from tests.unit.store.test_confirmed_facts import HOUR, T0
 
 
 def converse(store: Store, name: str, start: float, lines: list[tuple[str, str]],

@@ -15,12 +15,18 @@ import time
 from pathlib import Path
 
 import pytest
-from test_schema_snapshot import FIXTURES, OLD_ROWS, describe, schema_diffs, user_version
 
 import athena.db.connection as connection_mod
 import athena.db.migrations as migrations_mod
 from athena.db.migrations import MIGRATIONS, SCHEMA_VERSION
 from athena.db.store import Store
+from tests.unit.store.test_schema_snapshot import (
+    FIXTURES,
+    OLD_ROWS,
+    describe,
+    schema_diffs,
+    user_version,
+)
 
 V16_FIXTURES = ("schema_v16.sql", "schema_v16_migrated.sql")
 
@@ -347,7 +353,7 @@ def _check_migration():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "check_migration", Path(__file__).parents[1] / "scripts" / "check_migration.py")
+        "check_migration", Path(__file__).parents[3] / "scripts" / "check_migration.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

@@ -9,10 +9,10 @@ import logging
 
 import numpy as np
 import pytest
-from conftest import SAMPLE_RATE, ToneEmbedder, dominant_freq, silence, tone, wav
 
 from athena.diarize import load_voices
 from athena.meetings.people.voices import MAX_MEETING_SAMPLES, candidate_windows, merge, subtract
+from tests.conftest import SAMPLE_RATE, ToneEmbedder, dominant_freq, silence, tone, wav
 
 T0 = 1_760_000_000.0
 

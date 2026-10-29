@@ -8,11 +8,11 @@ import json
 from datetime import date
 
 import pytest
-from test_confirmed_facts import DAY, T0, say
-from test_mcp import call
 
 from athena.dates import fact_valid_until
 from athena.mcp_server import build_mcp
+from tests.unit.mcp.test_mcp import call
+from tests.unit.store.test_confirmed_facts import DAY, T0, say
 
 FRIDAY = date(2026, 10, 23)
 

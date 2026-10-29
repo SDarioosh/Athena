@@ -6,7 +6,6 @@ import math
 from pathlib import Path
 
 import httpx
-from conftest import tone
 
 from athena.cli import build_transcriber
 from athena.config import Settings
@@ -19,6 +18,7 @@ from athena.transcribe import (
     parse_cli_json,
     parse_verbose_json,
 )
+from tests.conftest import tone
 
 ON = HallucinationFilter()
 

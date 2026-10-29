@@ -7,11 +7,11 @@ from __future__ import annotations
 import re
 
 import pytest
-from conftest import tone
-from test_meeting_tracks import SCRIPT, T0, ScriptedWhisper, track_audio
 
 from athena.meetings.people.names import is_room_or_hardware
 from athena.meetings.transcribe.tracks import is_shared_room
+from tests.conftest import tone
+from tests.meetings.test_meeting_tracks import SCRIPT, T0, ScriptedWhisper, track_audio
 
 _SPEAKER_N = re.compile(r"^Speaker \d+$")
 

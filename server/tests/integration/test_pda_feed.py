@@ -15,7 +15,7 @@ import pytest
 from athena.domain import Segment
 from athena.pipeline import Pipeline
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "firmware" / "recorder" / "tools"))
 sys.path.insert(0, str(ROOT / "server" / "scripts"))
 

@@ -9,14 +9,14 @@ from pathlib import Path
 
 import httpx
 import numpy as np
-from test_confirmed_facts import DAY, HOUR, T0
-from test_mcp import call
 
 from athena.domain import ERASED_TEXT, Segment
 from athena.mcp_server import build_mcp
 from athena.summarize.client import LLMClient, LLMError
 from athena.summarize.rules.facts import scrub_facts
 from athena.summarize.summarizer import Summarizer
+from tests.unit.mcp.test_mcp import call
+from tests.unit.store.test_confirmed_facts import DAY, HOUR, T0
 
 FACT = "Alice is vegetarian"
 

@@ -38,7 +38,7 @@ def test_resolve_due(phrase, today, want):
 
 
 def test_code_date_wins_over_the_model(pipeline):
-    from test_insights import record, use_llm
+    from tests.unit.summarize.test_insights import record, use_llm
 
     summary = {"title": "t", "summary": "s", "key_points": [], "people": [], "topics": [],
                "facts": [], "action_items": [

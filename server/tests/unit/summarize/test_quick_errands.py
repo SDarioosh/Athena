@@ -10,14 +10,14 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import fake_llm_transport
-from test_confirmed_facts import HOUR, T0, say
 
 from athena.db.store import Store
 from athena.domain import Segment, person_name
 from athena.summarize.client import LLMClient
 from athena.summarize.prompts import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM
 from athena.summarize.summarizer import Summarizer
+from tests.conftest import fake_llm_transport
+from tests.unit.store.test_confirmed_facts import HOUR, T0, say
 
 
 def summarize(items: list[dict], lines: list[str], kind: str = "casual",

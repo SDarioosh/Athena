@@ -8,11 +8,7 @@ import json
 
 import httpx
 import pytest
-from conftest import TOKEN
 from fastapi.testclient import TestClient
-from test_ingest_relay import MCP_TOKEN, mcp_client
-from test_mcp import call
-from test_written_notes import LINK, note_llm
 
 from athena.api import create_app
 from athena.domain import ERASED_TEXT
@@ -20,6 +16,10 @@ from athena.mcp_server import build_mcp
 from athena.pipeline import MAX_LINE_CHARS, validate_link, written_lines
 from athena.summarize.client import LLMClient
 from athena.summarize.summarizer import Summarizer
+from tests.conftest import TOKEN
+from tests.integration.test_written_notes import LINK, note_llm
+from tests.unit.mcp.test_ingest_relay import MCP_TOKEN, mcp_client
+from tests.unit.mcp.test_mcp import call
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 DAY = 86_400.0

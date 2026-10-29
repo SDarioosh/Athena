@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from conftest import TOKEN
-from test_ingest_relay import MCP_TOKEN, mcp_client
-from test_mcp import process_two_speakers
 
 from athena import export
 from athena.api import create_app
+from tests.conftest import TOKEN
+from tests.unit.mcp.test_ingest_relay import MCP_TOKEN, mcp_client
+from tests.unit.mcp.test_mcp import process_two_speakers
 
 
 @pytest.fixture

@@ -17,10 +17,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
-from test_meetings import _bot, _report, _wait
 
 from athena.cli import zoom_login
 from athena.meetings.bot import zoom_signin
+from tests.meetings.test_meetings import _bot, _report, _wait
 
 CLIENT_ID, CLIENT_SECRET = "fictional-client-id", "fictional-client-secret"
 REDIRECT = "https://athena.example/zoom/callback"

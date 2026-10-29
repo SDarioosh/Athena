@@ -10,17 +10,17 @@ from pathlib import Path
 from urllib.parse import quote
 
 import pytest
-from test_meetings import (  # noqa: F401  (meeting_settings is a fixture)
+
+from athena.meetings.bot import launcher as meetings
+from athena.meetings.bot.launcher import Launcher, _Running, final_state
+from tests.meetings.test_meetings import (  # noqa: F401  (meeting_settings is a fixture)
     _launcher,
     _report,
     _use,
     _wait,
     meeting_settings,
 )
-from test_relay_meetings import Q, fake
-
-from athena.meetings.bot import launcher as meetings
-from athena.meetings.bot.launcher import Launcher, _Running, final_state
+from tests.meetings.test_relay_meetings import Q, fake
 
 
 # --------------------------------------------------- relay: GET /meetings?limit

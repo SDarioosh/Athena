@@ -9,11 +9,11 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
-from conftest import silence, tone, wav
 
 from athena.config import Settings
 from athena.links import sign, transcript_link
 from athena.mcp_server import BearerAuth, build_mcp, parse_when
+from tests.conftest import silence, tone, wav
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 DAY = "2025-10-09"
@@ -81,7 +81,7 @@ def test_lists_tools(mcp):
         "list_unnamed_speakers", "retire_fact"}
 
 
-AGENTS_MD = Path(__file__).resolve().parents[2] / "AGENTS.md"
+AGENTS_MD = Path(__file__).resolve().parents[4] / "AGENTS.md"
 
 
 def contract_table() -> dict[str, str]:

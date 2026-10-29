@@ -7,13 +7,13 @@ import time
 
 import httpx
 import numpy as np
-from conftest import TOKEN, ToneEmbedder, silence, tone, wav
 from fastapi.testclient import TestClient
 
 from athena import voice_enroll
 from athena.api import create_app
 from athena.ingest_relay import add_ingest_routes
 from athena.mcp_server import BearerAuth, build_mcp
+from tests.conftest import TOKEN, ToneEmbedder, silence, tone, wav
 
 MCP_TOKEN = "mcp-token-abcdefghijkl"
 

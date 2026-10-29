@@ -8,9 +8,6 @@ from datetime import date
 
 import httpx
 import pytest
-from test_confirmed_facts import DAY, T0
-from test_erase_fact import conversation
-from test_mcp import call
 
 from athena.dates import resolve_due
 from athena.db.store import Store
@@ -19,6 +16,9 @@ from athena.mcp_server import build_mcp
 from athena.summarize.client import LLMClient
 from athena.summarize.storage import _list_and_text
 from athena.summarize.summarizer import Summarizer
+from tests.unit.mcp.test_mcp import call
+from tests.unit.store.test_confirmed_facts import DAY, T0
+from tests.unit.store.test_erase_fact import conversation
 
 
 def summary(**fields) -> dict:

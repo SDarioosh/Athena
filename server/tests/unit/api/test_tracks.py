@@ -8,7 +8,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from conftest import TOKEN, silence, tone, wav
 from starlette.testclient import TestClient
 
 from athena.api import create_app
@@ -17,6 +16,7 @@ from athena.db.store import Store
 from athena.ingest_relay import add_ingest_routes
 from athena.mcp_server import BearerAuth, build_mcp
 from athena.pipeline import chunk_filename, validate_track
+from tests.conftest import TOKEN, silence, tone, wav
 
 T0 = 1_760_000_000.0
 

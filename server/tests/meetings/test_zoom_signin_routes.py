@@ -17,12 +17,19 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
-from conftest import TOKEN
-from test_ingest_relay import MCP_TOKEN, mcp_client
-from test_zoom_signin import CLIENT_ID, CLIENT_SECRET, REDIRECT, FakeZoom, _join, _stored
 
 from athena.api import create_app
 from athena.meetings.bot import zoom_signin
+from tests.conftest import TOKEN
+from tests.meetings.test_zoom_signin import (
+    CLIENT_ID,
+    CLIENT_SECRET,
+    REDIRECT,
+    FakeZoom,
+    _join,
+    _stored,
+)
+from tests.unit.mcp.test_ingest_relay import MCP_TOKEN, mcp_client
 
 Q = f"?access_token={MCP_TOKEN}"
 
@@ -254,7 +261,7 @@ def test_finish_body_is_capped(zc, zoom) -> None:
 # ------------------------------------------------------ expired at join time
 @pytest.fixture
 def zclient(zc, zsettings, tmp_path, zoom):
-    from test_meetings import _bot
+    from tests.meetings.test_meetings import _bot
 
     zsettings.meeting_bot_path, _ = _bot(tmp_path, "record")
     zsettings.meeting_bot_runner = "plain"
@@ -423,7 +430,7 @@ def test_building_the_apps_imports_no_zoom_code(tmp_path) -> None:
         print("ok")
     """)
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
-                       cwd=Path(__file__).parents[1], timeout=60)
+                       cwd=Path(__file__).parents[2], timeout=60)
     assert r.stdout.strip() == "ok", r.stderr
 
 

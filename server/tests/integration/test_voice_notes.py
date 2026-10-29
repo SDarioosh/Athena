@@ -7,13 +7,13 @@ import base64
 import sqlite3
 
 import numpy as np
-from conftest import fake_llm_transport, silence, tone, wav
 
 from athena.db.store import Store
 from athena.domain import Segment
 from athena.summarize.client import LLMClient
 from athena.summarize.summarizer import Summarizer
 from athena.transcribe import TranscriptPiece
+from tests.conftest import fake_llm_transport, silence, tone, wav
 
 T0 = 1_760_000_000.0
 
@@ -208,9 +208,8 @@ def test_summarizer_note_skips_length_check_and_triage():
 
 # --------------------------------------------------------------------- MCP
 def test_mcp_marks_voice_notes(pipeline):
-    from test_mcp import call
-
     from athena.mcp_server import build_mcp
+    from tests.unit.mcp.test_mcp import call
 
     record(pipeline, "c1", T0)
     record(pipeline, "n1", T0 + 60, "note")
@@ -228,9 +227,8 @@ def test_mcp_marks_voice_notes(pipeline):
 
 
 def test_mcp_filters_voice_notes(pipeline):
-    from test_mcp import call
-
     from athena.mcp_server import build_mcp
+    from tests.unit.mcp.test_mcp import call
 
     record(pipeline, "c1", T0)
     record(pipeline, "n1", T0 + 60, "note")

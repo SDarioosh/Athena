@@ -20,9 +20,6 @@ import json
 
 import httpx
 import pytest
-from conftest import fake_llm_transport
-from test_confirmed_facts import T0
-from test_mcp import call
 
 from athena.domain import Segment
 from athena.mcp_server import build_mcp
@@ -30,6 +27,9 @@ from athena.summarize.client import LLMClient
 from athena.summarize.prompts import FACTS_SYSTEM, REVIEW_SYSTEM
 from athena.summarize.rules.facts import fact_kind
 from athena.summarize.summarizer import Summarizer
+from tests.conftest import fake_llm_transport
+from tests.unit.mcp.test_mcp import call
+from tests.unit.store.test_confirmed_facts import T0
 
 LINES = ["Priya, can you write up how the Larkspur weather station joins the mesh?",
          "Sure, I'll send it to you next week.",

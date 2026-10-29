@@ -7,11 +7,11 @@ Found by running ~100 fictional voice notes through the summarizer and the hub's
 from __future__ import annotations
 
 import pytest
-from conftest import fake_llm_transport
 
 from athena.domain import Segment
 from athena.summarize.client import LLMClient
 from athena.summarize.summarizer import Summarizer
+from tests.conftest import fake_llm_transport
 
 T0 = 1_792_800_000.0 + 8 * 3600  # Saturday 2026-10-24, 10:00 in Berlin
 

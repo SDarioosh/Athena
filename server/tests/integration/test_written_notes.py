@@ -10,10 +10,7 @@ import re
 
 import httpx
 import pytest
-from conftest import TOKEN, silence, wav
 from fastapi.testclient import TestClient
-from test_ingest_relay import MCP_TOKEN, mcp_client
-from test_mcp import call
 
 from athena.api import create_app
 from athena.domain import ERASED_TEXT, WRITTEN_DEVICE
@@ -21,6 +18,9 @@ from athena.mcp_server import build_mcp
 from athena.pipeline import Worker
 from athena.summarize.client import LLMClient
 from athena.summarize.summarizer import Summarizer
+from tests.conftest import TOKEN, silence, wav
+from tests.unit.mcp.test_ingest_relay import MCP_TOKEN, mcp_client
+from tests.unit.mcp.test_mcp import call
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 WRITTEN_AT = "2025-10-09T08:53:20Z"
@@ -547,7 +547,7 @@ def test_text_routes_are_not_mcp_tools(pipeline):
 
 # ------------------------------------------------------------- kind filter (MCP 0.14.0)
 def test_kind_filter_tells_voice_and_written_notes_apart(api, pipeline):
-    from test_voice_notes import record
+    from tests.integration.test_voice_notes import record
 
     send(api)
     record(pipeline, "c1", T0 + 3600)

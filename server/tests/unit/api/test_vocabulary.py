@@ -5,7 +5,6 @@ from __future__ import annotations
 import httpx
 import numpy as np
 import pytest
-from conftest import TOKEN
 from fastapi.testclient import TestClient
 
 from athena import vocabulary
@@ -13,6 +12,7 @@ from athena.api import create_app
 from athena.db.store import Store
 from athena.ingest_relay import add_ingest_routes
 from athena.mcp_server import BearerAuth, build_mcp
+from tests.conftest import TOKEN
 
 MCP_TOKEN = "mcp-token-abcdefghijkl"
 
@@ -74,7 +74,7 @@ def test_api_get_and_put_survive_a_restart(pipeline, settings):
 
 
 def test_recordings_use_the_words(pipeline):
-    from test_recognition import ingest, tone
+    from tests.integration.test_recognition import ingest, tone
 
     vocabulary.set_words(pipeline, "RokTalk, Meshtastic")
     ingest(pipeline, 0, np.concatenate([tone(200, 4), tone(600, 4)]))

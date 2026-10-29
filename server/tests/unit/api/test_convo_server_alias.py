@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-SERVER = Path(__file__).resolve().parent.parent
+SERVER = Path(__file__).resolve().parents[3]
 
 
 def _run(*args: str, cwd: Path = SERVER) -> subprocess.CompletedProcess[str]:

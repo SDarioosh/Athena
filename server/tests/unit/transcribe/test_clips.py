@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from conftest import dominant_freq, silence, tone, wav
 
 from athena.audio import SAMPLE_RATE
 from athena.clips import Window, plan_windows, tail_words
 from athena.diarize import SpeakerLabel
 from athena.transcribe import TranscriptPiece
 from athena.vad import Span
+from tests.conftest import dominant_freq, silence, tone, wav
 
 T0 = 1_760_000_000.0
 

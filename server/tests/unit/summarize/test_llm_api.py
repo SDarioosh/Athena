@@ -7,11 +7,11 @@ import json
 import httpx
 import numpy as np
 import pytest
-from conftest import silence, tone, wav
 
 from athena.summarize.client import LLMClient, LLMError, _strip_fences
 from athena.summarize.schemas import ConversationSummary
 from athena.transcribe import parse_cli_json, parse_verbose_json
+from tests.conftest import silence, tone, wav
 
 T0 = 1_760_000_000.0
 
@@ -158,10 +158,9 @@ def test_enroll_speaker_json_for_the_watch(client):
 
 
 def test_summary_filters_placeholder_people_and_absent_owner():
-    from conftest import fake_llm_transport
-
     from athena.domain import Segment
     from athena.summarize.summarizer import Summarizer
+    from tests.conftest import fake_llm_transport
 
     summary = {"title": "t", "summary": "s", "key_points": [], "action_items": [],
                "people": ["Speaker 1", "Me", "Alice", "alice", "Unknown"], "topics": [],

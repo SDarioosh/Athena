@@ -12,15 +12,15 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from conftest import SAMPLE_RATE, tone
 
 from athena.db.store import Store
 from athena.meetings.transcribe import live as meeting_live
 from athena.pipeline import Pipeline, Worker
 from athena.transcribe import TranscriptPiece
+from tests.conftest import SAMPLE_RATE, tone
 
 T0 = 1_760_000_000.0
-SERVER = Path(__file__).resolve().parents[1]
+SERVER = Path(__file__).resolve().parents[2]
 
 SCRIPT = {
     300: "Hello everyone, thanks for joining.",   # Alice
@@ -62,7 +62,7 @@ class HashWhisper:
 
 
 def chunk(*parts: tuple[float, np.ndarray], total: float = 30.0) -> bytes:
-    from conftest import wav
+    from tests.conftest import wav
 
     out = np.zeros(int(total * SAMPLE_RATE), np.float32)
     for start, p in parts:
@@ -149,9 +149,8 @@ def run_meeting(pipeline, *, live=True, window=0.0):
 
 
 def fresh(settings, tmp_path, name) -> Pipeline:
-    from conftest import ToneEmbedder
-
     from athena.diarize import Diarizer, load_voices
+    from tests.conftest import ToneEmbedder
 
     s = settings.model_copy(update={"data_dir": tmp_path / name})
     store = Store(s.db_path)
@@ -427,7 +426,7 @@ def test_random_meetings_match_the_end_of_meeting_result(settings, tmp_path, see
             # prompt only of later windows, the one known difference)
             late = int(rng.integers(0, 2)) if seq else 0
             uploads.append((seq + late, track, seq, pcm))
-    from conftest import wav
+    from tests.conftest import wav
 
     def play(p, live):
         worker = setup(p, live=live, window=window)

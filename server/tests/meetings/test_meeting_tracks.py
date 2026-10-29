@@ -11,7 +11,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from conftest import SAMPLE_RATE, silence, tone, wav
 
 from athena.diarize import PieceRef, SpeakerLabel
 from athena.meetings.transcribe.tracks import (
@@ -25,9 +24,10 @@ from athena.meetings.transcribe.tracks import (
     track_speaker,
 )
 from athena.transcribe import TranscriptPiece
+from tests.conftest import SAMPLE_RATE, silence, tone, wav
 
 T0 = 1_760_000_000.0
-SERVER = Path(__file__).resolve().parents[1]
+SERVER = Path(__file__).resolve().parents[2]
 
 # What each fictional "voice" (tone frequency) says.
 SCRIPT = {

@@ -6,7 +6,6 @@ import json
 
 import httpx
 import pytest
-from conftest import TOKEN, FakeTranscriber, fake_llm_transport
 from fastapi.testclient import TestClient
 
 from athena import llm_settings
@@ -19,6 +18,7 @@ from athena.pipeline import Pipeline
 from athena.summarize.client import LLMClient
 from athena.summarize.summarizer import Summarizer
 from athena.vad import EnergyVAD
+from tests.conftest import TOKEN, FakeTranscriber, fake_llm_transport
 
 MCP_TOKEN = "mcp-token-abcdefghijkl"
 SERVED = ["qwen3.5-9b", "qwen3.6-35b"]

@@ -14,7 +14,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
-from conftest import silence, tone, wav
 
 from athena import audio as audio_mod
 from athena import transcribe_engine
@@ -24,6 +23,7 @@ from athena.meetings.people import voices
 from athena.meetings.transcribe import live
 from athena.transcribe import TranscriptPiece
 from athena.vad import Span, merge_spans
+from tests.conftest import silence, tone, wav
 
 CONTIGUOUS_TOLERANCE = 1.5
 REGION_MERGE_GAP = 2.0

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "deploy.sh"
+SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "deploy.sh"
 SERVER = SCRIPT.parents[1]
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")

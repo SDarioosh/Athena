@@ -4,11 +4,11 @@ enrolled person at least as well loses the name."""
 from __future__ import annotations
 
 import numpy as np
-from conftest import silence, tone
-from test_pipeline import ingest
-from test_split_lines import MixEmbedder
 
 from athena.diarize import UNSURE_LABEL, Diarizer, EnrolledVoice, PieceRef, SpeakerLabel
+from tests.conftest import silence, tone
+from tests.integration.test_pipeline import ingest
+from tests.integration.test_split_lines import MixEmbedder
 
 
 def _voices() -> list[EnrolledVoice]:
@@ -93,7 +93,7 @@ class ThreeEmbedder(MixEmbedder):
 
 
 def _two_voice_diarizer() -> Diarizer:
-    from test_recognition import unit
+    from tests.integration.test_recognition import unit
 
     return Diarizer(MixEmbedder(), [EnrolledVoice("Me", unit(1), True),
                                     EnrolledVoice("Alice", unit(0, 1), False)],
@@ -101,7 +101,7 @@ def _two_voice_diarizer() -> Diarizer:
 
 
 def test_match_margin_leaves_a_voice_between_two_people_unnamed():
-    from test_recognition import unit
+    from tests.integration.test_recognition import unit
 
     d = _two_voice_diarizer()
     clear, between = unit(0.95, 0.31), unit(0.75, 0.66)  # Me 0.95 vs 0.31; 0.75 vs 0.66
@@ -113,7 +113,7 @@ def test_match_margin_leaves_a_voice_between_two_people_unnamed():
 
 
 def test_too_little_speech_is_not_named():
-    from test_recognition import unit
+    from tests.integration.test_recognition import unit
 
     d = _two_voice_diarizer()
     d.name_min_seconds = 5.0
@@ -124,11 +124,10 @@ def test_too_little_speech_is_not_named():
 
 
 def test_build_diarizer_sets_the_naming_rules(tmp_path, monkeypatch):
-    from conftest import ToneEmbedder
-
     from athena import cli
     from athena.config import Settings
     from athena.db.store import Store
+    from tests.conftest import ToneEmbedder
 
     monkeypatch.setattr(cli, "EcapaEmbedder", lambda cache: ToneEmbedder())
     s = Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_match_margin=0.1,

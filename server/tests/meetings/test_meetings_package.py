@@ -87,5 +87,5 @@ def test_meeting_subpackages_never_load_the_launcher() -> None:
         print("ok")
     """)
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
-                       cwd=Path(__file__).parents[1], timeout=60)
+                       cwd=Path(__file__).parents[2], timeout=60)
     assert r.stdout.strip() == "ok", r.stderr

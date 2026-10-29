@@ -18,7 +18,8 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import TOKEN
+
+from tests.conftest import TOKEN
 
 FAKE_BOT = Path(__file__).with_name("fake_meeting_bot.py")
 

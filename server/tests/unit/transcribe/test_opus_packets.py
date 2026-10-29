@@ -7,10 +7,10 @@ import struct
 import subprocess
 
 import pytest
-from conftest import dominant_freq, tone, wav
 
 from athena import audio
 from athena.opus_packets import ogg_opus, packet_samples, parse_length_prefixed
+from tests.conftest import dominant_freq, tone, wav
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 

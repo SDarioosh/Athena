@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from conftest import TOKEN, silence, tone, wav
+from tests.conftest import TOKEN, silence, tone, wav
 
 T0 = 1_760_000_000.0
 

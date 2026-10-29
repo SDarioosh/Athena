@@ -8,9 +8,6 @@ import json
 import sqlite3
 
 import pytest
-from conftest import fake_llm_transport
-from test_mcp import call
-from test_voice_notes import conv_of, record
 
 from athena.db import migrations as migrations_mod
 from athena.db.store import Store
@@ -18,6 +15,9 @@ from athena.domain import Segment
 from athena.mcp_server import build_mcp
 from athena.summarize.client import LLMClient
 from athena.summarize.summarizer import Summarizer
+from tests.conftest import fake_llm_transport
+from tests.integration.test_voice_notes import conv_of, record
+from tests.unit.mcp.test_mcp import call
 
 T0 = 1_760_000_000.0  # Thursday 2025-10-09 08:53:20 UTC = 10:53 in Berlin
 

@@ -5,11 +5,11 @@ import subprocess
 
 import numpy as np
 import pytest
-from conftest import silence, tone, wav
 
 from athena import audio
 from athena.config import Settings
 from athena.vad import EnergyVAD, GainedVAD, Span, level_dbfs, make_vad, merge_spans
+from tests.conftest import silence, tone, wav
 
 
 def test_pcm16_roundtrip():

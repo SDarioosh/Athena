@@ -8,8 +8,6 @@ from pathlib import Path
 import httpx
 import numpy as np
 import pytest
-from conftest import tone
-from test_pipeline import ingest
 
 from athena.cli import build_transcriber
 from athena.config import Settings
@@ -20,6 +18,8 @@ from athena.transcribe import (
     WhisperServerTranscriber,
     _clean,
 )
+from tests.conftest import tone
+from tests.integration.test_pipeline import ingest
 
 
 def test_whisper_server_gets_prompt_and_temperature_fallback():
@@ -151,10 +151,9 @@ def test_old_single_voiceprints_become_samples(tmp_path):
 
 
 def test_enrollment_keeps_several_samples(tmp_path):
-    from conftest import ToneEmbedder
-
     from athena.db.store import Store
     from athena.diarize import enroll_voice
+    from tests.conftest import ToneEmbedder
 
     store = Store(tmp_path / "c.db")
     audio = np.concatenate([tone(200, 30), tone(300, 30)])  # 60 s, two "styles"
@@ -165,9 +164,8 @@ def test_enrollment_keeps_several_samples(tmp_path):
 
 # --------------------------------------------------------------------- owner hint
 def owner_diarizer(margin=0.10):
-    from conftest import ToneEmbedder
-
     from athena.diarize import Diarizer, EnrolledVoice
+    from tests.conftest import ToneEmbedder
 
     return Diarizer(ToneEmbedder(), [EnrolledVoice("Me", unit(1), True)],
                     match_threshold=0.5, owner_hint_margin=margin)
@@ -195,9 +193,8 @@ def test_owner_hint_needs_loudness_gap_and_close_voice():
 
 
 def test_best_pairs_are_matched_first():
-    from conftest import ToneEmbedder
-
     from athena.diarize import Diarizer, EnrolledVoice
+    from tests.conftest import ToneEmbedder
 
     d = Diarizer(ToneEmbedder(), [EnrolledVoice("Alice", unit(1), False)])
     # the first cluster is a weak match, the second a strong one: Alice is the second
@@ -222,10 +219,9 @@ def test_pyannote_backend_turns_off_telemetry_and_cloud():
 
 
 def test_pyannote_diarizer_names_turns_with_enrolled_voices():
-    from conftest import ToneEmbedder, silence
-
     from athena.diarize import EnrolledVoice, PieceRef
     from athena.diarize_pyannote import PyannoteDiarizer
+    from tests.conftest import ToneEmbedder, silence
 
     e = ToneEmbedder()
     run = np.concatenate([tone(200, 4), tone(600, 4), silence(1), tone(200, 3)])
@@ -240,10 +236,9 @@ def test_pyannote_diarizer_names_turns_with_enrolled_voices():
 
 
 def test_pyannote_merges_speakers_across_runs():
-    from conftest import ToneEmbedder
-
     from athena.diarize import PieceRef
     from athena.diarize_pyannote import PyannoteDiarizer
+    from tests.conftest import ToneEmbedder
 
     runs = [np.concatenate([tone(300, 3), tone(700, 3)]), tone(700, 3)]
     seg = {6.0: [(0.0, 3.0, "A"), (3.0, 6.0, "B")], 3.0: [(0.0, 3.0, "A")]}
@@ -255,10 +250,9 @@ def test_pyannote_merges_speakers_across_runs():
 def test_pyannote_keeps_speakers_of_one_run_apart():
     """Two people on one body-worn mic can have similar voiceprints; pyannote's split
     inside a run must survive, so the second person doesn't take the first one's name."""
-    from conftest import ToneEmbedder
-
     from athena.diarize import EnrolledVoice, PieceRef
     from athena.diarize_pyannote import PyannoteDiarizer
+    from tests.conftest import ToneEmbedder
 
     e = ToneEmbedder()
     run = tone(300, 8)  # both "voices" embed the same
@@ -280,9 +274,8 @@ def test_cluster_cannot_link():
 
 # --------------------------------------------------------------- relabel & fixes
 def test_naming_relabels_the_same_voice_in_other_conversations(pipeline):
-    from test_mcp import T0, call, process_two_speakers
-
     from athena.mcp_server import build_mcp
+    from tests.unit.mcp.test_mcp import T0, call, process_two_speakers
 
     mcp = build_mcp(pipeline.store, pipeline.settings)
     process_two_speakers(pipeline)
@@ -303,10 +296,9 @@ def test_naming_relabels_the_same_voice_in_other_conversations(pipeline):
 
 
 def test_relabel_needs_a_confident_unique_match(pipeline):
-    from conftest import ToneEmbedder
-    from test_mcp import process_two_speakers
-
     from athena.speakers import relabel_matches
+    from tests.conftest import ToneEmbedder
+    from tests.unit.mcp.test_mcp import process_two_speakers
 
     store = pipeline.store
     process_two_speakers(pipeline)  # leaves an unnamed "Speaker 1" (600 Hz)
@@ -318,9 +310,8 @@ def test_relabel_needs_a_confident_unique_match(pipeline):
 
 
 def test_rename_everywhere_and_reassign_line(pipeline):
-    from test_mcp import T0, call, process_two_speakers
-
     from athena.mcp_server import build_mcp
+    from tests.unit.mcp.test_mcp import T0, call, process_two_speakers
 
     mcp = build_mcp(pipeline.store, pipeline.settings)
     process_two_speakers(pipeline)
@@ -346,9 +337,8 @@ def test_rename_everywhere_and_reassign_line(pipeline):
 
 
 def test_relabel_never_overwrites_a_name_a_person_set(pipeline):
-    from test_mcp import T0, call, process_two_speakers
-
     from athena.mcp_server import build_mcp
+    from tests.unit.mcp.test_mcp import T0, call, process_two_speakers
 
     store = pipeline.store
     mcp = build_mcp(store, pipeline.settings)
@@ -369,10 +359,9 @@ def test_relabel_never_overwrites_a_name_a_person_set(pipeline):
 def test_relabel_never_gives_two_voices_of_one_recording_the_same_name(pipeline):
     """Naming one voice must not rename the other voice of the same recording, even if
     their voiceprints are close (two people on one body-worn mic)."""
-    from conftest import ToneEmbedder
-    from test_mcp import call, process_two_speakers
-
     from athena.mcp_server import build_mcp
+    from tests.conftest import ToneEmbedder
+    from tests.unit.mcp.test_mcp import call, process_two_speakers
 
     store = pipeline.store
     mcp = build_mcp(store, pipeline.settings)
@@ -387,9 +376,8 @@ def test_relabel_never_gives_two_voices_of_one_recording_the_same_name(pipeline)
 
 
 def test_rename_everywhere_refuses_an_unnamed_label_as_new_name(pipeline):
-    from test_mcp import call, process_two_speakers
-
     from athena.mcp_server import build_mcp
+    from tests.unit.mcp.test_mcp import call, process_two_speakers
 
     mcp = build_mcp(pipeline.store, pipeline.settings)
     process_two_speakers(pipeline)
@@ -400,10 +388,9 @@ def test_rename_everywhere_refuses_an_unnamed_label_as_new_name(pipeline):
 
 
 def test_pyannote_fallback_labels_dont_collide():
-    from conftest import ToneEmbedder
-
     from athena.diarize import PieceRef
     from athena.diarize_pyannote import PyannoteDiarizer
+    from tests.conftest import ToneEmbedder
 
     runs = [tone(300, 4), tone(900, 4)]
 
@@ -437,7 +424,7 @@ def _recognition():
 
     if "recognition_eval" in sys.modules:
         return sys.modules["recognition_eval"]
-    path = Path(__file__).resolve().parents[1] / "eval" / "recognition.py"
+    path = Path(__file__).resolve().parents[2] / "eval" / "recognition.py"
     spec = importlib.util.spec_from_file_location("recognition_eval", path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["recognition_eval"] = mod
@@ -447,7 +434,7 @@ def _recognition():
 
 def test_active_level_ignores_pauses_and_scaling_hits_the_target():
     rec = _recognition()
-    from conftest import silence
+    from tests.conftest import silence
 
     # a full-scale sine is -3 dBFS RMS; pauses must not pull the active level down
     x = np.concatenate([tone(300, 2, amp=0.1), silence(3), tone(300, 2, amp=0.1)])

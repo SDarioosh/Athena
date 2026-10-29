@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import numpy as np
-from conftest import FakeTranscriber, ToneEmbedder, silence, tone
-from test_pipeline import ingest
 
 from athena.diarize import Diarizer, EnrolledVoice, PieceRef
 from athena.transcribe import TranscriptPiece
+from tests.conftest import FakeTranscriber, ToneEmbedder, silence, tone
+from tests.integration.test_pipeline import ingest
 
 
 def _words(start: float, end: float, step: float = 0.5) -> list[tuple[float, float, str]]:

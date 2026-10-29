@@ -7,9 +7,6 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import fake_llm_transport
-from test_mcp import call
-from test_voice_notes import conv_of, record
 
 from athena.domain import Segment, clean_notes_name
 from athena.mcp_server import build_mcp
@@ -17,6 +14,9 @@ from athena.summarize.client import LLMClient
 from athena.summarize.prompts import NOTE_ACTIONS_SYSTEM
 from athena.summarize.summarizer import Summarizer
 from athena.transcribe import TranscriptPiece
+from tests.conftest import fake_llm_transport
+from tests.integration.test_voice_notes import conv_of, record
+from tests.unit.mcp.test_mcp import call
 
 T0 = 1_760_000_000.0  # Thursday 2025-10-09
 

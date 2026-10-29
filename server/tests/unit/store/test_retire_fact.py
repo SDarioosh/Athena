@@ -6,10 +6,9 @@ from __future__ import annotations
 
 import json
 
-from test_confirmed_facts import DAY, HOUR, T0, said_at, say
-from test_mcp import call
-
 from athena.mcp_server import build_mcp
+from tests.unit.mcp.test_mcp import call
+from tests.unit.store.test_confirmed_facts import DAY, HOUR, T0, said_at, say
 
 
 def facts_json(pipeline, **args) -> list[dict]:

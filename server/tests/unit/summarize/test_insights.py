@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from conftest import fake_llm_transport, silence, tone
-from test_mcp import T0, call, ingest
 
 from athena.mcp_server import build_mcp
 from athena.summarize.client import LLMClient
 from athena.summarize.summarizer import Summarizer
+from tests.conftest import fake_llm_transport, silence, tone
+from tests.unit.mcp.test_mcp import T0, call, ingest
 
 
 def use_llm(pipeline, log=None, **fake):

@@ -14,15 +14,15 @@ from pathlib import Path
 
 import httpx
 import pytest
-from conftest import TOKEN
 from starlette.testclient import TestClient
-from test_ingest_relay import MCP_TOKEN, mcp_client
-from test_meetings import SDK_KEY, SDK_SECRET, _bot, _gone
 
 from athena import ingest_relay
 from athena.api import create_app
 from athena.ingest_relay import add_ingest_routes
 from athena.mcp_server import build_mcp
+from tests.conftest import TOKEN
+from tests.meetings.test_meetings import SDK_KEY, SDK_SECRET, _bot, _gone
+from tests.unit.mcp.test_ingest_relay import MCP_TOKEN, mcp_client
 
 Q = f"?access_token={MCP_TOKEN}"
 MID = "0123456789abcdef0123456789abcdef"
@@ -258,7 +258,7 @@ def test_building_the_mcp_app_skips_meeting_code(tmp_path):
         print("ok")
     """)
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
-                       cwd=Path(__file__).parents[1], timeout=60)
+                       cwd=Path(__file__).parents[2], timeout=60)
     assert r.stdout.strip() == "ok", r.stderr
 
 

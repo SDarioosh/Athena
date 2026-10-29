@@ -5,12 +5,11 @@ from __future__ import annotations
 
 import json
 
-from conftest import ToneEmbedder, tone
-from test_confirmed_facts import HOUR, T0, say
-from test_mcp import call, process_two_speakers
-
 from athena.db.store import Store
 from athena.mcp_server import build_mcp
+from tests.conftest import ToneEmbedder, tone
+from tests.unit.mcp.test_mcp import call, process_two_speakers
+from tests.unit.store.test_confirmed_facts import HOUR, T0, say
 
 
 def voice(freq: float):

@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import httpx
 import numpy as np
 import pytest
-from conftest import ToneEmbedder, fake_llm_transport, silence, tone, wav
 
 from athena.conversations import split_on_gaps
 from athena.diarize import Diarizer, EnrolledVoice, cluster
@@ -18,6 +17,7 @@ from athena.pipeline import Worker
 from athena.search import index_conversation, search
 from athena.summarize.client import LLMClient
 from athena.summarize.summarizer import Summarizer
+from tests.conftest import ToneEmbedder, fake_llm_transport, silence, tone, wav
 
 T0 = 1_760_000_000.0
 

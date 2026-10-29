@@ -6,13 +6,13 @@ import logging
 
 import httpx
 import pytest
-from conftest import TOKEN, silence, wav
 from starlette.testclient import TestClient
 
 from athena import ingest_relay
 from athena.api import create_app
 from athena.ingest_relay import add_ingest_routes, ingest_api_base
 from athena.mcp_server import BearerAuth, build_mcp
+from tests.conftest import TOKEN, silence, wav
 
 MCP_TOKEN = "mcp-token-abcdefghijkl"
 T0 = 1_760_000_000.0

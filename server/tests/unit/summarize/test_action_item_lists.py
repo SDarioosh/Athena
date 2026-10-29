@@ -8,14 +8,14 @@ import json
 import sqlite3
 
 import pytest
-from test_action_items import T0, note_items, old_v5_db, summarizer
-from test_mcp import call
-from test_voice_notes import conv_of, record
 
 from athena.db.store import Store
 from athena.domain import clean_list_name
 from athena.mcp_server import build_mcp
 from athena.summarize.prompts import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM
+from tests.integration.test_voice_notes import conv_of, record
+from tests.unit.mcp.test_mcp import call
+from tests.unit.summarize.test_action_items import T0, note_items, old_v5_db, summarizer
 
 LIST_ITEMS = [
     {"text": "Milk", "kind": "task", "list_name": "my shopping list", "at_seconds": 1},

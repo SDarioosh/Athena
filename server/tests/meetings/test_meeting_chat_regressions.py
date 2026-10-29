@@ -6,13 +6,13 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import silence, wav
-from test_mcp import call
-from test_meeting_chat import chat, process, upload
-from test_meeting_tracks import ALICE, BO, T0, ScriptedWhisper
 
 from athena.domain import CHAT
 from athena.mcp_server import build_mcp
+from tests.conftest import silence, wav
+from tests.meetings.test_meeting_chat import chat, process, upload
+from tests.meetings.test_meeting_tracks import ALICE, BO, T0, ScriptedWhisper
+from tests.unit.mcp.test_mcp import call
 
 
 @pytest.fixture
