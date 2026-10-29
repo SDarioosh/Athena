@@ -14,14 +14,14 @@ import hmac
 import json
 import logging
 import re
-from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from pydantic import Field
 
+from . import mcp_format as fmt
+from . import serializers
 from .config import Settings
-from .dates import fact_valid_until
 from .db.store import Store
 from .diarize import load_voices
 from .domain import (
@@ -33,11 +33,12 @@ from .domain import (
     UNSET,
     VOICE,
     WRITTEN,
-    short_title,
 )
-from .links import local_time, meeting_label, speaker_label, transcript_link, written_label
 from .search import Embedder, search
+from .serializers import OWNER_WORDS, owner_names
 from .speakers import relabel_matches, suggestion
+from .timeutil import iso as _iso  # noqa: F401  (the old name, still imported by tests)
+from .timeutil import parse_when
 
 INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
 with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
@@ -97,23 +98,6 @@ RecKind = Annotated[str, Field(description=(
 ConvId = Annotated[str, Field(description="conversation id from a previous result")]
 
 
-def parse_when(value: str, tz: ZoneInfo, *, end: bool = False) -> float | None:
-    """'' -> None; 'YYYY-MM-DD' -> local midnight (``end``: midnight after); ISO -> as given."""
-    value = (value or "").strip()
-    if not value:
-        return None
-    try:
-        day = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=tz)
-        return (day + timedelta(days=1) if end else day).timestamp()
-    except ValueError:
-        pass
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as e:
-        raise ValueError(f"bad date {value!r}; use YYYY-MM-DD") from e
-    return (dt if dt.tzinfo else dt.replace(tzinfo=tz)).timestamp()
-
-
 def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None):
     from mcp.server.mcpserver import MCPServer
     from mcp.types import ToolAnnotations
@@ -128,22 +112,15 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     # erase_fact: the words are gone from the transcript and the notes
     rw_merge = ToolAnnotations(read_only_hint=False, destructive_hint=True,
                                idempotent_hint=True, open_world_hint=False)
-
-    def when(ts: float | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
-        return local_time(settings, ts, fmt) or "?"
+    f = fmt.Fmt(settings)
 
     def window(since: str, until: str) -> tuple[float | None, float | None]:
         return parse_when(since, tz), parse_when(until, tz, end=True)
 
-    # Frontends don't reliably forward server instructions (Hermes ignores them), so
-    # the citation rule also rides along with every non-empty result: in the header and
-    # again as the last line, the part a model reads right before it answers.
-    cite = "When answering, put the link next to each fact you use"
-
-    def header(n: int, what: str) -> str:
-        if not n:
-            return f"No {what} found."
-        return f"{n} {what} (times are {settings.timezone}). {cite}:"
+    def bad_format(value: str) -> tuple[str, str | None]:
+        """(text or json, None) or (_, the error the model sees)."""
+        v = (value or "text").strip().lower()
+        return v, None if v in ("text", "json") else "format must be text or json"
 
     @mcp.tool(annotations=ro)
     def search_transcripts(speaker: Person = "", query: Text = "", since: Since = "",
@@ -160,19 +137,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if not rows and speaker:
             known = ", ".join(r["name"] for r in store.speaker_stats()[:20])
             return f"No lines by {speaker!r} in that range. Known speakers: {known or 'none'}."
-        lines = [header(len(rows), "transcript lines")]
-        written = store.written_notes_for(r["conversation_id"] for r in rows)
-        meetings = store.meetings_for(r["conversation_id"] for r in rows)
-        for r in rows:
-            link = transcript_link(settings, r["conversation_id"],
-                                   r["started_at"] - r["conversation_at"])
-            lines.append(f"- #{r['id']} {when(r['started_at'])} {speaker_label(r)}: "
-                         f"\"{r['text']}\" "
-                         f"(conversation \"{r['conversation_title'] or 'untitled'}\""
-                         f"{_note(r.get('conversation_kind'), written.get(r['conversation_id']))}"
-                         f"{meeting_label(meetings.get(r['conversation_id']))}, "
-                         f"id {r['conversation_id']}) {link}")
-        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
+        return fmt.transcript_lines(f, rows, store.written_notes_for(_convs(rows)),
+                                    store.meetings_for(_convs(rows)))
 
     @mcp.tool(annotations=ro)
     def search_conversations(query: Text = "", person: Person = "", since: Since = "",
@@ -200,16 +166,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         else:
             convs = store.list_conversations(since=a, until=b, person=person or None,
                                              kind=k, limit=limit)
-        convs = [c for c in convs if c]
-        lines = [header(len(convs), _KIND_HEADER.get(k, "conversations"))]
-        for c in convs:
-            lines.append(
-                f"- {when(c['started_at'])}–{when(c['ended_at'], '%H:%M')} "
-                f"\"{_title(c)}\"{_note(c.get('kind'), c.get('written'))}"
-                f"{meeting_label(c.get('meeting'))} id {c['id']}; people: "
-                f"{', '.join(c['people']) or '—'}{_participants(c.get('meeting'))}\n  "
-                f"{c['summary'] or ''}\n  {transcript_link(settings, c['id'])}")
-        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
+        return fmt.conversations(f, [c for c in convs if c], k)
 
     @mcp.tool(annotations=ro)
     def get_conversation(conversation_id: ConvId) -> str:
@@ -218,21 +175,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if c is None:
             return f"No conversation {conversation_id!r}."
         speakers = sorted({s.speaker for s in store.conversation_segments(conversation_id)})
-        out = [f"\"{_title(c)}\"{_note(c.get('kind'), c.get('written'))}"
-               f"{meeting_label(c.get('meeting'))} — {when(c['started_at'])}–"
-               f"{when(c['ended_at'], '%H:%M')} ({settings.timezone}), device {c['device']}"
-               + (f", type {c['kind']}" if c.get("kind") else ""),
-               f"Speakers: {', '.join(speakers) or '—'}. People: {', '.join(c['people']) or '—'}"
-               + (f". Participants: {_attendance(c['meeting'], when)}" if c.get("meeting")
-                  else ""),
-               f"Link: {transcript_link(settings, c['id'])}",
-               f"Summary: {_summary(c)}"]
-        out += [f"* {k}" for k in c["key_points"]]
-        out += [_item(a, settings, c) for a in c["action_items"]]
-        out += [f"Fact [{f['subject']}]: {f['fact']} " + _src(f, settings, c)
-                for f in c["facts"]]
-        out.append(f"{cite}.")
-        return "\n".join(out)
+        return fmt.conversation(f, c, speakers)
 
     @mcp.tool(annotations=ro)
     def get_transcript(conversation_id: ConvId, start_seconds: float = 0,
@@ -250,55 +193,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         segs = [s for s in store.conversation_segments(conversation_id)
                 if s.started_at - origin >= start_seconds
                 and (end_seconds < 0 or s.started_at - origin <= end_seconds)]
-        more = len(segs) > max_lines
-        link = transcript_link(settings, c["id"])
-        # One time per line keeps the result short: a line's clock time is the header's
-        # start time plus its seconds.
-        out = [f"\"{c['title'] or 'untitled'}\" {when(origin, '%Y-%m-%d %H:%M:%S')} {link}"]
-        out += [f"#{s.id} [{int(s.started_at - origin)}s] {speaker_label(s)}: {s.text}"
-                for s in segs[:max_lines]]
-        if pruned := c.get("transcript_pruned_at"):
-            out.append(f"The transcript was removed on {when(pruned, '%Y-%m-%d')}"
-                       " by the retention setting; use get_conversation for the summary, "
-                       "facts and action items.")
-        if more:
-            out.append(f"… {len(segs) - max_lines} more lines; call again with a later "
-                       "start_seconds.")
-        out.append(f"{cite}. To show the transcript, give the link above and a short "
-                   "summary; don't copy these lines into your answer.")
-        return "\n".join(out)
-
-    def item_link(r: dict[str, Any]) -> str:
-        return transcript_link(settings, r["conversation_id"],
-                               (r["source_at"] or r["conversation_at"]) - r["conversation_at"])
-
-    def item_json(r: dict[str, Any], mine_names: set[str],
-                  participants: dict[str, list[dict[str, Any]]],
-                  written: dict[str, dict[str, Any]],
-                  summaries: dict[str, dict[str, Any]],
-                  meetings: dict[str, dict[str, Any]]) -> dict[str, Any]:
-        owner = (r["owner"] or "").strip().lower()
-        kind = r.get("kind") or "task"
-        others = [] if kind == "note" else _with(r["text"], participants.get(
-            r["conversation_id"], []))
-        return {"id": r["id"], "status": r["status"], "kind": r.get("kind") or "task",
-                "mine": not owner or owner in mine_names,
-                "title": r.get("title") or short_title(r.get("note_title"), r["text"]),
-                "explicit": bool(r.get("explicit")),
-                "text": r["text"], "owner": r["owner"], "due": r["due"],
-                "due_date": r["due_date"], "due_time": r.get("due_time"),
-                "duration_minutes": r.get("duration_minutes"), "location": r.get("location"),
-                "list_name": r.get("list_name"), "note_title": r.get("note_title"),
-                "time_unclear": bool(r.get("time_unclear")),
-                "conversation_id": r["conversation_id"],
-                "conversation_title": r["conversation_title"],
-                "conversation_kind": r.get("conversation_kind"),
-                "conversation_at": _iso(r["conversation_at"]),
-                "created_at": _iso(r.get("created_at") or r["conversation_at"]),
-                "timezone": settings.timezone, "link": item_link(r), "with": others,
-                "key_points": _note_key_points(r, summaries.get(r["conversation_id"])),
-                "source": _source(r["conversation_id"], meetings),
-                **_written_json(written.get(r["conversation_id"]))}
+        return fmt.transcript(f, c, segs, max_lines)
 
     @mcp.tool(annotations=ro)
     def list_action_items(status: Annotated[str, Field(description="open, done, dismissed or all")]
@@ -318,9 +213,9 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         command such as "remind me" or "add a task"), false for one the summary only suggests.
         Each JSON row also has with: the other people in the item's conversation, those
         the item names first."""
-        fmt = (format or "text").strip().lower()
-        if fmt not in ("text", "json"):
-            return "format must be text or json"
+        fmt_, error = bad_format(format)
+        if error:
+            return error
         st = (status or "open").strip().lower()
         if st not in ("open", "done", "dismissed", "all"):
             return "status must be open, done, dismissed or all"
@@ -328,35 +223,19 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             a, b = window(since, until)
         except ValueError as e:  # returned, not raised: the model sees the message
             return str(e)
-        rows = store.list_action_items(None if st == "all" else st, notes=fmt == "json")
-        rows = [r for r in rows
+        rows = [r for r in store.list_action_items(None if st == "all" else st,
+                                                   notes=fmt_ == "json")
                 if (a is None or r["conversation_at"] >= a)
                 and (b is None or r["conversation_at"] < b)]
-        participants = store.conversation_participants(
-            (r["conversation_id"] for r in rows), _owner_names(settings)) \
-            if fmt == "json" or person.strip() else {}
+        participants = store.conversation_participants(_convs(rows), _owner_names(settings)) \
+            if fmt_ == "json" or person.strip() else {}
         if person.strip():
             rows = [r for r in rows if _involves(r, person, participants)]
-        written = store.written_notes_for(r["conversation_id"] for r in rows)
-        meetings = store.meetings_for(r["conversation_id"] for r in rows)
-        if fmt == "json":
-            mine_names = store.known_names()[0] | _OWNER_WORDS | {
-                settings.owner_name.strip().lower()} - {""}
-            summaries = store.summaries_for(
-                r["conversation_id"] for r in rows if r.get("kind") == "note")
-            return json.dumps([item_json(r, mine_names, participants, written, summaries,
-                                         meetings) for r in rows], ensure_ascii=False)
-        lines = [header(len(rows), f"{st} action items")]
-        for r in rows:
-            lines.append(f"- #{r['id']} [{r['status']}] {_kind_word(r)}{r['text']}"
-                         + (f" (owner {r['owner']})" if r["owner"] else "")
-                         + _due(r)
-                         + (f" [list {r['list_name']}]" if r.get("list_name") else "")
-                         + f" — from \"{r['conversation_title']}\""
-                         + _note(r.get("conversation_kind"), written.get(r["conversation_id"]))
-                         + meeting_label(meetings.get(r["conversation_id"]))
-                         + f" {when(r['conversation_at'])} " + item_link(r))
-        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
+        written, meetings = store.written_notes_for(_convs(rows)), store.meetings_for(_convs(rows))
+        if fmt_ == "text":
+            return fmt.action_items(f, rows, st, written, meetings)
+        return json.dumps(_action_items_json(store, settings, rows, participants, written,
+                                             meetings), ensure_ascii=False)
 
     @mcp.tool(annotations=rw)
     def update_action_item(
@@ -395,14 +274,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             return str(e)
         if item is None:
             return f"No action item #{item_id}."
-        when_due = " ".join(x for x in (item["due_date"], item.get("due_time")) if x)
-        return (f"Action item #{item_id} is now {item['status']}, {item['kind']}, "
-                + (f"due {when_due}" if when_due else "no due date")
-                + (f", on the {item['list_name']} list." if item.get("list_name") else "."))
-
-    def fact_link(f: dict[str, Any]) -> str:
-        return transcript_link(settings, f["conversation_id"],
-                               (f["source_at"] or f["conversation_at"]) - f["conversation_at"])
+        return fmt.updated_item(item_id, item)
 
     @mcp.tool(annotations=ro)
     def list_facts(subject: Annotated[str, Field(description="Person/thing the fact is about")]
@@ -416,75 +288,27 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                                    "programs)")] = "text") -> str:
         """Durable facts learned from conversations (preferences, plans, relationships...).
         Only the latest version of each fact; older values it replaced are listed under it."""
-        fmt = (format or "text").strip().lower()
-        if fmt not in ("text", "json"):
-            return "format must be text or json"
-
-        def until(f: dict[str, Any]) -> str | None:
-            """The last day a fact about one occasion is worth keeping, or None."""
-            said_on = datetime.fromtimestamp(f["conversation_at"], tz).date()
-            end = fact_valid_until(f["fact"], said_on)
-            return end.isoformat() if end else None
-
-        counted = confirmed or fmt == "json"
+        fmt_, error = bad_format(format)
+        if error:
+            return error
+        counted = confirmed or fmt_ == "json"
         # programs reconcile by id, so the JSON cap is high enough to hold every fact
-        cap = 1000 if fmt == "json" else 200
         rows = store.list_facts(
-            subject=subject or None, query=query or None, limit=max(1, min(limit, cap)),
+            subject=subject or None, query=query or None,
+            limit=max(1, min(limit, 1000 if fmt_ == "json" else 200)),
             counts_tz=settings.timezone if counted else None,
             min_sources=settings.fact_confirm_sources if confirmed else 0,
             min_days=settings.fact_confirm_days if confirmed else 0)
-        written = store.written_notes_for(f["conversation_id"] for f in rows)
-        meetings = store.meetings_for(f["conversation_id"] for f in rows)
-        if fmt == "json":
-            owners, people = store.known_names()
-            owners |= _OWNER_WORDS | {settings.owner_name.strip().lower()} - {""}
-            owner_id = store.owner_person_id(_owner_names(settings))
-            quotes = store.fact_quotes(rows)
-
-            def fact_json(f: dict[str, Any]) -> dict[str, Any]:
-                about = _about(f["subject"], owners, people)
-                pid = (owner_id if about == "owner" else
-                       store.person_id(f["subject"] or "") if about == "person" else None)
-                return {"id": f["id"], "subject": f["subject"] or "", "about": about,
-                        "person_id": pid, "fact": f["fact"], "kind": f.get("kind"),
-                        "conversation_id": f["conversation_id"],
-                        "quote": quotes.get(f["id"]),
-                        "times_said": f["times_said"], "days": f["days"],
-                        "first_said": f["first_said"], "last_said": f["last_said"],
-                        "confirmed": (f["times_said"] >= settings.fact_confirm_sources
-                                      and f["days"] >= settings.fact_confirm_days),
-                        "valid_until": until(f), "link": fact_link(f),
-                        "source": _source(f["conversation_id"], meetings),
-                        **_written_json(written.get(f["conversation_id"]))}
-
-            return json.dumps({"facts": [fact_json(f) for f in rows]}, ensure_ascii=False)
-        lines = [header(len(rows), "confirmed facts" if confirmed else "facts")]
-        sources = {f["id"]: store.fact_sources(f["id"]) for f in rows}
-        history = {f["id"]: store.fact_history(f["id"]) for f in rows}
+        written, meetings = store.written_notes_for(_convs(rows)), store.meetings_for(_convs(rows))
+        if fmt_ == "json":
+            return json.dumps({"facts": _facts_json(store, settings, rows, written, meetings)},
+                              ensure_ascii=False)
+        sources = store.fact_sources_for(x["id"] for x in rows)
+        history = store.fact_history_for(x["id"] for x in rows)
         written.update(store.written_notes_for(
-            r["conversation_id"] for rs in (*sources.values(), *history.values()) for r in rs))
-        for f in rows:
-            end = until(f)
-            lines.append(f"- [{f['subject']}] {f['fact']} (learned "
-                         f"{when(f['conversation_at'], '%Y-%m-%d')}"
-                         + (f", until {end}" if end else "") + ") " + fact_link(f)
-                         + written_label(written.get(f["conversation_id"]))
-                         + meeting_label(meetings.get(f["conversation_id"])))
-            for s in sources[f["id"]]:
-                lines.append(f"  said again {when(s['conversation_at'], '%Y-%m-%d')} "
-                             + transcript_link(settings, s["conversation_id"],
-                                               (s["source_at"] or s["conversation_at"])
-                                               - s["conversation_at"])
-                             + written_label(written.get(s["conversation_id"])))
-            for old in history[f["id"]]:
-                lines.append(f"  replaces: {old['fact']} (from "
-                             f"{when(old['conversation_at'], '%Y-%m-%d')}) "
-                             + transcript_link(settings, old["conversation_id"],
-                                               (old["source_at"] or old["conversation_at"])
-                                               - old["conversation_at"])
-                             + written_label(written.get(old["conversation_id"])))
-        return "\n".join(lines + [f"{cite}."] * (len(lines) > 1))
+            _convs(r for rs in (*sources.values(), *history.values()) for r in rs)))
+        return fmt.facts(f, rows, confirmed, sources, history, written, meetings,
+                         lambda x: serializers.valid_until(x, settings.timezone))
 
     @mcp.tool(annotations=rw_merge)
     def retire_fact(fact_id: Annotated[int, Field(description="The fact's id (list_facts "
@@ -527,17 +351,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         d = store.get_digest(date)
         if d is None:
             return f"No digest for {date}. Try search_conversations with since/until = {date}."
-        out = [f"{date}: {d['headline']}", d["summary"]]
-        out += [f"* {h}" for h in d.get("highlights", [])]
-        out += [f"TODO: {t}" for t in d.get("open_action_items", [])]
-        for cid in d.get("conversation_ids", []):
-            conv = store.get_conversation(cid)
-            what = ("Written note" if conv and conv.get("written") else
-                    "Voice note" if conv and conv.get("kind") == "note" else
-                    "Online meeting" if conv and conv.get("meeting") else "Conversation")
-            out.append(f"{what}: {transcript_link(settings, cid)}")
-        out.append(f"{cite}.")
-        return "\n".join(out)
+        return fmt.digest(f, date, d, [(cid, store.get_conversation(cid))
+                                       for cid in d.get("conversation_ids", [])])
 
     @mcp.tool(annotations=ro)
     def list_people(format: Annotated[str, Field(  # noqa: A002
@@ -545,23 +360,15 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
                         "stable id, for programs)")] = "text") -> str:
         """Speakers heard in transcripts (named, enrolled, and unnamed 'Speaker N' labels)
         and people mentioned in conversations."""
-        fmt = (format or "text").strip().lower()
-        if fmt not in ("text", "json"):
-            return "format must be text or json"
+        fmt_, error = bad_format(format)
+        if error:
+            return error
         spk = store.speaker_stats()
-        if fmt == "json":
-            return json.dumps({"people": _people_json(store, spk, when, _owner_names(settings))},
+        if fmt_ == "json":
+            return json.dumps({"people": _people_json(store, spk, settings)},
                               ensure_ascii=False)
-        enrolled = {s["name"] for s in store.speakers()}
-        out = ["Speakers:"]
-        out += [f"- {s['name']}{' (owner)' if s['is_owner'] else ''}"
-                f"{' (voice known)' if s['name'] in enrolled else ''}: {s['lines']} lines in "
-                f"{s['conversations']} conversations, last {when(s['last_heard'])}"
-                for s in spk]
-        out.append("Mentioned:")
-        out += [f"- {p['name']}: {p['conversations']} conversations, last "
-                f"{when(p['last_mentioned'], '%Y-%m-%d')}" for p in store.mentioned_people()]
-        return "\n".join(out)
+        return fmt.people(f, spk, {s["name"] for s in store.speakers()},
+                          store.mentioned_people())
 
     @mcp.tool(annotations=rw)
     def name_speaker(conversation_id: ConvId,
@@ -608,16 +415,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         n, convs = store.rename_everywhere(old_name, new_name)
         if not n:
             return f"No lines by {old_name!r}. Known speakers: {_known(store)}."
-        msg = (f"Renamed {old_name} to {new_name} in {n} lines across {len(convs)} "
-               "conversations; their summaries will be redone.")
-        pid = store.person_id(new_name)
-        if pid is None:
-            return msg
-        if old_id is not None and new_id is not None and old_id != new_id:
-            return msg + (f" {old_name} (person id {old_id}) is merged into {new_name}, "
-                          f"whose person id {pid} is kept.")
-        return msg + (f" The person id {pid} is kept." if old_id == pid
-                      else f" Person id {pid}.")
+        return fmt.renamed(old_name, new_name, n, len(convs), old_id, new_id,
+                           store.person_id(new_name))
 
     @mcp.tool(annotations=rw)
     def reassign_line(line_id: Annotated[int, Field(
@@ -645,52 +444,68 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         if not cands:
             return "No unnamed speakers found."
         voices = load_voices(store)
-        out = [header(len(cands), "unnamed speakers")]
+        out = [f.header(len(cands), "unnamed speakers")]
         for k in cands:
             conv = store.get_conversation(k["conversations"][0])
             if conv is None:
                 continue
             lines = [s for s in store.conversation_segments(conv["id"])
                      if s.session_id == k["session_id"] and s.speaker == k["label"]]
-            quotes = sorted(lines, key=lambda s: -len(s.text))[:3]
             guess = suggestion(voices, k["embedding"],
                                settings.speaker_match_threshold - 0.1) if voices else None
-            out.append(
-                f"- {k['label']} in \"{conv['title'] or 'untitled'}\" "
-                f"{when(conv['started_at'])} (conversation id {conv['id']}), {k['lines']} "
-                "lines" + (f"; sounds like {guess[0]} ({guess[1]:.2f})" if guess else ""))
-            out += [f"  #{q.id} \"{q.text}\" "
-                    + transcript_link(settings, conv["id"], q.started_at - conv["started_at"])
-                    for q in sorted(quotes, key=lambda s: s.started_at)]
+            out += fmt.unnamed_speaker(f, k, conv, sorted(lines, key=lambda s: -len(s.text))[:3],
+                                       guess)
         return "\n".join(out)
 
     return mcp
 
 
-# Subjects that mean the owner (the user) in a fact, besides the owner's own names.
-_OWNER_WORD_ORDER = ("me", "i", "myself", "owner", "the owner", "user", "the user")
-_OWNER_WORDS = set(_OWNER_WORD_ORDER)
+def _convs(rows: Any) -> list[str]:
+    """The conversation ids of rows, in order (with repeats: the store drops them)."""
+    return [r["conversation_id"] for r in rows]
 
 
-def _about(subject: str | None, owners: set[str], people: set[str]) -> str:
-    """Who a fact is about: "owner", "person" (a known speaker or a person named in a
-    conversation) or "other"."""
-    s = (subject or "").strip().lower()
-    if s in owners:
-        return "owner"
-    return "person" if s and s in people else "other"
+def _action_items_json(store: Store, settings: Settings, rows: list[dict[str, Any]],
+                       participants: dict[str, list[dict[str, Any]]], written: dict[str, Any],
+                       meetings: dict[str, Any]) -> list[dict[str, Any]]:
+    """list_action_items(format="json") rows."""
+    mine_names = store.known_names()[0] | OWNER_WORDS | {
+        settings.owner_name.strip().lower()} - {""}
+    summaries = store.summaries_for(
+        r["conversation_id"] for r in rows if r.get("kind") == "note")
+    return [serializers.action_item(r, settings, mine_names=mine_names,
+                                    participants=participants, written=written,
+                                    summaries=summaries, meetings=meetings) for r in rows]
 
 
-def _with(text: str, people: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """list_action_items JSON ``with``: the conversation's other people, those whose name
-    (any name they appear under) is a word in the item's text first, then the rest in
-    order of first appearance."""
-    def named(p: dict[str, Any]) -> bool:
-        return any(re.search(rf"(?<!\w){re.escape(n)}(?!\w)", text or "", re.IGNORECASE)
-                   for n in p["names"])
+def _facts_json(store: Store, settings: Settings, rows: list[dict[str, Any]],
+                written: dict[str, Any], meetings: dict[str, Any]) -> list[dict[str, Any]]:
+    """list_facts(format="json") rows."""
+    owners, people = store.known_names()
+    owners |= OWNER_WORDS | {settings.owner_name.strip().lower()} - {""}
+    owner_id = store.owner_person_id(_owner_names(settings))
+    quotes = store.fact_quotes(rows)
+    person_ids = store.person_ids(x["subject"] or "" for x in rows
+                                  if serializers.about(x["subject"], owners, people) == "person")
+    return [serializers.fact(x, settings, owners=owners, people=people, owner_id=owner_id,
+                             person_ids=person_ids, quotes=quotes, written=written,
+                             meetings=meetings) for x in rows]
 
-    ranked = sorted(people, key=lambda p: not named(p))
-    return [{"id": p["id"], "name": p["name"]} for p in ranked]
+
+def _people_json(store: Store, speaker_stats: list[dict[str, Any]],
+                 settings: Settings) -> list[dict[str, Any]]:
+    """list_people(format="json"): every person not merged into another, in the text
+    mode's order (speakers by last heard, then people mentioned by last mention, then
+    people never seen, by name). Unnamed 'Speaker N' labels have no person row."""
+    names, mentioned = _owner_names(settings), store.mentioned_people()
+    ids = store.person_ids([s["name"] for s in speaker_stats]
+                           + [p["name"] for p in mentioned], names)
+    ordered = serializers.people_order(speaker_stats, mentioned, store.people(names),
+                                       lambda name: ids[name])
+    return [serializers.person(p, settings) for p in ordered]
+
+
+_owner_names = owner_names  # the old private name, still imported by tests
 
 
 def _involves(row: dict[str, Any], person: str,
@@ -704,33 +519,6 @@ def _involves(row: dict[str, Any], person: str,
         return True
     return any(p in n.lower() for e in participants.get(row["conversation_id"], [])
                for n in e["names"])
-
-
-def _owner_names(settings: Settings) -> tuple[str, ...]:
-    """Names that mean the owner, in order: CONVO_OWNER_NAME, then the owner words."""
-    names = [settings.owner_name.strip(), *_OWNER_WORD_ORDER]
-    return tuple(dict.fromkeys(n for n in names if n))
-
-
-def _people_json(store: Store, speaker_stats: list[dict[str, Any]], when: Any,
-                 owner_names: tuple[str, ...]) -> list[dict[str, Any]]:
-    """list_people(format="json"): every person not merged into another, in the text
-    mode's order (speakers by last heard, then people mentioned by last mention, then
-    people never seen, by name). Unnamed 'Speaker N' labels have no person row."""
-    rank: dict[int, int] = {}
-    names = [s["name"] for s in speaker_stats] + [p["name"] for p in store.mentioned_people()]
-    for name in names:
-        pid = store.person_id(name, owner_names)
-        if pid is not None:
-            rank.setdefault(pid, len(rank))
-    people = sorted(store.people(owner_names), key=lambda p: (rank.get(p["id"], len(rank)),
-                                                   p["name"].lower()))
-    return [{"id": p["id"], "name": p["name"], "aliases": p["aliases"],
-             "is_owner": p["is_owner"], "has_voice": p["has_voice"],
-             "conversations": p["conversations"],
-             "first_seen": when(p["first_at"], "%Y-%m-%d") if p["first_at"] is not None else None,
-             "last_seen": when(p["last_at"], "%Y-%m-%d") if p["last_at"] is not None else None}
-            for p in people]
 
 
 _UNNAMED = re.compile(r"^(speaker\s*\d+|unknown)$", re.IGNORECASE)
@@ -748,26 +536,6 @@ def _relabel_note(store: Store, name: str, settings: Settings) -> str:
     convs = {c for r in done for c in r.conversations}
     return (f" Their voice also matched {len(done)} unnamed speaker(s) elsewhere, renamed "
             f"to {name} in {lines} lines across {len(convs)} other conversation(s).")
-
-
-def _summary(c: dict[str, Any]) -> str:
-    if c.get("forget_pending"):
-        return "(being rewritten after the user forgot something; ask again later)"
-    if c.get("transcript_pruned_at") and not c.get("summary"):
-        return "(none; the transcript was removed by the retention setting)"
-    return c["summary"] or "(pending)"
-
-
-def _title(c: dict[str, Any]) -> str:
-    if c.get("forget_pending"):
-        return "untitled (being rewritten after a forget)"
-    if c.get("status") == "discarded":
-        return f"(not summarized: looked like {c.get('discard_reason') or 'junk'})"
-    return c.get("title") or "untitled (summary pending)"
-
-
-_KIND_HEADER = {NOTE: "notes", VOICE: "voice notes", WRITTEN: "written notes",
-                MEETING: "online meetings"}
 
 
 def _kind(value: str) -> str | None:
@@ -790,91 +558,6 @@ def _kind(value: str) -> str | None:
         return CONVERSATION
     raise ValueError(f"bad kind {value!r}; use 'note', 'voice', 'written', 'conversation', "
                      "'meeting', 'in_person' or ''")
-
-
-def _note(kind: str | None, written: dict[str, Any] | None = None) -> str:
-    """Marks a voice note (the owner talking to themselves) next to its title, or a note
-    written by hand in the hub, with the link to it there."""
-    if written:
-        return written_label(written)
-    return " (voice note)" if kind == "note" else ""
-
-
-def _note_key_points(r: dict[str, Any], summary: dict[str, Any] | None) -> list[str]:
-    """JSON rows' ``key_points`` (MCP 0.15.0): for a note that is a whole voice note (its
-    text is the voice note's summary, see ``_lone_note`` in summarize/rules/notes.py), the
-    voice note's key points, so the hub's note holds what was said ("Screen: 49 mm x
-    60 mm"), not only the summary; ``[]`` for every other item."""
-    if r.get("kind") != "note" or r.get("list_name") or not summary:
-        return []
-    said = " ".join((summary.get("summary") or "").split())
-    if not said or said != " ".join((r.get("text") or "").split()):
-        return []
-    return [str(k).strip() for k in summary.get("key_points") or [] if str(k).strip()]
-
-
-def _source(conv_id: str, meetings: dict[str, dict[str, Any]]) -> str | None:
-    """JSON rows' ``source`` (MCP 0.16.0): "meeting" when the fact or item comes from a
-    meeting (Zoom today), else null (a recording, a voice note or a written note; those are told
-    apart by ``conversation_kind`` and ``written_by_hand``)."""
-    return "meeting" if conv_id in meetings else None
-
-
-def _participants(meeting: dict[str, Any] | None) -> str:
-    """"; participants: A, B" after a meeting's people in search_conversations."""
-    if not meeting or not meeting.get("participants"):
-        return ""
-    return "; participants: " + ", ".join(p["name"] for p in meeting["participants"])
-
-
-def _attendance(meeting: dict[str, Any], when: Any) -> str:
-    """get_conversation's participants: "Dana Example (16:00–16:45), Me", with the times
-    they joined and left when the bot sent them."""
-    out = []
-    for p in meeting.get("participants") or []:
-        span = "–".join(when(t, "%H:%M") for t in (p.get("joined_at"), p.get("left_at"))
-                        if t is not None)
-        out.append(p["name"] + (f" ({span})" if span else ""))
-    return ", ".join(out) or "—"
-
-
-def _written_json(written: dict[str, Any] | None) -> dict[str, Any]:
-    """JSON rows' fields for a written note (MCP 0.12.0): ``written_by_hand`` and
-    ``note_link``, the note in the hub (null for spoken ones)."""
-    return {"written_by_hand": bool(written),
-            "note_link": written["link"] if written else None}
-
-
-def _due(a: dict[str, Any]) -> str:
-    """" due 2026-10-21 12:00 (Wednesday at 12 pm)", plus " [time unclear]" when set."""
-    when_due = " ".join(x for x in (a.get("due_date"), a.get("due_time")) if x)
-    if when_due:
-        out = f" due {when_due}" + (f" ({a['due']})" if a.get("due") else "")
-    else:
-        out = f" due {a['due']}" if a.get("due") else ""
-    return out + (" [time unclear]" if a.get("time_unclear") else "")
-
-
-def _kind_word(a: dict[str, Any]) -> str:
-    """"event: " / "reminder: " before the text; nothing for a task."""
-    kind = a.get("kind") or "task"
-    return "" if kind == "task" else f"{kind}: "
-
-
-def _iso(ts: float | None) -> str | None:
-    return datetime.fromtimestamp(ts, UTC).isoformat() if ts is not None else None
-
-
-def _src(item: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:
-    off = (item.get("source_at") or conv["started_at"]) - conv["started_at"]
-    return transcript_link(settings, conv["id"], off)
-
-
-def _item(a: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:
-    kind = _kind_word(a)
-    return (f"Action #{a['id']} [{a['status']}]{' ' + kind if kind else ': '}{a['text']}"
-            + (f" (owner {a['owner']})" if a.get("owner") else "")
-            + _due(a) + " " + _src(a, settings, conv))
 
 
 class BearerAuth:

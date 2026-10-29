@@ -39,10 +39,8 @@ import base64
 import binascii
 import hmac
 import logging
-import math
 import re
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from importlib import metadata
 from typing import Annotated, Any
 
@@ -63,70 +61,29 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
 from . import audio as audio_mod
-from . import export, llm_settings, vocabulary, voice_enroll
+from . import export, llm_settings, serializers, vocabulary, voice_enroll
 from .config import Settings
 from .diarize import enroll_voice, load_voices
 from .domain import UNSET
-from .links import render_conversation, transcript_link, verify
-from .pipeline import (
-    MAX_LINK_CHARS,
-    MAX_TEXT_CHARS,
-    MAX_TITLE_CHARS,
-    Pipeline,
-    Worker,
-)
+from .links import transcript_link, verify
+from .pipeline import Pipeline, Worker
 from .search import search
 from .speakers import relabel_matches
 from .summarize.client import LLMError
+from .timeutil import iso, parse_instant
+from .validation import MAX_LINK_CHARS, MAX_TEXT_CHARS, MAX_TITLE_CHARS
+from .views import render_conversation
 
 log = logging.getLogger(__name__)
 MAX_CHUNK_BYTES = 25 * 1024 * 1024
 
 
-def iso(ts: float | None) -> str | None:
-    return datetime.fromtimestamp(ts, UTC).isoformat() if ts is not None else None
-
-
 def parse_ts(value: str) -> float:
     """ISO-8601 (naive = UTC) or epoch seconds/milliseconds."""
     try:
-        num = float(value)
-    except ValueError:
-        pass
-    else:
-        if not math.isfinite(num):
-            raise HTTPException(400, "timestamp must be ISO-8601 or epoch seconds")
-        return num / 1000.0 if num > 1e11 else num
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_instant(value)
     except ValueError as e:
         raise HTTPException(400, "timestamp must be ISO-8601 or epoch seconds") from e
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.timestamp()
-
-
-def _conv_out(c: dict[str, Any], settings: Settings) -> dict[str, Any]:
-    out = {k: v for k, v in c.items() if k not in ("started_at", "ended_at", "updated_at")}
-    out["started_at"] = iso(c["started_at"])
-    out["ended_at"] = iso(c["ended_at"])
-    out["transcript_url"] = f"/v1/conversations/{c['id']}/transcript"
-    out["link"] = transcript_link(settings, c["id"])
-    for key in ("action_items", "facts"):
-        for item in out.get(key, []):
-            src = item.get("source_at")
-            item["source_at"] = iso(src)
-            if src is not None:
-                item["source_url"] = transcript_link(settings, c["id"], src - c["started_at"])
-    if out.get("meeting"):
-        out["meeting"] = {**out["meeting"], "participants": [
-            {**p, "joined_at": iso(p["joined_at"]), "left_at": iso(p["left_at"])}
-            for p in out["meeting"]["participants"]]}
-    for item in out.get("action_items", []):
-        item["created_at"] = iso(item.get("created_at"))
-        item["time_unclear"] = bool(item.get("time_unclear"))
-        item["explicit"] = bool(item.get("explicit"))
-    return out
 
 
 class ChunkJson(BaseModel):
@@ -457,14 +414,14 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         rows = store.list_conversations(
             since=parse_ts(since) if since else None, until=parse_ts(until) if until else None,
             person=person, limit=limit)
-        return {"conversations": [_conv_out(r, settings) for r in rows]}
+        return {"conversations": [serializers.rest_conversation(r, settings) for r in rows]}
 
     @v1.get("/conversations/{conv_id}")
     def get_conversation(conv_id: str) -> dict[str, Any]:
         c = store.get_conversation(conv_id)
         if c is None:
             raise HTTPException(404, "conversation not found")
-        return _conv_out(c, settings)
+        return serializers.rest_conversation(c, settings)
 
     @v1.get("/conversations/{conv_id}/transcript")
     def get_transcript(conv_id: str, start: float | None = None,
@@ -530,13 +487,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         # notes ("create a note ...") are no to-dos: only on request
         rows = store.list_action_items(None if status == "all" else status,
                                        notes=include_notes)
-        for r in rows:
-            r["source_at"], r["conversation_at"] = iso(r["source_at"]), iso(r["conversation_at"])
-            r["created_at"] = iso(r.get("created_at"))
-            r["time_unclear"] = bool(r.get("time_unclear"))
-            r["explicit"] = bool(r.get("explicit"))
-            r["timezone"] = settings.timezone
-        return {"action_items": rows}
+        return {"action_items": [serializers.rest_action_item(r, settings) for r in rows]}
 
     @v1.patch("/action-items/{item_id}")
     def patch_action_item(item_id: int, body: ActionItemPatch) -> dict[str, Any]:
