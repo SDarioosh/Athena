@@ -5,10 +5,13 @@ plugins {
 }
 
 android {
-    namespace = "org.barvis.sound.relay"
+    namespace = "org.athena.relay"
     compileSdk = 35
 
     defaultConfig {
+        // The app's identity on the phone: keep it unchanged (it differs from the Kotlin
+        // namespace on purpose), so new builds update the installed app in place and keep its
+        // pairing, token and settings.
         applicationId = "org.barvis.sound.relay"
         minSdk = 26
         targetSdk = 35
