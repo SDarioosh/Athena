@@ -11,8 +11,11 @@ his own Zoom account), so only while he is in the meeting**; a separate Athena Z
 (ZAK, owner absent) is a later option, tested only in the optional
 [Later](#later-optional-athenas-own-zoom-account) section.
 
-The spike code is in [`meeting-bot/spike/`](../meeting-bot/spike/) on branch
-`feature/meeting-bot-0a`. It is throwaway: Phase 1 lanes take the findings, not the code.
+The spike code was in `meeting-bot/spike/` (branch `feature/meeting-bot-0a`, then `main`).
+It was throwaway: Phase 1 lanes took the findings, not the code. It has been **removed**
+from the repo; it lives in git history at commit `b96332dce8428fa39c4cbd067b56da621b9568c0`
+(`git show b96332dce842:meeting-bot/spike/`, or `git checkout b96332dce842 -- meeting-bot/spike` to run
+the steps below again).
 The Zoom Meeting SDK is proprietary and never enters the repo: the owner downloads it,
 and the build reads it from a folder outside git.
 

@@ -1,0 +1,22 @@
+[
+  {"status": 200, "body": {"ok": true, "stop": false, "reason": null, "duplicate": false, "speech_seconds": 12.5, "trailing_silence_seconds": 0.4, "session_seconds": 30.0}, "expect": "ok"},
+  {"status": 200, "body": {"ok": true, "stop": false, "reason": null, "duplicate": true, "speech_seconds": 12.5, "trailing_silence_seconds": 0.4, "session_seconds": 30.0}, "expect": "ok"},
+  {"status": 200, "body": {"ok": true, "stop": true, "reason": "max_duration", "duplicate": false, "speech_seconds": 3.0, "trailing_silence_seconds": 0.0, "session_seconds": 14400.0}, "expect": "ok"},
+  {"status": 200, "body": {"ok": false}, "expect": "retry"},
+  {"status": 200, "body": "<html><body>Welcome to nginx!</body></html>", "expect": "retry"},
+  {"status": 301, "body": null, "expect": "retry"},
+  {"status": 302, "body": null, "expect": "retry"},
+  {"status": 400, "body": {"detail": "track must match ^[A-Za-z0-9._:-]{1,64}$"}, "expect": "drop"},
+  {"status": 401, "body": {"detail": "invalid or missing bearer token"}, "expect": "stop_uploads"},
+  {"status": 403, "body": {"detail": "a meeting bot's token can only upload to its session"}, "expect": "stop_uploads"},
+  {"status": 404, "body": {"detail": "Not Found"}, "expect": "drop"},
+  {"status": 408, "body": "Request Timeout", "expect": "retry"},
+  {"status": 413, "body": {"detail": "chunk too large"}, "expect": "drop"},
+  {"status": 415, "body": "Unsupported Media Type", "expect": "drop"},
+  {"status": 422, "body": {"detail": "could not decode audio: invalid data"}, "expect": "drop"},
+  {"status": 429, "body": "Too Many Requests", "expect": "retry"},
+  {"status": 500, "body": "Internal Server Error", "expect": "retry"},
+  {"status": 502, "body": "<html><body>502 Bad Gateway</body></html>", "expect": "retry"},
+  {"status": 503, "body": {"detail": "busy"}, "expect": "retry"},
+  {"status": 0, "body": null, "expect": "retry"}
+]

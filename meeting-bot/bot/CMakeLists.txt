@@ -43,7 +43,7 @@ if(EXISTS "${ZOOM_SDK_DIR}/stub_meetingsdk.cpp")
                         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/sdkstub")
   target_link_libraries(athena-meeting-bot PRIVATE meetingsdk_stub)
 else()
-  # The real SDK (as the spike, meeting-bot/spike/cpp/CMakeLists.txt). Its soname is
+  # The real SDK (as the Phase 0 spike's cpp/CMakeLists.txt, in git history at b96332dce842). Its soname is
   # libmeetingsdk.so.1 but it ships as libmeetingsdk.so: make the link in the build dir,
   # never in the SDK folder.
   set(SDK_LINK_DIR "${CMAKE_BINARY_DIR}/sdklib")

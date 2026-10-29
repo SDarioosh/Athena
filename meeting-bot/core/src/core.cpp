@@ -234,17 +234,20 @@ struct Core::Impl {
         break;
       } else if (r.aborted) {
         break;
-      } else if (r.status == 0 || r.status == 429 || r.status >= 500 || r.status == 200) {
-        logf("upload of %s failed (%s), retrying in %lld s", item.path.c_str(),
-             r.status ? ("HTTP " + std::to_string(r.status)).c_str() : r.error.c_str(),
+      } else if (r.status >= 400 && r.status < 500 && r.status != 408 && r.status != 429) {
+        logf("server refused %s, dropped: HTTP %ld %s", item.path.c_str(), r.status,
+             r.body.substr(0, 200).c_str());
+        drop_locked(queue.begin());
+      } else {
+        // Transient (docs/api/ingest-client.md): no answer, 408, 429, 5xx, a 200 without
+        // "ok": true, a redirect (never followed) or anything else unexpected.
+        std::string why = r.status ? "HTTP " + std::to_string(r.status) : r.error;
+        if (r.status >= 300 && r.status < 400) why += ", redirect not followed; check the URL";
+        logf("upload of %s failed (%s), retrying in %lld s", item.path.c_str(), why.c_str(),
              static_cast<long long>(
                  std::chrono::duration_cast<std::chrono::seconds>(backoff).count()));
         next_try = Clock::now() + backoff;
         backoff = std::min<Clock::duration>(backoff * 2, kBackoffMax);
-      } else {
-        logf("server refused %s, dropped: HTTP %ld %s", item.path.c_str(), r.status,
-             r.body.substr(0, 200).c_str());
-        drop_locked(queue.begin());
       }
       q_cv.notify_all();
     }

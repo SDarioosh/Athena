@@ -3,7 +3,7 @@
 
 Run by ctest: test_core_upload.py --driver <core_driver> --server <fake_ingest_server.py>
 Checks the upload fields, per-track sequences, the queue, retries, 401, "stop", the chat
-call body (server/README.md "Meeting chat, topic and participants") and finish()'s
+call body (docs/api/meetings.md "Meeting chat, topic and participants") and finish()'s
 deadline. Fictional data only.
 """
 
@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +27,7 @@ SESSION = "mtg-demo-1"
 TOKEN = "test-token"
 DANA, LEE = "16782336", "16782337"
 TRACK_RE = r"[A-Za-z0-9._:-]{1,64}"
+CASES = Path(__file__).resolve().parents[2] / "docs" / "api" / "ingest-client-cases.json"
 
 
 def opus_seconds(data: bytes) -> float:
@@ -65,7 +67,8 @@ def iso_ok(value: str) -> bool:
 class Run:
     """One fake server + one core_driver run."""
 
-    def __init__(self, mode: str, *driver_args: str, timeout: float = 120):
+    def __init__(self, mode: str, *driver_args: str, timeout: float = 120,
+                 server_args: tuple[str, ...] = ()):
         self.tmp = Path(tempfile.mkdtemp(prefix="athena-core-test-"))
         self.log = self.tmp / "log"
         self.work = self.tmp / "work"
@@ -73,7 +76,7 @@ class Run:
         self.work.mkdir()
         env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
         server = subprocess.Popen([sys.executable, ARGS.server, "--mode", mode, "--log",
-                                   str(self.log), "--token", TOKEN],
+                                   str(self.log), "--token", TOKEN, *server_args],
                                   stdout=subprocess.PIPE, text=True, env=env)
         try:
             port = int(server.stdout.readline())
@@ -303,6 +306,51 @@ class CoreUploadTests(unittest.TestCase):
         self.assertTrue(run.chunks())
         self.assertTrue(all(c["fields"].get("track") for c in run.chunks()))
         self.assertEqual([r["status"] for r in run.calls("end")], [200])
+
+    def test_ingest_client_cases(self):
+        """Every row of docs/api/ingest-client-cases.json, as the answer to the first upload
+        of a one-chunk meeting (later uploads get 200 ok): ok, retry, drop or stop_uploads."""
+        cases = json.loads(CASES.read_text())
+        self.assertTrue(cases)
+        with ThreadPoolExecutor(max_workers=4) as pool:  # each run waits on timers, not CPU
+            runs = list(pool.map(self.run_case, cases))
+        for case, run in zip(cases, runs, strict=True):
+            with self.subTest(status=case["status"], body=case["body"]):
+                self.check_case(case, run)
+
+    def run_case(self, case: dict) -> Run:
+        return self.run_core("case", "--pattern", "tail", "--wait-ms", "2500",
+                             server_args=("--case", json.dumps(case)))
+
+    def check_case(self, case: dict, run: Run) -> None:
+        chunks = run.chunks(None)
+        self.assertEqual(chunks[0]["status"], case["status"])
+        expect = case["expect"]
+        if expect == "ok":
+            self.assertEqual(len(chunks), 1, run.stderr)  # sent once, not again
+            self.assertEqual(run.num("finish"), 1, run.stderr)
+            self.assertEqual(run.num("rejected"), 0)
+            body = case["body"]
+            self.assertEqual(run.num("stop"), 1 if body.get("stop") else 0)
+        elif expect == "retry":
+            self.assertEqual(len(chunks), 2, run.stderr)  # the same chunk again, then 200
+            self.assertEqual(chunks[0]["fields"], chunks[1]["fields"])
+            self.assertGreaterEqual(chunks[1]["t"] - chunks[0]["t"], 0.5)  # after a backoff
+            self.assertEqual(run.num("finish"), 1, run.stderr)
+            self.assertIn("1 chunks uploaded, 0 unsent, 0 dropped", run.stderr)
+        elif expect == "drop":
+            self.assertEqual(len(chunks), 1, run.stderr)  # never sent again
+            self.assertEqual(run.num("finish"), 0)  # not everything was sent
+            self.assertEqual(run.num("rejected"), 0)
+            self.assertIn(", dropped: HTTP", run.stderr)
+            self.assertIn("0 chunks uploaded, 0 unsent, 1 dropped", run.stderr)
+        elif expect == "stop_uploads":
+            self.assertEqual(len(chunks), 1, run.stderr)
+            self.assertEqual(run.num("rejected"), 1)
+            self.assertEqual(run.num("finish"), 0)
+            self.assertEqual(run.calls("chat") + run.calls("end"), [])
+        else:
+            self.fail(f"unknown expect {expect!r}")
 
     def test_chat_cap_and_private_drop(self):
         run = self.run_core("ok", "--chat-flood")

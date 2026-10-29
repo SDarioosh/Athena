@@ -38,8 +38,10 @@ What it does:
   (libcurl, never through a proxy) sends `POST /v1/ingest/chunk` multipart with `audio`,
   `device=zoom`, `session_id`, `sequence`, `timestamp` (epoch seconds of the first
   sample, with milliseconds), `codec`, `track`, `track_name` and
-  `Authorization: Bearer $ATHENA_UPLOAD_TOKEN`. Network errors, 5xx and 429 are retried
-  with backoff (1 s doubling to 30 s); 401/403 stop the uploads and set
+  `Authorization: Bearer $ATHENA_UPLOAD_TOKEN`. Answers follow the ingest client contract
+  ([docs/api/ingest-client.md](../../docs/api/ingest-client.md)): network errors, 408,
+  429, 5xx, a 200 without `"ok": true` and redirects (never followed: "check the URL") are
+  retried with backoff (1 s doubling to 30 s); 401/403 stop the uploads and set
   `upload_rejected()`; other 4xx drop that chunk (logged). An answer with `"stop": true`
   sets `stop_requested()`. Unsent audio is capped at `--max-seconds`; the oldest chunk
   goes first (logged).
