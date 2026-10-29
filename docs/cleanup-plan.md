@@ -1,6 +1,6 @@
 # Athena and Odysseus cleanup: phased plan
 
-As of 2026-10-28. Status (2026-10-29): **in progress**: Phases 0, 1 and 2 merged and gated; Phase 3 running. Covers both repos: Athena (this repo) and
+As of 2026-10-28. Status (2026-10-29): **done in code**: Phases 0–4 merged; Gate 3 passed; Gate 4 done in the sandbox and deployed to production by the owner on 2026-10-29 (stored-name rename applied: 710 rows). Left for the owner: the server-side parts of Gate 4 (full bakeoff on the real model, one real meeting, walk-around recording and handwritten note) and the open questions below. Covers both repos: Athena (this repo) and
 our Odysseus fork (`SDarioosh/odysseus-expanded`, hub side in its
 `docs/fork/cleanup-plan.md`, which points here). Each lane is sized for one Claude
 subagent, one branch and one PR. An **overseer** session runs the lanes, checks each
@@ -700,6 +700,16 @@ commits behind upstream and hooked files upstream touched.
 **Gate 4:** both repos' full suites, all evals, the full bakeoff on the server, and one real
 meeting, walk-around recording and handwritten note through the whole system.
 
+## Phase 4 as run
+
+- 4A: `deploy.sh` runs Docker only (the owner already ran Docker); compose project and services keep `odysseus-sound` / `sound-*` until every server has deployed once (then a one-line rename). A failed switch from a native install starts the native units again. `ATHENA_*` deploy settings beside `BARVIS_SOUND_*`.
+- 4B: the 8 re-export shims removed; the `convo_server` alias and `convo-server` CLI stay (owner: no outside users known; removal is a later PR). No file in `server/athena/` over 800 lines.
+- 4C: the hub's three largest modules split, old import paths kept; CI reports upstream drift (report only). A hub test that passed only by test order (`test_tool_approvals`) now creates its table; offer upstream.
+- 4D: `/modules/athena`, `/api/modules/athena/*`, `/api/codex/athena/*`, `athena:*` beside the old names (302 redirects for pages, so a rollback can't strand a cached URL).
+- 4E: `ATHENA_*` settings beside `CONVO_*` (new wins); `athena.db` for new installs, an existing `convo.db` used as is; the phone relay calls the new routes and falls back on 404; compose forces container values under both names.
+- 4F: the hub reads both stored names; `scripts/athena_names_migrate.py` (dry run, backup, rollback) renames them, and `scripts/fork_deploy.sh deploy` runs it once after its data backup (undone on a failed deploy or a `rollback`). Calendar uids frozen.
+- Seen after the deploy: the 9B chat model sometimes leaves out Athena's transcript links or invents one; Athena's tool output carries them unchanged. Using the larger model, or the hub adding the links itself, is a follow-up.
+
 ## Lanes
 
 | Lane | Repo | Depends on | Runs beside | Needs the owner |
@@ -767,3 +777,5 @@ of `pipeline.py` into `validation.py`, so it goes before 3A, which rewrites `pip
 | Gate 0 | 2026-10-29 | 1,759 passed, 3 skipped (+0A, 0B) | 1,964 passed (+0C, after 0D) | 1/3 (`1 9 16`; noisy, see notes) | 8/8 partial | belief 19/19 · 80/80, insight 53/53, ink CER 7.6% / WER 12.5% | qwen3-4b, CPU contention during the run |
 | Gate 1 | 2026-10-29 | 1,805 passed, 3 skipped; PC relay 251; firmware host 20/20; meeting bot 2/2 + 4/4 | 1,995 passed (+1D) | A/B `1 6 13 16 17 20`: before 3/6, after 5/6 | first 25: 25/25 both | unchanged; `/athena` slash eval 2/6 both | idle machine, A/B back to back; Athena MCP output byte-identical A vs B |
 | Gate 2 | 2026-10-29 | 1,949 passed, 3 skipped (same test ids as before 2D, moved); PC relay 272; firmware host 20/20; PDA host 12/12; meeting bot 2/2 + 4/4 | fork + trio + env reference + procfs guard + frontend build 2,107 passed; full suite: same 21 sandbox failures before and after 2F | A/B `1 6 13 16 17 20`: Phase 1 code 1/6, Phase 2 code 2/6 | 25/25 both | belief 19/19 · 80/80, scale 11/11, insight 8/8 · 53/53, ink CER 1.4% / WER 6.7%: unchanged; `/athena` slash 1/6 → 3/6 | idle machine, back to back; contract snapshots and summarizer request bytes byte-identical; small-model scores swing widely (the Phase 1 code scored 5/6 at Gate 1), so from Phase 3 on, lanes prove "no change" with deterministic before/after tests and model evals are a sanity check only |
+| Gate 3 | 2026-10-29 | 2,543 passed, 3 skipped (Phase 3 main) | 2,411 passed (fork + trio) | deterministic proofs per lane (characterization tests on the old code, passing unchanged after) | 25/25 | unchanged | model A/B run later with Gate 4 (a first try ran beside the lanes and timed out) |
+| Gate 4 | 2026-10-29 | 2,573 passed, 3 skipped (after 4A, 4B, 4E); PC relay 273 | 2,473 passed (fork + trio + approvals, after 4C, 4D, 4F) | A/B `1 6 13 16 17 20`: Phase 2 code 1/6 (ran beside lanes), Phase 4 code 2/6 | 25/25 (Phase 4 code) | `/athena` slash 2/6 → 3/6 | same seed and model; no change beyond small-model noise; Athena MCP output byte-identical to Phase 2 (contract snapshots). Owner deploy 2026-10-29: Athena (Docker) and hub healthy, rename of stored names applied by `fork_deploy.sh` |
