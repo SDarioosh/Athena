@@ -24,7 +24,7 @@ server. **Nothing in the data path touches the cloud.**
   `convo-ai` (its display name is now "Athena Rec Test"), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
   `SDarioosh/Athena`; GitHub redirects the old URL), the `barvis-sound*` service names
   and `BARVIS_SOUND_*` vars of `server/scripts/deploy.sh`, the Android app ID
-  `org.barvis.sound.relay`, the BLE name `barvis-tw`, the BLE UUID bytes and the
+  `org.barvis.sound.relay`, the BLE UUID bytes and the
   Opus tag text (`BARVIS_SESSION=`…; the macros are now `ATHENA_UUID_BYTES` / `ATHENA_TAG_*` in
   `firmware/recorder/main/wire_ids.h`, values unchanged), and the PC relay's old package
   name `barvis_relay` (now `athena_relay`; `barvis_relay` stays as a stub) and its state
@@ -32,6 +32,9 @@ server. **Nothing in the data path touches the cloud.**
   breaks deployed servers and configs, paired watches, the installed phone app and
   Odysseus. Don't "fix" them ad hoc: the planned rename, step by step with the old
   names still working, is `docs/athena-rename-plan.md`.
+- The watch's BLE name is now `athena-tw`. Older firmware advertises `barvis-tw`; the phone
+  and PC relays find the watch by its service UUID and accept both names, for good, so
+  never drop `barvis-tw` from them.
 
 ## This is an Odysseus module
 

@@ -3,7 +3,8 @@
 Status: **step 1 in progress** (Athena's links done 2026-10-29), the other steps not started (written 2026-10-27). On 2026-10-29 the owner also chose to
 rename the hub's stored `"odysseus-sound"` values and server name `convo` with a data
 migration (cleanup lane 4F; filed calendar event IDs stay), and the watch's Bluetooth name
-(lane 1I); the "What stays" table below predates that. Since 2026-10-29 the steps run
+(lane 1I, **done** 2026-10-29: `athena-tw`, relays accept `barvis-tw` too); the "What stays"
+table below predates that. Since 2026-10-29 the steps run
 inside the cleanup ([cleanup-plan.md](cleanup-plan.md), "Renaming to Athena" maps each step
 to its lane). Each step below is one PR. Tick it off here in the same PR that does it.
 
@@ -152,7 +153,8 @@ copied from the firmware before the rename. `idf.py build` runs in CI.
 - In `firmware/recorder/main/ble_sync.c` and the other files that use them (13 files),
   rename `BARVIS_UUID` and the `BARVIS_*` Opus tag macros to `ATHENA_*`.
 - **The values stay the same:** the UUID bytes, the Opus tag bytes and
-  `DEVICE_NAME "barvis-tw"`. They are the wire protocol, which
+  `DEVICE_NAME "barvis-tw"` (the name was renamed later after all, decided 2026-10-29:
+  `athena-tw`, relays accept both; see "What stays"). They are the wire protocol, which
   `docs/twatch-ble-protocol.md` describes and the phone and PC relays rely on.
 - Done when: the host tests pass and `idf.py build` passes for all three boards. Byte
   check: build the BLE service table before and after, and compare it (a
@@ -348,7 +350,7 @@ is ever renamed, it gets its own plan, with a backup and a rollback.
 | Stored `"odysseus-sound"` values | hub: belief source (`src/evidence_intake.py`), note label (`src/module_action_items.py`, `src/notes_evidence.py`), memory source (`src/today_insight.py`), calendar uid prefix | Needs a migration of the owner's hub data. Anything missed is filed or remembered twice. |
 | Android `applicationId` `org.barvis.sound.relay` | installed phone app | It becomes a separate app: reinstall, pair again, and recordings waiting in the old app are lost. |
 | Zepp `appId` and vendor | installed watch app | It becomes a new app on the watch. |
-| BLE UUIDs, Opus tag bytes (the BLE name `barvis-tw` is renamed after all: cleanup lane 1I, relays accept both names first) | T-Watch firmware, phone and PC relays | Every watch needs reflashing and pairing again. |
+| BLE UUIDs, Opus tag bytes (the BLE name is renamed after all, decided 2026-10-29 and **done**: `athena-tw`; older firmware advertises `barvis-tw` and the phone and PC relays accept both for good) | T-Watch firmware, phone and PC relays | Every watch needs reflashing and pairing again. |
 | Hermes profiles `convo-ai`, `convo` | owner's Hermes setup, outside these repos | The build loop and eval profile; only the owner can rename them. |
 | Hub branch `barvis` | hub repo, clones, `fork_deploy.sh` default ref | Every clone and the deploy default would need updating, for no visible gain. |
 | `/api/codex/sound/*`, scopes `sound:*` | installed phone relays, existing API tokens | They stay as aliases next to the new names (steps 13, 14). |

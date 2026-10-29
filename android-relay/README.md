@@ -97,7 +97,8 @@ on the branch you run it from. These are debug-signed builds for sideloading.
 
 If the phone was paired while the watch's sync window was closed, the watch drops the bond
 but Android keeps it, and connections then fail with an authentication error. Remove
-`barvis-tw` in Android's Bluetooth settings, open the sync window and start again.
+`athena-tw` (older firmware: `barvis-tw`) in Android's Bluetooth settings, open the sync window and
+start again.
 
 ## T5 E-Paper PDA (optional)
 
