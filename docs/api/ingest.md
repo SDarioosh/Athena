@@ -1,6 +1,6 @@
 # Ingestion API
 
-Moved here from [server/README.md](../../server/README.md) on 2026-10-29. Setup, configuration and running are there; the meeting bot is in [meetings.md](meetings.md), the MCP tools in [mcp.md](mcp.md).
+Moved here from [server/README.md](../../server/README.md) on 2026-10-29. Setup, configuration and running are there; the meeting bot is in [meetings.md](meetings.md), the MCP tools in [mcp.md](mcp.md). Settings are written `CONVO_<NAME>` here; each also works as `ATHENA_<NAME>`, which wins when both are set.
 
 `POST /v1/ingest/chunk` (multipart), header `Authorization: Bearer <token>`:
 
