@@ -59,8 +59,13 @@ server. **Nothing in the data path touches the cloud.**
   (bring-up test firmware for the T-Watch Ultra) is built, plus Opus recording sessions,
   the SD chunk queue and the BLE service; `tools/ble_relay.py` is the PC relay. See
   `firmware/recorder/README.md`.
+- `firmware/pda/`: ESP-IDF firmware for the LilyGO T5 E-Paper Pro PDA (its own project):
+  shows the briefing, conversations, action items and calendar, and queues taps as actions;
+  BLE only, through the phone or PC relay. See `firmware/pda/README.md`.
 - `android-relay/`: Android relay app (Kotlin): drains the T-Watch over BLE and uploads to
   the server. Protocol: `docs/twatch-ble-protocol.md`. See `android-relay/README.md`.
+- `meeting-bot/`: Zoom meeting bot: C++ bot on the Zoom Meeting SDK, core upload library,
+  tests. See `meeting-bot/README.md`.
 - `docs/`: research and decisions (`omi-ingestion.md`,
   `frontend-decision.md`, `xiao-esp32s3-sense-plan.md`: the plan for our own
   XIAO ESP32-S3 Sense pendant, which comes later; `t-watch-ultra-plan.md`: the same
@@ -73,6 +78,9 @@ server. **Nothing in the data path touches the cloud.**
   `athena-rename-plan.md`: the work order for renaming the old names, planned;
   `cleanup-plan.md`: the phased cleanup of Athena and the hub, run in lanes by subagents
   with an overseer, planned).
+- `docs/api/`: the API reference (`ingest.md`, `meetings.md`, `mcp.md`); `docs/changelog/`:
+  what was done, by month; `docs/decisions-log.md`: the owner's decisions;
+  `docs/archive/`: past QC and bug-hunt reports, kept as records.
 - `hermes/`: Hermes profile snippet used by the orchestrator.
 - `orchestrator/`: optional build loop. Leave it alone.
 
