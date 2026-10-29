@@ -36,3 +36,16 @@ def test_public_method_keeps_its_signature(name: str) -> None:
         if "<object object" in repr(p.default):
             assert p.default is UNSET
 
+
+def test_old_import_paths_give_the_same_objects() -> None:
+    import convo_server.store
+
+    import athena.store
+    from athena import domain
+    from athena.db import migrations
+    from athena.db.store import Store as DbStore
+
+    assert DbStore is Store is convo_server.store.Store
+    assert athena.store.Segment is domain.Segment
+    assert athena.store.MIGRATIONS is migrations.MIGRATIONS
+    assert athena.store.SCHEMA is migrations.SCHEMA

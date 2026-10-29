@@ -17,6 +17,8 @@ from pathlib import Path
 import pytest
 from test_schema_snapshot import FIXTURES, OLD_ROWS, describe, schema_diffs, user_version
 
+import athena.db.connection as connection_mod
+import athena.db.migrations as migrations_mod
 import athena.store as store_mod
 from athena.store import MIGRATIONS, SCHEMA_VERSION, Store
 
@@ -209,7 +211,7 @@ def _fail_after(monkeypatch: pytest.MonkeyPatch, version: int) -> None:
     """Make step ``version`` do all its work and then raise."""
     steps = list(store_mod.MIGRATIONS)
     steps[version] = _failing_after(steps[version])
-    monkeypatch.setattr(store_mod, "MIGRATIONS", steps)
+    monkeypatch.setattr(migrations_mod, "MIGRATIONS", steps)
 
 
 def _failing_after(step):
@@ -284,18 +286,18 @@ def test_busy_timeout_is_set(tmp_path: Path) -> None:
 
 def test_long_lock_wait_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFixture,
                                   monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(store_mod, "LOCK_WAIT_WARN_SECONDS", 0.2)
+    monkeypatch.setattr(connection_mod, "LOCK_WAIT_WARN_SECONDS", 0.2)
     store = Store(tmp_path / "convo.db")
     other = sqlite3.connect(tmp_path / "convo.db", isolation_level=None,
                             check_same_thread=False)
     other.execute("BEGIN IMMEDIATE")
     threading.Timer(0.5, lambda: other.execute("COMMIT")).start()
     try:
-        with caplog.at_level(logging.WARNING, logger="athena.store"):
+        with caplog.at_level(logging.WARNING, logger="athena.db.connection"):
             store.set_setting("vocabulary", "kiln")
         assert any("write lock" in r.message for r in caplog.records)
         caplog.clear()
-        with caplog.at_level(logging.WARNING, logger="athena.store"):
+        with caplog.at_level(logging.WARNING, logger="athena.db.connection"):
             store.set_setting("vocabulary", "glaze")
         assert not caplog.records
     finally:
@@ -317,7 +319,7 @@ def test_crash_inside_a_data_step_rewrites_nothing(
     def crash(*_args: object) -> None:
         raise RuntimeError("crash in step 12")
 
-    monkeypatch.setattr(store_mod, "_rename_person", crash)
+    monkeypatch.setattr(migrations_mod, "_rename_person", crash)
     with pytest.raises(RuntimeError):
         Store(path)
     assert user_version(path) == 11
