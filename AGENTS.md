@@ -349,6 +349,10 @@ relay tests and the Android build and tests.
   `CONVO_`. Commit only `.env.example`. The server refuses to start without
   `CONVO_INGEST_TOKEN`.
 - Zepp app: JavaScript, `@zeppos/zeus-cli`, test on the real device.
+- Database schema changes go only through a new numbered step at the end of `MIGRATIONS`
+  (`server/convo_server/store.py`); never edit `SCHEMA` (the frozen first schema) for a new
+  table, column or index. One PR at a time takes the next number and names it in its
+  title (e.g. "migration 18: …").
 - Small, focused commits with descriptive messages.
 
 ## Rules for agents
