@@ -161,7 +161,7 @@ own random base: `d023xxxx-51f4-43be-86e4-1653768283cd`.
   has a large screen, so it shows the code there. The feed holds conversation summaries,
   so an unauthenticated link must never read it.
 - The BLE name is `odysseus-pda`. The T5 advertises the service UUID, so the relay's scan
-  filter can tell it from `barvis-tw`.
+  filter can tell it from the watch (`athena-tw`, older firmware `barvis-tw`).
 
 ### 3.1 Blobs
 
