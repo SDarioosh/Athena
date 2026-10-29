@@ -10,9 +10,9 @@ from fastapi.testclient import TestClient
 
 from athena import vocabulary
 from athena.api import create_app
+from athena.db.store import Store
 from athena.ingest_relay import add_ingest_routes
 from athena.mcp_server import BearerAuth, build_mcp
-from athena.store import Store
 
 MCP_TOKEN = "mcp-token-abcdefghijkl"
 

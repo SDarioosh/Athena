@@ -7,7 +7,7 @@ from conftest import silence, wav
 from test_meeting_chat import chat
 from test_meeting_tracks import ALICE, BO, T0, ScriptedWhisper
 
-from athena.store import CHAT
+from athena.domain import CHAT
 
 SILENT_1S = wav(silence(1))
 

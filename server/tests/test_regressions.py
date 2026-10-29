@@ -11,8 +11,8 @@ from conftest import silence, tone, wav
 
 from athena import audio as audio_mod
 from athena.diarize import cluster
+from athena.domain import Segment
 from athena.pipeline import Worker
-from athena.store import Segment
 
 T0 = 1_760_000_000.0
 

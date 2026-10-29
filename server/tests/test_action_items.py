@@ -12,10 +12,12 @@ from conftest import fake_llm_transport
 from test_mcp import call
 from test_voice_notes import conv_of, record
 
-from athena import store as store_mod
-from athena.llm import LLMClient, Summarizer
+from athena.db import migrations as migrations_mod
+from athena.db.store import Store
+from athena.domain import Segment
 from athena.mcp_server import build_mcp
-from athena.store import Segment, Store
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
 
 T0 = 1_760_000_000.0  # Thursday 2025-10-09 08:53:20 UTC = 10:53 in Berlin
 
@@ -85,7 +87,7 @@ def test_time_details():
 
 
 def test_both_action_prompts_explain_the_kinds():
-    from athena.llm import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM
+    from athena.summarize.prompts import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM
 
     for prompt in (ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM):
         text = prompt.format(date="Thursday 2025-10-09", owner="Me")
@@ -98,7 +100,7 @@ def test_both_action_prompts_explain_the_kinds():
 def old_v5_db(path):
     """A database as version 5 left it: action items without the calendar columns."""
     old = sqlite3.connect(path)
-    old.executescript(store_mod.SCHEMA)
+    old.executescript(migrations_mod.SCHEMA)
     old.executescript(
         "ALTER TABLE conversations ADD COLUMN kind TEXT;"
         "ALTER TABLE conversations ADD COLUMN discard_reason TEXT;"

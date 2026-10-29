@@ -128,7 +128,7 @@ def test_build_diarizer_sets_the_naming_rules(tmp_path, monkeypatch):
 
     from athena import cli
     from athena.config import Settings
-    from athena.store import Store
+    from athena.db.store import Store
 
     monkeypatch.setattr(cli, "EcapaEmbedder", lambda cache: ToneEmbedder())
     s = Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_match_margin=0.1,
@@ -140,8 +140,8 @@ def test_build_diarizer_sets_the_naming_rules(tmp_path, monkeypatch):
 def test_voices_of_two_speaker_models_dont_mix(tmp_path):
     """Switching CONVO_SPEAKER_EMBEDDER: old (192-value) samples stay stored but the
     voiceprint follows the newest model, and a voice of the other model never matches."""
+    from athena.db.store import Store
     from athena.diarize import load_voices
-    from athena.store import Store
 
     store = Store(tmp_path / "x.db")
     old = np.ones(192, np.float32)
@@ -164,7 +164,7 @@ def test_pyannote_embedder_needs_the_pyannote_diarizer(tmp_path):
 
     from athena import cli
     from athena.config import Settings
-    from athena.store import Store
+    from athena.db.store import Store
 
     s = Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_embedder="pyannote")
     with pytest.raises(SystemExit):

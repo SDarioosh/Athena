@@ -21,8 +21,8 @@ from conftest import TOKEN
 from test_ingest_relay import MCP_TOKEN, mcp_client
 from test_zoom_signin import CLIENT_ID, CLIENT_SECRET, REDIRECT, FakeZoom, _join, _stored
 
-from athena import zoom_signin
 from athena.api import create_app
+from athena.meetings.bot import zoom_signin
 
 Q = f"?access_token={MCP_TOKEN}"
 
@@ -405,7 +405,7 @@ def test_building_the_apps_imports_no_zoom_code(tmp_path) -> None:
     code = textwrap.dedent(f"""
         import sys
         from athena.config import Settings
-        from athena.store import Store
+        from athena.db.store import Store
         from athena.pipeline import Pipeline
         from athena.vad import EnergyVAD
         from athena.api import create_app

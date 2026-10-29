@@ -19,8 +19,8 @@ from test_schema_snapshot import FIXTURES, OLD_ROWS, describe, schema_diffs, use
 
 import athena.db.connection as connection_mod
 import athena.db.migrations as migrations_mod
-import athena.store as store_mod
-from athena.store import MIGRATIONS, SCHEMA_VERSION, Store
+from athena.db.migrations import MIGRATIONS, SCHEMA_VERSION
+from athena.db.store import Store
 
 V16_FIXTURES = ("schema_v16.sql", "schema_v16_migrated.sql")
 
@@ -130,7 +130,7 @@ def test_new_database_is_at_the_last_version(tmp_path: Path) -> None:
 
 def test_first_schema_has_only_first_version_tables() -> None:
     c = sqlite3.connect(":memory:")
-    c.executescript(store_mod.SCHEMA)
+    c.executescript(migrations_mod.SCHEMA)
     v1 = sqlite3.connect(":memory:")
     v1.executescript((FIXTURES / "schema_v1.sql").read_text())
     names = "SELECT type, name FROM sqlite_master ORDER BY name"
@@ -209,7 +209,7 @@ def test_opening_a_new_database_twice_changes_nothing(tmp_path: Path) -> None:
 
 def _fail_after(monkeypatch: pytest.MonkeyPatch, version: int) -> None:
     """Make step ``version`` do all its work and then raise."""
-    steps = list(store_mod.MIGRATIONS)
+    steps = list(migrations_mod.MIGRATIONS)
     steps[version] = _failing_after(steps[version])
     monkeypatch.setattr(migrations_mod, "MIGRATIONS", steps)
 

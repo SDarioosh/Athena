@@ -16,10 +16,11 @@ from test_ingest_relay import MCP_TOKEN, mcp_client
 from test_mcp import call
 
 from athena.api import create_app
-from athena.llm import LLMClient, Summarizer
+from athena.domain import ERASED_TEXT, WRITTEN_DEVICE
 from athena.mcp_server import build_mcp
 from athena.pipeline import Worker
-from athena.store import ERASED_TEXT, WRITTEN_DEVICE
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 WRITTEN_AT = "2025-10-09T08:53:20Z"

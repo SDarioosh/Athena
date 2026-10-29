@@ -7,8 +7,9 @@ import pytest
 from conftest import fake_llm_transport, silence, tone
 from test_mcp import T0, call, ingest
 
-from athena.llm import LLMClient, Summarizer
 from athena.mcp_server import build_mcp
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
 
 
 def use_llm(pipeline, log=None, **fake):
@@ -76,7 +77,7 @@ def test_tv_is_discarded_but_transcript_kept(pipeline):
 
 
 def test_too_short_is_discarded_without_a_model_call(pipeline):
-    from athena.store import Segment
+    from athena.domain import Segment
 
     log: list = []
     use_llm(pipeline, log)
@@ -90,7 +91,7 @@ def test_too_short_is_discarded_without_a_model_call(pipeline):
     ("Testing, testing, one two three.", "mic_check"),
 ])
 def test_filler_and_mic_checks_are_discarded_without_a_model_call(pipeline, text, reason):
-    from athena.store import Segment
+    from athena.domain import Segment
 
     log: list = []
     use_llm(pipeline, log)
@@ -100,7 +101,7 @@ def test_filler_and_mic_checks_are_discarded_without_a_model_call(pipeline, text
 
 
 def test_one_content_word_still_goes_to_triage(pipeline):
-    from athena.store import Segment
+    from athena.domain import Segment
 
     log: list = []
     use_llm(pipeline, log)

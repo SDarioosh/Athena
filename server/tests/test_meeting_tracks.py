@@ -14,7 +14,7 @@ import pytest
 from conftest import SAMPLE_RATE, silence, tone, wav
 
 from athena.diarize import PieceRef, SpeakerLabel
-from athena.meeting_tracks import (
+from athena.meetings.transcribe.tracks import (
     BLEED_MIN_SIMILARITY,
     BLEED_SURE_SIMILARITY,
     Line,
@@ -173,7 +173,7 @@ def test_meeting_never_imports_pyannote_and_plain_sessions_never_import_meeting_
         from conftest import FakeTranscriber, silence, tone, wav
         from athena.config import Settings
         from athena.pipeline import Pipeline
-        from athena.store import Store
+        from athena.db.store import Store
         from athena.vad import EnergyVAD
         s = Settings(ingest_token="x" * 20, data_dir={str(tmp_path)!r}, run_worker=False,
                      vad_backend="energy", whisper_window_seconds=0,
@@ -493,7 +493,7 @@ def test_the_last_round_after_max_duration_is_still_stored(pipeline):
 
 
 def test_a_chunk_racing_the_worker_is_refused(pipeline, settings):
-    from athena.store import MeetingClosed
+    from athena.db.sessions import MeetingClosed
 
     _upload(pipeline, "m1", 0, T0, track_audio((0, tone(300, 5))), "a", "Alice Example")
     pipeline.end_session("m1")

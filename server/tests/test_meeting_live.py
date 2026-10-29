@@ -14,9 +14,9 @@ import numpy as np
 import pytest
 from conftest import SAMPLE_RATE, tone
 
-from athena import meeting_live
+from athena.db.store import Store
+from athena.meetings.transcribe import live as meeting_live
 from athena.pipeline import Pipeline, Worker
-from athena.store import Store
 from athena.transcribe import TranscriptPiece
 
 T0 = 1_760_000_000.0
@@ -288,7 +288,7 @@ def test_worker_tick_imports_no_meeting_code_and_starts_nothing(tmp_path):
         from conftest import FakeTranscriber, silence, tone, wav
         from athena.config import Settings
         from athena.pipeline import Pipeline, Worker
-        from athena.store import Store
+        from athena.db.store import Store
         from athena.vad import EnergyVAD
         s = Settings(ingest_token="x" * 20, data_dir={str(tmp_path)!r}, run_worker=False,
                      vad_backend="energy", whisper_window_seconds=0)
@@ -610,7 +610,7 @@ def test_live_skips_every_track_the_end_pass_diarizes(pipeline, names):
     uses to diarize it (any display name it ever had is a room or a device, owner names
     excepted), not by its latest name only: no live work is spent on it once a room or
     device name is known."""
-    from athena.meeting_tracks import is_room_track
+    from athena.meetings.transcribe.tracks import is_room_track
 
     heard = _named_chunks(pipeline, "t1", names)
     info = pipeline.store.tracks("m1")[0]

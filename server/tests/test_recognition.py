@@ -120,8 +120,8 @@ def unit(*xs: float) -> np.ndarray:
 
 
 def test_voice_samples_are_kept_not_blended(tmp_path):
+    from athena.db.store import Store
     from athena.diarize import load_voices
-    from athena.store import Store
 
     store = Store(tmp_path / "c.db")
     store.add_voice_sample("Alice", unit(1, 0))
@@ -139,7 +139,7 @@ def test_voice_samples_are_kept_not_blended(tmp_path):
 
 
 def test_old_single_voiceprints_become_samples(tmp_path):
-    from athena.store import Store
+    from athena.db.store import Store
 
     store = Store(tmp_path / "c.db")
     store.put_speaker("Me", unit(1), True)
@@ -153,8 +153,8 @@ def test_old_single_voiceprints_become_samples(tmp_path):
 def test_enrollment_keeps_several_samples(tmp_path):
     from conftest import ToneEmbedder
 
+    from athena.db.store import Store
     from athena.diarize import enroll_voice
-    from athena.store import Store
 
     store = Store(tmp_path / "c.db")
     audio = np.concatenate([tone(200, 30), tone(300, 30)])  # 60 s, two "styles"

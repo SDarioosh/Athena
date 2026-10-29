@@ -20,8 +20,9 @@ from typing import Any
 
 import httpx
 
-from athena.llm import LLMClient, Summarizer
-from athena.store import Segment
+from athena.domain import Segment
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
 
 SNAPSHOT = Path(__file__).parent / "fixtures" / "summarize_requests.json"
 UPDATE = os.environ.get("UPDATE_SNAPSHOTS") == "1"

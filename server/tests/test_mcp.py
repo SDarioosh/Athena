@@ -59,7 +59,7 @@ def test_parse_when():
 
 
 def test_fts_query_keeps_topic_words():
-    from athena.store import _fts_query
+    from athena.db.search import _fts_query
 
     assert _fts_query("the one talking about AI glasses") == '"AI" OR "glasses"'
     assert _fts_query("The conversation about the") == '"The" OR "conversation" OR "about" OR "the"'

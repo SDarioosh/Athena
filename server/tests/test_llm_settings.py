@@ -12,11 +12,12 @@ from fastapi.testclient import TestClient
 from athena import llm_settings
 from athena.api import create_app
 from athena.cli import build_pipeline
+from athena.db.store import Store
 from athena.ingest_relay import add_ingest_routes
-from athena.llm import LLMClient, Summarizer
 from athena.mcp_server import BearerAuth, build_mcp
 from athena.pipeline import Pipeline
-from athena.store import Store
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
 from athena.vad import EnergyVAD
 
 MCP_TOKEN = "mcp-token-abcdefghijkl"
@@ -140,6 +141,6 @@ def test_reachable_through_the_mcp_http_app(settings):
 
 
 def llm_settings_schema():
-    from athena.llm import Triage
+    from athena.summarize.schemas import Triage
 
     return Triage

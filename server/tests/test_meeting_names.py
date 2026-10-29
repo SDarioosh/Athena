@@ -7,13 +7,14 @@ import sys
 
 import pytest
 
-from athena.meeting_names import (
+from athena.db.store import Store
+from athena.domain import Segment
+from athena.meetings.people.names import (
     clean_display_name,
     looks_like_device,
     speaker_for_track,
     speakers_for_tracks,
 )
-from athena.store import Segment, Store
 
 OWNER = ("Sam Okoro",)
 

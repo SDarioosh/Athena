@@ -9,8 +9,10 @@ import sqlite3
 import numpy as np
 from conftest import fake_llm_transport, silence, tone, wav
 
-from athena.llm import LLMClient, Summarizer
-from athena.store import Segment, Store
+from athena.db.store import Store
+from athena.domain import Segment
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
 from athena.transcribe import TranscriptPiece
 
 T0 = 1_760_000_000.0
@@ -137,7 +139,7 @@ def test_note_owner_name_falls_back_to_settings(pipeline):
 def test_note_after_a_zoom_meeting_keeps_convo_owner_name(pipeline):
     # owner request (QA BUG-07 follow-up): a Zoom meeting matched the owner by
     # CONVO_ZOOM_OWNER_NAMES with no owner voice enrolled; voice notes keep CONVO_OWNER_NAME
-    from athena.meeting_names import speaker_for_track
+    from athena.meetings.people.names import speaker_for_track
     pipeline.store._conn.execute("DELETE FROM speakers")
     pipeline.store._conn.execute("DELETE FROM people")
     pipeline.settings.owner_name = "Shahyah"

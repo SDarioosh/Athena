@@ -9,10 +9,11 @@ import pytest
 
 from athena.audio import SAMPLE_RATE, to_wav_bytes
 from athena.config import Settings
+from athena.db.store import Store
 from athena.diarize import Diarizer, load_voices
-from athena.llm import LLMClient, Summarizer
 from athena.pipeline import Pipeline
-from athena.store import Store
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
 from athena.transcribe import TranscriptPiece
 from athena.vad import EnergyVAD
 

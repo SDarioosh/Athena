@@ -15,10 +15,11 @@ from test_mcp import call
 from test_written_notes import LINK, note_llm
 
 from athena.api import create_app
-from athena.llm import LLMClient, Summarizer
+from athena.domain import ERASED_TEXT
 from athena.mcp_server import build_mcp
 from athena.pipeline import MAX_LINE_CHARS, validate_link, written_lines
-from athena.store import ERASED_TEXT
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 DAY = 86_400.0

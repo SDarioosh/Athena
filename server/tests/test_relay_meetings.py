@@ -245,7 +245,7 @@ def test_building_the_mcp_app_skips_meeting_code(tmp_path):
     code = textwrap.dedent(f"""
         import sys, threading
         from athena.config import Settings
-        from athena.store import Store
+        from athena.db.store import Store
         from athena.mcp_server import BearerAuth, build_mcp
         from athena.ingest_relay import add_ingest_routes
         s = Settings(ingest_token="x" * 20, mcp_token="m" * 20, data_dir={str(tmp_path)!r},

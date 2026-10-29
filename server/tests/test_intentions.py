@@ -7,14 +7,10 @@ from __future__ import annotations
 import pytest
 from conftest import fake_llm_transport
 
-from athena.llm import (
-    ACTIONS_SYSTEM,
-    FACTS_SYSTEM,
-    NOTE_ACTIONS_SYSTEM,
-    LLMClient,
-    Summarizer,
-)
-from athena.store import Segment
+from athena.domain import Segment
+from athena.summarize.client import LLMClient
+from athena.summarize.prompts import ACTIONS_SYSTEM, FACTS_SYSTEM, NOTE_ACTIONS_SYSTEM
+from athena.summarize.summarizer import Summarizer
 
 T0 = 1_760_000_000.0  # Thursday 2025-10-09
 

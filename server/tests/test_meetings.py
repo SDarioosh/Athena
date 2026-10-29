@@ -21,7 +21,8 @@ from pathlib import Path
 import pytest
 from conftest import TOKEN, tone, wav
 
-from athena.meetings import (
+from athena.meetings.bot import launcher as meetings
+from athena.meetings.bot.launcher import (
     ZoomMeeting,
     bot_args,
     build_command,
@@ -32,7 +33,6 @@ from athena.meetings import (
     parse_zoom_link,
     sign_sdk_jwt,
 )
-from athena.meetings.bot import launcher as meetings
 
 FAKE_BOT = Path(__file__).with_name("fake_meeting_bot.py")
 SDK_KEY = "fictional-sdk-key"
@@ -507,7 +507,7 @@ def test_api_import_starts_nothing_and_skips_meeting_code(tmp_path) -> None:
         import sys, threading
         from athena.config import Settings
         from athena.pipeline import Pipeline
-        from athena.store import Store
+        from athena.db.store import Store
         from athena.vad import EnergyVAD
         from athena.api import create_app
         s = Settings(ingest_token="x" * 20, data_dir={str(tmp_path)!r}, run_worker=False,
@@ -578,7 +578,7 @@ def test_auto_runner_probes_once(meeting_settings, pipeline, monkeypatch, probe,
 
 
 def test_meetings_table_and_token_lookup(tmp_path) -> None:
-    from athena.store import Store
+    from athena.db.store import Store
 
     store = Store(tmp_path / "convo.db")
     cols = {r[1] for r in store._conn.execute("PRAGMA table_info(meetings)")}

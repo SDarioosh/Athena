@@ -12,9 +12,11 @@ import numpy as np
 from test_confirmed_facts import DAY, HOUR, T0
 from test_mcp import call
 
-from athena.llm import LLMClient, LLMError, Summarizer, scrub_facts
+from athena.domain import ERASED_TEXT, Segment
 from athena.mcp_server import build_mcp
-from athena.store import ERASED_TEXT, Segment
+from athena.summarize.client import LLMClient, LLMError
+from athena.summarize.rules.facts import scrub_facts
+from athena.summarize.summarizer import Summarizer
 
 FACT = "Alice is vegetarian"
 
@@ -222,7 +224,7 @@ def test_a_digest_is_taken_down_and_written_again_after_the_rewrite(pipeline):
 
 
 def _digest_aware(structured):
-    from athena.llm import DailyDigest
+    from athena.summarize.schemas import DailyDigest
 
     def wrapped(system, user, schema, retries=1):
         if schema is DailyDigest:

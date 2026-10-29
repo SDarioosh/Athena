@@ -9,8 +9,8 @@ from conftest import ToneEmbedder, tone
 from test_confirmed_facts import HOUR, T0, say
 from test_mcp import call, process_two_speakers
 
+from athena.db.store import Store
 from athena.mcp_server import build_mcp
-from athena.store import Store
 
 
 def voice(freq: float):

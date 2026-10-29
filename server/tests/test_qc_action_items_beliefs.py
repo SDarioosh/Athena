@@ -13,9 +13,12 @@ from test_erase_fact import conversation
 from test_mcp import call
 
 from athena.dates import resolve_due
-from athena.llm import LLMClient, Summarizer, _list_and_text
+from athena.db.store import Store
+from athena.domain import ERASED_TEXT, Segment
 from athena.mcp_server import build_mcp
-from athena.store import ERASED_TEXT, Segment, Store
+from athena.summarize.client import LLMClient
+from athena.summarize.storage import _list_and_text
+from athena.summarize.summarizer import Summarizer
 
 
 def summary(**fields) -> dict:

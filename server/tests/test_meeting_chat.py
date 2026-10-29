@@ -16,9 +16,10 @@ from conftest import TOKEN
 from test_mcp import call
 from test_meeting_tracks import ALICE, BO, CLEO, T0, ScriptedWhisper
 
-from athena.llm import format_transcript
+from athena.db.store import Store
+from athena.domain import CHAT, SPEECH, Segment
 from athena.mcp_server import build_mcp
-from athena.store import CHAT, SPEECH, Segment, Store
+from athena.summarize.prompts import format_transcript
 
 SERVER = Path(__file__).resolve().parents[1]
 DANA = "16782336"  # in the meeting, typed in chat, never spoke (no track)
@@ -392,7 +393,7 @@ def test_meeting_chat_is_imported_only_on_a_chat_call(tmp_path):
         from fastapi.testclient import TestClient
         from athena.config import Settings
         from athena.pipeline import Pipeline
-        from athena.store import Store
+        from athena.db.store import Store
         from athena.vad import EnergyVAD
         s = Settings(ingest_token={TOKEN!r}, data_dir={str(tmp_path)!r}, run_worker=False,
                      vad_backend="energy")
@@ -477,7 +478,7 @@ def test_meeting_label_names_no_platform():
 
 def test_kind_meeting_and_in_person_split_conversations(done_meeting, pipeline, mcp):
     # MCP 0.18.0: the hub's Online meetings tab lists meetings apart.
-    from athena.store import IN_PERSON, MEETING
+    from athena.domain import IN_PERSON, MEETING
     conv_id = done_meeting[0].conversation_id
     pipeline.ingest_chunk(device="omi", session_id="s1", sequence=0, started_at=T0 + 7200,
                           codec="wav", data=ALICE[2])

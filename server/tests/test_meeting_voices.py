@@ -12,12 +12,7 @@ import pytest
 from conftest import SAMPLE_RATE, ToneEmbedder, dominant_freq, silence, tone, wav
 
 from athena.diarize import load_voices
-from athena.meeting_voices import (
-    MAX_MEETING_SAMPLES,
-    candidate_windows,
-    merge,
-    subtract,
-)
+from athena.meetings.people.voices import MAX_MEETING_SAMPLES, candidate_windows, merge, subtract
 
 T0 = 1_760_000_000.0
 

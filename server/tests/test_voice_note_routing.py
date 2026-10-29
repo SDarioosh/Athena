@@ -9,8 +9,9 @@ from __future__ import annotations
 import pytest
 from conftest import fake_llm_transport
 
-from athena.llm import LLMClient, Summarizer
-from athena.store import Segment
+from athena.domain import Segment
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
 
 T0 = 1_792_800_000.0 + 8 * 3600  # Saturday 2026-10-24, 10:00 in Berlin
 

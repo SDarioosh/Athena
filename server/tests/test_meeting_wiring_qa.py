@@ -10,8 +10,8 @@ import pytest
 from conftest import tone
 from test_meeting_tracks import SCRIPT, T0, ScriptedWhisper, track_audio
 
-from athena.meeting_names import is_room_or_hardware
-from athena.meeting_tracks import is_shared_room
+from athena.meetings.people.names import is_room_or_hardware
+from athena.meetings.transcribe.tracks import is_shared_room
 
 _SPEAKER_N = re.compile(r"^Speaker \d+$")
 
