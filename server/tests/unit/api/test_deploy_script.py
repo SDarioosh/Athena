@@ -60,7 +60,8 @@ def test_syntax():
 def test_units_prints_the_compose_configuration(tmp_path):
     docker, calls = fake_docker(tmp_path)
     assert run("units", DOCKER=str(docker)).returncode == 0
-    assert calls.read_text() == f"compose --project-directory {SERVER} -f {SERVER}/compose.yml config\n"
+    expected = f"compose --project-directory {SERVER} -f {SERVER}/compose.yml config\n"
+    assert calls.read_text() == expected
 
 
 def test_no_systemd_unit_is_written():
@@ -326,7 +327,8 @@ def fake_system(tmp_path: Path, body: str | None = ACTIVE, code: str = "200") ->
           *) exit 0 ;;  # /health
         esac
         """))
-    (bin_dir / "systemctl").write_text(f'#!/usr/bin/env bash\necho "systemctl $*" >> {log}\nexit 1\n')
+    (bin_dir / "systemctl").write_text(
+        f'#!/usr/bin/env bash\necho "systemctl $*" >> {log}\nexit 1\n')
     (bin_dir / "docker").write_text(f'#!/usr/bin/env bash\necho "docker $*" >> {log}\n')
     for f in bin_dir.iterdir():
         f.chmod(0o755)

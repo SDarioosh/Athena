@@ -31,8 +31,10 @@ FAKE_DOCKER = r'''#!/usr/bin/env bash
 echo "docker $*" >> "$FAKE/log"
 args=" $* "
 case $args in
-  *" compose version "*) [ -f "$FAKE/no-compose" ] && exit 1; echo "Docker Compose version v2.29.0"; exit 0 ;;
-  *" --profile * config --services "*) printf 'sound-api\nsound-mcp\nwhisper-gpu\nwhisper-cpu\n'; exit 0 ;;
+  *" compose version "*)
+    [ -f "$FAKE/no-compose" ] && exit 1; echo "Docker Compose version v2.29.0"; exit 0 ;;
+  *" --profile * config --services "*)
+    printf 'sound-api\nsound-mcp\nwhisper-gpu\nwhisper-cpu\n'; exit 0 ;;
   *" config --services "*) printf 'sound-api\nsound-mcp\nwhisper-cpu\n'; exit 0 ;;
   *" compose "*" build"*) [ -f "$FAKE/build-fails" ] && exit 1; exit 0 ;;
   *" compose "*" up "*) [ -f "$FAKE/up-fails" ] && exit 1; exit 0 ;;
@@ -291,7 +293,8 @@ def test_native_units_without_explicit_docker_refuse_and_change_nothing(tmp_path
         assert "barvis-sound-whisper" not in r.stderr
         assert "Nothing was changed." in r.stderr
         assert "ATHENA_RUNNER=docker" in r.stderr and "COMPOSE_PROFILES=whisper-gpu" in r.stderr
-        assert "CONVO_DOCKER_WHISPER_URL" in r.stderr and "docker compose -p odysseus-sound down" in r.stderr
+        assert "CONVO_DOCKER_WHISPER_URL" in r.stderr
+        assert "docker compose -p odysseus-sound down" in r.stderr
         assert changes(e) == [] and "curl meetings" not in e.log()  # refused first
     assert head(repo) == before and not (repo / "server" / ".env").exists()
     assert unit.exists()
@@ -527,7 +530,8 @@ def test_athena_name_wins_old_name_still_works(tmp_path):
     e = Env(tmp_path)
     assert odysseus_dir_used(e, BARVIS_SOUND_ODYSSEUS_DIR="/old") == "/old"
     assert odysseus_dir_used(e, ATHENA_ODYSSEUS_DIR="/new") == "/new"
-    assert odysseus_dir_used(e, ATHENA_ODYSSEUS_DIR="/new", BARVIS_SOUND_ODYSSEUS_DIR="/old") == "/new"
+    both = {"ATHENA_ODYSSEUS_DIR": "/new", "BARVIS_SOUND_ODYSSEUS_DIR": "/old"}
+    assert odysseus_dir_used(e, **both) == "/new"
 
 
 def test_dotenv_athena_name_wins_and_environment_beats_dotenv(tmp_path):
