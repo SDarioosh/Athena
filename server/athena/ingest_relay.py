@@ -48,6 +48,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -101,6 +102,44 @@ READ_ROUTES = [
     ("POST", "/speakers/enroll/next"),
     ("DELETE", "/speakers/enroll/next"),
 ]
+
+
+@dataclass(frozen=True)
+class ForwardRoute:
+    """A relay route that forwards to ``"/v1" + path`` on the API after its own checks."""
+
+    method: str
+    path: str  # on the MCP app
+    timeout: httpx.Timeout = field(default_factory=lambda: MEETING_TIMEOUT)
+    json_cap: int | None = None  # takes a JSON body up to this size; None: sends no body
+    meeting_id: bool = False  # {meeting_id} must be a launcher id, else 404 unsent
+    limit: bool = False  # forwards only ?limit, bounded to 1..MEETING_LIST_MAX
+
+
+# The hub's "Send Athena to a meeting" box and its "Sign in to Zoom" button.
+FORWARD_ROUTES = [
+    ForwardRoute("POST", "/meetings", json_cap=MAX_MEETING_BODY_BYTES),
+    ForwardRoute("GET", "/meetings", limit=True),
+    ForwardRoute("GET", "/meetings/{meeting_id}", meeting_id=True),
+    ForwardRoute("DELETE", "/meetings/{meeting_id}", timeout=MEETING_LEAVE_TIMEOUT,
+                 meeting_id=True),
+    ForwardRoute("GET", "/zoom/signin"),
+    ForwardRoute("POST", "/zoom/signin/start"),
+    ForwardRoute("POST", "/zoom/signin/finish", json_cap=MAX_SIGNIN_BODY_BYTES),
+]
+
+
+def _meeting_limit(raw: str) -> int | None:
+    """``?limit`` bounded to 1..MEETING_LIST_MAX, or None when it is no whole number.
+
+    ASCII digits only: "²".isdigit() is true but int() refuses it, and int() refuses a
+    digit string over 4300 digits; any number past the cap is the cap.
+    """
+    digits = raw.strip()
+    if not re.fullmatch(r"[0-9]+", digits):
+        return None
+    digits = digits.lstrip("0") or "0"
+    return MEETING_LIST_MAX if len(digits) > 6 else max(1, min(int(digits), MEETING_LIST_MAX))
 
 
 def ingest_api_base(settings: Settings) -> str:
@@ -296,74 +335,42 @@ def add_ingest_routes(mcp: Any, settings: Settings,
         return Response(resp.content, status_code=200,
                         headers={k: v for k, v in resp.headers.items() if k.lower() in keep})
 
-    # ----------------------------------------------------------------- meetings
-    @mcp.custom_route("/meetings", methods=["POST"], include_in_schema=False)
-    async def join_meeting(request: Any) -> Any:
-        ctype = request.headers.get("content-type", "")
-        if not ctype.lower().startswith("application/json"):
-            return _json(415, "send application/json, like /v1/meetings")
-        body = await _read_capped(request, MAX_MEETING_BODY_BYTES)
-        if body is None:
-            return _json(413, "request too large")
-        return await forward_method("POST", "/v1/meetings", timeout=MEETING_TIMEOUT,
-                                    content=body,
-                                    headers={**auth, "Content-Type": "application/json"})
+    # ----------------------------------------------------- meetings, Zoom sign-in
+    def forward_route(route: ForwardRoute) -> None:
+        api_path = "/v1" + route.path
 
-    @mcp.custom_route("/meetings", methods=["GET"], include_in_schema=False)
-    async def list_meetings(request: Any) -> Any:
-        params: dict[str, int] = {}
-        raw = request.query_params.get("limit")
-        if raw is not None:
-            # ASCII digits only: "²".isdigit() is true but int() refuses it, and int()
-            # refuses a digit string over 4300 digits; any number past the cap is the cap
-            digits = raw.strip()
-            if not re.fullmatch(r"[0-9]+", digits):
-                return _json(400, f"limit must be a whole number from 1 to {MEETING_LIST_MAX}")
-            digits = digits.lstrip("0") or "0"
-            params["limit"] = MEETING_LIST_MAX if len(digits) > 6 else \
-                max(1, min(int(digits), MEETING_LIST_MAX))
-        return await forward_method("GET", "/v1/meetings", timeout=MEETING_TIMEOUT,
-                                    params=params, headers=auth)
+        async def handler(request: Any) -> Any:
+            kwargs: dict[str, Any] = {"headers": auth}
+            path = api_path
+            if route.meeting_id:
+                mid = request.path_params["meeting_id"]
+                if not _MEETING_ID.fullmatch(mid):
+                    # the API's own answer for an id it doesn't know
+                    return _json(404, "meeting not found")
+                path = api_path.replace("{meeting_id}", mid)
+            if route.limit:
+                params: dict[str, int] = {}
+                raw = request.query_params.get("limit")
+                if raw is not None:
+                    limit = _meeting_limit(raw)
+                    if limit is None:
+                        return _json(400, "limit must be a whole number from 1 to "
+                                          f"{MEETING_LIST_MAX}")
+                    params["limit"] = limit
+                kwargs["params"] = params
+            if route.json_cap is not None:
+                # Never log the body: the sign-in one is the pasted sign-in code.
+                ctype = request.headers.get("content-type", "")
+                if not ctype.lower().startswith("application/json"):
+                    return _json(415, f"send application/json, like {api_path}")
+                body = await _read_capped(request, route.json_cap)
+                if body is None:
+                    return _json(413, "request too large")
+                kwargs["content"] = body
+                kwargs["headers"] = {**auth, "Content-Type": "application/json"}
+            return await forward_method(route.method, path, timeout=route.timeout, **kwargs)
 
-    def meeting_path(request: Any) -> str | None:
-        mid = request.path_params["meeting_id"]
-        return f"/v1/meetings/{mid}" if _MEETING_ID.fullmatch(mid) else None
+        mcp.custom_route(route.path, methods=[route.method], include_in_schema=False)(handler)
 
-    @mcp.custom_route("/meetings/{meeting_id}", methods=["GET"], include_in_schema=False)
-    async def get_meeting(request: Any) -> Any:
-        path = meeting_path(request)
-        if path is None:  # the API's own answer for an id it doesn't know
-            return _json(404, "meeting not found")
-        return await forward_method("GET", path, timeout=MEETING_TIMEOUT, headers=auth)
-
-    @mcp.custom_route("/meetings/{meeting_id}", methods=["DELETE"], include_in_schema=False)
-    async def leave_meeting(request: Any) -> Any:
-        path = meeting_path(request)
-        if path is None:
-            return _json(404, "meeting not found")
-        return await forward_method("DELETE", path, timeout=MEETING_LEAVE_TIMEOUT,
-                                    headers=auth)
-
-    # ------------------------------------------------------------- Zoom sign-in
-    @mcp.custom_route("/zoom/signin", methods=["GET"], include_in_schema=False)
-    async def zoom_signin_status(request: Any) -> Any:
-        return await forward_method("GET", "/v1/zoom/signin", timeout=MEETING_TIMEOUT,
-                                    headers=auth)
-
-    @mcp.custom_route("/zoom/signin/start", methods=["POST"], include_in_schema=False)
-    async def zoom_signin_start(request: Any) -> Any:
-        return await forward_method("POST", "/v1/zoom/signin/start",
-                                    timeout=MEETING_TIMEOUT, headers=auth)
-
-    @mcp.custom_route("/zoom/signin/finish", methods=["POST"], include_in_schema=False)
-    async def zoom_signin_finish(request: Any) -> Any:
-        # Never log the body: it is the pasted sign-in code.
-        ctype = request.headers.get("content-type", "")
-        if not ctype.lower().startswith("application/json"):
-            return _json(415, "send application/json, like /v1/zoom/signin/finish")
-        body = await _read_capped(request, MAX_SIGNIN_BODY_BYTES)
-        if body is None:
-            return _json(413, "request too large")
-        return await forward_method("POST", "/v1/zoom/signin/finish",
-                                    timeout=MEETING_TIMEOUT, content=body,
-                                    headers={**auth, "Content-Type": "application/json"})
+    for route in FORWARD_ROUTES:
+        forward_route(route)

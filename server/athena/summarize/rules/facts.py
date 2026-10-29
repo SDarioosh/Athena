@@ -8,6 +8,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+from ..draft import Context, SummaryDraft
 from ..schemas import FACT_KINDS, KnownFacts
 from .text import _content_words
 
@@ -137,14 +138,15 @@ def _request(text: str, people: Iterable[str]) -> bool:
     return False
 
 
-def _drop_passing_facts(out: dict[str, Any]) -> None:
+def drop_passing_facts(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
     """Facts are for months; one tied to a single day ("today", "tonight", "this
     morning", "right now") is not one, and neither is curiosity about something that
     came up ("is interested in hearing how it sounds"), thinking aloud ("is considering
     selling the boat", "might move") or a request to someone else ("wants Bo to send the
     report": an action item), whatever the model says (small models keep them)."""
+    draft = draft.copy()
     keep = []
-    for fact in out["facts"]:
+    for fact in draft.facts:
         text = fact["fact"]
         if _ONE_DAY.search(text):
             log.info("dropped a one-day fact: %r", text)
@@ -155,11 +157,12 @@ def _drop_passing_facts(out: dict[str, Any]) -> None:
         if _hedged(text):
             log.info("dropped a thinking-aloud fact: %r", text)
             continue
-        if _request(text, out.get("people") or []):
+        if _request(text, draft.people or []):
             log.info("dropped a request to someone else: %r", text)
             continue
         keep.append(fact)
-    out["facts"] = keep
+    draft.facts = keep
+    return draft
 
 
 def _known_matches(facts: list[dict[str, Any]], known: KnownFacts) -> set[int]:
@@ -180,6 +183,67 @@ def _known_matches(facts: list[dict[str, Any]], known: KnownFacts) -> set[int]:
                 out.add(i)
                 break
     return out
+
+
+def review_facts(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
+    """A second look at the model's facts (``_review``)."""
+    return _review(draft, ctx, keep_decisions=False)
+
+
+def review_facts_keep_decisions(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
+    """``review_facts`` for a voice note: the owner's decisions are kept, neither
+    reviewed nor capped."""
+    return _review(draft, ctx, keep_decisions=True)
+
+
+def _review(draft: SummaryDraft, ctx: Context, keep_decisions: bool) -> SummaryDraft:
+    """A second look at the model's facts. One call scores each 1-5 (worth recalling
+    in three months?, ``REVIEW_SYSTEM``, ``Context.review``) and facts under
+    ``fact_min_score`` are left out; then the best ``max_facts`` are kept (ties: the
+    model's order). A fact the review gives no score counts as ``fact_min_score``; a
+    failed review call keeps every fact. A fact that repeats or updates a stored one
+    (``known``) is never cut by the cap: it adds nothing new, and cutting an update would
+    leave the old value current. With ``keep_decisions`` (voice notes), the owner's
+    decisions are neither reviewed nor capped."""
+    draft = draft.copy()
+    facts = draft.facts
+    if not facts:
+        return draft
+    owner = {ctx.owner.lower(), *_OWNER_WORDS}
+    kept = [keep_decisions and f.get("kind") == "decision"
+            and (f.get("subject") or "").strip().lower() in owner for f in facts]
+    asked_ids = [i for i, k in enumerate(kept) if not k]
+    scores: dict[int, int] = {}
+    if ctx.fact_min_score > 1 and asked_ids and ctx.review is not None:
+        lines = ctx.said_by_offset
+        asked = [{"number": i, "subject": facts[i]["subject"], "fact": facts[i]["fact"],
+                  "said": lines.get(int(facts[i]["source_at"] - ctx.origin), "")
+                  if facts[i].get("source_at") is not None else ""}
+                 for i in asked_ids]
+        scores = {number: min(5, max(1, score)) for number, score in ctx.review(asked)
+                  if number in asked_ids}
+    repeats = _known_matches(facts, ctx.known) if ctx.known is not None else set()
+    keep, ranked = [], []
+    for i, fact in enumerate(facts):
+        if kept[i]:
+            keep.append(i)
+            continue
+        score = scores.get(i, ctx.fact_min_score)
+        if score < ctx.fact_min_score:
+            log.info("dropped a fact the review scored %d: %r", score, fact["fact"])
+        elif i in repeats:
+            keep.append(i)
+        else:
+            ranked.append((-score, i))
+    ranked.sort()
+    if ctx.max_facts and len(ranked) > ctx.max_facts:
+        for _, i in ranked[ctx.max_facts:]:
+            log.info("dropped a fact over the cap of %d: %r", ctx.max_facts,
+                     facts[i]["fact"])
+        ranked = ranked[:ctx.max_facts]
+    keep += [i for _, i in ranked]
+    draft.facts = [facts[i] for i in sorted(keep)]
+    return draft
 
 
 def _intent_fact(text: str, decided: bool) -> str:

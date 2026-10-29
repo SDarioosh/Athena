@@ -1,6 +1,6 @@
 # Athena and Odysseus cleanup: phased plan
 
-As of 2026-10-28. Status (2026-10-29): **in progress**: Phases 0 and 1 merged; Phase 2 merged except its gate. Covers both repos: Athena (this repo) and
+As of 2026-10-28. Status (2026-10-29): **in progress**: Phases 0, 1 and 2 merged and gated; Phase 3 running. Covers both repos: Athena (this repo) and
 our Odysseus fork (`SDarioosh/odysseus-expanded`, hub side in its
 `docs/fork/cleanup-plan.md`, which points here). Each lane is sized for one Claude
 subagent, one branch and one PR. An **overseer** session runs the lanes, checks each
@@ -764,3 +764,4 @@ of `pipeline.py` into `validation.py`, so it goes before 3A, which rewrites `pip
 | Baseline | 2026-10-29 | 1,598 passed, 3 skipped | 1,931 passed (fork + trio) | Phase 0 | Phase 0 | Phase 0 | sandbox |
 | Gate 0 | 2026-10-29 | 1,759 passed, 3 skipped (+0A, 0B) | 1,964 passed (+0C, after 0D) | 1/3 (`1 9 16`; noisy, see notes) | 8/8 partial | belief 19/19 · 80/80, insight 53/53, ink CER 7.6% / WER 12.5% | qwen3-4b, CPU contention during the run |
 | Gate 1 | 2026-10-29 | 1,805 passed, 3 skipped; PC relay 251; firmware host 20/20; meeting bot 2/2 + 4/4 | 1,995 passed (+1D) | A/B `1 6 13 16 17 20`: before 3/6, after 5/6 | first 25: 25/25 both | unchanged; `/athena` slash eval 2/6 both | idle machine, A/B back to back; Athena MCP output byte-identical A vs B |
+| Gate 2 | 2026-10-29 | 1,949 passed, 3 skipped (same test ids as before 2D, moved); PC relay 272; firmware host 20/20; PDA host 12/12; meeting bot 2/2 + 4/4 | fork + trio + env reference + procfs guard + frontend build 2,107 passed; full suite: same 21 sandbox failures before and after 2F | A/B `1 6 13 16 17 20`: Phase 1 code 1/6, Phase 2 code 2/6 | 25/25 both | belief 19/19 · 80/80, scale 11/11, insight 8/8 · 53/53, ink CER 1.4% / WER 6.7%: unchanged; `/athena` slash 1/6 → 3/6 | idle machine, back to back; contract snapshots and summarizer request bytes byte-identical; small-model scores swing widely (the Phase 1 code scored 5/6 at Gate 1), so from Phase 3 on, lanes prove "no change" with deterministic before/after tests and model evals are a sanity check only |
