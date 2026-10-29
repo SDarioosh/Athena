@@ -1,1 +1,1 @@
-"""convo-ai local server."""
+"""Athena local server (package `convo_server`)."""

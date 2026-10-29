@@ -1,4 +1,4 @@
-"""MCP server over the convo-ai store: the knowledge layer for any frontend.
+"""MCP server over the Athena store: the knowledge layer for any frontend.
 
 Frontends (Hermes Agent, Odysseus, ...) connect over stdio (``convo-server mcp``) or
 Streamable HTTP with a bearer token (``convo-server mcp --http``). The SQLite store stays
@@ -119,7 +119,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("convo-ai", instructions=INSTRUCTIONS, version="0.20.0")
+    mcp = MCPServer("athena", instructions=INSTRUCTIONS, version="0.20.1")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)

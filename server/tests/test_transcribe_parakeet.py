@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from convo_server import cli
 from convo_server.config import Settings
@@ -175,8 +176,12 @@ def test_build_transcriber_selects_backend(monkeypatch: pytest.MonkeyPatch, tmp_
 
     with pytest.raises(RuntimeError, match="CONVO_PARAKEET_MODEL_DIR"):
         cli.build_transcriber(_settings(tmp_path, transcriber="parakeet"))
+    # an unknown backend fails when the settings load; the CLI check stays as a backstop
+    with pytest.raises(ValidationError):
+        _settings(tmp_path, transcriber="vosk")
+    vosk = _settings(tmp_path).model_copy(update={"transcriber": "vosk"})  # skips validation
     with pytest.raises(RuntimeError, match="unknown CONVO_TRANSCRIBER"):
-        cli.build_transcriber(_settings(tmp_path, transcriber="vosk"))
+        cli.build_transcriber(vosk)
 
 
 def test_env_selects_parakeet(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

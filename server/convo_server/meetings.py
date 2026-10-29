@@ -3,7 +3,7 @@
 Imported lazily by the API route handlers, on the first meeting request: a server that
 never gets one never imports this module. Nothing here runs between meetings:
 
-- The bot (``CONVO_MEETING_BOT_PATH``, lane 1A's ``athena-meeting-bot``) is a child
+- The bot (``CONVO_MEETING_BOT_PATH``, ``athena-meeting-bot`` in ``meeting-bot/``) is a child
   process started on request, under safety caps (``systemd-run --user --scope`` with
   ``CPUQuota``, ``MemoryMax`` and ``RuntimeMaxSec`` when that works, else ``nice 10`` and
   ``RLIMIT_AS``).
@@ -13,7 +13,7 @@ never gets one never imports this module. Nothing here runs between meetings:
 - After a server restart, rows still marked active are checked on the next meeting
   request (is the pid still that bot?); there is no startup scan.
 
-Bot contract (lane 1A codes against it; also in ``server/README.md``)::
+Bot contract (the bot codes against it; also in ``docs/api/meetings.md``)::
 
     <bot> --meeting-id <digits> --session-id <id> --upload-url <http://127.0.0.1:port>
           --name Athena --max-seconds <s> --alone-seconds <s> --waiting-room-seconds <s>
@@ -126,7 +126,7 @@ class ZoomMeeting:
 
 def parse_zoom_link(text: str) -> ZoomMeeting:
     """The meeting number and passcode of a Zoom join link; ValueError with a message the
-    owner can act on otherwise. The hub (lane 4B) mirrors these rules:
+    owner can act on otherwise. The hub's meeting box mirrors these rules:
 
     - ``https://zoom.us/j/<number>?pwd=<pwd>`` and any subdomain of zoom.us
       (``us06web.zoom.us``, a company's vanity ``acme.zoom.us``); ``http`` and a link

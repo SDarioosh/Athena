@@ -1,5 +1,5 @@
 """Regression tests for the QC report of 2026-10-25 (action items and beliefs). Each test
-failed on the code before its fix; see docs/qc-report-2026-10-25.md. Fictional data."""
+failed on the code before its fix; see docs/archive/qc-report-2026-10-25.md. Fictional data."""
 
 from __future__ import annotations
 
