@@ -589,7 +589,9 @@ After 3G's `settings.py` exists (3G merges its settings module first, as its fir
   `module_facts`, `sound_module_view`, `sound_module_routes`, `today_insight`,
   `beliefs_routes`, `module_turn_scope`, and the HTTP callers in `call_recorder.forward`,
   `meeting_bot._call`, `summary_model_routes`, `whisper_vocabulary_routes`,
-  `sound_relay_routes`, `ink_athena`. One `AthenaError`, one server setting.
+  `sound_relay_routes`, `ink_athena`. One `AthenaError`. As run: two server settings stay
+  (`athena_server()` and `athena_recorder_server()`, the client's `recorder=True`), because
+  the owner may point the recorder at another Athena; merging them is an open owner question.
 - [ ] Tests on 0C's contract fixtures.
 
 **3G Common helpers and settings (hub).** Owns `fork/common/`.
