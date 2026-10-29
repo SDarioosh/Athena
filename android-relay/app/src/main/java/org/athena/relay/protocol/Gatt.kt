@@ -15,6 +15,18 @@ object WatchGatt {
 
     val PROFILE = GattProfile(SERVICE, DATA, STATUS)
 
+    /** The watch's Bluetooth name. Firmware before 2026-10-29 advertises [OLD_NAME]; the
+     *  relay accepts both, forever. The scan matches [SERVICE], never the name, and a bond
+     *  is kept by MAC address, so a reflashed watch stays paired. */
+    const val NAME = "athena-tw"
+    const val OLD_NAME = "barvis-tw"
+
+    /** How the watch shows up in Android's Bluetooth settings, for user-facing hints. */
+    const val NAME_HINT = "\"$NAME\" (older firmware: \"$OLD_NAME\")"
+
+    /** True for the watch's current or older Bluetooth name. */
+    fun isWatchName(name: String?): Boolean = name == NAME || name == OLD_NAME
+
     /** Client Characteristic Configuration descriptor (standard). */
     val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
