@@ -128,7 +128,7 @@ too when it will still matter in a month (a trip, a purchase, a project, a move)
 owner plans to ...". Fewer good facts are better than many weak ones. Keys: \
 facts[{{subject, fact, kind, at_seconds}}]."""
 
-# The second look at the facts (``Summarizer._review_facts``): small models list too many.
+# The second look at the facts (``rules.facts.review_facts``): small models list too many.
 REVIEW_SYSTEM = """You check facts picked from one conversation before they go into the \
 user's long-term memory. Score each fact from 1 to 5:
 5: certainly worth recalling in three months: an allergy, a job, a family member, a \

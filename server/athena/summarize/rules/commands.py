@@ -3,20 +3,22 @@ which items are explicit."""
 
 from __future__ import annotations
 
+import dataclasses
 import re
-from typing import Any
+from collections.abc import Sequence
 
 from ...dates import resolve_time
 from ...domain import NOTE_ITEM, clean_list_name, is_explicit, short_title
+from ..draft import Context, DraftItem, SummaryDraft
 from ..schemas import ActionItem
 from ..storage import _item_storage
-from .notes import _NOTE_COMMAND, _NOTES_PHRASE, _note_storage
+from .notes import _NOTE_COMMAND, _NOTES_PHRASE, _note_storage, note_word_said
 from .text import (
-    _LINE,
     _NAME_WORD,
     _SENTENCE_END,
     _STOP,
     _WHEN_WORDS,
+    Line,
     _content_words,
     _meridiem,
     _overlaps,
@@ -50,31 +52,26 @@ _THANKS = re.compile(r"[\s,]*\b(?:thanks|thank\s+you|please|cheers)\s*[.!]*$", r
 _SENTENCE_MAX = 400
 
 
-def _whole_sentences(parts: list[str]) -> list[tuple[str, int]]:
+def _whole_sentences(lines: Sequence[Line]) -> list[tuple[str, int]]:
     """The transcript's sentences, each with the offset of the line it starts on. The
     transcriber breaks lines mid-sentence ("... has a bug where a" / "speaker is ..."):
     a line that doesn't end a sentence goes on into the next one."""
     out: list[tuple[str, int]] = []
     open_: tuple[str, int] | None = None  # the sentence still being said
-    for part in parts:
-        for line in part.splitlines():
-            m = _LINE.match(line.strip())
-            if not m:
-                continue
-            at = int(m["at"])
-            said = _INNER_FILLER.sub("", _ELLIPSIS.sub(" ", m["text"]))
-            pieces = [p.strip() for p in _SENTENCE_END.split(said) if p.strip()]
-            for i, piece in enumerate(pieces):
-                if open_ is not None and i == 0:
-                    piece, start = f"{open_[0]} {piece}", open_[1]
-                else:
-                    start = at
-                open_ = None
-                if i < len(pieces) - 1 or piece.endswith((".", "!", "?")) \
-                        or len(piece) >= _SENTENCE_MAX:
-                    out.append((piece, start))
-                else:
-                    open_ = (piece, start)
+    for line in lines:
+        said = _INNER_FILLER.sub("", _ELLIPSIS.sub(" ", line.text))
+        pieces = [p.strip() for p in _SENTENCE_END.split(said) if p.strip()]
+        for i, piece in enumerate(pieces):
+            if open_ is not None and i == 0:
+                piece, start = f"{open_[0]} {piece}", open_[1]
+            else:
+                start = line.at
+            open_ = None
+            if i < len(pieces) - 1 or piece.endswith((".", "!", "?")) \
+                    or len(piece) >= _SENTENCE_MAX:
+                out.append((piece, start))
+            else:
+                open_ = (piece, start)
     if open_ is not None:
         out.append(open_)
     return out
@@ -88,11 +85,11 @@ def _starts_command(text: str) -> bool:
                 or (_ADD_TO_NOTES.match(t) and _NOTES_PHRASE.search(t)))
 
 
-def _command_units(parts: list[str]) -> list[tuple[str, int]]:
+def _command_units(lines: Sequence[Line]) -> list[tuple[str, int]]:
     """The sentences, with one sentence that holds several commands split at each ("Make
     a to-do to get eggs and make a note that the car is broken" is a to-do and a note,
     not one to-do that says both); the lead words of each are taken off."""
-    return [(c, at) for sentence, at in _whole_sentences(parts)
+    return [(c, at) for sentence, at in _whole_sentences(lines)
             for c in (_LEAD.sub("", x) for x in _split_commands(sentence)) if c]
 
 
@@ -112,10 +109,10 @@ def _split_commands(sentence: str) -> list[str]:
     return [x for x in out if x]
 
 
-def _command_sentences(parts: list[str]) -> list[tuple[str, int]]:
+def _command_sentences(lines: Sequence[Line]) -> list[tuple[str, int]]:
     """Sentences that ask for a note ("create a note ...", "note that ...", "add to my
     hardware notes ..."), with the offset of the line they start on."""
-    sentences = _command_units(parts)
+    sentences = _command_units(lines)
     out = []
     i = 0
     while i < len(sentences):
@@ -149,9 +146,9 @@ def _words(text: str) -> set[str]:
     return set(re.findall(r"[^\W\d_]+|\d+", text.lower())) - _STOP
 
 
-def _covers(item: dict[str, Any], want: set[str]) -> bool:
+def _covers(item: DraftItem, want: set[str]) -> bool:
     """The item says mostly the same words."""
-    got = _words(item["text"])
+    got = _words(item.text)
     return bool(got) and len(want & got) >= 0.6 * min(len(want), len(got))
 
 
@@ -159,48 +156,53 @@ def _covers(item: dict[str, Any], want: set[str]) -> bool:
 _OTHER_COMMAND = re.compile(r"\b(?:to-?do|task|remind\s+me|reminder)\b", re.IGNORECASE)
 
 
-def _notes_from_commands(items: list[dict[str, Any]], parts: list[str],
-                         origin: float) -> None:
-    """Make sure each spoken note command gives a note: an item the model already wrote
+def notes_from_commands(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
+    """Only in a voice note that says the word "note(s)" (``notes.note_word_said``):
+    make sure each spoken note command gives a note: an item the model already wrote
     for it becomes the note (small models take "add to my hardware notes ..." for a
     task); a command without an item gets one, untitled (the hub titles it). A model's
     note that left out the notes the user named ("in voice recorder") goes there.
     A to-do the user asked for out loud is never taken for a note."""
-    for said, at in _command_sentences(parts):
-        note = _note_storage(ActionItem(text=said, kind=NOTE_ITEM), said, origin + at)
-        want = _words(note["text"])
+    if not note_word_said(ctx):
+        return draft
+    draft = draft.copy()
+    items = draft.action_items
+    for said, at in _command_sentences(ctx.lines):
+        note = DraftItem.from_row(_note_storage(ActionItem(text=said, kind=NOTE_ITEM), said,
+                                                ctx.origin + at))
+        want = _words(note.text)
         if not want:
             continue
-        cover = next((i for i in items if i["kind"] == NOTE_ITEM and _covers(i, want)), None)
+        cover = next((i for i in items if i.kind == NOTE_ITEM and _covers(i, want)), None)
         if cover is not None:
-            if note["list_name"] and not cover.get("list_name"):
-                cover.update(list_name=note["list_name"], text=note["text"])
-            elif _OTHER_COMMAND.search(cover["text"]) and not _OTHER_COMMAND.search(said):
+            if note.list_name and not cover.list_name:
+                cover.list_name, cover.text = note.list_name, note.text
+            elif _OTHER_COMMAND.search(cover.text) and not _OTHER_COMMAND.search(said):
                 # the model wrote the note and the to-do said with it as one note
-                cover.update(text=note["text"], title=note["title"], note_title=None)
+                cover.text, cover.title, cover.note_title = note.text, note.title, None
             continue
-        twin = next((i for i in items if i["kind"] != NOTE_ITEM and not i.get("due_date")
-                     and not i.get("due_time") and not i.get(_ASKED)
-                     and _covers(i, want)), None)
+        twin = next((i for i in items if i.kind != NOTE_ITEM and not i.due_date
+                     and not i.due_time and not i.asked and _covers(i, want)), None)
         if twin is not None:
-            if len(_words(twin["text"])) > len(want):  # the model wrote down more of it
-                text = _NOTE_COMMAND.sub("", twin["text"].strip()).strip(" :,-")
-                note["text"] = re.sub(r"(?<!\.)\.$", "", text[:1].upper() + text[1:])
-                note["title"] = short_title(None, note["text"])
-            twin.update(note, note_title=None, source_at=twin.get("source_at") or origin + at,
-                        time_unclear=False)
-            twin.pop("time", None)
+            if len(_words(twin.text)) > len(want):  # the model wrote down more of it
+                text = _NOTE_COMMAND.sub("", twin.text.strip()).strip(" :,-")
+                note.text = re.sub(r"(?<!\.)\.$", "", text[:1].upper() + text[1:])
+                note.title = short_title(None, note.text)
+            # the twin becomes the note: the note's fields, the twin's place in the list
+            twin.text, twin.title, twin.kind, twin.owner = (note.text, note.title, note.kind,
+                                                            note.owner)
+            twin.due, twin.due_date, twin.duration_minutes = None, None, None
+            twin.location, twin.list_name, twin.note_title = None, note.list_name, None
+            twin.source_at = twin.source_at or ctx.origin + at
+            twin.time_unclear, twin.said_time = False, None
         else:
-            note.pop("time", None)
-            note["due_time"], note["time_unclear"] = None, False
             items.append(note)
+    return draft
 
 
 # A to-do the user asked for out loud ("Make a to-do to figure out how ...", "add a task:
 # ...", "new to-do: ...", "remind me (on Friday) to ..."): what follows the command is the
 # to-do. Not "make a to-do list" (a list header, see ``_after_list_header``).
-_ASKED = "_asked"  # set on items a spoken to-do command asked for; dropped by _mark_explicit
-_SAID = "_said"  # the command an item was asked for with; dropped by _command_dates
 # a day said between the command and the to-do: "make a to-do for tomorrow to ...",
 # "remind me on Friday to ...", "remind me at 5 to ..."
 _CMD_WHEN = (r"(?:(?:on|by|for|this|next|at|around|in\s+the)\s+)*(?:today|tonight|tomorrow"
@@ -291,22 +293,22 @@ def _list_things(text: str) -> list[str]:
     return [p.strip() for p in _LIST_SEP.split(text) if p.strip()]
 
 
-def _add_asked(items: list[dict[str, Any]], text: str, list_name: str | None,
+def _add_asked(items: list[DraftItem], text: str, list_name: str | None,
                when: str | None, source_at: float, owner: str) -> None:
     """A line said for a list: a task on it, unless an item already says it (that one
     gets the list)."""
     want = _content_words(text)
     if not want:
         return
-    twins = [i for i in items if i["kind"] != NOTE_ITEM and _overlaps(want, i["text"])]
+    twins = [i for i in items if i.kind != NOTE_ITEM and _overlaps(want, i.text)]
     for twin in twins:
-        twin[_ASKED] = True
-        if list_name and not twin.get("list_name"):
-            twin["list_name"] = list_name
+        twin.asked = True
+        if list_name and not twin.list_name:
+            twin.list_name = list_name
     if not twins:
-        items.append({**_item_storage(ActionItem(
+        items.append(dataclasses.replace(DraftItem.from_row(_item_storage(ActionItem(
             text=text, kind="task", owner=owner, list_name=list_name, due=when,
-            title=_todo_title(text)), source_at), _ASKED: True})
+            title=_todo_title(text)), source_at)), asked=True))
 
 
 def _todo_text(what: str, when: str | None = None) -> str:
@@ -323,8 +325,7 @@ def _todo_title(text: str) -> str:
     return short_title(None, bare if len(bare.split()) >= 2 else text)
 
 
-def _todos_from_commands(items: list[dict[str, Any]], parts: list[str], origin: float,
-                         owner: str) -> None:
+def todos_from_commands(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
     """Make sure each to-do the user asked for out loud is an item. The prompts call a
     vague wish ("figure out how ...") no action item unless it has a command word, and
     small models drop it even with one (for "Make a to-do to figure out how renewing a
@@ -332,12 +333,14 @@ def _todos_from_commands(items: list[dict[str, Any]], parts: list[str], origin: 
     suggest).
     A command no item already covers gets a task; the words the transcriber put on the
     next line ("... works" / "for Bruno.") are part of it. An item that covers one (the
-    model reworded it) is marked as asked for (``_ASKED``): it stays a to-do and is
+    model reworded it) is marked as asked for (``DraftItem.asked``): it stays a to-do and is
     explicit even when its words no longer find the command's sentence. "Add ... to my
     shopping list" works the same, and gives the list to an item the model left without.
     "Remind me" with a time is a reminder."""
+    draft = draft.copy()
+    items, origin, owner = draft.action_items, ctx.origin, ctx.owner
     header: tuple[str | None, str | None] | None = None  # (list, day) of a list said
-    for said, at in _command_units(parts):
+    for said, at in _command_units(ctx.lines):
         m = _TODO_COMMAND.match(said.strip())
         list_name = due = None
         if (got_header := _list_header(said)) is not None:
@@ -363,20 +366,22 @@ def _todos_from_commands(items: list[dict[str, Any]], parts: list[str], origin: 
         want = _content_words(text)
         if not want:
             continue
-        twins = [i for i in items if i["kind"] != NOTE_ITEM and _overlaps(want, i["text"])]
+        twins = [i for i in items if i.kind != NOTE_ITEM and _overlaps(want, i.text)]
         for twin in twins:
-            twin[_ASKED] = True
-            twin[_SAID] = (f"{text} {due or ''}".strip(),
-                           bool(m and re.match(r"remind\b", said.strip(), re.IGNORECASE)))
-            if list_name and not twin.get("list_name"):
-                twin["list_name"] = list_name
+            twin.asked = True
+            twin.command = (f"{text} {due or ''}".strip(),
+                            bool(m and re.match(r"remind\b", said.strip(), re.IGNORECASE)))
+            if list_name and not twin.list_name:
+                twin.list_name = list_name
         if not twins:
             reminder = bool(m and re.match(r"remind\b", said.strip(), re.IGNORECASE)
                             and resolve_time(text)[0])
             item = ActionItem(text=text, kind="reminder" if reminder else "task",
                               owner=owner, list_name=list_name, title=_todo_title(text),
                               due=due)
-            items.append({**_item_storage(item, origin + at), _ASKED: True})
+            items.append(dataclasses.replace(DraftItem.from_row(_item_storage(
+                item, origin + at)), asked=True))
+    return draft
 
 
 # the user asked for a to-do: "remind me", "todo", "to-do", "task:", "add a task", "add
@@ -414,37 +419,50 @@ def _after_list_header(text: str, spoken: list[tuple[str, str]]) -> bool:
     return any(i >= header for i, x in enumerate(spoken) if x == (clause, sentence))
 
 
-def _mark_explicit(items: list[dict[str, Any]],
-                   spoken: list[tuple[str, str]] | None) -> None:
+def _mark_explicit(items: list[DraftItem], spoken: list[tuple[str, str]] | None) -> None:
     """``explicit``: the user asked for the item (a date or time, a named list, a
     reminder, event or note, or in a voice note (``spoken``) a command word), so the hub
     files it; the rest are suggestions."""
     for item in items:
         said = ""
         if spoken is not None:
-            said = f"{item['text']}\n{_said_in(item['text'], spoken)[1]}"
-        item["explicit"] = (bool(item.pop(_ASKED, False)) or is_explicit(item)
-                            or _COMMAND_WORDS.search(said) is not None
-                            or (spoken is not None and _after_list_header(item["text"], spoken)))
+            said = f"{item.text}\n{_said_in(item.text, spoken)[1]}"
+        item.explicit = (item.asked or is_explicit(vars(item))
+                         or _COMMAND_WORDS.search(said) is not None
+                         or (spoken is not None and _after_list_header(item.text, spoken)))
+
+
+def mark_explicit_voice_note(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
+    """``DraftItem.explicit`` in a voice note: command words count (``_mark_explicit``)."""
+    draft = draft.copy()
+    _mark_explicit(draft.action_items, ctx.spoken)
+    return draft
+
+
+def mark_explicit(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
+    """``DraftItem.explicit`` in a conversation: no command words (``_mark_explicit``)."""
+    draft = draft.copy()
+    _mark_explicit(draft.action_items, None)
+    return draft
 
 
 # "eggs, milk and bread": things said as a list, each a line of its own
 _LIST_SEP = re.compile(r"\s*,\s*(?:and\s+)?|\s+and\s+", re.IGNORECASE)
 
 
-def _split_list_lines(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def split_list_lines(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
     """An item for a named list that says several things ("Eggs, milk and bread" for the
     shopping list) is one item per thing, so each is a line to tick. Only a comma list of
     short things ("salt and pepper" alone stays one line)."""
     out = []
-    for item in items:
-        text = item["text"].strip().rstrip(".")
+    for item in draft.action_items:
+        text = item.text.strip().rstrip(".")
         pieces = [p.strip() for p in _LIST_SEP.split(text) if p.strip()]
-        if (item["kind"] != "task" or not item.get("list_name") or "," not in text
+        if (item.kind != "task" or not item.list_name or "," not in text
                 or len(pieces) < 2 or any(len(p.split()) > 3 for p in pieces)):
-            out.append(item)
+            out.append(dataclasses.replace(item))
             continue
         for piece in pieces:
             piece = piece[:1].upper() + piece[1:]
-            out.append({**item, "text": piece, "title": short_title(None, piece)})
-    return out
+            out.append(dataclasses.replace(item, text=piece, title=short_title(None, piece)))
+    return dataclasses.replace(draft.copy(), action_items=out)
