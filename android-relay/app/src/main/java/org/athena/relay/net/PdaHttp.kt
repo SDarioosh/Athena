@@ -113,11 +113,6 @@ internal class JsonClient(
     fun networkError(): ServerResult = ServerResult.Transient("$name not reachable (network error)")
 
     /** A 2xx JSON object, or the classified error. */
-    suspend fun obj(path: String, logPath: String = path): ApiResult<Map<String, Any?>> {
-        val a = call("GET", path, logPath = logPath) ?: return ApiResult.Fail(networkError())
-        return objOf(a)
-    }
-
     fun objOf(a: HttpAnswer): ApiResult<Map<String, Any?>> {
         if (a.code !in 200..299) return ApiResult.Fail(HttpUploader.classify(a.code, a.body, needOkField = false))
         return try {
@@ -141,8 +136,8 @@ internal class JsonClient(
 
 /**
  * The Athena HTTP API (server/athena/api.py), directly or through Odysseus
- * ([routes]: the same paths under `/api/codex/sound` and the same JSON). The token is never
- * logged.
+ * ([routes]: the same paths under `/api/codex/athena`, or `/api/codex/sound` on a hub from
+ * before those ([hubRoutes]), and the same JSON). The token is never logged.
  */
 class ConvoHttpApi(
     baseUrl: String,
@@ -150,40 +145,51 @@ class ConvoHttpApi(
     transport: HttpTransport = UrlConnectionTransport(),
     log: RelayLog = RelayLog.NONE,
     private val routes: Routes = Routes.DIRECT,
+    private val hubRoutes: HubRoutes = HubRoutes.SHARED,
 ) : ConvoApi {
     private val c = JsonClient(baseUrl, token, transport, log, routes.name)
+    private val base = baseUrl
     private val p = routes.prefix
 
+    /** [JsonClient.call] on the hub's routes (null: network error). */
+    private suspend fun call(method: String, path: String, auth: Boolean = true, json: Any? = null): HttpAnswer? =
+        hubRoutes.call<HttpAnswer?>(base, path, { it?.code }) { c.call(method, it, auth = auth, json = json) }
+
+    private suspend fun obj(path: String): ApiResult<Map<String, Any?>> {
+        val a = call("GET", path) ?: return ApiResult.Fail(c.networkError())
+        return c.objOf(a)
+    }
+
     override suspend fun health(): ServerResult {
-        val a = c.call("GET", routes.health, auth = routes.healthNeedsToken) ?: return c.networkError()
+        val a = call("GET", routes.health, auth = routes.healthNeedsToken) ?: return c.networkError()
         return HttpUploader.classify(a.code, a.body)
     }
 
     override suspend fun digest(date: String): ApiResult<Map<String, Any?>> {
         require(DATE.matches(date)) { "bad date" }
-        return c.obj("$p/digests/$date")
+        return obj("$p/digests/$date")
     }
 
     override suspend fun conversations(sinceEpochS: Long, limit: Int): ApiResult<List<Map<String, Any?>>> =
-        list(c.obj("$p/conversations?since=$sinceEpochS&limit=$limit"), "conversations")
+        list(obj("$p/conversations?since=$sinceEpochS&limit=$limit"), "conversations")
 
     override suspend fun openActionItems(): ApiResult<List<Map<String, Any?>>> =
-        list(c.obj("$p/action-items?status=open"), "action_items")
+        list(obj("$p/action-items?status=open"), "action_items")
 
     override suspend fun conversation(id: String): ApiResult<Map<String, Any?>> =
-        c.obj("$p/conversations/${JsonClient.enc(id)}")
+        obj("$p/conversations/${JsonClient.enc(id)}")
 
     override suspend fun transcript(id: String): ApiResult<Map<String, Any?>> =
-        c.obj("$p/conversations/${JsonClient.enc(id)}/transcript")
+        obj("$p/conversations/${JsonClient.enc(id)}/transcript")
 
     override suspend fun setActionItemStatus(id: Long, status: String): ServerResult {
-        val a = c.call("PATCH", "$p/action-items/$id", json = mapOf("status" to status)) ?: return c.networkError()
+        val a = call("PATCH", "$p/action-items/$id", json = mapOf("status" to status)) ?: return c.networkError()
         return HttpUploader.classify(a.code, a.body)
     }
 
     override suspend fun makeDigest(date: String): ServerResult {
         require(DATE.matches(date)) { "bad date" }
-        val a = c.call("POST", "$p/digests/$date", json = emptyMap<String, Any?>()) ?: return c.networkError()
+        val a = call("POST", "$p/digests/$date", json = emptyMap<String, Any?>()) ?: return c.networkError()
         return HttpUploader.classify(a.code, a.body, needOkField = false)
     }
 
