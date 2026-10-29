@@ -103,7 +103,7 @@ def template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """The demo store, built once per run."""
     data = tmp_path_factory.mktemp("contract-template") / "data"
     build(data)
-    return data / "convo.db"
+    return settings_for(data).db_path
 
 
 def _copy(template: Path, data_dir: Path) -> Pipeline:

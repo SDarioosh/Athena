@@ -624,7 +624,8 @@ def run(settings: Settings, store: Store, embedder: Embedder | None, http: bool)
         mcp.run("stdio")
         return
     if not settings.mcp_token or len(settings.mcp_token) < 16:
-        raise SystemExit("set CONVO_MCP_TOKEN (>= 16 chars) to serve MCP over HTTP")
+        raise SystemExit("set CONVO_MCP_TOKEN (or ATHENA_MCP_TOKEN, >= 16 chars) to serve MCP "
+                         "over HTTP")
     import uvicorn
 
     from .ingest_relay import add_ingest_routes

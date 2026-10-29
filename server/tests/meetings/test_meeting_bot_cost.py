@@ -99,6 +99,18 @@ def test_configured_cap(tmp_path, monkeypatch) -> None:
     assert cost.configured_cap(env)[0] == 1536 * 1024 ** 2
 
 
+def test_configured_cap_new_name_first(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("CONVO_MEETING_BOT_MEMORY", raising=False)
+    monkeypatch.delenv("ATHENA_MEETING_BOT_MEMORY", raising=False)
+    env = tmp_path / ".env"
+    env.write_text("ATHENA_MEETING_BOT_MEMORY=4G\nCONVO_MEETING_BOT_MEMORY=3G\n")
+    assert cost.configured_cap(env) == (4 * 1024 ** 3, f"ATHENA_MEETING_BOT_MEMORY=4G ({env})")
+    monkeypatch.setenv("CONVO_MEETING_BOT_MEMORY", "1536M")  # the environment beats .env
+    assert cost.configured_cap(env)[0] == 1536 * 1024 ** 2
+    monkeypatch.setenv("ATHENA_MEETING_BOT_MEMORY", "1G")
+    assert cost.configured_cap(env) == (1024 ** 3, "ATHENA_MEETING_BOT_MEMORY=1G (environment)")
+
+
 def test_cpu_math() -> None:
     tck = 100
     # one core busy for 2 s of 4 s: 50 % average, 100 % peak over a 1 s window

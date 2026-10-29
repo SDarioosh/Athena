@@ -394,3 +394,12 @@ def test_check_migration_refuses_a_live_database(tmp_path: Path,
     Store(live).close()
     assert check.main([str(live)]) == 1
     assert "looks like a live database" in capsys.readouterr().out
+
+
+def test_check_migration_refuses_a_live_athena_db(tmp_path: Path,
+                                                  capsys: pytest.CaptureFixture) -> None:
+    check = _check_migration()
+    live = tmp_path / "athena.db"
+    Store(live).close()
+    assert check.main([str(live)]) == 1
+    assert "looks like a live database" in capsys.readouterr().out
