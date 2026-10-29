@@ -7,14 +7,14 @@ import httpx
 import numpy as np
 import pytest
 
-from convo_server.audio import SAMPLE_RATE, to_wav_bytes
-from convo_server.config import Settings
-from convo_server.diarize import Diarizer, load_voices
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.pipeline import Pipeline
-from convo_server.store import Store
-from convo_server.transcribe import TranscriptPiece
-from convo_server.vad import EnergyVAD
+from athena.audio import SAMPLE_RATE, to_wav_bytes
+from athena.config import Settings
+from athena.diarize import Diarizer, load_voices
+from athena.llm import LLMClient, Summarizer
+from athena.pipeline import Pipeline
+from athena.store import Store
+from athena.transcribe import TranscriptPiece
+from athena.vad import EnergyVAD
 
 TOKEN = "test-token-0123456789abcdef"
 
@@ -139,7 +139,7 @@ def pipeline(settings: Settings, llm_log: list) -> Pipeline:
 def client(pipeline: Pipeline):
     from fastapi.testclient import TestClient
 
-    from convo_server.api import create_app
+    from athena.api import create_app
 
     with TestClient(create_app(pipeline)) as c:
         c.headers["Authorization"] = f"Bearer {TOKEN}"

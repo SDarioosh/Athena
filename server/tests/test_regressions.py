@@ -9,10 +9,10 @@ from datetime import UTC, datetime
 import numpy as np
 from conftest import silence, tone, wav
 
-from convo_server import audio as audio_mod
-from convo_server.diarize import cluster
-from convo_server.pipeline import Worker
-from convo_server.store import Segment
+from athena import audio as audio_mod
+from athena.diarize import cluster
+from athena.pipeline import Worker
+from athena.store import Segment
 
 T0 = 1_760_000_000.0
 
@@ -108,7 +108,7 @@ def test_worker_redoes_a_digest_when_a_late_conversation_of_that_day_arrives(
         pipeline, monkeypatch, llm_log):
     """Relays upload store-and-forward recordings late. A digest written before a
     conversation of that day was summarized was never redone, so it missed it."""
-    from convo_server import pipeline as pipeline_mod
+    from athena import pipeline as pipeline_mod
 
     day = datetime.fromtimestamp(T0, UTC)
     yesterday = day.strftime("%Y-%m-%d")

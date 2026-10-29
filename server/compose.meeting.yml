@@ -7,7 +7,7 @@
 #
 # Builds the Dockerfile's `meeting` target for sound-api: meeting-bot/ compiled against the
 # unpacked Zoom Meeting SDK, which comes in as a BuildKit build context and never from git.
-# The launcher (convo_server/meetings.py) starts the bot as a child process of
+# The launcher (athena/meetings.py) starts the bot as a child process of
 # `convo-server serve` in this container, with the plain runner (nice 10 + RLIMIT_AS); no
 # new service. sound-mcp keeps the image without the bot.
 #

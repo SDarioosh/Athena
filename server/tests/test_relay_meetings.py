@@ -19,10 +19,10 @@ from starlette.testclient import TestClient
 from test_ingest_relay import MCP_TOKEN, mcp_client
 from test_meetings import SDK_KEY, SDK_SECRET, _bot, _gone
 
-from convo_server import ingest_relay
-from convo_server.api import create_app
-from convo_server.ingest_relay import add_ingest_routes
-from convo_server.mcp_server import build_mcp
+from athena import ingest_relay
+from athena.api import create_app
+from athena.ingest_relay import add_ingest_routes
+from athena.mcp_server import build_mcp
 
 Q = f"?access_token={MCP_TOKEN}"
 MID = "0123456789abcdef0123456789abcdef"
@@ -244,16 +244,16 @@ def test_building_the_mcp_app_skips_meeting_code(tmp_path):
     no thread (a fresh interpreter, so other tests can't pollute sys.modules)."""
     code = textwrap.dedent(f"""
         import sys, threading
-        from convo_server.config import Settings
-        from convo_server.store import Store
-        from convo_server.mcp_server import BearerAuth, build_mcp
-        from convo_server.ingest_relay import add_ingest_routes
+        from athena.config import Settings
+        from athena.store import Store
+        from athena.mcp_server import BearerAuth, build_mcp
+        from athena.ingest_relay import add_ingest_routes
         s = Settings(ingest_token="x" * 20, mcp_token="m" * 20, data_dir={str(tmp_path)!r},
                      run_worker=False, vad_backend="energy", meeting_bot_path="/bin/true")
         mcp = build_mcp(Store(s.db_path), s)
         add_ingest_routes(mcp, s)
         app = BearerAuth(mcp.streamable_http_app(), s.mcp_token)
-        assert "convo_server.meetings" not in sys.modules, "meetings imported"
+        assert "athena.meetings" not in sys.modules, "meetings imported"
         assert threading.active_count() == 1, threading.enumerate()
         print("ok")
     """)

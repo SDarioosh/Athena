@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 from conftest import SAMPLE_RATE, silence, tone, wav
 
-from convo_server.diarize import PieceRef, SpeakerLabel
-from convo_server.meeting_tracks import (
+from athena.diarize import PieceRef, SpeakerLabel
+from athena.meeting_tracks import (
     BLEED_MIN_SIMILARITY,
     BLEED_SURE_SIMILARITY,
     Line,
@@ -24,7 +24,7 @@ from convo_server.meeting_tracks import (
     text_similarity,
     track_speaker,
 )
-from convo_server.transcribe import TranscriptPiece
+from athena.transcribe import TranscriptPiece
 
 T0 = 1_760_000_000.0
 SERVER = Path(__file__).resolve().parents[1]
@@ -169,12 +169,12 @@ def test_meeting_never_imports_pyannote_and_plain_sessions_never_import_meeting_
         import sys
         import numpy as np
         sys.path.insert(0, {str(SERVER / "tests")!r})
-        import convo_server.api, convo_server.cli, convo_server.mcp_server
+        import athena.api, athena.cli, athena.mcp_server
         from conftest import FakeTranscriber, silence, tone, wav
-        from convo_server.config import Settings
-        from convo_server.pipeline import Pipeline
-        from convo_server.store import Store
-        from convo_server.vad import EnergyVAD
+        from athena.config import Settings
+        from athena.pipeline import Pipeline
+        from athena.store import Store
+        from athena.vad import EnergyVAD
         s = Settings(ingest_token="x" * 20, data_dir={str(tmp_path)!r}, run_worker=False,
                      vad_backend="energy", whisper_window_seconds=0,
                      learn_meeting_voices=False)
@@ -182,17 +182,17 @@ def test_meeting_never_imports_pyannote_and_plain_sessions_never_import_meeting_
         p.ingest_chunk(device="omi", session_id="s", sequence=0, started_at=1e9,
                        codec="wav", data=wav(tone(300, 5), silence(25)))
         p.end_session("s"); p.process_session("s")
-        assert "convo_server.meeting_tracks" not in sys.modules, "plain session"
+        assert "athena.meeting_tracks" not in sys.modules, "plain session"
         for i, f in enumerate((300, 500)):
             p.ingest_chunk(device="zoom", session_id="m", sequence=0, started_at=2e9,
                            codec="wav", data=wav(tone(f, 5), silence(25)),
                            track=str(i), track_name="Person " + "AB"[i])
         p.end_session("m"); p.process_session("m")
-        assert "convo_server.meeting_tracks" in sys.modules
-        speaker_models = ("convo_server.diarize_pyannote", "pyannote", "speechbrain")
+        assert "athena.meeting_tracks" in sys.modules
+        speaker_models = ("athena.diarize_pyannote", "pyannote", "speechbrain")
         bad = [m for m in sys.modules if m.startswith(speaker_models)]
         assert not bad, bad
-        assert "convo_server.meeting_voices" not in sys.modules, "learning is off"
+        assert "athena.meeting_voices" not in sys.modules, "learning is off"
         print([x.speaker for x in p.store.session_segments("m")])
 
         class EmbedderOnly:
@@ -215,7 +215,7 @@ def test_meeting_never_imports_pyannote_and_plain_sessions_never_import_meeting_
                                                  silence(18 - at)),
                            track=str(i), track_name="Person " + "AB"[i])
         p.end_session("m2"); p.process_session("m2")
-        assert "convo_server.meeting_voices" in sys.modules
+        assert "athena.meeting_voices" in sys.modules
         bad = [m for m in sys.modules if m.startswith(speaker_models)]
         assert not bad, bad
         assert Trap.embedder.clips == [3 * 16000] * 6, Trap.embedder.clips
@@ -270,7 +270,7 @@ def test_room_track_without_diarizer_keeps_the_room_name(pipeline):
 
 
 def test_owner_names_setting():
-    from convo_server.config import Settings
+    from athena.config import Settings
 
     s = Settings(ingest_token="x" * 20, zoom_owner_names=" Cleo Example, ,Cleo (phone) ")
     assert s.zoom_owner_name_list == ("Cleo Example", "Cleo (phone)")
@@ -493,7 +493,7 @@ def test_the_last_round_after_max_duration_is_still_stored(pipeline):
 
 
 def test_a_chunk_racing_the_worker_is_refused(pipeline, settings):
-    from convo_server.store import MeetingClosed
+    from athena.store import MeetingClosed
 
     _upload(pipeline, "m1", 0, T0, track_audio((0, tone(300, 5))), "a", "Alice Example")
     pipeline.end_session("m1")

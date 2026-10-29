@@ -11,8 +11,8 @@ from test_mcp import call
 from test_meeting_chat import chat, process, upload
 from test_meeting_tracks import ALICE, BO, T0, ScriptedWhisper
 
-from convo_server.mcp_server import build_mcp
-from convo_server.store import CHAT
+from athena.mcp_server import build_mcp
+from athena.store import CHAT
 
 
 @pytest.fixture

@@ -9,7 +9,7 @@ import json
 from test_confirmed_facts import DAY, HOUR, T0, said_at, say
 from test_mcp import call
 
-from convo_server.mcp_server import build_mcp
+from athena.mcp_server import build_mcp
 
 
 def facts_json(pipeline, **args) -> list[dict]:

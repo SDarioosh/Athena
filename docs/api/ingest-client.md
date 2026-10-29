@@ -1,7 +1,7 @@
 # Ingest client contract
 
 What a program that uploads audio to Athena (an *uploader*) does with each answer of
-`POST /v1/ingest/chunk`. The server side is `server/convo_server/api.py` (`ingest_chunk`)
+`POST /v1/ingest/chunk`. The server side is `server/athena/api.py` (`ingest_chunk`)
 and `server/README.md` ("Ingestion API"); this page is the client side, written once for
 every uploader. The machine-readable form is
 [`ingest-client-cases.json`](ingest-client-cases.json): one row per answer,

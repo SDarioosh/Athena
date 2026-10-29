@@ -16,9 +16,9 @@ from conftest import TOKEN
 from test_mcp import call
 from test_meeting_tracks import ALICE, BO, CLEO, T0, ScriptedWhisper
 
-from convo_server.llm import format_transcript
-from convo_server.mcp_server import build_mcp
-from convo_server.store import CHAT, SPEECH, Segment, Store
+from athena.llm import format_transcript
+from athena.mcp_server import build_mcp
+from athena.store import CHAT, SPEECH, Segment, Store
 
 SERVER = Path(__file__).resolve().parents[1]
 DANA = "16782336"  # in the meeting, typed in chat, never spoke (no track)
@@ -316,7 +316,7 @@ def test_json_rows_have_source(done_meeting, pipeline, mcp):
 
 
 def test_view_page_shows_chat_and_meeting(done_meeting, client, pipeline):
-    from convo_server.links import transcript_link
+    from athena.links import transcript_link
 
     conv_id = done_meeting[0].conversation_id
     link = transcript_link(pipeline.settings, conv_id).split("/view/")[1]
@@ -388,21 +388,21 @@ def test_old_database_gets_the_kind_column(tmp_path):
 def test_meeting_chat_is_imported_only_on_a_chat_call(tmp_path):
     script = textwrap.dedent(f"""
         import sys
-        import convo_server.api, convo_server.cli, convo_server.mcp_server
+        import athena.api, athena.cli, athena.mcp_server
         from fastapi.testclient import TestClient
-        from convo_server.config import Settings
-        from convo_server.pipeline import Pipeline
-        from convo_server.store import Store
-        from convo_server.vad import EnergyVAD
+        from athena.config import Settings
+        from athena.pipeline import Pipeline
+        from athena.store import Store
+        from athena.vad import EnergyVAD
         s = Settings(ingest_token={TOKEN!r}, data_dir={str(tmp_path)!r}, run_worker=False,
                      vad_backend="energy")
-        app = convo_server.api.create_app(Pipeline(s, Store(s.db_path), EnergyVAD()))
+        app = athena.api.create_app(Pipeline(s, Store(s.db_path), EnergyVAD()))
         with TestClient(app) as c:
             c.headers["Authorization"] = "Bearer {TOKEN}"
             assert c.get("/v1/sessions").status_code == 200
-            assert "convo_server.meeting_chat" not in sys.modules, "loaded at startup"
+            assert "athena.meeting_chat" not in sys.modules, "loaded at startup"
             assert c.post("/v1/sessions/x/chat", json={{}}).status_code == 404
-            assert "convo_server.meeting_chat" in sys.modules
+            assert "athena.meeting_chat" in sys.modules
         import threading
         # AnyIO's worker threads are told to stop when the loop closes but may take a
         # moment to exit; wait for them so only a thread left behind for good counts
@@ -468,7 +468,7 @@ def test_bot_silent_start_makes_a_session_for_chat_only(pipeline, client):
 def test_meeting_label_names_no_platform():
     # MCP 0.17.0: meetings may come from other platforms than Zoom later, so the mark
     # after a title says "Online meeting", never the platform.
-    from convo_server.links import meeting_label
+    from athena.links import meeting_label
     assert meeting_label({"topic": "Q4 budget review"}) == " (Online meeting: Q4 budget review)"
     assert meeting_label({"topic": None}) == " (Online meeting)"
     assert meeting_label(None) == ""
@@ -477,7 +477,7 @@ def test_meeting_label_names_no_platform():
 
 def test_kind_meeting_and_in_person_split_conversations(done_meeting, pipeline, mcp):
     # MCP 0.18.0: the hub's Online meetings tab lists meetings apart.
-    from convo_server.store import IN_PERSON, MEETING
+    from athena.store import IN_PERSON, MEETING
     conv_id = done_meeting[0].conversation_id
     pipeline.ingest_chunk(device="omi", session_id="s1", sequence=0, started_at=T0 + 7200,
                           codec="wav", data=ALICE[2])

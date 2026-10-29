@@ -17,7 +17,7 @@ import java.net.URL
 import java.security.SecureRandom
 
 /**
- * Talks to the owner's Athena server (server/convo_server/api.py), directly or through
+ * Talks to the owner's Athena server (server/athena/api.py), directly or through
  * Odysseus ([routes]), with [HttpURLConnection]. Only [baseUrl] is ever contacted; redirects are not followed so the
  * token can't be sent anywhere else. The token is read from [token] per request and never
  * logged. Timeouts stay below the watch's 30 s idle disconnect (§7.2): an upload that is

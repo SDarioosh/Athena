@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 from test_schema_snapshot import FIXTURES, OLD_ROWS, describe, schema_diffs, user_version
 
-import convo_server.store as store_mod
-from convo_server.store import MIGRATIONS, SCHEMA_VERSION, Store
+import athena.store as store_mod
+from athena.store import MIGRATIONS, SCHEMA_VERSION, Store
 
 V16_FIXTURES = ("schema_v16.sql", "schema_v16_migrated.sql")
 
@@ -291,11 +291,11 @@ def test_long_lock_wait_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFixtu
     other.execute("BEGIN IMMEDIATE")
     threading.Timer(0.5, lambda: other.execute("COMMIT")).start()
     try:
-        with caplog.at_level(logging.WARNING, logger="convo_server.store"):
+        with caplog.at_level(logging.WARNING, logger="athena.store"):
             store.set_setting("vocabulary", "kiln")
         assert any("write lock" in r.message for r in caplog.records)
         caplog.clear()
-        with caplog.at_level(logging.WARNING, logger="convo_server.store"):
+        with caplog.at_level(logging.WARNING, logger="athena.store"):
             store.set_setting("vocabulary", "glaze")
         assert not caplog.records
     finally:

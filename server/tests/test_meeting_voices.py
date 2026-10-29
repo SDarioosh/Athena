@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 from conftest import SAMPLE_RATE, ToneEmbedder, dominant_freq, silence, tone, wav
 
-from convo_server.diarize import load_voices
-from convo_server.meeting_voices import (
+from athena.diarize import load_voices
+from athena.meeting_voices import (
     MAX_MEETING_SAMPLES,
     candidate_windows,
     merge,
@@ -129,7 +129,7 @@ def test_owner_samples_go_to_the_enrolled_owner_never_a_second_owner(pipeline, r
 def test_owner_without_enrolled_voice_is_not_learned(pipeline, rec, caplog):
     with pipeline.store.tx() as c:
         c.execute("UPDATE speakers SET is_owner = 0")
-    with caplog.at_level(logging.INFO, "convo_server.meeting_voices"):
+    with caplog.at_level(logging.INFO, "athena.meeting_voices"):
         meeting(pipeline, [("o", "Cleo Example", track((0, 14, 700)))],
                 owners="Cleo Example")
     assert rec.clips == []
@@ -149,7 +149,7 @@ def test_setting_false_stores_nothing(pipeline, rec):
 
 def test_no_diarizer_skips_quietly_once(pipeline, caplog):
     pipeline.diarizer = None
-    with caplog.at_level(logging.INFO, "convo_server.meeting_voices"):
+    with caplog.at_level(logging.INFO, "athena.meeting_voices"):
         meeting(pipeline, [("a", "Alice Example", track((0, 14, 300))),
                            ("b", "Bo Example", track((15, 14, 500)))])
     assert "Alice Example" not in {s["name"] for s in pipeline.store.speakers()}
@@ -158,7 +158,7 @@ def test_no_diarizer_skips_quietly_once(pipeline, caplog):
 
 def test_pyannote_embedder_is_never_used(pipeline, rec, caplog):
     pipeline.settings.speaker_embedder = "pyannote"
-    with caplog.at_level(logging.INFO, "convo_server.meeting_voices"):
+    with caplog.at_level(logging.INFO, "athena.meeting_voices"):
         meeting(pipeline, [("a", "Alice Example", track((0, 14, 300)))])
     assert rec.clips == []
     assert "not ecapa" in caplog.text

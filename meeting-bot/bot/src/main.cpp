@@ -1,6 +1,6 @@
 // athena-meeting-bot: joins one Zoom meeting as "Athena" with the Zoom Meeting SDK for Linux,
 // records one track per participant and leaves on its own (docs/zoom-meeting-bot-plan.md,
-// lane 1A and the bot part of lane 3A). The launcher (server/convo_server/meetings.py)
+// lane 1A and the bot part of lane 3A). The launcher (server/athena/meetings.py)
 // starts it per meeting; nothing of it runs between meetings.
 //
 // SDK calls are kept as close as possible to the Phase 0 spike's athena_spike.cpp, which

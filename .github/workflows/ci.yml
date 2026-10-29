@@ -46,6 +46,9 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8001/mcp)" = 401
           docker compose exec -T sound-api python -c \
             "import urllib.request as u; u.urlopen('http://whisper:8178/', timeout=5)"
+          # the CLI under both names, and the old package name as an alias
+          docker compose exec -T sound-api sh -c \
+            "athena --help >/dev/null && convo-server --help >/dev/null && python -m convo_server.cli --help >/dev/null"
       - name: Container logs
         if: failure()
         working-directory: server

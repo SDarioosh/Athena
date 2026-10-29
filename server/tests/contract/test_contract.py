@@ -35,12 +35,12 @@ from demo_store import (
 )
 from fastapi.testclient import TestClient
 
-from convo_server.api import create_app
-from convo_server.ingest_relay import add_ingest_routes
-from convo_server.links import sign
-from convo_server.mcp_server import BearerAuth, build_mcp
-from convo_server.pipeline import Pipeline
-from convo_server.store import Store
+from athena.api import create_app
+from athena.ingest_relay import add_ingest_routes
+from athena.links import sign
+from athena.mcp_server import BearerAuth, build_mcp
+from athena.pipeline import Pipeline
+from athena.store import Store
 
 SNAPSHOTS = Path(__file__).parent / "snapshots"
 UPDATE = os.environ.get("UPDATE_SNAPSHOTS") == "1"

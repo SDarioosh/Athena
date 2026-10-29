@@ -11,9 +11,9 @@ import pytest
 from conftest import tone
 from test_pipeline import ingest
 
-from convo_server.cli import build_transcriber
-from convo_server.config import Settings
-from convo_server.transcribe import (
+from athena.cli import build_transcriber
+from athena.config import Settings
+from athena.transcribe import (
     DecodeOptions,
     TranscriptPiece,
     WhisperCliTranscriber,
@@ -120,8 +120,8 @@ def unit(*xs: float) -> np.ndarray:
 
 
 def test_voice_samples_are_kept_not_blended(tmp_path):
-    from convo_server.diarize import load_voices
-    from convo_server.store import Store
+    from athena.diarize import load_voices
+    from athena.store import Store
 
     store = Store(tmp_path / "c.db")
     store.add_voice_sample("Alice", unit(1, 0))
@@ -139,7 +139,7 @@ def test_voice_samples_are_kept_not_blended(tmp_path):
 
 
 def test_old_single_voiceprints_become_samples(tmp_path):
-    from convo_server.store import Store
+    from athena.store import Store
 
     store = Store(tmp_path / "c.db")
     store.put_speaker("Me", unit(1), True)
@@ -153,8 +153,8 @@ def test_old_single_voiceprints_become_samples(tmp_path):
 def test_enrollment_keeps_several_samples(tmp_path):
     from conftest import ToneEmbedder
 
-    from convo_server.diarize import enroll_voice
-    from convo_server.store import Store
+    from athena.diarize import enroll_voice
+    from athena.store import Store
 
     store = Store(tmp_path / "c.db")
     audio = np.concatenate([tone(200, 30), tone(300, 30)])  # 60 s, two "styles"
@@ -167,7 +167,7 @@ def test_enrollment_keeps_several_samples(tmp_path):
 def owner_diarizer(margin=0.10):
     from conftest import ToneEmbedder
 
-    from convo_server.diarize import Diarizer, EnrolledVoice
+    from athena.diarize import Diarizer, EnrolledVoice
 
     return Diarizer(ToneEmbedder(), [EnrolledVoice("Me", unit(1), True)],
                     match_threshold=0.5, owner_hint_margin=margin)
@@ -176,7 +176,7 @@ def owner_diarizer(margin=0.10):
 def test_loudest_borderline_cluster_is_the_owner(caplog):
     d = owner_diarizer()
     loud, quiet = unit(0.45, 0.893), unit(0.1, 0.995)  # owner scores 0.45 and 0.10
-    with caplog.at_level("INFO", logger="convo_server.diarize"):
+    with caplog.at_level("INFO", logger="athena.diarize"):
         labels, unnamed = d.name_clusters([quiet, loud], loudness=[-30.0, -18.0])
     assert "owner hint: speaker 2 of 2 named Me (voice score 0.45" in caplog.text
     assert "12.0 dB louder" in caplog.text
@@ -197,7 +197,7 @@ def test_owner_hint_needs_loudness_gap_and_close_voice():
 def test_best_pairs_are_matched_first():
     from conftest import ToneEmbedder
 
-    from convo_server.diarize import Diarizer, EnrolledVoice
+    from athena.diarize import Diarizer, EnrolledVoice
 
     d = Diarizer(ToneEmbedder(), [EnrolledVoice("Alice", unit(1), False)])
     # the first cluster is a weak match, the second a strong one: Alice is the second
@@ -211,7 +211,7 @@ def test_pyannote_backend_turns_off_telemetry_and_cloud():
 
     import pytest
 
-    from convo_server import diarize_pyannote
+    from athena import diarize_pyannote
 
     assert os.environ["PYANNOTE_METRICS_ENABLED"] == "false"
     for model in ("pyannote/speaker-diarization-precision-2",
@@ -224,8 +224,8 @@ def test_pyannote_backend_turns_off_telemetry_and_cloud():
 def test_pyannote_diarizer_names_turns_with_enrolled_voices():
     from conftest import ToneEmbedder, silence
 
-    from convo_server.diarize import EnrolledVoice, PieceRef
-    from convo_server.diarize_pyannote import PyannoteDiarizer
+    from athena.diarize import EnrolledVoice, PieceRef
+    from athena.diarize_pyannote import PyannoteDiarizer
 
     e = ToneEmbedder()
     run = np.concatenate([tone(200, 4), tone(600, 4), silence(1), tone(200, 3)])
@@ -242,8 +242,8 @@ def test_pyannote_diarizer_names_turns_with_enrolled_voices():
 def test_pyannote_merges_speakers_across_runs():
     from conftest import ToneEmbedder
 
-    from convo_server.diarize import PieceRef
-    from convo_server.diarize_pyannote import PyannoteDiarizer
+    from athena.diarize import PieceRef
+    from athena.diarize_pyannote import PyannoteDiarizer
 
     runs = [np.concatenate([tone(300, 3), tone(700, 3)]), tone(700, 3)]
     seg = {6.0: [(0.0, 3.0, "A"), (3.0, 6.0, "B")], 3.0: [(0.0, 3.0, "A")]}
@@ -257,8 +257,8 @@ def test_pyannote_keeps_speakers_of_one_run_apart():
     inside a run must survive, so the second person doesn't take the first one's name."""
     from conftest import ToneEmbedder
 
-    from convo_server.diarize import EnrolledVoice, PieceRef
-    from convo_server.diarize_pyannote import PyannoteDiarizer
+    from athena.diarize import EnrolledVoice, PieceRef
+    from athena.diarize_pyannote import PyannoteDiarizer
 
     e = ToneEmbedder()
     run = tone(300, 8)  # both "voices" embed the same
@@ -271,7 +271,7 @@ def test_pyannote_keeps_speakers_of_one_run_apart():
 
 
 def test_cluster_cannot_link():
-    from convo_server.diarize import cluster
+    from athena.diarize import cluster
 
     x = np.array([[1, 0], [1, 0], [1, 0]], dtype=np.float32)
     assert cluster(x, 0.5) == [0, 0, 0]
@@ -282,7 +282,7 @@ def test_cluster_cannot_link():
 def test_naming_relabels_the_same_voice_in_other_conversations(pipeline):
     from test_mcp import T0, call, process_two_speakers
 
-    from convo_server.mcp_server import build_mcp
+    from athena.mcp_server import build_mcp
 
     mcp = build_mcp(pipeline.store, pipeline.settings)
     process_two_speakers(pipeline)
@@ -306,7 +306,7 @@ def test_relabel_needs_a_confident_unique_match(pipeline):
     from conftest import ToneEmbedder
     from test_mcp import process_two_speakers
 
-    from convo_server.speakers import relabel_matches
+    from athena.speakers import relabel_matches
 
     store = pipeline.store
     process_two_speakers(pipeline)  # leaves an unnamed "Speaker 1" (600 Hz)
@@ -320,7 +320,7 @@ def test_relabel_needs_a_confident_unique_match(pipeline):
 def test_rename_everywhere_and_reassign_line(pipeline):
     from test_mcp import T0, call, process_two_speakers
 
-    from convo_server.mcp_server import build_mcp
+    from athena.mcp_server import build_mcp
 
     mcp = build_mcp(pipeline.store, pipeline.settings)
     process_two_speakers(pipeline)
@@ -348,7 +348,7 @@ def test_rename_everywhere_and_reassign_line(pipeline):
 def test_relabel_never_overwrites_a_name_a_person_set(pipeline):
     from test_mcp import T0, call, process_two_speakers
 
-    from convo_server.mcp_server import build_mcp
+    from athena.mcp_server import build_mcp
 
     store = pipeline.store
     mcp = build_mcp(store, pipeline.settings)
@@ -372,7 +372,7 @@ def test_relabel_never_gives_two_voices_of_one_recording_the_same_name(pipeline)
     from conftest import ToneEmbedder
     from test_mcp import call, process_two_speakers
 
-    from convo_server.mcp_server import build_mcp
+    from athena.mcp_server import build_mcp
 
     store = pipeline.store
     mcp = build_mcp(store, pipeline.settings)
@@ -389,7 +389,7 @@ def test_relabel_never_gives_two_voices_of_one_recording_the_same_name(pipeline)
 def test_rename_everywhere_refuses_an_unnamed_label_as_new_name(pipeline):
     from test_mcp import call, process_two_speakers
 
-    from convo_server.mcp_server import build_mcp
+    from athena.mcp_server import build_mcp
 
     mcp = build_mcp(pipeline.store, pipeline.settings)
     process_two_speakers(pipeline)
@@ -402,8 +402,8 @@ def test_rename_everywhere_refuses_an_unnamed_label_as_new_name(pipeline):
 def test_pyannote_fallback_labels_dont_collide():
     from conftest import ToneEmbedder
 
-    from convo_server.diarize import PieceRef
-    from convo_server.diarize_pyannote import PyannoteDiarizer
+    from athena.diarize import PieceRef
+    from athena.diarize_pyannote import PyannoteDiarizer
 
     runs = [tone(300, 4), tone(900, 4)]
 
@@ -417,7 +417,7 @@ def test_pyannote_fallback_labels_dont_collide():
 
 
 def test_one_line_speakers_join_the_closest_speaker():
-    from convo_server.diarize import absorb_singletons
+    from athena.diarize import absorb_singletons
 
     a, b = unit(1, 0, 0), unit(0, 1, 0)
     near_a = unit(1, 0.9, 0)  # one noisy piece, closer to a (0.74) than to b (0.67)

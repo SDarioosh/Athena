@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 from conftest import silence, tone, wav
 
-from convo_server.llm import ConversationSummary, LLMClient, LLMError, _strip_fences
-from convo_server.transcribe import parse_cli_json, parse_verbose_json
+from athena.llm import ConversationSummary, LLMClient, LLMError, _strip_fences
+from athena.transcribe import parse_cli_json, parse_verbose_json
 
 T0 = 1_760_000_000.0
 
@@ -159,8 +159,8 @@ def test_enroll_speaker_json_for_the_watch(client):
 def test_summary_filters_placeholder_people_and_absent_owner():
     from conftest import fake_llm_transport
 
-    from convo_server.llm import Summarizer
-    from convo_server.store import Segment
+    from athena.llm import Summarizer
+    from athena.store import Segment
 
     summary = {"title": "t", "summary": "s", "key_points": [], "action_items": [],
                "people": ["Speaker 1", "Me", "Alice", "alice", "Unknown"], "topics": [],

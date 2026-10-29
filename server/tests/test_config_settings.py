@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from convo_server import meetings
-from convo_server.config import Settings
+from athena import meetings
+from athena.config import Settings
 
 ENV_EXAMPLE = Path(__file__).resolve().parents[1] / ".env.example"
 TOKEN = "t" * 32
@@ -57,7 +57,7 @@ def test_backend_choice_typo_fails_at_startup(field: str, monkeypatch) -> None:
 @pytest.mark.parametrize("field", sorted(MEETING))
 def test_meeting_choice_typo_only_warns_at_startup(field: str, monkeypatch, caplog) -> None:
     monkeypatch.setenv(f"CONVO_{field.upper()}", "wisper")
-    with caplog.at_level(logging.WARNING, logger="convo_server.config"):
+    with caplog.at_level(logging.WARNING, logger="athena.config"):
         s = Settings(ingest_token=TOKEN, _env_file=None)
     assert getattr(s, field) == "wisper"
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
@@ -65,9 +65,9 @@ def test_meeting_choice_typo_only_warns_at_startup(field: str, monkeypatch, capl
 
 
 def test_valid_meeting_choices_do_not_warn(caplog) -> None:
-    with caplog.at_level(logging.WARNING, logger="convo_server.config"):
+    with caplog.at_level(logging.WARNING, logger="athena.config"):
         Settings(ingest_token=TOKEN, _env_file=None)
-    assert not [r for r in caplog.records if r.name == "convo_server.config"]
+    assert not [r for r in caplog.records if r.name == "athena.config"]
 
 
 @pytest.mark.parametrize("field", sorted(MEETING))

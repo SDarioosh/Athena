@@ -14,10 +14,10 @@ import numpy as np
 import pytest
 from conftest import SAMPLE_RATE, tone
 
-from convo_server import meeting_live
-from convo_server.pipeline import Pipeline, Worker
-from convo_server.store import Store
-from convo_server.transcribe import TranscriptPiece
+from athena import meeting_live
+from athena.pipeline import Pipeline, Worker
+from athena.store import Store
+from athena.transcribe import TranscriptPiece
 
 T0 = 1_760_000_000.0
 SERVER = Path(__file__).resolve().parents[1]
@@ -151,7 +151,7 @@ def run_meeting(pipeline, *, live=True, window=0.0):
 def fresh(settings, tmp_path, name) -> Pipeline:
     from conftest import ToneEmbedder
 
-    from convo_server.diarize import Diarizer, load_voices
+    from athena.diarize import Diarizer, load_voices
 
     s = settings.model_copy(update={"data_dir": tmp_path / name})
     store = Store(s.db_path)
@@ -161,7 +161,7 @@ def fresh(settings, tmp_path, name) -> Pipeline:
 
 
 def pipeline_vad():
-    from convo_server.vad import EnergyVAD
+    from athena.vad import EnergyVAD
 
     return EnergyVAD()
 
@@ -286,10 +286,10 @@ def test_worker_tick_imports_no_meeting_code_and_starts_nothing(tmp_path):
         import sys, threading
         sys.path.insert(0, {str(SERVER / "tests")!r})
         from conftest import FakeTranscriber, silence, tone, wav
-        from convo_server.config import Settings
-        from convo_server.pipeline import Pipeline, Worker
-        from convo_server.store import Store
-        from convo_server.vad import EnergyVAD
+        from athena.config import Settings
+        from athena.pipeline import Pipeline, Worker
+        from athena.store import Store
+        from athena.vad import EnergyVAD
         s = Settings(ingest_token="x" * 20, data_dir={str(tmp_path)!r}, run_worker=False,
                      vad_backend="energy", whisper_window_seconds=0)
         t = FakeTranscriber()
@@ -300,7 +300,7 @@ def test_worker_tick_imports_no_meeting_code_and_starts_nothing(tmp_path):
                        codec="wav", data=wav(tone(300, 5), silence(25)))
         for _ in range(3):
             w.tick()
-        meeting = [m for m in sys.modules if m.startswith("convo_server.meeting")]
+        meeting = [m for m in sys.modules if m.startswith("athena.meeting")]
         assert not meeting, meeting
         assert t.calls == 0 and threading.active_count() == threads
         for seq in range(2):
@@ -309,7 +309,7 @@ def test_worker_tick_imports_no_meeting_code_and_starts_nothing(tmp_path):
                            data=wav(tone(300, 5), silence(10), tone(500, 5), silence(10)),
                            track="1", track_name="Person A")
         w.tick()
-        assert "convo_server.meeting_live" in sys.modules
+        assert "athena.meeting_live" in sys.modules
         assert t.calls == 3, t.calls  # all but the last window, during the meeting
         p.end_session("m"); w.tick()
         assert t.calls == 4, t.calls
@@ -391,7 +391,7 @@ def test_a_late_earlier_chunk_restarts_that_track(settings, tmp_path, caplog):
     upload(live, 0)                # her chunk 0 arrives late and comes first
     upload(live, 1, only={BO, ROOM})
     upload(live, 2, only={BO, CLEO})
-    with caplog.at_level("INFO", logger="convo_server.meeting_live"):
+    with caplog.at_level("INFO", logger="athena.meeting_live"):
         worker.tick()
     assert "live transcript restarted" in caplog.text
     live.end_session("m1")
@@ -610,7 +610,7 @@ def test_live_skips_every_track_the_end_pass_diarizes(pipeline, names):
     uses to diarize it (any display name it ever had is a room or a device, owner names
     excepted), not by its latest name only: no live work is spent on it once a room or
     device name is known."""
-    from convo_server.meeting_tracks import is_room_track
+    from athena.meeting_tracks import is_room_track
 
     heard = _named_chunks(pipeline, "t1", names)
     info = pipeline.store.tracks("m1")[0]

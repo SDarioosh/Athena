@@ -1,7 +1,10 @@
 # Athena server
 
-The `convo_server` package (CLI `convo-server`, env prefix `CONVO_`) keeps the project's
-old name, convo-ai. Don't rename it.
+The Python package is `athena`, with the CLI `athena`. The old names keep working:
+`convo_server` is an alias of the package (`import convo_server.store` and
+`python -m convo_server.cli` give the same modules), and the `convo-server` CLI runs the
+same code, so deployed services and cron jobs need no change. The env prefix `CONVO_`
+keeps the project's old name, convo-ai. Don't rename it.
 
 Device-agnostic ingestion + processing pipeline. Everything runs on this machine:
 Silero VAD, whisper.cpp, ECAPA speaker embeddings (SpeechBrain), llama-server, SQLite.
@@ -146,7 +149,7 @@ other's name; two different named speakers stay apart (often a real interruption
   split by its token times. `CONVO_WHISPER_WINDOW_SECONDS=0` sends every region alone
   (the behaviour before). `CONVO_WHISPER_CONTEXT_WORDS` (0 = off) adds the end of the
   previous clip's text to the prompt; it made the eval worse.
-- Zoom names become people (`convo_server/meeting_names.py`, imported only by the meeting
+- Zoom names become people (`athena/meeting_names.py`, imported only by the meeting
   pipeline, never at startup). Each track's display names are cleaned first: pronouns
   ("(she/her)"), bracketed tags, "| Company", " - Company" (spaced dash only, so
   "Smith-Jones" stays), "@ Company", device suffixes ("Kath's iPhone", "(iPad)"), titles
@@ -169,7 +172,7 @@ other's name; two different named speakers stay apart (often a real interruption
   while `rename_speaker_everywhere("Kath Dlamini", "Kath")` merges them for good. Every
   display name a track used, raw and cleaned, is kept as an alias, so a participant who
   renames mid-meeting stays one person and the next meeting finds them again.
-- Learning voices from meetings (`convo_server/meeting_voices.py`,
+- Learning voices from meetings (`athena/meeting_voices.py`,
   `CONVO_LEARN_MEETING_VOICES`, default true; `false` turns it off; imported only after a
   meeting's lines are stored, and only with the setting on). A named participant's own
   track is one known voice, so a few seconds of it become that person's voice samples and
@@ -452,7 +455,7 @@ give the summarizer made-up facts); its audio is deleted unless `CONVO_KEEP_AUDI
 `GET /v1/speakers/enroll/next` shows the state (`none`, `waiting` with the `recording`
 coming in, `processing`, `done` with `samples`, `speech_seconds`, `relabeled_lines`,
 `failed` with `error`, `cancelled`, `expired` after 30 minutes without a recording),
-`DELETE` cancels while waiting (409 while processing). `convo_server/voice_enroll.py`.
+`DELETE` cancels while waiting (409 while processing). `athena/voice_enroll.py`.
 
 ## API reference
 
@@ -541,7 +544,7 @@ small local model does better on narrow questions):
    its transcript (still searchable; `POST /v1/conversations/{id}/summarize` retries) but
    gets no summary, action items or facts, and stays out of digests.
    Plain junk is discarded first, without a model call, by fixed rules
-   (`convo_server/relevance_rules.py`): under 3 words (`too_short`), only filler words
+   (`athena/relevance_rules.py`): under 3 words (`too_short`), only filler words
    such as "okay", "mm", "yeah" (`filler`), or a microphone check such as "testing, one,
    two" (`mic_check`). These rules only discard: anything with one content word, a name,
    a number, "yes"/"no", or words in another language goes to the model. No rule keeps a
@@ -550,7 +553,7 @@ small local model does better on narrow questions):
    decisions and owners for meetings, instructions and the next date for appointments.
 3. **Action items** (promises, requests, appointments), each written as a task, with
    `due_date` (YYYY-MM-DD). When the deadline names a day ("by Friday", "October
-   thirty-first", "tomorrow") the date is worked out in code (`convo_server/dates.py`)
+   thirty-first", "tomorrow") the date is worked out in code (`athena/dates.py`)
    from the conversation date in `CONVO_TIMEZONE` ("by Friday" said on Wednesday
    2026-10-14 → 2026-10-16); the model's date is used only for vaguer deadlines.
    An action item is a concrete thing to do with an object and ideally a time ("send the

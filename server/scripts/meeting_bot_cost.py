@@ -56,7 +56,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 BOT_NAME = "athena-meeting-bot"
-DEFAULT_CAP = "2G"  # CONVO_MEETING_BOT_MEMORY's default (convo_server/config.py)
+DEFAULT_CAP = "2G"  # CONVO_MEETING_BOT_MEMORY's default (athena/config.py)
 WARN_FRACTION = 0.75
 SAMPLE_RATE = 32000  # the SDK's raw audio: s16le mono 32 kHz
 # fictional values only: placeholders that are never real secrets

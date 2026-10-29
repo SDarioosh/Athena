@@ -9,15 +9,15 @@ import pytest
 from conftest import TOKEN, FakeTranscriber, fake_llm_transport
 from fastapi.testclient import TestClient
 
-from convo_server import llm_settings
-from convo_server.api import create_app
-from convo_server.cli import build_pipeline
-from convo_server.ingest_relay import add_ingest_routes
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.mcp_server import BearerAuth, build_mcp
-from convo_server.pipeline import Pipeline
-from convo_server.store import Store
-from convo_server.vad import EnergyVAD
+from athena import llm_settings
+from athena.api import create_app
+from athena.cli import build_pipeline
+from athena.ingest_relay import add_ingest_routes
+from athena.llm import LLMClient, Summarizer
+from athena.mcp_server import BearerAuth, build_mcp
+from athena.pipeline import Pipeline
+from athena.store import Store
+from athena.vad import EnergyVAD
 
 MCP_TOKEN = "mcp-token-abcdefghijkl"
 SERVED = ["qwen3.5-9b", "qwen3.6-35b"]
@@ -140,6 +140,6 @@ def test_reachable_through_the_mcp_http_app(settings):
 
 
 def llm_settings_schema():
-    from convo_server.llm import Triage
+    from athena.llm import Triage
 
     return Triage

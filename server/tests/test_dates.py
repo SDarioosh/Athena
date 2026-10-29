@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from convo_server.dates import resolve_due, resolve_time
+from athena.dates import resolve_due, resolve_time
 
 TUE = date(2026, 9, 15)  # a Tuesday
 

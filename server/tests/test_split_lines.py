@@ -6,8 +6,8 @@ import numpy as np
 from conftest import FakeTranscriber, ToneEmbedder, silence, tone
 from test_pipeline import ingest
 
-from convo_server.diarize import Diarizer, EnrolledVoice, PieceRef
-from convo_server.transcribe import TranscriptPiece
+from athena.diarize import Diarizer, EnrolledVoice, PieceRef
+from athena.transcribe import TranscriptPiece
 
 
 def _words(start: float, end: float, step: float = 0.5) -> list[tuple[float, float, str]]:
@@ -45,7 +45,7 @@ def test_ecapa_keeps_every_line_whole():
 
 
 def test_pyannote_lines_split_at_turn_changes_and_blips_join_their_neighbour():
-    from convo_server.diarize_pyannote import PyannoteDiarizer
+    from athena.diarize_pyannote import PyannoteDiarizer
 
     run = np.concatenate([tone(200, 4), tone(600, 4), silence(1), tone(200, 3)])
     turns = [(0.0, 4.0, "A"), (4.0, 8.0, "B"), (9.0, 12.0, "A"), (10.0, 10.5, "B")]
@@ -60,7 +60,7 @@ def test_pyannote_lines_split_at_turn_changes_and_blips_join_their_neighbour():
 
 
 def test_pyannote_short_first_part_joins_the_next_and_wordless_lines_stay():
-    from convo_server.diarize_pyannote import PyannoteDiarizer
+    from athena.diarize_pyannote import PyannoteDiarizer
 
     run = np.concatenate([tone(200, 4), tone(600, 6)])
     turns = [(0.0, 4.0, "A"), (4.0, 10.0, "B")]
@@ -84,7 +84,7 @@ class WordTranscriber(FakeTranscriber):
 
 
 def test_pipeline_stores_the_parts_as_lines_when_turned_on(pipeline):
-    from convo_server.diarize_pyannote import PyannoteDiarizer
+    from athena.diarize_pyannote import PyannoteDiarizer
 
     turns = [(0.0, 4.0, "A"), (4.0, 12.0, "B")]
     pipeline.diarizer = PyannoteDiarizer(MixEmbedder(), [], segmenter=lambda audio: turns)
@@ -117,7 +117,7 @@ def test_pipeline_keeps_whole_lines_by_default(pipeline):
 def test_pyannote_clustering_threshold_and_speaker_bounds():
     import pytest
 
-    from convo_server.diarize_pyannote import speaker_bounds, tune_clustering
+    from athena.diarize_pyannote import speaker_bounds, tune_clustering
 
     class FakePipeline:
         def __init__(self) -> None:
@@ -162,7 +162,7 @@ def test_split_parts_without_words_are_dropped_and_times_never_run_backwards(pip
     """QC S5: a part that is only punctuation became a line of its own, and a part whose
     last word ends before its first word starts (whisper word times) ended before it
     started."""
-    from convo_server.diarize import SpeakerLabel
+    from athena.diarize import SpeakerLabel
 
     a, b = SpeakerLabel("Me", True), SpeakerLabel("Speaker 1", False)
     words = [(0.0, 1.0, " Hello"), (1.0, 2.0, " there"), (2.0, 3.5, " ..."),
@@ -180,7 +180,7 @@ def test_split_parts_without_words_are_dropped_and_times_never_run_backwards(pip
 def test_pyannote_fallback_for_a_too_short_run_doesnt_reuse_speaker_1():
     """QC S6: a run pyannote heard nobody in and too short to embed got "Speaker 1",
     the name of a different unknown voice of an earlier run."""
-    from convo_server.diarize_pyannote import PyannoteDiarizer
+    from athena.diarize_pyannote import PyannoteDiarizer
 
     runs = [tone(600, 4), tone(400, 0.5)]
     d = PyannoteDiarizer(MixEmbedder(), [_me()],

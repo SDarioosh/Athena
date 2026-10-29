@@ -16,8 +16,8 @@ import pytest
 from conftest import fake_llm_transport
 from test_confirmed_facts import T0
 
-from convo_server.llm import FACTS_SYSTEM, LLMClient, Summarizer
-from convo_server.store import Segment
+from athena.llm import FACTS_SYSTEM, LLMClient, Summarizer
+from athena.store import Segment
 
 
 def summarize(facts: list[str], kind: str = "casual") -> list[str]:

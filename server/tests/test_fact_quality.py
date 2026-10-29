@@ -24,9 +24,9 @@ from conftest import fake_llm_transport
 from test_confirmed_facts import T0
 from test_mcp import call
 
-from convo_server.llm import FACTS_SYSTEM, REVIEW_SYSTEM, LLMClient, Summarizer, fact_kind
-from convo_server.mcp_server import build_mcp
-from convo_server.store import Segment
+from athena.llm import FACTS_SYSTEM, REVIEW_SYSTEM, LLMClient, Summarizer, fact_kind
+from athena.mcp_server import build_mcp
+from athena.store import Segment
 
 LINES = ["Priya, can you write up how the Larkspur weather station joins the mesh?",
          "Sure, I'll send it to you next week.",

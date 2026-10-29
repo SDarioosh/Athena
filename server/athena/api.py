@@ -20,11 +20,11 @@ Read API (used by the knowledge-layer/MCP integration and for debugging):
 Settings (the hub's settings page):
     GET  /v1/settings/llm, PUT /v1/settings/llm {"model": name | null}
     GET  /v1/settings/vocabulary, PUT /v1/settings/vocabulary {"words": "a, b" | [..] | null}
-Meeting bot (convo_server/meetings.py, imported on the first meeting request):
+Meeting bot (athena/meetings.py, imported on the first meeting request):
     POST   /v1/meetings            JSON {url} or {meeting_id, passcode}, title? -> {id, state}
     GET    /v1/meetings, /v1/meetings/{id}
     DELETE /v1/meetings/{id}       the bot leaves
-Zoom sign-in (convo_server/zoom_signin.py, imported on the first sign-in request; the hub's
+Zoom sign-in (athena/zoom_signin.py, imported on the first sign-in request; the hub's
 "Sign in to Zoom" button):
     GET  /v1/zoom/signin           {configured, signed_in, join_token, missing}
     POST /v1/zoom/signin/start     -> {url, expires_in}
@@ -230,11 +230,16 @@ def save_rejected(settings: Settings, session_id: str, sequence: int, codec: str
 
 
 def _package_version() -> str:
-    """The installed package's version (pyproject.toml), or 0.0.0 when not installed."""
-    try:
-        return metadata.version("convo-server")
-    except metadata.PackageNotFoundError:
-        return "0.0.0"
+    """The installed package's version (pyproject.toml), or 0.0.0 when not installed.
+
+    ``convo-server`` is the distribution's old name, still installed in a venv set up
+    before the rename and not reinstalled since."""
+    for name in ("athena-server", "convo-server"):
+        try:
+            return metadata.version(name)
+        except metadata.PackageNotFoundError:
+            pass
+    return "0.0.0"
 
 
 def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastAPI:
@@ -248,7 +253,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         if scheme.lower() == "bearer" and hmac.compare_digest(value.encode(), token):
             return
         # A running meeting bot's own token: only its session's uploads, end and chat
-        # (convo_server/meetings.py). Looked up only when the ingest token didn't match.
+        # (athena/meetings.py). Looked up only when the ingest token didn't match.
         grant = store.meeting_upload_session(value) if scheme.lower() == "bearer" and value \
             else None
         if grant is not None and request.method == "POST":
@@ -385,7 +390,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
     @v1.post("/sessions/{session_id}/chat")
     async def session_chat(session_id: str, request: Request) -> dict[str, Any]:
         """A meeting's chat lines, topic and participants, sent by the Zoom bot when the
-        meeting ends (``convo_server/meeting_chat.py``, imported on the first call).
+        meeting ends (``athena/meeting_chat.py``, imported on the first call).
         Idempotent: resent lines are not added twice."""
         import json
 

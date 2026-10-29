@@ -8,8 +8,8 @@ from conftest import TOKEN
 from test_ingest_relay import MCP_TOKEN, mcp_client
 from test_mcp import process_two_speakers
 
-from convo_server import export
-from convo_server.api import create_app
+from athena import export
+from athena.api import create_app
 
 
 @pytest.fixture
@@ -81,7 +81,7 @@ def test_dismissed_items_and_forget_pending_stay_out(client, pipeline, conv_id):
 
 
 def test_filename_is_safe():
-    from convo_server.config import Settings
+    from athena.config import Settings
 
     s = Settings(ingest_token=TOKEN, timezone="UTC")
     conv = {"started_at": 1_760_000_000.0, "title": 'Café / "plans" <b>?'}

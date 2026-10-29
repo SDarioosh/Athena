@@ -5,7 +5,7 @@ from __future__ import annotations
 import multiprocessing as mp
 from pathlib import Path
 
-from convo_server.store import Store
+from athena.store import Store
 
 
 def _open(path: str, barrier, results) -> None:

@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 from conftest import silence, tone, wav
 
-from convo_server.config import Settings
-from convo_server.links import sign, transcript_link
-from convo_server.mcp_server import BearerAuth, build_mcp, parse_when
+from athena.config import Settings
+from athena.links import sign, transcript_link
+from athena.mcp_server import BearerAuth, build_mcp, parse_when
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 DAY = "2025-10-09"
@@ -59,7 +59,7 @@ def test_parse_when():
 
 
 def test_fts_query_keeps_topic_words():
-    from convo_server.store import _fts_query
+    from athena.store import _fts_query
 
     assert _fts_query("the one talking about AI glasses") == '"AI" OR "glasses"'
     assert _fts_query("The conversation about the") == '"The" OR "conversation" OR "about" OR "the"'

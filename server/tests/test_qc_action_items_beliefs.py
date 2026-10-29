@@ -12,10 +12,10 @@ from test_confirmed_facts import DAY, T0
 from test_erase_fact import conversation
 from test_mcp import call
 
-from convo_server.dates import resolve_due
-from convo_server.llm import LLMClient, Summarizer, _list_and_text
-from convo_server.mcp_server import build_mcp
-from convo_server.store import ERASED_TEXT, Segment, Store
+from athena.dates import resolve_due
+from athena.llm import LLMClient, Summarizer, _list_and_text
+from athena.mcp_server import build_mcp
+from athena.store import ERASED_TEXT, Segment, Store
 
 
 def summary(**fields) -> dict:

@@ -21,8 +21,8 @@ from pathlib import Path
 import pytest
 from conftest import TOKEN, tone, wav
 
-from convo_server import meetings
-from convo_server.meetings import (
+from athena import meetings
+from athena.meetings import (
     ZoomMeeting,
     bot_args,
     build_command,
@@ -458,7 +458,7 @@ def test_restart_reconciles_lazily(meeting_settings, pipeline, tmp_path) -> None
     """A row left active by an earlier server process doesn't block new meetings."""
     from fastapi.testclient import TestClient
 
-    from convo_server.api import create_app
+    from athena.api import create_app
 
     store = pipeline.store
     store.add_meeting({"id": "old", "state": "recording", "session_id": "zoom-old",
@@ -478,7 +478,7 @@ def test_restart_keeps_a_live_orphan(meeting_settings, pipeline, tmp_path) -> No
     """A bot still running from before a restart counts as busy and DELETE stops it."""
     from fastapi.testclient import TestClient
 
-    from convo_server.api import create_app
+    from athena.api import create_app
 
     sid = "zoom-orphan"
     orphan = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)",
@@ -502,14 +502,14 @@ def test_restart_keeps_a_live_orphan(meeting_settings, pipeline, tmp_path) -> No
 # ------------------------------------------------------------------ idle cost
 def test_api_import_starts_nothing_and_skips_meeting_code(tmp_path) -> None:
     """Importing the API and creating the app starts no thread and doesn't import
-    convo_server.meetings (a fresh interpreter, so other tests can't pollute it)."""
+    athena.meetings (a fresh interpreter, so other tests can't pollute it)."""
     code = textwrap.dedent(f"""
         import sys, threading
-        from convo_server.config import Settings
-        from convo_server.pipeline import Pipeline
-        from convo_server.store import Store
-        from convo_server.vad import EnergyVAD
-        from convo_server.api import create_app
+        from athena.config import Settings
+        from athena.pipeline import Pipeline
+        from athena.store import Store
+        from athena.vad import EnergyVAD
+        from athena.api import create_app
         s = Settings(ingest_token="x" * 20, data_dir={str(tmp_path)!r}, run_worker=False,
                      vad_backend="energy", meeting_bot_path="/bin/true")
         app = create_app(Pipeline(s, Store(s.db_path), EnergyVAD()))
@@ -518,8 +518,8 @@ def test_api_import_starts_nothing_and_skips_meeting_code(tmp_path) -> None:
         c = TestClient(app)
         assert c.get("/health").json() == {{"ok": True}}
         assert c.post("/v1/ingest/chunk").status_code == 401
-        assert "convo_server.meetings" not in sys.modules, "meetings imported"
-        assert "convo_server.zoom_signin" not in sys.modules, "zoom sign-in imported"
+        assert "athena.meetings" not in sys.modules, "meetings imported"
+        assert "athena.zoom_signin" not in sys.modules, "zoom sign-in imported"
         # TestClient's own portal thread may take a moment to finish
         for t in threading.enumerate():
             if t is not threading.main_thread():
@@ -578,7 +578,7 @@ def test_auto_runner_probes_once(meeting_settings, pipeline, monkeypatch, probe,
 
 
 def test_meetings_table_and_token_lookup(tmp_path) -> None:
-    from convo_server.store import Store
+    from athena.store import Store
 
     store = Store(tmp_path / "convo.db")
     cols = {r[1] for r in store._conn.execute("PRAGMA table_info(meetings)")}

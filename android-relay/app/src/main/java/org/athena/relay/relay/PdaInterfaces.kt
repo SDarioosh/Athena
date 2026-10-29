@@ -33,7 +33,7 @@ sealed class ApiResult<out T> {
     data class Unsupported(val reason: String) : ApiResult<Nothing>()
 }
 
-/** The Athena HTTP API calls the PDA needs (server/convo_server/api.py, §4). */
+/** The Athena HTTP API calls the PDA needs (server/athena/api.py, §4). */
 interface ConvoApi {
     /** `GET /health` (no token). */
     suspend fun health(): ServerResult

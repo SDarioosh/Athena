@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "convo-server"
+name = "athena-server"
 version = "0.1.0"
-description = "convo-ai local server: ingestion, VAD, transcription, diarization, summaries, storage"
+description = "Athena local server: ingestion, VAD, transcription, diarization, summaries, storage"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
@@ -33,10 +33,13 @@ parakeet = ["sherpa-onnx>=1.13"]
 dev = ["pytest>=8", "ruff>=0.4"]
 
 [project.scripts]
-convo-server = "convo_server.cli:main"
+athena = "athena.cli:main"
+# The old CLI name: deployed services, cron jobs and notes run `convo-server`.
+convo-server = "athena.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["convo_server*"]
+# convo_server: the old package name, kept importable as an alias of athena.
+include = ["athena*", "convo_server*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

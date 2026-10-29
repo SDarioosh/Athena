@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS module_settings (
     updated_at REAL NOT NULL
 );
 
--- "Enroll my voice" from the next recording (convo_server/voice_enroll.py): one row,
+-- "Enroll my voice" from the next recording (athena/voice_enroll.py): one row,
 -- its state as JSON, kept after it ends so the hub can show how it went.
 CREATE TABLE IF NOT EXISTS voice_enrollment (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -325,7 +325,7 @@ CREATE INDEX IF NOT EXISTS sessions_status ON sessions(status);
 """
 
 
-# Step 16: meeting bots (POST /v1/meetings, convo_server/meetings.py).
+# Step 16: meeting bots (POST /v1/meetings, athena/meetings.py).
 MEETINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS meetings (
     id TEXT PRIMARY KEY,

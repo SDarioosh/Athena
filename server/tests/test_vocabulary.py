@@ -1,4 +1,4 @@
-"""Words whisper is nudged toward, set in the hub's settings (convo_server/vocabulary.py)."""
+"""Words whisper is nudged toward, set in the hub's settings (athena/vocabulary.py)."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ import pytest
 from conftest import TOKEN
 from fastapi.testclient import TestClient
 
-from convo_server import vocabulary
-from convo_server.api import create_app
-from convo_server.ingest_relay import add_ingest_routes
-from convo_server.mcp_server import BearerAuth, build_mcp
-from convo_server.store import Store
+from athena import vocabulary
+from athena.api import create_app
+from athena.ingest_relay import add_ingest_routes
+from athena.mcp_server import BearerAuth, build_mcp
+from athena.store import Store
 
 MCP_TOKEN = "mcp-token-abcdefghijkl"
 

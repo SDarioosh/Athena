@@ -32,8 +32,8 @@ The hub's "Sign in to Zoom" button signs Athena in to Zoom the same way:
     POST /zoom/signin/start          same as /v1/zoom/signin/start (authorize URL)
     POST /zoom/signin/finish         same JSON and answer as /v1/zoom/signin/finish
 
-The relay only forwards HTTP: it never imports ``convo_server.meetings`` or
-``convo_server.zoom_signin``, so building the MCP app starts and loads nothing
+The relay only forwards HTTP: it never imports ``athena.meetings`` or
+``athena.zoom_signin``, so building the MCP app starts and loads nothing
 meeting-related.
 
 They are not MCP tools (the model never sees them) and sit behind the same ``BearerAuth``

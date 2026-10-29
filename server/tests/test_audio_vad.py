@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 from conftest import silence, tone, wav
 
-from convo_server import audio
-from convo_server.config import Settings
-from convo_server.vad import EnergyVAD, GainedVAD, Span, level_dbfs, make_vad, merge_spans
+from athena import audio
+from athena.config import Settings
+from athena.vad import EnergyVAD, GainedVAD, Span, level_dbfs, make_vad, merge_spans
 
 
 def test_pcm16_roundtrip():
@@ -150,7 +150,7 @@ def test_level_dbfs_measures_loud_part():
 
 
 def test_make_vad_wires_silero_settings(tmp_path, monkeypatch):
-    from convo_server import vad as vad_mod
+    from athena import vad as vad_mod
 
     class FakeSilero:
         def __init__(self, **kw) -> None:

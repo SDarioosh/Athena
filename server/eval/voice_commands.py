@@ -31,9 +31,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from convo_server.config import Settings  # noqa: E402
-from convo_server.llm import LLMClient, Summarizer  # noqa: E402
-from convo_server.store import Segment  # noqa: E402
+from athena.config import Settings  # noqa: E402
+from athena.llm import LLMClient, Summarizer  # noqa: E402
+from athena.store import Segment  # noqa: E402
 
 T0 = 1_792_800_000.0 + 8 * 3600  # Saturday 2026-10-24 08:00 UTC = 10:00 in Berlin
 V = "Voice notes"

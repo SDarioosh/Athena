@@ -9,9 +9,9 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from convo_server import cli
-from convo_server.config import Settings
-from convo_server.transcribe import (
+from athena import cli
+from athena.config import Settings
+from athena.transcribe import (
     ParakeetTranscriber,
     WhisperServerTranscriber,
     split_points,
