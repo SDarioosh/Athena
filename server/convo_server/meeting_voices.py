@@ -1,4 +1,4 @@
-"""Learning voices from meetings (Zoom bot, plan lane 2C).
+"""Learning voices from meetings.
 
 In a meeting every named participant speaks on their own track, so Athena knows for sure
 whose voice it hears. A few seconds of each track are saved as voice samples of that

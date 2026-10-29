@@ -20,6 +20,25 @@ STATUS_UUID = "f8060002" + _BASE
 CTRL_UUID = "f8060003" + _BASE
 DATA_UUID = "f8060004" + _BASE
 
+# The watch's Bluetooth name (scan response). Firmware before 2026-10-29 advertises the old
+# name; relays accept both, forever. The service UUID stays the main key.
+WATCH_NAME = "athena-tw"
+OLD_WATCH_NAME = "barvis-tw"
+WATCH_NAMES = (WATCH_NAME, OLD_WATCH_NAME)
+
+
+def is_watch_name(name: str | None) -> bool:
+    """True for the watch's current or older Bluetooth name."""
+    return name in WATCH_NAMES
+
+
+def is_watch(service_uuids: list[str] | None, name: str | None) -> bool:
+    """A scanned device is the watch if it advertises the service, or (no UUIDs in this
+    advertisement) carries either watch name."""
+    if SERVICE_UUID in [u.lower() for u in service_uuids or []]:
+        return True
+    return is_watch_name(name)
+
 MIN_MTU = 64
 DATA_HEADER = 9  # opcode + chunk_id + offset
 # The Core spec caps an attribute value at 512 bytes; Android drops longer notifications.

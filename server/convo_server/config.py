@@ -5,11 +5,23 @@ Every variable is prefixed with ``CONVO_``. See ``.env.example``.
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+log = logging.getLogger(__name__)
+
+# Meeting settings checked only when a meeting is requested (meetings.check_settings), so
+# a wrong value turns meetings off but never stops the server; at startup it is a warning.
+MEETING_CHOICES: dict[str, tuple[str, ...]] = {
+    "meeting_bot_runner": ("auto", "systemd", "plain"),
+    "meeting_track_codec": ("opus", "wav"),
+    "zoom_join_token": ("auto", "zak", "obf", "none"),
+}
 
 
 class Settings(BaseSettings):
@@ -32,7 +44,7 @@ class Settings(BaseSettings):
     session_idle_seconds: float = 600.0
 
     # --- pipeline ---
-    vad_backend: str = "silero"  # "silero" (production) or "energy" (tests only)
+    vad_backend: Literal["silero", "energy"] = "silero"  # "energy" is for tests only
     # Silero speech threshold, the silence that ends a speech span, and padding around
     # each span (Silero's default is 30 ms; Omi uses 300 ms pre-roll). Ignored by the
     # energy backend.
@@ -64,7 +76,7 @@ class Settings(BaseSettings):
 
     # Speech-to-text model: "whisper" (whisper.cpp, below) or "parakeet" (Parakeet TDT
     # 0.6B v3 in-process via sherpa-onnx, extra `parakeet`; being measured against whisper).
-    transcriber: str = "whisper"
+    transcriber: Literal["whisper", "parakeet"] = "whisper"
     # Unpacked sherpa-onnx export, e.g. .../sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
     parakeet_model_dir: Path | None = None
     parakeet_threads: int = 4
@@ -130,7 +142,7 @@ class Settings(BaseSettings):
     diarization: bool = True
     # "ecapa": cluster one voiceprint per transcript piece (no extra install).
     # "pyannote": pyannote.audio community-1 pipeline, local (extra `pyannote`).
-    diarizer: str = "ecapa"
+    diarizer: Literal["ecapa", "pyannote"] = "ecapa"
     # Hugging Face id or a local directory. Cloud (pyannoteAI) pipelines are refused.
     pyannote_model: str = "pyannote-community/speaker-diarization-community-1"
     pyannote_device: str = "auto"  # auto (cuda if available), cuda or cpu
@@ -140,7 +152,7 @@ class Settings(BaseSettings):
     # Voiceprints for naming speakers: "ecapa" (SpeechBrain, default) or "pyannote" (the
     # pyannote pipeline's own WeSpeaker model; CONVO_DIARIZER=pyannote only). Switching
     # needs a new enrollment: voices of the other model never match.
-    speaker_embedder: str = "ecapa"
+    speaker_embedder: Literal["ecapa", "pyannote"] = "ecapa"
     pyannote_cluster_threshold: float | None = None
     # VBx clustering (community-1): how many speakers come out. Unset = the pipeline's own
     # (Fa 0.07, Fb 0.8); a lower Fb or a higher Fa keeps more speakers apart.
@@ -272,6 +284,16 @@ class Settings(BaseSettings):
             self.speaker_split_min_seconds = 0.3 if py else 1.5
         if self.speaker_line_check is None:
             self.speaker_line_check = py
+        return self
+
+    @model_validator(mode="after")
+    def _warn_meeting_choices(self) -> Settings:
+        """Warn (never fail) about a meeting setting a meeting request would refuse."""
+        for name, allowed in MEETING_CHOICES.items():
+            value = getattr(self, name)
+            if value not in allowed:
+                log.warning("CONVO_%s=%r is not one of %s: meetings will be refused until it "
+                            "is fixed", name.upper(), value, ", ".join(allowed))
         return self
 
     @field_validator("ingest_token", "mcp_token")

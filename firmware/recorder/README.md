@@ -252,8 +252,8 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 24 kbps VBR, complexity 1) -> 30 s Ogg
   sync window, last sync, counters). `ble forget` deletes every pairing. Pairing is passkey
   entry with LE Secure Connections: the watch shows a 6-digit code (also logged on the USB
   console) and you type it on the phone or PC, only in the sync window (protocol §3.1). If
-  a phone paired outside the window, remove `barvis-tw` in its Bluetooth settings and pair
-  again in the window.
+  a phone paired outside the window, remove `athena-tw` (older firmware: `barvis-tw`) in its
+  Bluetooth settings and pair again in the window.
 
 ### Drain from a PC: `tools/ble_relay.py`
 
@@ -269,7 +269,7 @@ python3 -m venv ~/.venvs/barvis-relay
 # watch shows a 6-digit code.
 # bleak can't type it, so pair through the OS and type the code:
 #   Linux:   bluetoothctl -> agent on -> default-agent -> scan on -> pair <address>
-#   Windows: Settings > Bluetooth & devices > Add device > Bluetooth > barvis-tw
+#   Windows: Settings > Bluetooth & devices > Add device > Bluetooth > athena-tw (older firmware: barvis-tw)
 #   macOS:   run the --list below; macOS asks for the code
 ~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py --list
 

@@ -1,4 +1,4 @@
-"""Per-track transcription of a meeting (Zoom bot, plan lane 2A).
+"""Per-track transcription of a meeting.
 
 A meeting session holds one audio track per participant (``track`` / ``track_name`` on
 each chunk). Each track is transcribed on its own, and every line from it is that
@@ -20,7 +20,7 @@ participant's: no diarizer, no speaker embedder. Then:
   (``Settings.zoom_owner_name_list``) is the owner's (``is_owner=true``), named as the
   owner is everywhere else (enrolled owner voice, else CONVO_OWNER_NAME).
 
-A person's track is finished from what ``meeting_live`` (lane 5D) transcribed while the
+A person's track is finished from what ``meeting_live`` transcribed while the
 meeting ran, plus the windows left; it gives the same lines as transcribing it here.
 
 Imported only by ``Pipeline._transcribe_session`` for a session that has tracks and by
@@ -77,8 +77,8 @@ def is_shared_room(name: str | None) -> bool:
     hardware ("Conference Room", "Polycom", "Huddle 4", "Rally Bar"), a bare device with
     no person on it ("iPhone", "Galaxy S23"), a dial-in number or "Zoom user". Not a
     person whose name holds such a word ("Jordan Hall", "Cisco Ramirez") or a personal
-    device ("Kath's iPhone" is Kath). Lane 2B's ``meeting_names.is_room_or_hardware`` is
-    the one rule; this name stays for callers of lane 2A's API."""
+    device ("Kath's iPhone" is Kath). ``meeting_names.is_room_or_hardware`` is
+    the one rule; this name stays for callers of this module."""
     from .meeting_names import is_room_or_hardware
 
     return is_room_or_hardware(name)
@@ -93,7 +93,7 @@ def track_speaker(store: Store, track_info: dict[str, Any],
                   owner_display: str | None = None) -> tuple[str, bool]:
     """Who a track's lines belong to: (speaker name for its segments, is_owner).
 
-    The one place a track becomes a speaker. Lane 2B's ``meeting_names.speaker_for_track``
+    The one place a track becomes a speaker. ``meeting_names.speaker_for_track``
     cleans the display name ("Anna (she/her) | Acme" -> "Anna"), matches it against people
     and their aliases (creating a person when it is new) and keeps every display name as
     an alias. An empty name means the track has no person's name (a device, a room or
@@ -229,7 +229,7 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str, chunks: list[dict[st
 
     ``kept``, when given, is filled with each named (not shared-room) track's kept lines
     as (start, end) epoch seconds, after bleed is dropped and before lines are joined:
-    the only speech lane 2C learns a voice from (QA BUG-05)."""
+    the only speech ``meeting_voices`` learns a voice from (QA BUG-05)."""
     from . import meeting_live
 
     store, cfg = pipeline.store, pipeline.settings
@@ -252,7 +252,7 @@ def transcribe_meeting(pipeline: Pipeline, session_id: str, chunks: list[dict[st
     prompt = meeting_live.meeting_whisper_prompt(pipeline, track_list)
 
     lines: list[Line] = []
-    shared_tracks: set[str] = set()  # not learned from (lane 2C)
+    shared_tracks: set[str] = set()  # no voice is learned from these
     loud: list[float] = []  # dBFS of each line on its own track, for the bleed check
     candidates: dict[str, np.ndarray] = {}
     unnamed = 0  # "Speaker N" numbering across the meeting

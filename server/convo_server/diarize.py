@@ -493,6 +493,7 @@ def enrollment_samples(embedder: SpeakerEmbedder, audio: np.ndarray,
     return [_normalize(np.mean(vecs[i:i + per], axis=0)) for i in range(0, len(vecs), per)]
 
 
+# Not used by the server; only eval/recognition.py calls it (one voice per enrollment).
 def enrollment_embedding(embedder: SpeakerEmbedder, audio: np.ndarray,
                          window_seconds: float = DIARIZATION_WINDOW) -> np.ndarray:
     """Average embedding over windows of an enrollment recording (>= ~20 s of speech)."""

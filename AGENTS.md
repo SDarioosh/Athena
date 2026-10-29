@@ -18,12 +18,13 @@ server. **Nothing in the data path touches the cloud.**
   calendar uid prefixes (stored in the owner's data).
 - **Don't rename code identifiers.** They keep the old name on purpose: the
   `convo_server` package, the `convo-server` CLI, `CONVO_*` env vars, paths such as
-  `server/data/convo.db`, the MCP server name `convo-ai`, the hub's server name
-  `convo`, the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app's appId and vendor
+  `server/data/convo.db`, the hub's server name `convo` (the name Odysseus registered
+  our MCP server under; since MCP 0.20.1 the server reports itself as `athena`, was
+  `convo-ai`, and the hub never reads that), the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app's appId and vendor
   `convo-ai` (its display name is now "Athena Rec Test"), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
   `SDarioosh/Athena`; GitHub redirects the old URL), the `barvis-sound*` service names
   and `BARVIS_SOUND_*` vars of `server/scripts/deploy.sh`, the Android app ID
-  `org.barvis.sound.relay`, the BLE name `barvis-tw`, the BLE UUID bytes and the
+  `org.barvis.sound.relay`, the BLE UUID bytes and the
   Opus tag text (`BARVIS_SESSION=`…; the macros are now `ATHENA_UUID_BYTES` / `ATHENA_TAG_*` in
   `firmware/recorder/main/wire_ids.h`, values unchanged), and the PC relay's old package
   name `barvis_relay` (now `athena_relay`; `barvis_relay` stays as a stub) and its state
@@ -31,6 +32,9 @@ server. **Nothing in the data path touches the cloud.**
   breaks deployed servers and configs, paired watches, the installed phone app and
   Odysseus. Don't "fix" them ad hoc: the planned rename, step by step with the old
   names still working, is `docs/athena-rename-plan.md`.
+- The watch's BLE name is now `athena-tw`. Older firmware advertises `barvis-tw`; the phone
+  and PC relays find the watch by its service UUID and accept both names, for good, so
+  never drop `barvis-tw` from them.
 
 ## This is an Odysseus module
 
@@ -360,6 +364,10 @@ relay tests and the Android build and tests.
   `CONVO_`. Commit only `.env.example`. The server refuses to start without
   `CONVO_INGEST_TOKEN`.
 - Zepp app: JavaScript, `@zeppos/zeus-cli`, test on the real device.
+- Database schema changes go only through a new numbered step at the end of `MIGRATIONS`
+  (`server/convo_server/store.py`); never edit `SCHEMA` (the frozen first schema) for a new
+  table, column or index. One PR at a time takes the next number and names it in its
+  title (e.g. "migration 18: …").
 - Small, focused commits with descriptive messages.
 
 ## Rules for agents

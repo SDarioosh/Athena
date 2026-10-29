@@ -300,7 +300,7 @@ class RelayService : Service() {
         } catch (e: GattStatusException) {
             val hint = if (e.status == 5 || e.status == 15 || e.status == 137) {
                 " (pairing problem: if the watch was paired outside its sync window, remove " +
-                    "\"barvis-tw\" in Android's Bluetooth settings and pair again during the window)"
+                    "${WatchGatt.NAME_HINT} in Android's Bluetooth settings and pair again during the window)"
             } else ""
             log.log(Level.WARN, (e.message ?: "GATT error") + hint)
             return DrainOutcome.LinkLost((e.message ?: "GATT error") + hint, 0)

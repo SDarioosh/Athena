@@ -1,5 +1,5 @@
 """QC report of 2026-10-26 on written notes (POST /v1/ingest/text, PR #108): one test
-(or a few) per reported bug; see docs/qc-report-2026-10-26.md for the verdicts.
+(or a few) per reported bug; see docs/archive/qc-report-2026-10-26.md for the verdicts.
 Fictional data only."""
 
 from __future__ import annotations

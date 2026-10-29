@@ -169,7 +169,11 @@ def test_pyannote_embedder_needs_the_pyannote_diarizer(tmp_path):
     s = Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_embedder="pyannote")
     with pytest.raises(SystemExit):
         cli.build_diarizer(s, Store(tmp_path / "x.db"))
-    s = Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_embedder="wespeaker")
+    # an unknown embedder fails when the settings load; the CLI check stays as a backstop
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_embedder="wespeaker")
+    s = s.model_copy(update={"speaker_embedder": "wespeaker"})  # skips validation
     with pytest.raises(SystemExit):
         cli.build_diarizer(s, Store(tmp_path / "x.db"))
 

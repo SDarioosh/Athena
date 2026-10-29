@@ -36,7 +36,9 @@ void ble_store_config_init(void);
 
 static const char *TAG = "ble";
 
-#define DEVICE_NAME "barvis-tw"
+/* Firmware before 2026-10-29 advertised "barvis-tw"; the relays accept both names
+ * (docs/twatch-ble-protocol.md). */
+#define DEVICE_NAME "athena-tw"
 #define WINDOW_MS (2 * 60 * 1000)
 #define IDLE_DISCONNECT_MS 30000
 #define BYE_DISCONNECT_MS 1000

@@ -43,6 +43,7 @@ import math
 import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from importlib import metadata
 from typing import Annotated, Any
 
 import numpy as np
@@ -228,6 +229,14 @@ def save_rejected(settings: Settings, session_id: str, sequence: int, codec: str
     return str(path)
 
 
+def _package_version() -> str:
+    """The installed package's version (pyproject.toml), or 0.0.0 when not installed."""
+    try:
+        return metadata.version("convo-server")
+    except metadata.PackageNotFoundError:
+        return "0.0.0"
+
+
 def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastAPI:
     settings = pipeline.settings
     store = pipeline.store
@@ -266,7 +275,7 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         if worker:
             worker.stop()
 
-    app = FastAPI(title="convo-ai server", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Athena server", version=_package_version(), lifespan=lifespan)
 
     @app.get("/health")
     def health() -> dict[str, Any]:
