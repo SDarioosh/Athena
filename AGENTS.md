@@ -3,8 +3,8 @@
 Athena (formerly "convo-ai", then "barvis-ai", then "barvis-sound", then
 "odysseus-sound") is a private conversation-memory system and the first **Odysseus
 module**. Wearables capture audio; this Ubuntu server transcribes, diarizes and
-summarizes it with local models; [Odysseus](https://github.com/SDarioosh/Barvis), our
-Odysseus fork (repo `SDarioosh/Barvis`), answers questions about it through our MCP
+summarizes it with local models; [Odysseus](https://github.com/SDarioosh/odysseus-expanded), our
+Odysseus fork (repo `SDarioosh/odysseus-expanded`, formerly `SDarioosh/Barvis`), answers questions about it through our MCP
 server. **Nothing in the data path touches the cloud.**
 
 ## Names: prose vs code
@@ -20,12 +20,15 @@ server. **Nothing in the data path touches the cloud.**
   `convo_server` package, the `convo-server` CLI, `CONVO_*` env vars, paths such as
   `server/data/convo.db`, the hub's server name `convo` (the name Odysseus registered
   our MCP server under; since MCP 0.20.1 the server reports itself as `athena`, was
-  `convo-ai`, and the hub never reads that), the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app ("Convo Rec Test", vendor
-  `convo-ai`), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
+  `convo-ai`, and the hub never reads that), the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app's appId and vendor
+  `convo-ai` (its display name is now "Athena Rec Test"), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
   `SDarioosh/Athena`; GitHub redirects the old URL), the `barvis-sound*` service names
   and `BARVIS_SOUND_*` vars of `server/scripts/deploy.sh`, the Android app ID
-  `org.barvis.sound.relay`, the BLE name `barvis-tw` and its `BARVIS_UUID` /
-  `BARVIS_*` Opus tag macros, and the PC relay's `barvis_relay` package. Renaming them
+  `org.barvis.sound.relay`, the BLE name `barvis-tw`, the BLE UUID bytes and the
+  Opus tag text (`BARVIS_SESSION=`…; the macros are now `ATHENA_UUID_BYTES` / `ATHENA_TAG_*` in
+  `firmware/recorder/main/wire_ids.h`, values unchanged), and the PC relay's old package
+  name `barvis_relay` (now `athena_relay`; `barvis_relay` stays as a stub) and its state
+  dir `barvis-relay` (used as is where it exists). Renaming them
   breaks deployed servers and configs, paired watches, the installed phone app and
   Odysseus. Don't "fix" them ad hoc: the planned rename, step by step with the old
   names still working, is `docs/athena-rename-plan.md`.
@@ -36,9 +39,9 @@ server. **Nothing in the data path touches the cloud.**
   is a separate program that owns its data. Odysseus reaches it only through our MCP
   server (or the HTTP API here) and never writes `convo.db` directly.
 - The module contract is in the hub repo:
-  [docs/fork/modules.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules.md).
+  [docs/fork/modules.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/modules.md).
   How Odysseus connects to us:
-  [docs/fork/modules/odysseus-sound.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules/odysseus-sound.md).
+  [docs/fork/modules/odysseus-sound.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/modules/odysseus-sound.md).
 - Never copy Odysseus code (upstream or our fork) into this repo. Talking over MCP keeps
   the AGPL out of this module.
 
@@ -60,8 +63,13 @@ server. **Nothing in the data path touches the cloud.**
   (bring-up test firmware for the T-Watch Ultra) is built, plus Opus recording sessions,
   the SD chunk queue and the BLE service; `tools/ble_relay.py` is the PC relay. See
   `firmware/recorder/README.md`.
+- `firmware/pda/`: ESP-IDF firmware for the LilyGO T5 E-Paper Pro PDA (its own project):
+  shows the briefing, conversations, action items and calendar, and queues taps as actions;
+  BLE only, through the phone or PC relay. See `firmware/pda/README.md`.
 - `android-relay/`: Android relay app (Kotlin): drains the T-Watch over BLE and uploads to
   the server. Protocol: `docs/twatch-ble-protocol.md`. See `android-relay/README.md`.
+- `meeting-bot/`: Zoom meeting bot: C++ bot on the Zoom Meeting SDK, core upload library,
+  tests. See `meeting-bot/README.md`.
 - `docs/`: research and decisions (`omi-ingestion.md`,
   `frontend-decision.md`, `xiao-esp32s3-sense-plan.md`: the plan for our own
   XIAO ESP32-S3 Sense pendant, which comes later; `t-watch-ultra-plan.md`: the same
@@ -74,6 +82,9 @@ server. **Nothing in the data path touches the cloud.**
   `athena-rename-plan.md`: the work order for renaming the old names, planned;
   `cleanup-plan.md`: the phased cleanup of Athena and the hub, run in lanes by subagents
   with an overseer, planned).
+- `docs/api/`: the API reference (`ingest.md`, `meetings.md`, `mcp.md`); `docs/changelog/`:
+  what was done, by month; `docs/decisions-log.md`: the owner's decisions;
+  `docs/archive/`: past QC and bug-hunt reports, kept as records.
 - `hermes/`: Hermes profile snippet used by the orchestrator.
 - `orchestrator/`: optional build loop. Leave it alone.
 
@@ -184,7 +195,7 @@ server. **Nothing in the data path touches the cloud.**
   `message` and `active`; ids checked before forwarding; `DELETE` waits up to 30 s for the
   bot to exit), and `GET /zoom/signin`, `POST /zoom/signin/start`,
   `POST /zoom/signin/finish` for the hub's "Sign in to Zoom" button (same JSON and status
-  as `/v1/zoom/signin*`, contract in `server/README.md`), and (MCP 0.19.0, additive)
+  as `/v1/zoom/signin*`, contract in `docs/api/meetings.md`), and (MCP 0.19.0, additive)
   `GET /conversations/{id}/export` for the hub's Share button (the file of
   `/v1/conversations/{id}/export`, `format` md or html, `include` sections; no links or ids
   in it). They are **not MCP tools** (never register
@@ -216,14 +227,14 @@ server. **Nothing in the data path touches the cloud.**
   so a program can read all current facts and promote the confirmed ones. Each JSON row
   also has `valid_until` (MCP 0.13.0, additive): the last day a fact about one occasion
   ("has a meeting with X on Tuesday at 11 a.m.") is worth keeping, else null; the hub
-  ends the belief after it. JSON fields are listed in `server/README.md`.
+  ends the belief after it. JSON fields are listed in `docs/api/mcp.md`.
 - Each `list_action_items` JSON row has `key_points` (MCP 0.15.0, additive): for a note
   that is a whole voice note (its text is the voice note's summary), the voice note's key
   points, which the hub writes into the note between the summary and the transcript
   link; `[]` for every other item.
 - Zoom meetings (MCP 0.16.0, additive): the bot sends a meeting's chat, topic and
   participant list in one call, `POST /v1/sessions/{id}/chat` (not a relay route, not a
-  tool; contract in `server/README.md`). Chat lines are transcript lines of kind `chat`;
+  tool; contract in `docs/api/meetings.md`). Chat lines are transcript lines of kind `chat`;
   results show them as `<name> (chat): …`, mark a meeting's conversation `(Online meeting:
   <topic>)` (or `(Online meeting)`; MCP 0.17.0, before that `(Zoom meeting…)`: the mark
   names no platform, meetings may come from others than Zoom later; the hub reads both)
@@ -275,7 +286,7 @@ server. **Nothing in the data path touches the cloud.**
   page say the transcript was removed.
 - **Changing a tool name, an argument, an annotation, the link format, or the auth is a
   breaking change.** It needs a coordinated hub PR (module doc, preset text) per the
-  [versioning rules](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/modules.md#versioning),
+  [versioning rules](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/modules.md#versioning),
   and a rerun of `server/eval/bakeoff.py --frontend odysseus`: a few questions in the
   sandbox stack, and the full run listed under Server verification for the owner. Put
   the scores in both PRs. Current server score: 9/20, target ≥ 15/20.
@@ -299,7 +310,7 @@ server. **Nothing in the data path touches the cloud.**
 - The sandbox runs the whole system on CPU with fictional data: llama-server with a
   small model, whisper-server, `convo-server serve` and `mcp --http`, Odysseus on
   `127.0.0.1:7010`, and the eval. Steps, timings and known issues:
-  [hub docs/fork/sandbox.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/sandbox.md).
+  [hub docs/fork/sandbox.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/sandbox.md).
 - Small-model scores only compare with other sandbox runs. The real score
   (`qwen3.5-35b` on the server) is measured by the owner.
 - Use only fictional data (`server/scripts/seed_demo.py`). Never ask for or use real
@@ -309,7 +320,7 @@ server. **Nothing in the data path touches the cloud.**
 
 - Every PR that can change answers, the pipeline on real audio, devices or deployment
   has a **Server verification** section: exact commands, the expected result, and
-  real-device steps ([format](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/sandbox.md#server-verification)).
+  real-device steps ([format](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/sandbox.md#server-verification)).
 - The owner runs it and pastes the result into the PR; continue from that result.
 - Never write steps that touch the owner's production Odysseus install (Docker,
   `~/models/odysseus`, port 7000). Server-side evals target the Odysseus test

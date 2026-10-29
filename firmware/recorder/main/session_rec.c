@@ -22,6 +22,7 @@
 #include "mic.h"
 #include "ogg_opus.h"
 #include "opus_enc.h"
+#include "wire_ids.h"
 
 static const char *TAG = "session";
 
@@ -145,10 +146,10 @@ static esp_err_t open_chunk(session_t *s)
     ESP_RETURN_ON_ERROR(chunk_store_begin(&c, &s->chunk_id), TAG, "begin chunk");
 
     char seq[32], start[40];
-    snprintf(seq, sizeof(seq), "BARVIS_SEQUENCE=%" PRIu32, s->sequence);
-    snprintf(start, sizeof(start), "BARVIS_START_MS=%" PRIu64, c.start_ms);
+    snprintf(seq, sizeof(seq), ATHENA_TAG_SEQUENCE "%" PRIu32, s->sequence);
+    snprintf(start, sizeof(start), ATHENA_TAG_START_MS "%" PRIu64, c.start_ms);
     char session[40];
-    snprintf(session, sizeof(session), "BARVIS_SESSION=%s", s->session_hex);
+    snprintf(session, sizeof(session), ATHENA_TAG_SESSION "%s", s->session_hex);
     const ogg_opus_head_t head = {
         .serial = esp_random(),
         .pre_skip = s->pre_skip,

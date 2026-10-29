@@ -1,4 +1,4 @@
-# ble_relay.py (PC test relay for the T-Watch Ultra and the T5 PDA). The barvis_relay package
+# ble_relay.py (PC test relay for the T-Watch Ultra and the T5 PDA). The athena_relay package
 # itself uses only the standard library. Tests: pip install pytest, then pytest
 # firmware/recorder/tools.
 bleak>=0.22

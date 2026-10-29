@@ -9,11 +9,11 @@ import struct
 import zlib
 
 import pytest
-from barvis_relay import pda_actions as a
-from barvis_relay import pda_feed as f
-from barvis_relay import pda_protocol as q
-from barvis_relay import pda_sync as s
-from barvis_relay.uploader import RETRY, UploadError
+from athena_relay import pda_actions as a
+from athena_relay import pda_feed as f
+from athena_relay import pda_protocol as q
+from athena_relay import pda_sync as s
+from athena_relay.uploader import RETRY, UploadError
 from pda_fakes import NOW, TOKEN, FakeApiServer, FakeCalendar, FakeT5
 
 

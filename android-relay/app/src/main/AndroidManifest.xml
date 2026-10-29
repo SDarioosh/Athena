@@ -48,12 +48,20 @@
 
         <activity
             android:name=".ui.MainActivity"
+            android:exported="false" />
+
+        <!-- The launcher entry keeps the class name it had before the Kotlin package moved to
+             org.athena.relay: launchers store this name for icons pinned to the home screen,
+             so an icon placed by an older version keeps working after the update. -->
+        <activity-alias
+            android:name="org.barvis.sound.relay.ui.MainActivity"
+            android:targetActivity=".ui.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
 
         <activity
             android:name=".ui.SettingsActivity"

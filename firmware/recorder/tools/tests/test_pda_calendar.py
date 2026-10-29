@@ -8,12 +8,12 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from barvis_relay import pda_actions as a
-from barvis_relay import pda_feed as f
-from barvis_relay import pda_sync as s
-from barvis_relay.pda_calendar import OdysseusCalendar
-from barvis_relay.pda_insight import OdysseusInsight
-from barvis_relay.pda_todos import OdysseusTodos
+from athena_relay import pda_actions as a
+from athena_relay import pda_feed as f
+from athena_relay import pda_sync as s
+from athena_relay.pda_calendar import OdysseusCalendar
+from athena_relay.pda_insight import OdysseusInsight
+from athena_relay.pda_todos import OdysseusTodos
 from ody_fake import ODY_TOKEN, FakeOdysseus
 from pda_fakes import NOW, TOKEN, FakeApiServer, FakeT5
 

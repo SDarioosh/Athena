@@ -1,5 +1,5 @@
 /*
- * Convo Rec Test — T-Rex 3 Pro recording feasibility test.
+ * Athena Rec Test — T-Rex 3 Pro recording feasibility test.
  *
  * "Screen ON" keeps the display lit for the whole test; "Screen OFF" lets the watch
  * turn the screen off normally (and asks the system to relaunch the app on wake).
@@ -143,7 +143,7 @@ Page(
       this.clearWidgets()
       const st = this.tester.state
       this.add(hmUI.widget.TEXT, {
-        x: px(60), y: px(28), w: px(W - 120), h: px(40), text: 'Convo Rec Test',
+        x: px(60), y: px(28), w: px(W - 120), h: px(40), text: 'Athena Rec Test',
         text_size: px(28), color: 0x7fd4ff, align_h: hmUI.align.CENTER_H,
       })
       this.state.info = this.add(hmUI.widget.TEXT, {

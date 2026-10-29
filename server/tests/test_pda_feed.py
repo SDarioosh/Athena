@@ -1,4 +1,4 @@
-"""The PC relay's T5 PDA feed and actions (firmware/recorder/tools/barvis_relay) against the
+"""The PC relay's T5 PDA feed and actions (firmware/recorder/tools/athena_relay) against the
 real API, with the fictional conversations of scripts/seed_demo.py and the fake LLM."""
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "firmware" / "recorder" / "tools"))
 sys.path.insert(0, str(ROOT / "server" / "scripts"))
 
-from barvis_relay.pda_actions import ActionRunner  # noqa: E402
-from barvis_relay.pda_feed import FEED_MAX, build_feed, encode_feed  # noqa: E402
-from barvis_relay.uploader import UploadError, classify  # noqa: E402
+from athena_relay.pda_actions import ActionRunner  # noqa: E402
+from athena_relay.pda_feed import FEED_MAX, build_feed, encode_feed  # noqa: E402
+from athena_relay.uploader import UploadError, classify  # noqa: E402
 from seed_demo import CONVERSATIONS, ME  # noqa: E402
 
 NOW = datetime(2026, 10, 18, 9, 0, tzinfo=UTC).timestamp()  # 48 h back: maria-oct, tv-news
