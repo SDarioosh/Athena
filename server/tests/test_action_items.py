@@ -12,10 +12,10 @@ from conftest import fake_llm_transport
 from test_mcp import call
 from test_voice_notes import conv_of, record
 
-from convo_server import store as store_mod
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.mcp_server import build_mcp
-from convo_server.store import Segment, Store
+from athena import store as store_mod
+from athena.llm import LLMClient, Summarizer
+from athena.mcp_server import build_mcp
+from athena.store import Segment, Store
 
 T0 = 1_760_000_000.0  # Thursday 2025-10-09 08:53:20 UTC = 10:53 in Berlin
 
@@ -85,7 +85,7 @@ def test_time_details():
 
 
 def test_both_action_prompts_explain_the_kinds():
-    from convo_server.llm import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM
+    from athena.llm import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM
 
     for prompt in (ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM):
         text = prompt.format(date="Thursday 2025-10-09", owner="Me")

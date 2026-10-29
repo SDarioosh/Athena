@@ -15,11 +15,11 @@ from fastapi.testclient import TestClient
 from test_ingest_relay import MCP_TOKEN, mcp_client
 from test_mcp import call
 
-from convo_server.api import create_app
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.mcp_server import build_mcp
-from convo_server.pipeline import Worker
-from convo_server.store import ERASED_TEXT, WRITTEN_DEVICE
+from athena.api import create_app
+from athena.llm import LLMClient, Summarizer
+from athena.mcp_server import build_mcp
+from athena.pipeline import Worker
+from athena.store import ERASED_TEXT, WRITTEN_DEVICE
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 WRITTEN_AT = "2025-10-09T08:53:20Z"
@@ -447,7 +447,7 @@ def test_page_text_is_data_not_instructions(api, pipeline, log):
 
 
 def note_view(pipeline, conv_id) -> str:
-    from convo_server.links import sign
+    from athena.links import sign
 
     return f"/view/{conv_id}?sig={sign(pipeline.settings, conv_id)}"
 
@@ -514,7 +514,7 @@ def test_relay_forwards_with_the_ingest_token(pipeline):
 
 
 def test_relay_wants_json_and_caps_the_body(pipeline, monkeypatch):
-    from convo_server import ingest_relay
+    from athena import ingest_relay
 
     seen: list = []
     c = mcp_client(pipeline, httpx.MockTransport(
@@ -532,7 +532,7 @@ def test_text_routes_are_not_mcp_tools(pipeline):
 
     from mcp import Client
 
-    from convo_server.ingest_relay import add_ingest_routes
+    from athena.ingest_relay import add_ingest_routes
 
     mcp = build_mcp(pipeline.store, pipeline.settings)
     add_ingest_routes(mcp, pipeline.settings)

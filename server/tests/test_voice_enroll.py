@@ -1,5 +1,5 @@
 """Enroll a voice from the next recording, for the hub's "Enroll my voice"
-(convo_server/voice_enroll.py)."""
+(athena/voice_enroll.py)."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ import numpy as np
 from conftest import TOKEN, ToneEmbedder, silence, tone, wav
 from fastapi.testclient import TestClient
 
-from convo_server import voice_enroll
-from convo_server.api import create_app
-from convo_server.ingest_relay import add_ingest_routes
-from convo_server.mcp_server import BearerAuth, build_mcp
+from athena import voice_enroll
+from athena.api import create_app
+from athena.ingest_relay import add_ingest_routes
+from athena.mcp_server import BearerAuth, build_mcp
 
 MCP_TOKEN = "mcp-token-abcdefghijkl"
 
@@ -122,7 +122,7 @@ def test_unexpected_error_keeps_the_audio(pipeline, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("disk on fire")
 
-    monkeypatch.setattr("convo_server.diarize.enroll_voice", boom)
+    monkeypatch.setattr("athena.diarize.enroll_voice", boom)
     voice_enroll.start(pipeline, "Sam", now=time.time() - 1)
     record(pipeline, "enr", reading(40))
     pipeline.process_pending()

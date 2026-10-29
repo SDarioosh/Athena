@@ -6,11 +6,11 @@ import numpy as np
 import pytest
 from conftest import dominant_freq, silence, tone, wav
 
-from convo_server.audio import SAMPLE_RATE
-from convo_server.clips import Window, plan_windows, tail_words
-from convo_server.diarize import SpeakerLabel
-from convo_server.transcribe import TranscriptPiece
-from convo_server.vad import Span
+from athena.audio import SAMPLE_RATE
+from athena.clips import Window, plan_windows, tail_words
+from athena.diarize import SpeakerLabel
+from athena.transcribe import TranscriptPiece
+from athena.vad import Span
 
 T0 = 1_760_000_000.0
 
@@ -188,7 +188,7 @@ def test_piece_over_a_cut_is_split_by_word_times():
 
 
 def test_verbose_json_keeps_word_times():
-    from convo_server.transcribe import parse_verbose_json
+    from athena.transcribe import parse_verbose_json
 
     (p,) = parse_verbose_json({"segments": [{"start": 0.0, "end": 1.0, "text": " Hi there",
                                              "words": [{"word": " Hi", "start": 0.0,

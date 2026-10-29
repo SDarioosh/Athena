@@ -23,12 +23,12 @@ import httpx
 import numpy as np
 import pytest
 
-from convo_server import store as store_module
-from convo_server.config import Settings
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.pipeline import Pipeline
-from convo_server.store import CONVERSATION, NOTE, Segment, Store
-from convo_server.vad import EnergyVAD
+from athena import store as store_module
+from athena.config import Settings
+from athena.llm import LLMClient, Summarizer
+from athena.pipeline import Pipeline
+from athena.store import CONVERSATION, NOTE, Segment, Store
+from athena.vad import EnergyVAD
 
 ME = "Me"
 INGEST_TOKEN = "contract-ingest-token-0123456789"  # signs the transcript links
@@ -472,7 +472,7 @@ def _insert_conversation(store: Store, pipeline: Pipeline, key: str, start: str,
 def _insert_meeting(store: Store, pipeline: Pipeline, key: str, start: str,
                     lines: list[tuple[str, str, float, float]]) -> list[str]:
     """As seed_demo.insert_meeting: per-track lines, then the bot's chat call."""
-    from convo_server.meeting_chat import ChatIn, ingest_chat
+    from athena.meeting_chat import ChatIn, ingest_chat
 
     sid, device, t0 = f"demo-{key}", "zoom", _ts(start)
     segs = sorted((Segment(t0 + at, t0 + at + length, text, speaker, speaker == ME)

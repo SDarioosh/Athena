@@ -1,4 +1,4 @@
-"""Athena's Zoom sign-in (convo_server/zoom_signin.py) against a fake Zoom OAuth and API.
+"""Athena's Zoom sign-in (athena/zoom_signin.py) against a fake Zoom OAuth and API.
 
 No network: every call goes to FakeZoom, an httpx transport. All ids, keys and tokens
 are fictional.
@@ -19,8 +19,8 @@ import httpx
 import pytest
 from test_meetings import _bot, _report, _wait
 
-from convo_server import zoom_signin
-from convo_server.cli import zoom_login
+from athena import zoom_signin
+from athena.cli import zoom_login
 
 CLIENT_ID, CLIENT_SECRET = "fictional-client-id", "fictional-client-secret"
 REDIRECT = "https://athena.example/zoom/callback"

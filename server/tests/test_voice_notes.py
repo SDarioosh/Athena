@@ -9,9 +9,9 @@ import sqlite3
 import numpy as np
 from conftest import fake_llm_transport, silence, tone, wav
 
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.store import Segment, Store
-from convo_server.transcribe import TranscriptPiece
+from athena.llm import LLMClient, Summarizer
+from athena.store import Segment, Store
+from athena.transcribe import TranscriptPiece
 
 T0 = 1_760_000_000.0
 
@@ -137,7 +137,7 @@ def test_note_owner_name_falls_back_to_settings(pipeline):
 def test_note_after_a_zoom_meeting_keeps_convo_owner_name(pipeline):
     # owner request (QA BUG-07 follow-up): a Zoom meeting matched the owner by
     # CONVO_ZOOM_OWNER_NAMES with no owner voice enrolled; voice notes keep CONVO_OWNER_NAME
-    from convo_server.meeting_names import speaker_for_track
+    from athena.meeting_names import speaker_for_track
     pipeline.store._conn.execute("DELETE FROM speakers")
     pipeline.store._conn.execute("DELETE FROM people")
     pipeline.settings.owner_name = "Shahyah"
@@ -208,7 +208,7 @@ def test_summarizer_note_skips_length_check_and_triage():
 def test_mcp_marks_voice_notes(pipeline):
     from test_mcp import call
 
-    from convo_server.mcp_server import build_mcp
+    from athena.mcp_server import build_mcp
 
     record(pipeline, "c1", T0)
     record(pipeline, "n1", T0 + 60, "note")
@@ -228,7 +228,7 @@ def test_mcp_marks_voice_notes(pipeline):
 def test_mcp_filters_voice_notes(pipeline):
     from test_mcp import call
 
-    from convo_server.mcp_server import build_mcp
+    from athena.mcp_server import build_mcp
 
     record(pipeline, "c1", T0)
     record(pipeline, "n1", T0 + 60, "note")

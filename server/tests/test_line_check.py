@@ -8,7 +8,7 @@ from conftest import silence, tone
 from test_pipeline import ingest
 from test_split_lines import MixEmbedder
 
-from convo_server.diarize import UNSURE_LABEL, Diarizer, EnrolledVoice, PieceRef, SpeakerLabel
+from athena.diarize import UNSURE_LABEL, Diarizer, EnrolledVoice, PieceRef, SpeakerLabel
 
 
 def _voices() -> list[EnrolledVoice]:
@@ -40,7 +40,7 @@ def test_one_enrolled_voice_means_nothing_to_compare():
 
 
 def test_pyannote_lines_are_checked_too_when_turned_on(pipeline):
-    from convo_server.diarize_pyannote import PyannoteDiarizer
+    from athena.diarize_pyannote import PyannoteDiarizer
 
     # pyannote missed the turn change: one speaker for all 18 s, mostly the owner
     turns = [(0.0, 18.0, "A")]
@@ -57,7 +57,7 @@ def test_pyannote_lines_are_checked_too_when_turned_on(pipeline):
 
 
 def test_the_check_is_off_by_default(pipeline):
-    from convo_server.diarize_pyannote import PyannoteDiarizer
+    from athena.diarize_pyannote import PyannoteDiarizer
 
     turns = [(0.0, 18.0, "A")]
     pipeline.diarizer = PyannoteDiarizer(MixEmbedder(), [], segmenter=lambda audio: turns)
@@ -126,9 +126,9 @@ def test_too_little_speech_is_not_named():
 def test_build_diarizer_sets_the_naming_rules(tmp_path, monkeypatch):
     from conftest import ToneEmbedder
 
-    from convo_server import cli
-    from convo_server.config import Settings
-    from convo_server.store import Store
+    from athena import cli
+    from athena.config import Settings
+    from athena.store import Store
 
     monkeypatch.setattr(cli, "EcapaEmbedder", lambda cache: ToneEmbedder())
     s = Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_match_margin=0.1,
@@ -140,8 +140,8 @@ def test_build_diarizer_sets_the_naming_rules(tmp_path, monkeypatch):
 def test_voices_of_two_speaker_models_dont_mix(tmp_path):
     """Switching CONVO_SPEAKER_EMBEDDER: old (192-value) samples stay stored but the
     voiceprint follows the newest model, and a voice of the other model never matches."""
-    from convo_server.diarize import load_voices
-    from convo_server.store import Store
+    from athena.diarize import load_voices
+    from athena.store import Store
 
     store = Store(tmp_path / "x.db")
     old = np.ones(192, np.float32)
@@ -162,9 +162,9 @@ def test_voices_of_two_speaker_models_dont_mix(tmp_path):
 def test_pyannote_embedder_needs_the_pyannote_diarizer(tmp_path):
     import pytest
 
-    from convo_server import cli
-    from convo_server.config import Settings
-    from convo_server.store import Store
+    from athena import cli
+    from athena.config import Settings
+    from athena.store import Store
 
     s = Settings(ingest_token="t" * 32, data_dir=tmp_path, speaker_embedder="pyannote")
     with pytest.raises(SystemExit):
@@ -179,7 +179,7 @@ def test_pyannote_embedder_needs_the_pyannote_diarizer(tmp_path):
 
 
 def test_pyannote_gets_the_measured_defaults_and_settings_still_win(tmp_path, monkeypatch):
-    from convo_server.config import Settings
+    from athena.config import Settings
 
     for k in ("CONVO_VAD_THRESHOLD", "CONVO_SPEAKER_SPLIT_LINES", "CONVO_SPEAKER_LINE_CHECK",
               "CONVO_SPEAKER_SPLIT_MIN_SECONDS", "CONVO_DIARIZER"):
@@ -236,7 +236,7 @@ def test_a_missed_turn_inside_one_speakers_lines_is_still_caught():
 
 
 def test_own_bounds_stop_at_other_speakers_in_the_same_run():
-    from convo_server.diarize import own_bounds
+    from athena.diarize import own_bounds
 
     a, b = SpeakerLabel("A", False), SpeakerLabel("B", False)
     pieces = [PieceRef(0, 0.0, 2.0), PieceRef(0, 2.5, 3.0), PieceRef(0, 3.0, 4.0),

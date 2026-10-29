@@ -9,8 +9,8 @@ import subprocess
 import pytest
 from conftest import dominant_freq, tone, wav
 
-from convo_server import audio
-from convo_server.opus_packets import ogg_opus, packet_samples, parse_length_prefixed
+from athena import audio
+from athena.opus_packets import ogg_opus, packet_samples, parse_length_prefixed
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 

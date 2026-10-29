@@ -8,9 +8,9 @@ from pathlib import Path
 import httpx
 from conftest import tone
 
-from convo_server.cli import build_transcriber
-from convo_server.config import Settings
-from convo_server.transcribe import (
+from athena.cli import build_transcriber
+from athena.config import Settings
+from athena.transcribe import (
     HallucinationFilter,
     WhisperCliTranscriber,
     WhisperServerTranscriber,

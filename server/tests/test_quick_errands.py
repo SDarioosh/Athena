@@ -13,8 +13,8 @@ import pytest
 from conftest import fake_llm_transport
 from test_confirmed_facts import HOUR, T0, say
 
-from convo_server.llm import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM, LLMClient, Summarizer
-from convo_server.store import Segment, Store, person_name
+from athena.llm import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM, LLMClient, Summarizer
+from athena.store import Segment, Store, person_name
 
 
 def summarize(items: list[dict], lines: list[str], kind: str = "casual",

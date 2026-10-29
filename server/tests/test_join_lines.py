@@ -5,8 +5,8 @@ from __future__ import annotations
 from conftest import tone
 from test_pipeline import ingest
 
-from convo_server.diarize import UNSURE_LABEL, PieceRef, SpeakerLabel
-from convo_server.lines import ends_sentence, join_lines
+from athena.diarize import UNSURE_LABEL, PieceRef, SpeakerLabel
+from athena.lines import ends_sentence, join_lines
 
 ME, BOB = SpeakerLabel("Me", True), SpeakerLabel("Bob", False)
 UNSURE = SpeakerLabel(UNSURE_LABEL, False)
@@ -60,7 +60,7 @@ def test_sentence_ends():
 
 class _TwoPieces:
     def transcribe(self, audio, prompt=""):
-        from convo_server.transcribe import TranscriptPiece
+        from athena.transcribe import TranscriptPiece
 
         return [TranscriptPiece(0.2, 1.0, "I just"), TranscriptPiece(1.2, 2.5, "found this.")]
 

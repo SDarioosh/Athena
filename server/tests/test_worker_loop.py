@@ -5,7 +5,7 @@ import threading
 import time
 from types import SimpleNamespace
 
-from convo_server.pipeline import Worker
+from athena.pipeline import Worker
 
 
 class _Store:
@@ -51,7 +51,7 @@ def test_failing_step_does_not_skip_the_rest(caplog) -> None:
     prunes: list[int] = []
     worker._maybe_digest = lambda: digests.append(1)  # type: ignore[method-assign]
     worker._maybe_prune = lambda: prunes.append(1)  # type: ignore[method-assign]
-    with caplog.at_level(logging.ERROR, logger="convo_server.pipeline"):
+    with caplog.at_level(logging.ERROR, logger="athena.pipeline"):
         worker.tick(now=100.0)
     assert p.ran == ["finalize_idle", "process_pending", "transcribe_live",
                      "rewrite_forgotten"]

@@ -12,8 +12,8 @@ from typing import Any
 
 import pytest
 
-from convo_server.pipeline import Pipeline
-from convo_server.store import Segment
+from athena.pipeline import Pipeline
+from athena.store import Segment
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "firmware" / "recorder" / "tools"))

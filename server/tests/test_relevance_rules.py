@@ -2,7 +2,7 @@
 
 import pytest
 
-from convo_server.relevance_rules import discard_reason
+from athena.relevance_rules import discard_reason
 
 
 @pytest.mark.parametrize("texts", [

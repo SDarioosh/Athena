@@ -11,8 +11,8 @@ import pytest
 from test_confirmed_facts import DAY, T0, say
 from test_mcp import call
 
-from convo_server.dates import fact_valid_until
-from convo_server.mcp_server import build_mcp
+from athena.dates import fact_valid_until
+from athena.mcp_server import build_mcp
 
 FRIDAY = date(2026, 10, 23)
 

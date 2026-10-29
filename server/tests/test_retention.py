@@ -7,9 +7,9 @@ from test_confirmed_facts import DAY, T0
 from test_erase_fact import conversation, erase, rewriter
 from test_mcp import call, process_two_speakers
 
-from convo_server.links import render_conversation
-from convo_server.mcp_server import build_mcp
-from convo_server.pipeline import Worker
+from athena.links import render_conversation
+from athena.mcp_server import build_mcp
+from athena.pipeline import Worker
 
 
 def retention(pipeline, days: int):

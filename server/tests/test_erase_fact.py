@@ -12,9 +12,9 @@ import numpy as np
 from test_confirmed_facts import DAY, HOUR, T0
 from test_mcp import call
 
-from convo_server.llm import LLMClient, LLMError, Summarizer, scrub_facts
-from convo_server.mcp_server import build_mcp
-from convo_server.store import ERASED_TEXT, Segment
+from athena.llm import LLMClient, LLMError, Summarizer, scrub_facts
+from athena.mcp_server import build_mcp
+from athena.store import ERASED_TEXT, Segment
 
 FACT = "Alice is vegetarian"
 
@@ -222,7 +222,7 @@ def test_a_digest_is_taken_down_and_written_again_after_the_rewrite(pipeline):
 
 
 def _digest_aware(structured):
-    from convo_server.llm import DailyDigest
+    from athena.llm import DailyDigest
 
     def wrapped(system, user, schema, retries=1):
         if schema is DailyDigest:
@@ -248,8 +248,8 @@ def test_a_model_failure_keeps_the_notes_hidden(pipeline):
 def test_the_view_page_shows_the_redacted_line(pipeline):
     from fastapi.testclient import TestClient
 
-    from convo_server.api import create_app
-    from convo_server.links import sign
+    from athena.api import create_app
+    from athena.links import sign
 
     store = pipeline.store
     conv, fid = conversation(store, "c0", T0)

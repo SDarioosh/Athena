@@ -21,7 +21,7 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from convo_server.store import Store
+from athena.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

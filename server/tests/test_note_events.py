@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from conftest import fake_llm_transport
 
-from convo_server.llm import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM, LLMClient, Summarizer
-from convo_server.store import Segment
+from athena.llm import ACTIONS_SYSTEM, NOTE_ACTIONS_SYSTEM, LLMClient, Summarizer
+from athena.store import Segment
 
 T0 = 1_760_000_000.0  # Thursday 2025-10-09, 10:53 in Berlin
 TUESDAY = "2025-10-14"

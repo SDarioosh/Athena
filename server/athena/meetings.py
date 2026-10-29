@@ -245,7 +245,7 @@ def sign_sdk_jwt(key: str, secret: str, meeting_id: str, *, now: float | None = 
 async def join_token_provider(settings: Settings, meeting: ZoomMeeting, *,
                               transport: Any = None) -> tuple[str, str | None]:
     """``(kind, token)`` for this join: ``("zak"|"obf", token)`` from Athena's Zoom
-    sign-in (convo_server/zoom_signin.py, imported only here), or ``("none", None)``.
+    sign-in (athena/zoom_signin.py, imported only here), or ``("none", None)``.
     Called on a join request only. Raises MeetingError 503 ``zoom_signin_needed`` when the
     mode needs a sign-in that is missing or expired, 502 ``zoom_unavailable`` when Zoom
     can't be reached."""

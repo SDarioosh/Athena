@@ -14,11 +14,11 @@ from test_ingest_relay import MCP_TOKEN, mcp_client
 from test_mcp import call
 from test_written_notes import LINK, note_llm
 
-from convo_server.api import create_app
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.mcp_server import build_mcp
-from convo_server.pipeline import MAX_LINE_CHARS, validate_link, written_lines
-from convo_server.store import ERASED_TEXT
+from athena.api import create_app
+from athena.llm import LLMClient, Summarizer
+from athena.mcp_server import build_mcp
+from athena.pipeline import MAX_LINE_CHARS, validate_link, written_lines
+from athena.store import ERASED_TEXT
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 DAY = 86_400.0
@@ -241,7 +241,7 @@ def test_a6_bare_dots_are_no_source_id(api, source_id):
 
 # ------------------------------------------------------------------- A-7
 def test_a7_a_failed_note_is_retried_by_the_worker_after_an_unchanged_resend(api, pipeline):
-    from convo_server.pipeline import Worker
+    from athena.pipeline import Worker
 
     conv = put(pipeline, "hub-note:n1", ["Call the dentist on Monday."])
     pipeline.store.mark_conversation_failed(conv, "LLMError: down")

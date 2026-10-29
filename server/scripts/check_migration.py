@@ -21,7 +21,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from convo_server.store import SCHEMA_VERSION, Store
+from athena.store import SCHEMA_VERSION, Store
 
 
 def snapshot(path: Path) -> tuple[int, dict[str, int]]:

@@ -11,13 +11,13 @@ import numpy as np
 import pytest
 from conftest import ToneEmbedder, fake_llm_transport, silence, tone, wav
 
-from convo_server import store as store_mod
-from convo_server.conversations import split_on_gaps
-from convo_server.diarize import Diarizer, EnrolledVoice, cluster
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.pipeline import Worker
-from convo_server.search import index_conversation, search
-from convo_server.store import Segment
+from athena import store as store_mod
+from athena.conversations import split_on_gaps
+from athena.diarize import Diarizer, EnrolledVoice, cluster
+from athena.llm import LLMClient, Summarizer
+from athena.pipeline import Worker
+from athena.search import index_conversation, search
+from athena.store import Segment
 
 T0 = 1_760_000_000.0
 

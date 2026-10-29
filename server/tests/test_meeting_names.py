@@ -7,13 +7,13 @@ import sys
 
 import pytest
 
-from convo_server.meeting_names import (
+from athena.meeting_names import (
     clean_display_name,
     looks_like_device,
     speaker_for_track,
     speakers_for_tracks,
 )
-from convo_server.store import Segment, Store
+from athena.store import Segment, Store
 
 OWNER = ("Sam Okoro",)
 
@@ -268,8 +268,8 @@ def test_link_person_skips_placeholders_and_returns_current_name(store):
 
 
 def test_api_import_does_not_load_meeting_names():
-    code = ("import sys, convo_server.api, convo_server.mcp_server; "
-            "assert 'convo_server.meeting_names' not in sys.modules, 'loaded at startup'")
+    code = ("import sys, athena.api, athena.mcp_server; "
+            "assert 'athena.meeting_names' not in sys.modules, 'loaded at startup'")
     subprocess.run([sys.executable, "-c", code], check=True)
 
 

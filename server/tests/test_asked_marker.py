@@ -7,7 +7,7 @@ string key, so an item can be logged or serialized as JSON.
 
 import json
 
-from convo_server import llm
+from athena import llm
 
 
 def test_asked_marker_is_a_string_key() -> None:

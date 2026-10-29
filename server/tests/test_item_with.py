@@ -9,8 +9,8 @@ from conftest import ToneEmbedder, tone
 from test_confirmed_facts import HOUR, T0
 from test_mcp import call
 
-from convo_server.mcp_server import build_mcp
-from convo_server.store import Segment, Store
+from athena.mcp_server import build_mcp
+from athena.store import Segment, Store
 
 
 def converse(store: Store, name: str, start: float, lines: list[tuple[str, str]],

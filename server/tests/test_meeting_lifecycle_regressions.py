@@ -19,8 +19,8 @@ from test_meetings import (  # noqa: F401  (meeting_settings is a fixture)
 )
 from test_relay_meetings import Q, fake
 
-from convo_server import meetings
-from convo_server.meetings import Launcher, _Running, final_state
+from athena import meetings
+from athena.meetings import Launcher, _Running, final_state
 
 
 # --------------------------------------------------- relay: GET /meetings?limit
@@ -107,7 +107,7 @@ def test_shutdown_as_container_init_lets_bots_leave(meeting_settings, pipeline, 
     session's end. There the shutdown must ask the bots to leave (SIGTERM) first."""
     from fastapi.testclient import TestClient
 
-    from convo_server.api import create_app
+    from athena.api import create_app
 
     monkeypatch.setattr(meetings, "_exit_kills_bots", lambda: True, raising=False)
     rep = _use(meeting_settings, tmp_path, "record")
@@ -136,7 +136,7 @@ def test_shutdown_elsewhere_leaves_bots_running(meeting_settings, pipeline,  # n
     rep = _use(meeting_settings, tmp_path, "record")
     from fastapi.testclient import TestClient
 
-    from convo_server.api import create_app
+    from athena.api import create_app
 
     with TestClient(create_app(pipeline)) as c:
         c.headers["Authorization"] = "Bearer " + meeting_settings.ingest_token

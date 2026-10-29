@@ -11,10 +11,10 @@ from conftest import fake_llm_transport
 from test_mcp import call
 from test_voice_notes import record
 
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.mcp_server import build_mcp
-from convo_server.store import Segment, Store, short_title
-from convo_server.transcribe import TranscriptPiece
+from athena.llm import LLMClient, Summarizer
+from athena.mcp_server import build_mcp
+from athena.store import Segment, Store, short_title
+from athena.transcribe import TranscriptPiece
 
 T0 = 1_760_000_000.0  # Thursday 2025-10-09
 

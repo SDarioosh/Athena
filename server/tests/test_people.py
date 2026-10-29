@@ -9,8 +9,8 @@ from conftest import ToneEmbedder, tone
 from test_confirmed_facts import HOUR, T0, say
 from test_mcp import call, process_two_speakers
 
-from convo_server.mcp_server import build_mcp
-from convo_server.store import Store
+from athena.mcp_server import build_mcp
+from athena.store import Store
 
 
 def voice(freq: float):
@@ -246,7 +246,7 @@ def owner_view(store: Store, settings) -> tuple[list[dict], list[dict]]:
 
 
 def test_without_an_enrolled_owner_the_owner_name_person_is_the_owner(pipeline, tmp_path):
-    from convo_server.mcp_server import _owner_names
+    from athena.mcp_server import _owner_names
 
     store = Store(tmp_path / "no-owner.db")  # nobody enrolled as the owner
     say(store, "c0", T0, "Me", "Me prefers tea", people=("Me", "Alice"))
@@ -260,7 +260,7 @@ def test_without_an_enrolled_owner_the_owner_name_person_is_the_owner(pipeline, 
 
 
 def test_owner_name_person_is_listed_as_the_enrolled_owner(pipeline, tmp_path):
-    from convo_server.mcp_server import _owner_names
+    from athena.mcp_server import _owner_names
 
     store = Store(tmp_path / "sam.db")
     store.put_speaker("Sam", voice(300), is_owner=True)

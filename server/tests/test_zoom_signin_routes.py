@@ -21,8 +21,8 @@ from conftest import TOKEN
 from test_ingest_relay import MCP_TOKEN, mcp_client
 from test_zoom_signin import CLIENT_ID, CLIENT_SECRET, REDIRECT, FakeZoom, _join, _stored
 
-from convo_server import zoom_signin
-from convo_server.api import create_app
+from athena import zoom_signin
+from athena.api import create_app
 
 Q = f"?access_token={MCP_TOKEN}"
 
@@ -379,8 +379,8 @@ def test_signin_routes_are_not_mcp_tools(pipeline) -> None:
 
     from mcp import Client
 
-    from convo_server.ingest_relay import add_ingest_routes
-    from convo_server.mcp_server import build_mcp
+    from athena.ingest_relay import add_ingest_routes
+    from athena.mcp_server import build_mcp
 
     def tool_names(with_routes: bool) -> set[str]:
         mcp = build_mcp(pipeline.store, pipeline.settings)
@@ -404,21 +404,21 @@ def test_building_the_apps_imports_no_zoom_code(tmp_path) -> None:
     fresh interpreter, so other tests can't pollute sys.modules)."""
     code = textwrap.dedent(f"""
         import sys
-        from convo_server.config import Settings
-        from convo_server.store import Store
-        from convo_server.pipeline import Pipeline
-        from convo_server.vad import EnergyVAD
-        from convo_server.api import create_app
-        from convo_server.mcp_server import BearerAuth, build_mcp
-        from convo_server.ingest_relay import add_ingest_routes
+        from athena.config import Settings
+        from athena.store import Store
+        from athena.pipeline import Pipeline
+        from athena.vad import EnergyVAD
+        from athena.api import create_app
+        from athena.mcp_server import BearerAuth, build_mcp
+        from athena.ingest_relay import add_ingest_routes
         s = Settings(ingest_token="x" * 20, mcp_token="m" * 20, data_dir={str(tmp_path)!r},
                      run_worker=False, vad_backend="energy")
         create_app(Pipeline(s, Store(s.db_path), EnergyVAD()))
         mcp = build_mcp(Store(s.db_path), s)
         add_ingest_routes(mcp, s)
         BearerAuth(mcp.streamable_http_app(), s.mcp_token)
-        bad = [m for m in sys.modules if m in ("convo_server.zoom_signin",
-                                               "convo_server.meetings")]
+        bad = [m for m in sys.modules if m in ("athena.zoom_signin",
+                                               "athena.meetings")]
         assert not bad, bad
         print("ok")
     """)

@@ -9,9 +9,9 @@ import pytest
 from conftest import ToneEmbedder, tone
 from test_mcp import call
 
-from convo_server.links import transcript_link
-from convo_server.mcp_server import build_mcp
-from convo_server.store import Segment
+from athena.links import transcript_link
+from athena.mcp_server import build_mcp
+from athena.store import Segment
 
 T0 = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 HOUR, DAY = 3600.0, 86400.0

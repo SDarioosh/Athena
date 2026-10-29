@@ -9,10 +9,10 @@ import pytest
 from conftest import TOKEN, silence, wav
 from starlette.testclient import TestClient
 
-from convo_server import ingest_relay
-from convo_server.api import create_app
-from convo_server.ingest_relay import add_ingest_routes, ingest_api_base
-from convo_server.mcp_server import BearerAuth, build_mcp
+from athena import ingest_relay
+from athena.api import create_app
+from athena.ingest_relay import add_ingest_routes, ingest_api_base
+from athena.mcp_server import BearerAuth, build_mcp
 
 MCP_TOKEN = "mcp-token-abcdefghijkl"
 T0 = 1_760_000_000.0
@@ -26,7 +26,7 @@ def mcp_client(pipeline, transport) -> TestClient:
 
 def no_tokens_logged(caplog) -> bool:
     """The module's own log lines (the test client logs its own URLs) carry no token."""
-    ours = [r.getMessage() for r in caplog.records if r.name.startswith("convo_server")]
+    ours = [r.getMessage() for r in caplog.records if r.name.startswith("athena")]
     assert ours, "expected a log line to check"
     return not any(TOKEN in m or MCP_TOKEN in m for m in ours)
 
@@ -162,7 +162,7 @@ def test_ingest_api_base(settings, host, base):
 
 
 def test_access_log_hides_the_mcp_token():
-    from convo_server.mcp_server import HideAccessToken, _log_config
+    from athena.mcp_server import HideAccessToken, _log_config
 
     record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0,
                                '%s - "%s %s HTTP/%s" %d', ("1.2.3.4:5", "POST",

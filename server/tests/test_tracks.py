@@ -11,11 +11,11 @@ import pytest
 from conftest import TOKEN, silence, tone, wav
 from starlette.testclient import TestClient
 
-from convo_server.api import create_app
-from convo_server.ingest_relay import add_ingest_routes
-from convo_server.mcp_server import BearerAuth, build_mcp
-from convo_server.pipeline import chunk_filename, validate_track
-from convo_server.store import DuplicateChunk, Store
+from athena.api import create_app
+from athena.ingest_relay import add_ingest_routes
+from athena.mcp_server import BearerAuth, build_mcp
+from athena.pipeline import chunk_filename, validate_track
+from athena.store import DuplicateChunk, Store
 
 T0 = 1_760_000_000.0
 

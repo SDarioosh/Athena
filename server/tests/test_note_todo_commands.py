@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from conftest import fake_llm_transport
 
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.store import Segment
+from athena.llm import LLMClient, Summarizer
+from athena.store import Segment
 
 T0 = 1_760_000_000.0
 
