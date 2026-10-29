@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 from conftest import ToneEmbedder, fake_llm_transport, silence, tone, wav
 
-from athena import store as store_mod
 from athena.conversations import split_on_gaps
 from athena.diarize import Diarizer, EnrolledVoice, cluster
 from athena.llm import LLMClient, Summarizer
@@ -226,7 +225,9 @@ def test_summarize_pending_tries_each_conversation_once(pipeline):
 
 def test_worker_backs_off_on_failed_summaries(pipeline, monkeypatch):
     clock = [time.time()]
-    monkeypatch.setattr(store_mod, "time", SimpleNamespace(time=lambda: clock[0]))
+    for area in ("carry_over", "conversations", "facts", "forget", "meetings", "people",
+                 "sessions", "store", "voices"):  # the store's clock, in each part of it
+        monkeypatch.setattr(f"athena.db.{area}.time", SimpleNamespace(time=lambda: clock[0]))
 
     def tick(seconds_later: float) -> None:
         clock[0] += seconds_later

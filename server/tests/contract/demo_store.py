@@ -23,8 +23,8 @@ import httpx
 import numpy as np
 import pytest
 
-from athena import store as store_module
 from athena.config import Settings
+from athena.db import conversations as store_module
 from athena.llm import LLMClient, Summarizer
 from athena.pipeline import Pipeline
 from athena.store import CONVERSATION, NOTE, Segment, Store
