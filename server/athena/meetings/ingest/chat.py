@@ -23,16 +23,15 @@ so a server that never sees a meeting never loads it.
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 import threading
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...domain import CHAT, ZOOM_DEVICE, Segment
 from ...pipeline import MAX_TITLE_CHARS, MAX_TRACK_NAME_CHARS, TRACK, validate_id
+from ...timeutil import parse_instant
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...pipeline import Pipeline
@@ -99,21 +98,10 @@ def parse_time(value: str | float | None, what: str) -> float | None:
     ValueError for anything else or a time outside 2000..2100."""
     if value is None or value == "":
         return None
-    num: float | None
     try:
-        num = float(value)
-    except (TypeError, ValueError):
-        num = None
-    if num is not None:
-        if not math.isfinite(num):
-            raise ValueError(f"{what} must be ISO-8601 or epoch seconds")
-        ts = num / 1000.0 if num > 1e11 else num
-    else:
-        try:
-            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except ValueError as e:
-            raise ValueError(f"{what} must be ISO-8601 or epoch seconds") from e
-        ts = (dt if dt.tzinfo else dt.replace(tzinfo=UTC)).timestamp()
+        ts = parse_instant(value)
+    except ValueError as e:
+        raise ValueError(f"{what} must be ISO-8601 or epoch seconds") from e
     if not (_EARLIEST <= ts < _LATEST):
         raise ValueError(f"{what} must be a time between 2000 and 2100")
     return ts

@@ -14,7 +14,7 @@ import hmac
 import json
 import logging
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
@@ -38,6 +38,8 @@ from .domain import (
 from .links import local_time, meeting_label, speaker_label, transcript_link, written_label
 from .search import Embedder, search
 from .speakers import relabel_matches, suggestion
+from .timeutil import iso as _iso
+from .timeutil import parse_when
 
 INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
 with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
@@ -95,23 +97,6 @@ RecKind = Annotated[str, Field(description=(
     "'meeting' = only online meetings; 'in_person' = only conversations recorded in "
     "person (no online meetings); empty = everything"))]
 ConvId = Annotated[str, Field(description="conversation id from a previous result")]
-
-
-def parse_when(value: str, tz: ZoneInfo, *, end: bool = False) -> float | None:
-    """'' -> None; 'YYYY-MM-DD' -> local midnight (``end``: midnight after); ISO -> as given."""
-    value = (value or "").strip()
-    if not value:
-        return None
-    try:
-        day = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=tz)
-        return (day + timedelta(days=1) if end else day).timestamp()
-    except ValueError:
-        pass
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as e:
-        raise ValueError(f"bad date {value!r}; use YYYY-MM-DD") from e
-    return (dt if dt.tzinfo else dt.replace(tzinfo=tz)).timestamp()
 
 
 def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None):
@@ -859,10 +844,6 @@ def _kind_word(a: dict[str, Any]) -> str:
     """"event: " / "reminder: " before the text; nothing for a task."""
     kind = a.get("kind") or "task"
     return "" if kind == "task" else f"{kind}: "
-
-
-def _iso(ts: float | None) -> str | None:
-    return datetime.fromtimestamp(ts, UTC).isoformat() if ts is not None else None
 
 
 def _src(item: dict[str, Any], settings: Settings, conv: dict[str, Any]) -> str:

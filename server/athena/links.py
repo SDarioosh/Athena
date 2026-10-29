@@ -13,11 +13,10 @@ import hmac
 import html
 import time
 from collections.abc import Collection
-from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from .config import Settings
+from .timeutil import local_time as _local_time
 
 
 def _key(settings: Settings) -> bytes:
@@ -39,9 +38,7 @@ def transcript_link(settings: Settings, conv_id: str, offset: float | None = Non
 
 
 def local_time(settings: Settings, ts: float | None, fmt: str = "%Y-%m-%d %H:%M") -> str | None:
-    if ts is None:
-        return None
-    return datetime.fromtimestamp(ts, ZoneInfo(settings.timezone)).strftime(fmt)
+    return _local_time(ts, settings.timezone, fmt)
 
 
 _PAGE = """<!doctype html><html><head><meta charset="utf-8">

@@ -39,10 +39,8 @@ import base64
 import binascii
 import hmac
 import logging
-import math
 import re
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from importlib import metadata
 from typing import Annotated, Any
 
@@ -78,32 +76,18 @@ from .pipeline import (
 from .search import search
 from .speakers import relabel_matches
 from .summarize.client import LLMError
+from .timeutil import iso, parse_instant
 
 log = logging.getLogger(__name__)
 MAX_CHUNK_BYTES = 25 * 1024 * 1024
 
 
-def iso(ts: float | None) -> str | None:
-    return datetime.fromtimestamp(ts, UTC).isoformat() if ts is not None else None
-
-
 def parse_ts(value: str) -> float:
     """ISO-8601 (naive = UTC) or epoch seconds/milliseconds."""
     try:
-        num = float(value)
-    except ValueError:
-        pass
-    else:
-        if not math.isfinite(num):
-            raise HTTPException(400, "timestamp must be ISO-8601 or epoch seconds")
-        return num / 1000.0 if num > 1e11 else num
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_instant(value)
     except ValueError as e:
         raise HTTPException(400, "timestamp must be ISO-8601 or epoch seconds") from e
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.timestamp()
 
 
 def _conv_out(c: dict[str, Any], settings: Settings) -> dict[str, Any]:
