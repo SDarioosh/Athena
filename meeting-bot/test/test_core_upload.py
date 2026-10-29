@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -311,13 +312,17 @@ class CoreUploadTests(unittest.TestCase):
         of a one-chunk meeting (later uploads get 200 ok): ok, retry, drop or stop_uploads."""
         cases = json.loads(CASES.read_text())
         self.assertTrue(cases)
-        for case in cases:
+        with ThreadPoolExecutor(max_workers=4) as pool:  # each run waits on timers, not CPU
+            runs = list(pool.map(self.run_case, cases))
+        for case, run in zip(cases, runs, strict=True):
             with self.subTest(status=case["status"], body=case["body"]):
-                self.check_case(case)
+                self.check_case(case, run)
 
-    def check_case(self, case: dict) -> None:
-        run = self.run_core("case", "--pattern", "tail", "--wait-ms", "2500",
-                            server_args=("--case", json.dumps(case)))
+    def run_case(self, case: dict) -> Run:
+        return self.run_core("case", "--pattern", "tail", "--wait-ms", "2500",
+                             server_args=("--case", json.dumps(case)))
+
+    def check_case(self, case: dict, run: Run) -> None:
         chunks = run.chunks(None)
         self.assertEqual(chunks[0]["status"], case["status"])
         expect = case["expect"]
