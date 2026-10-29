@@ -1,0 +1,321 @@
+{
+ "audio_files": [],
+ "rows": {
+  "action_items": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "created_at": 1760000030.0,
+    "due": "Friday",
+    "due_date": "2025-10-10",
+    "due_time": null,
+    "duration_minutes": null,
+    "edited": 0,
+    "explicit": 1,
+    "id": 1,
+    "kind": "task",
+    "list_name": null,
+    "location": null,
+    "note_title": null,
+    "owner": "Me",
+    "source_at": 1760000002.73,
+    "status": "open",
+    "text": "Book flights",
+    "time_unclear": 0,
+    "title": "Book flights"
+   }
+  ],
+  "chunks": [
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000030.0,
+    "sequence": 0,
+    "session_id": "s1",
+    "speech": "[[1.98, 8.01]]",
+    "started_at": 1760000000.0,
+    "track": "",
+    "track_name": null
+   }
+  ],
+  "conversation_people": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "name": "Alice"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "name": "Me"
+   }
+  ],
+  "conversations": [
+   {
+    "device": "handwriting2",
+    "discard_reason": null,
+    "ended_at": 1760000008.26,
+    "error": null,
+    "id": "000000000000000000000000c0de0001",
+    "key_points": "[\"Trip to Lisbon in May\"]",
+    "kind": "casual",
+    "people": "[\"Alice\", \"Me\"]",
+    "started_at": 1760000001.73,
+    "status": "summarized",
+    "summary": "Alice and the user planned a trip to Lisbon.",
+    "title": "Planning the trip",
+    "topics": "[\"travel\"]",
+    "transcript_pruned_at": null,
+    "updated_at": 1760000030.0
+   }
+  ],
+  "facts": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "erased_at": null,
+    "fact": "Alice is vegetarian",
+    "id": 1,
+    "kind": "other",
+    "retired_at": null,
+    "retired_reason": null,
+    "source_at": 1760000003.73,
+    "status": "current",
+    "subject": "Alice",
+    "superseded_by": null
+   }
+  ],
+  "people": [
+   {
+    "created_at": 1760000000.0,
+    "id": 1,
+    "is_owner": 1,
+    "merged_into": null,
+    "name": "Me",
+    "speaker_id": 1
+   },
+   {
+    "created_at": 1760000030.0,
+    "id": 2,
+    "is_owner": 0,
+    "merged_into": null,
+    "name": "Alice",
+    "speaker_id": null
+   }
+  ],
+  "search_fts": [
+   {
+    "body": "Alice: Alice is vegetarian",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "fact",
+    "ref_id": "1"
+   },
+   {
+    "body": "Book flights",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "action_item",
+    "ref_id": "1"
+   },
+   {
+    "body": "Me: words at 200 hz",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "transcript",
+    "ref_id": "000000000000000000000000c0de0001"
+   },
+   {
+    "body": "Planning the trip\nAlice and the user planned a trip to Lisbon.\nTrip to Lisbon in May\ntravel\nAlice Me",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "conversation",
+    "ref_id": "000000000000000000000000c0de0001"
+   }
+  ],
+  "segments": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "device": "handwriting2",
+    "ended_at": 1760000008.26,
+    "erased": 0,
+    "id": 1,
+    "is_owner": 1,
+    "kind": "speech",
+    "session_id": "s1",
+    "speaker": "Me",
+    "started_at": 1760000001.73,
+    "text": "words at 200 hz"
+   }
+  ],
+  "sessions": [
+   {
+    "device": "handwriting2",
+    "error": null,
+    "id": "s1",
+    "kind": "conversation",
+    "last_chunk_at": 1760000030.0,
+    "last_speech_at": 1760000008.01,
+    "received_at": 1760000030.0,
+    "started_at": 1760000000.0,
+    "status": "done",
+    "stop_reason": "client"
+   }
+  ],
+  "speakers": [
+   {
+    "created_at": 1760000000.0,
+    "embedding": "sha256:96a50e6c30a75949",
+    "id": 1,
+    "is_owner": 1,
+    "name": "Me"
+   }
+  ],
+  "voice_samples": [
+   {
+    "created_at": 1760000000.0,
+    "embedding": "sha256:96a50e6c30a75949",
+    "id": 1,
+    "session_id": null,
+    "source": "enrolled",
+    "speaker_id": 1
+   }
+  ]
+ },
+ "steps": [
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": null,
+    "session_seconds": 30.0,
+    "speech_seconds": 6.03,
+    "stop": false,
+    "trailing_silence_seconds": 21.99
+   },
+   "step": "ingest s1 -#0 @0"
+  },
+  {
+   "out": true,
+   "step": "end s1"
+  },
+  {
+   "llm": [
+    {
+     "messages_sha256": "74227a05a7115482ce89d7c5ca88b033339fd38a6dde45d1e0232a0602762b67",
+     "schema": "Triage",
+     "user_head": "[0] Me: words at 200 hz"
+    },
+    {
+     "messages_sha256": "0a58e3b431aa370af2fa3cd1d6e2e41358482da0e391e2e06679ce6e04733af0",
+     "schema": "SummaryNotes",
+     "user_head": "[0] Me: words at 200 hz"
+    },
+    {
+     "messages_sha256": "8c4418c4b9bc2846be7d0372693cfae6d5c4a0a554c66d31a64a45993b4d0c39",
+     "schema": "ActionItemList",
+     "user_head": "[0] Me: words at 200 hz"
+    },
+    {
+     "messages_sha256": "ff8fdcac43f2613fbcc7ab100702126e5590677a0644bb7e7a96315cfda465ae",
+     "schema": "FactList",
+     "user_head": "[0] Me: words at 200 hz"
+    },
+    {
+     "messages_sha256": "dafca67db07367bfc58295a872648c771ccd8cc8ec6feeac9e604feb34acbb92",
+     "schema": "FactReview",
+     "user_head": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\", \"said\": \"\"}]}"
+    }
+   ],
+   "out": 1,
+   "step": "process_pending"
+  },
+  {
+   "out": {
+    "conversation_id": "000000000000000000000000c0de0002",
+    "erased_lines": 0,
+    "lines": 2,
+    "result": "created"
+   },
+   "step": "ingest_text hub-note:1"
+  },
+  {
+   "llm": [
+    {
+     "messages_sha256": "262e980a5886bfb26d4675a9cbdc00712f742e1141e2f7a7ac52d394516f6ff5",
+     "schema": "SummaryNotes",
+     "user_head": "[0] Me: Buy milk\n[1] Me: Call Alice about the trip"
+    },
+    {
+     "messages_sha256": "a3b90815909673c3a2e543fb06114145ad720a36b3067cf4416c5f2e26238ac7",
+     "schema": "ActionItemList",
+     "user_head": "[0] Me: Buy milk\n[1] Me: Call Alice about the trip"
+    },
+    {
+     "messages_sha256": "dcc2cb2159d8e66fa69bbee10d1d61ad5d24841d0d917d16f3ce76e71c619613",
+     "schema": "FactList",
+     "user_head": "[0] Me: Buy milk\n[1] Me: Call Alice about the trip"
+    },
+    {
+     "messages_sha256": "dafca67db07367bfc58295a872648c771ccd8cc8ec6feeac9e604feb34acbb92",
+     "schema": "FactReview",
+     "user_head": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\", \"said\": \"\"}]}"
+    },
+    {
+     "messages_sha256": "378fd1e1745c6303fc1ee86cb070c8828e9a6ab73288728fa01454f101a7d874",
+     "schema": "FactLinks",
+     "user_head": "{\"known\": [{\"id\": 1, \"learned\": \"2025-10-09\", \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\"}], \"new\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\"}]}"
+    }
+   ],
+   "out": 0,
+   "step": "process_pending"
+  },
+  {
+   "out": {
+    "conversation_id": "000000000000000000000000c0de0002",
+    "erased_lines": 0,
+    "lines": 2,
+    "result": "unchanged"
+   },
+   "step": "ingest_text hub-note:1"
+  },
+  {
+   "out": {
+    "conversation_id": "000000000000000000000000c0de0002",
+    "erased_lines": 0,
+    "lines": 2,
+    "result": "replaced"
+   },
+   "step": "ingest_text hub-note:1"
+  },
+  {
+   "llm": [
+    {
+     "messages_sha256": "7226ee7f10d741880053afc624c82db0633d8cd15c14a9cdbf04542e594dcb61",
+     "schema": "SummaryNotes",
+     "user_head": "[0] Me: Buy oat milk\n[1] Me: Call Alice about the trip"
+    },
+    {
+     "messages_sha256": "ec5512d4584eed13bd448ae6e0c8a509852bec5f5b314533a601b22403a16a65",
+     "schema": "ActionItemList",
+     "user_head": "[0] Me: Buy oat milk\n[1] Me: Call Alice about the trip"
+    },
+    {
+     "messages_sha256": "c6743f5f55d3a8aed56ff7243db3b62d53252dbf82b64f52619102df57027012",
+     "schema": "FactList",
+     "user_head": "[0] Me: Buy oat milk\n[1] Me: Call Alice about the trip"
+    },
+    {
+     "messages_sha256": "dafca67db07367bfc58295a872648c771ccd8cc8ec6feeac9e604feb34acbb92",
+     "schema": "FactReview",
+     "user_head": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\", \"said\": \"\"}]}"
+    }
+   ],
+   "out": 0,
+   "step": "process_pending"
+  },
+  {
+   "out": {
+    "conversation_id": "000000000000000000000000c0de0002"
+   },
+   "step": "delete_text hub-note:1"
+  },
+  {
+   "out": null,
+   "step": "delete_text hub-note:1"
+  }
+ ]
+}

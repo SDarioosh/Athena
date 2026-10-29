@@ -1,0 +1,300 @@
+{
+ "audio_files": [],
+ "rows": {
+  "action_items": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "created_at": 1760000060.0,
+    "due": "Friday",
+    "due_date": "2025-10-10",
+    "due_time": null,
+    "duration_minutes": null,
+    "edited": 0,
+    "explicit": 1,
+    "id": 1,
+    "kind": "task",
+    "list_name": null,
+    "location": null,
+    "note_title": null,
+    "owner": "Me",
+    "source_at": 1760000001.0,
+    "status": "open",
+    "text": "Book flights",
+    "time_unclear": 0,
+    "title": "Book flights"
+   }
+  ],
+  "chunks": [
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000030.0,
+    "sequence": 0,
+    "session_id": "m1",
+    "speech": "[[0.0, 5.01]]",
+    "started_at": 1760000000.0,
+    "track": "a",
+    "track_name": "Alice Example"
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000060.0,
+    "sequence": 1,
+    "session_id": "m1",
+    "speech": "[[0.0, 5.01]]",
+    "started_at": 1760000030.0,
+    "track": "a",
+    "track_name": null
+   }
+  ],
+  "conversation_people": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "name": "Alice"
+   }
+  ],
+  "conversations": [
+   {
+    "device": "zoom",
+    "discard_reason": null,
+    "ended_at": 1760000035.26,
+    "error": null,
+    "id": "000000000000000000000000c0de0001",
+    "key_points": "[\"Trip to Lisbon in May\"]",
+    "kind": "casual",
+    "people": "[\"Alice\"]",
+    "started_at": 1760000000.0,
+    "status": "summarized",
+    "summary": "Alice and the user planned a trip to Lisbon.",
+    "title": "Planning the trip",
+    "topics": "[\"travel\"]",
+    "transcript_pruned_at": null,
+    "updated_at": 1760000060.0
+   }
+  ],
+  "facts": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "erased_at": null,
+    "fact": "Alice is vegetarian",
+    "id": 1,
+    "kind": "other",
+    "retired_at": null,
+    "retired_reason": null,
+    "source_at": 1760000002.0,
+    "status": "current",
+    "subject": "Alice",
+    "superseded_by": null
+   }
+  ],
+  "meeting_info": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "participants": "[]",
+    "session_id": "m1",
+    "topic": null,
+    "updated_at": 1760000060.0
+   }
+  ],
+  "people": [
+   {
+    "created_at": 1760000000.0,
+    "id": 1,
+    "is_owner": 1,
+    "merged_into": null,
+    "name": "Me",
+    "speaker_id": 1
+   },
+   {
+    "created_at": 1760000060.0,
+    "id": 2,
+    "is_owner": 0,
+    "merged_into": null,
+    "name": "Alice Example",
+    "speaker_id": 2
+   },
+   {
+    "created_at": 1760000060.0,
+    "id": 3,
+    "is_owner": 0,
+    "merged_into": null,
+    "name": "Alice",
+    "speaker_id": null
+   }
+  ],
+  "search_fts": [
+   {
+    "body": "Alice: Alice is vegetarian",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "fact",
+    "ref_id": "1"
+   },
+   {
+    "body": "Book flights",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "action_item",
+    "ref_id": "1"
+   },
+   {
+    "body": "Online meeting: \nParticipants: Alice Example\nAlice Example: words at 300 hz\nAlice Example: words at 300 hz",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "transcript",
+    "ref_id": "000000000000000000000000c0de0001"
+   },
+   {
+    "body": "Planning the trip\nAlice and the user planned a trip to Lisbon.\nTrip to Lisbon in May\ntravel\nAlice",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "conversation",
+    "ref_id": "000000000000000000000000c0de0001"
+   }
+  ],
+  "segments": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "device": "zoom",
+    "ended_at": 1760000005.26,
+    "erased": 0,
+    "id": 1,
+    "is_owner": 0,
+    "kind": "speech",
+    "session_id": "m1",
+    "speaker": "Alice Example",
+    "started_at": 1760000000.0,
+    "text": "words at 300 hz"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "device": "zoom",
+    "ended_at": 1760000035.26,
+    "erased": 0,
+    "id": 2,
+    "is_owner": 0,
+    "kind": "speech",
+    "session_id": "m1",
+    "speaker": "Alice Example",
+    "started_at": 1760000029.75,
+    "text": "words at 300 hz"
+   }
+  ],
+  "sessions": [
+   {
+    "device": "zoom",
+    "error": null,
+    "id": "m1",
+    "kind": "conversation",
+    "last_chunk_at": 1760000060.0,
+    "last_speech_at": 1760000035.01,
+    "received_at": 1760000060.0,
+    "started_at": 1760000000.0,
+    "status": "done",
+    "stop_reason": "client"
+   }
+  ],
+  "speakers": [
+   {
+    "created_at": 1760000000.0,
+    "embedding": "sha256:96a50e6c30a75949",
+    "id": 1,
+    "is_owner": 1,
+    "name": "Me"
+   },
+   {
+    "created_at": 1760000060.0,
+    "embedding": "sha256:52b876e3a46b948b",
+    "id": 2,
+    "is_owner": 0,
+    "name": "Alice Example"
+   }
+  ],
+  "voice_samples": [
+   {
+    "created_at": 1760000000.0,
+    "embedding": "sha256:96a50e6c30a75949",
+    "id": 1,
+    "session_id": null,
+    "source": "enrolled",
+    "speaker_id": 1
+   },
+   {
+    "created_at": 1760000060.0,
+    "embedding": "sha256:52b876e3a46b948b",
+    "id": 2,
+    "session_id": "m1",
+    "source": "meeting",
+    "speaker_id": 2
+   },
+   {
+    "created_at": 1760000060.0,
+    "embedding": "sha256:52b876e3a46b948b",
+    "id": 3,
+    "session_id": "m1",
+    "source": "meeting",
+    "speaker_id": 2
+   }
+  ]
+ },
+ "steps": [
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": null,
+    "session_seconds": 30.0,
+    "speech_seconds": 5.01,
+    "stop": false,
+    "trailing_silence_seconds": 24.99
+   },
+   "step": "ingest m1 a#0 @0"
+  },
+  {
+   "out": true,
+   "step": "end m1"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": "client",
+    "session_seconds": 60.0,
+    "speech_seconds": 5.01,
+    "stop": true,
+    "trailing_silence_seconds": 24.99
+   },
+   "step": "ingest m1 a#1 @30"
+  },
+  {
+   "llm": [
+    {
+     "messages_sha256": "73c78e26af38444e2d22a84845bdb9d6696ef94ad2165d4507fa21d68bb36372",
+     "schema": "Triage",
+     "user_head": "This is an online meeting.\nParticipants: Alice Example.\n[0] Alice Example: words at 300 hz\n[29] Alice Example: words at 300 hz"
+    },
+    {
+     "messages_sha256": "5136fe929487c4ae27d23a5f777892de79780d34414705e42426fd0d03e5f3a4",
+     "schema": "SummaryNotes",
+     "user_head": "This is an online meeting.\nParticipants: Alice Example.\n[0] Alice Example: words at 300 hz\n[29] Alice Example: words at 300 hz"
+    },
+    {
+     "messages_sha256": "adb7183e2855c444e27c2a4cfec37cee19956387b7d4a5de105b7256feee0e28",
+     "schema": "ActionItemList",
+     "user_head": "This is an online meeting.\nParticipants: Alice Example.\n[0] Alice Example: words at 300 hz\n[29] Alice Example: words at 300 hz"
+    },
+    {
+     "messages_sha256": "36a58e1e1c11863c5ad885870ff7d81e6b7d3c2f325cf4e808c51b9f5021ca01",
+     "schema": "FactList",
+     "user_head": "This is an online meeting.\nParticipants: Alice Example.\n[0] Alice Example: words at 300 hz\n[29] Alice Example: words at 300 hz"
+    },
+    {
+     "messages_sha256": "dafca67db07367bfc58295a872648c771ccd8cc8ec6feeac9e604feb34acbb92",
+     "schema": "FactReview",
+     "user_head": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\", \"said\": \"\"}]}"
+    }
+   ],
+   "out": 1,
+   "step": "process_pending"
+  }
+ ]
+}

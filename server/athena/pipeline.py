@@ -25,18 +25,12 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from . import audio as audio_mod
-from . import transcribe_engine, voice_enroll
+from . import session_kinds, transcribe_engine, voice_enroll
 from .clips import Window
 from .config import Settings
-from .conversations import split_on_gaps
 from .db.store import Store
 from .diarize import Diarizer, PieceRef, load_voices
-from .domain import (
-    CONVERSATION,
-    NOTE,
-    ZOOM_DEVICE,
-    Segment,
-)
+from .domain import CONVERSATION, Segment
 from .lines import join_lines
 from .search import Embedder, index_conversation
 from .summarize.summarizer import Summarizer
@@ -184,7 +178,7 @@ class Pipeline:
         if sess["status"] != "recording":
             reason = sess["stop_reason"] or "ended"
         elif (trailing >= self.settings.silence_stop_seconds
-              and not (track or self.store.has_tracks(session_id))):
+              and session_kinds.stops_on_silence(self.store, session_id, track)):
             reason = "silence"
         elif length >= self.settings.max_session_seconds:
             reason = "max_duration"
@@ -207,14 +201,10 @@ class Pipeline:
         one an untracked chunk stopped on silence, whose first tracked chunk reopens it.
         ``Store.add_chunk`` makes the same check inside its transaction (``MeetingClosed``),
         so a chunk racing the worker is refused too; this one only skips the decode."""
-        from .domain import MEETING_CLOSED_STATUSES
-
         sess = self.store.get_session(session_id)
-        if (sess is None or sess["status"] not in MEETING_CLOSED_STATUSES
-                or not ((track and sess["stop_reason"] != "silence")
-                        or self.store.has_tracks(session_id))
-                or self.store.has_chunk(session_id, track, sequence)):
+        if not session_kinds.refuses_late_chunk(self.store, sess, track, sequence):
             return None
+        assert sess is not None
         return self._meeting_closed(sess, track, sequence)
 
     def _meeting_closed(self, sess: dict[str, Any], track: str,
@@ -318,35 +308,23 @@ class Pipeline:
                 # conversation (voice_enroll.py)
                 voice_enroll.enroll_session(self, sess)
                 return
-            note = sess.get("kind") == NOTE
+            kind = session_kinds.kind_of(self.store, sess)  # plain, note or meeting
             try:
                 kept: dict[str, list[tuple[float, float]]] = {}  # meeting tracks' lines
-                segments, ranges, done = self._transcribe_session(session_id, note=note,
-                                                                  kept=kept)
+                segments, ranges, done = kind.transcribe(self, session_id, kept)
             except Exception as e:  # keep audio so the session can be retried
                 log.exception("transcription failed for %s", session_id)
                 self.store.set_session_status(session_id, "failed", f"{type(e).__name__}: {e}",
                                               only_if="processing")
                 return
             self.store.replace_segments(session_id, sess["device"], segments, ranges)
-            if (self.settings.learn_meeting_voices and not note and segments
-                    and self.store.has_tracks(session_id)):
-                # voice samples from named meeting tracks, while the audio is here
-                from .meetings.people.voices import learn_from_meeting
-
-                learn_from_meeting(self, session_id, done, kept)
-            if any(c["track"] for c in done):
-                # a meeting's live transcript (meetings/transcribe/live.py) is in its lines now
-                self.store.drop_live_states(session_id)
+            kind.after_transcribe(self, session_id, segments, done, kept)
             if not self.settings.keep_audio:
                 # Only the chunks transcribed here: one uploaded meanwhile waits for the
                 # next pass (add_chunk set the session back to 'ended').
                 self._delete_audio(session_id, sess["device"], done)
             self.store.delete_empty_conversations()
-            if note:
-                touched = self._assign_note(session_id, sess["device"])
-            else:
-                touched = self._assign_conversations(session_id, sess["device"])
+            touched = kind.split(self, session_id, sess["device"])
             self.store.set_session_status(session_id, "done", only_if="processing")
         for conv_id in touched:
             self.summarize_conversation(conv_id)
@@ -355,25 +333,22 @@ class Pipeline:
         self, session_id: str, *, note: bool = False,
         kept: dict[str, list[tuple[float, float]]] | None = None,
     ) -> tuple[list[Segment], list[tuple[float, float]], list[dict[str, Any]]]:
-        """Transcribe chunks that still have audio.
+        """Transcribe chunks that still have audio (``SessionKind.transcribe`` of a voice
+        note when ``note``, else of a plain session, which a session with tracks
+        transcribes as a meeting).
 
         Returns segments, the covered time ranges and the chunks that were transcribed.
-        A voice note (``note``) skips the diarizer: every line is the owner's. For a
-        meeting, ``kept`` gets each named track's kept lines (``transcribe_meeting``).
+        For a meeting, ``kept`` gets each named track's kept lines (``transcribe_meeting``).
         """
-        chunks = [c for c in self.store.chunks(session_id) if c["audio_path"]]
-        ranges = [(c["started_at"], c["started_at"] + c["duration"]) for c in chunks]
-        if not any(c["speech"] for c in chunks):
-            return [], ranges, chunks
-        if self.transcriber is None:
-            raise RuntimeError("no transcriber configured (set CONVO_WHISPER_SERVER_URL)")
-        if not note and self.store.has_tracks(session_id):
-            # A meeting: one track per participant, each transcribed on its own and named
-            # by its track. Imported only here, so sessions without tracks never load it.
-            from .meetings.transcribe import tracks as meeting_tracks
+        kind = session_kinds.NOTE_KIND if note else session_kinds.PLAIN
+        return kind.transcribe(self, session_id, kept)
 
-            return (meeting_tracks.transcribe_meeting(self, session_id, chunks, kept),
-                    ranges, chunks)
+    def _transcribe_recording(self, session_id: str, chunks: list[dict[str, Any]], *,
+                              owner_lines: bool) -> list[Segment]:
+        """Transcribe the chunks of a session that isn't transcribed track by track:
+        whisper over each run's speech, then the diarizer names the speakers. With
+        ``owner_lines`` (a voice note) the diarizer is skipped: every line is the
+        owner's."""
         prompt = self.whisper_prompt()
         runs: list[np.ndarray] = []
         pieces: list[tuple[float, float, str, PieceRef]] = []
@@ -393,8 +368,9 @@ class Pipeline:
         pieces = [pieces[i] for i in order]
         piece_words = [piece_words[i] for i in order]
         labels = None
-        owner_name = (self.store.owner_name() or self.settings.owner_name) if note else ""
-        if not note and self.diarizer is not None and pieces:
+        owner_name = ((self.store.owner_name() or self.settings.owner_name) if owner_lines
+                      else "")
+        if not owner_lines and self.diarizer is not None and pieces:
             self.diarizer.voices = load_voices(self.store)  # pick up newly named speakers
             labels, unnamed = self.diarizer.diarize_runs(runs, [p[3] for p in pieces])
             self.store.put_speaker_candidates(session_id, unnamed)
@@ -408,14 +384,14 @@ class Pipeline:
                                         cfg.join_max_seconds)
         segments = []
         for i, (s, e, text, _) in enumerate(pieces):
-            if note:
+            if owner_lines:
                 name, owner = owner_name, True
             else:
                 name, owner = ((labels[i].name, labels[i].is_owner) if labels
                                else ("Unknown", False))
             segments.append(Segment(started_at=s, ended_at=e, text=text, speaker=name,
                                     is_owner=owner))
-        return segments, ranges, chunks
+        return segments
 
     def _whisper_run(self, run: int, run_start: float, run_audio: np.ndarray,
                      run_speech: list[Span], prompt: str, context: str
@@ -532,52 +508,17 @@ class Pipeline:
             (self.settings.audio_dir / device / session_id).rmdir()
 
     def _assign_conversations(self, session_id: str, device: str) -> list[str]:
-        # a meeting: tracks, or a Zoom session without them (the bot's chat-only meeting:
-        # one untracked second of silence, then chat lines), is never split at gaps nor
-        # joined with another meeting
-        if (self.store.has_tracks(session_id) or device == ZOOM_DEVICE
-                or self.store.has_meeting_info(session_id)):
-            return self._assign_meeting(session_id, device)
-        gap = self.settings.conversation_gap_seconds
-        touched: list[str] = []
-        for group in split_on_gaps(self.store.session_segments(session_id), gap):
-            start, end = group[0].started_at, max(s.ended_at for s in group)
-            near = [c["id"] for c in self.store.overlapping_conversations(device, start, end, gap)]
-            meetings = self.store.meeting_conversations(near)  # never joined with a meeting
-            near = [c for c in near if c not in meetings]
-            conv_id = self.store.save_conversation(near[0] if near else None, device,
-                                                   [s.id for s in group if s.id is not None],
-                                                   absorb=near[1:])
-            touched = [t for t in touched if t not in near] + [conv_id]
-        return touched
+        """File a session that isn't a voice note into conversations (``SessionKind.split``
+        of a plain session: split at gaps, or one conversation if it is a meeting)."""
+        return session_kinds.PLAIN.split(self, session_id, device)
 
     def _assign_meeting(self, session_id: str, device: str) -> list[str]:
-        """A meeting (a session with tracks, or a Zoom session: QA BUG-27, its conversation
-        gets the meeting block) is one conversation: never split at speech
-        gaps (a break inside it), never joined with another session's conversation (two
-        back-to-back meetings stay two). A pass after the first keeps its conversation."""
-        segs = self.store.session_segments(session_id)
-        if not segs:
-            return []
-        have = self.store.session_conversations(session_id)
-        conv_id = self.store.save_conversation(have[0] if have else None, device,
-                                               [s.id for s in segs if s.id is not None],
-                                               absorb=have[1:])
-        # its topic and participants (meetings/ingest/chat.py) show on this conversation
-        self.store.link_meeting(session_id, conv_id)
-        return [conv_id]
+        """``SessionKind.split`` of a meeting: one conversation, never split or joined."""
+        return session_kinds.MEETING.split(self, session_id, device)
 
     def _assign_note(self, session_id: str, device: str) -> list[str]:
-        """A voice note is one conversation of kind NOTE: no gap split, never joined with
-        nearby conversations. A late chunk extends the note's existing conversation."""
-        segments = self.store.session_segments(session_id)
-        if not segments:
-            return []
-        existing = self.store.session_conversations(session_id)
-        conv_id = self.store.save_conversation(
-            existing[0] if existing else None, device,
-            [s.id for s in segments if s.id is not None], absorb=existing[1:], kind=NOTE)
-        return [conv_id]
+        """``SessionKind.split`` of a voice note: one conversation of kind NOTE."""
+        return session_kinds.NOTE_KIND.split(self, session_id, device)
 
     # --------------------------------------------------------------- summaries
     def summarize_conversation(self, conv_id: str) -> bool:
@@ -589,11 +530,7 @@ class Pipeline:
         conv = self.store.get_conversation(conv_id)
         kind = conv.get("kind") if conv else None
         stamp = conv["updated_at"] if conv else None
-        extra: dict[str, Any] = {}
-        if conv and conv.get("meeting"):  # a Zoom meeting: its topic, people, chat lines
-            from .meetings.ingest.chat import summary_context
-
-            extra["context"] = summary_context(conv["meeting"], segments)
+        extra = session_kinds.for_conversation(conv).summary_context(conv, segments)
         try:
             # facts that repeat or update stored ones are never cut by the fact cap
             summary = self.summarizer.summarize(

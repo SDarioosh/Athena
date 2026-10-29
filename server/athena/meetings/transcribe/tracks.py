@@ -23,9 +23,9 @@ participant's: no diarizer, no speaker embedder. Then:
 A person's track is finished from what ``transcribe.live`` transcribed while the
 meeting ran, plus the windows left; it gives the same lines as transcribing it here.
 
-Imported only by ``Pipeline._transcribe_session`` for a session that has tracks and by
-``transcribe.live`` while a meeting records, so a server that never sees a meeting never
-loads this module.
+Imported only by ``SessionKind.transcribe`` (``athena/session_kinds.py``) for a session
+that has tracks and by ``transcribe.live`` while a meeting records, so a server that never
+sees a meeting never loads this module.
 """
 
 from __future__ import annotations

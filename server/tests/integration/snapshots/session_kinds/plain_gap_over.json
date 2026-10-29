@@ -1,0 +1,633 @@
+{
+ "audio_files": [],
+ "rows": {
+  "action_items": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "created_at": 1760000360.0,
+    "due": "Friday",
+    "due_date": "2025-10-10",
+    "due_time": null,
+    "duration_minutes": null,
+    "edited": 0,
+    "explicit": 1,
+    "id": 1,
+    "kind": "task",
+    "list_name": null,
+    "location": null,
+    "note_title": null,
+    "owner": "Me",
+    "source_at": 1760000001.0,
+    "status": "open",
+    "text": "Book flights",
+    "time_unclear": 0,
+    "title": "Book flights"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0002",
+    "created_at": 1760000360.0,
+    "due": "Friday",
+    "due_date": "2025-10-10",
+    "due_time": null,
+    "duration_minutes": null,
+    "edited": 0,
+    "explicit": 1,
+    "id": 2,
+    "kind": "task",
+    "list_name": null,
+    "location": null,
+    "note_title": null,
+    "owner": "Me",
+    "source_at": 1760000333.75,
+    "status": "open",
+    "text": "Book flights",
+    "time_unclear": 0,
+    "title": "Book flights"
+   }
+  ],
+  "chunks": [
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000030.0,
+    "sequence": 0,
+    "session_id": "s1",
+    "speech": "[[0.0, 4.02], [7.98, 12.0]]",
+    "started_at": 1760000000.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000031.0,
+    "sequence": 1,
+    "session_id": "s1",
+    "speech": "[]",
+    "started_at": 1760000030.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000061.0,
+    "sequence": 2,
+    "session_id": "s1",
+    "speech": "[]",
+    "started_at": 1760000060.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000091.0,
+    "sequence": 3,
+    "session_id": "s1",
+    "speech": "[]",
+    "started_at": 1760000090.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000121.0,
+    "sequence": 4,
+    "session_id": "s1",
+    "speech": "[]",
+    "started_at": 1760000120.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000151.0,
+    "sequence": 5,
+    "session_id": "s1",
+    "speech": "[]",
+    "started_at": 1760000150.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000181.0,
+    "sequence": 6,
+    "session_id": "s1",
+    "speech": "[]",
+    "started_at": 1760000180.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000211.0,
+    "sequence": 7,
+    "session_id": "s1",
+    "speech": "[]",
+    "started_at": 1760000210.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000241.0,
+    "sequence": 8,
+    "session_id": "s1",
+    "speech": "[]",
+    "started_at": 1760000240.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000271.0,
+    "sequence": 9,
+    "session_id": "s1",
+    "speech": "[]",
+    "started_at": 1760000270.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000301.0,
+    "sequence": 10,
+    "session_id": "s1",
+    "speech": "[]",
+    "started_at": 1760000300.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000360.0,
+    "sequence": 11,
+    "session_id": "s1",
+    "speech": "[[3.0, 9.0]]",
+    "started_at": 1760000330.0,
+    "track": "",
+    "track_name": null
+   }
+  ],
+  "conversation_people": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "name": "Alice"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "name": "Me"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0002",
+    "name": "Alice"
+   }
+  ],
+  "conversations": [
+   {
+    "device": "omi",
+    "discard_reason": null,
+    "ended_at": 1760000012.25,
+    "error": null,
+    "id": "000000000000000000000000c0de0001",
+    "key_points": "[\"Trip to Lisbon in May\"]",
+    "kind": "casual",
+    "people": "[\"Alice\", \"Me\"]",
+    "started_at": 1760000000.0,
+    "status": "summarized",
+    "summary": "Alice and the user planned a trip to Lisbon.",
+    "title": "Planning the trip",
+    "topics": "[\"travel\"]",
+    "transcript_pruned_at": null,
+    "updated_at": 1760000360.0
+   },
+   {
+    "device": "omi",
+    "discard_reason": null,
+    "ended_at": 1760000339.25,
+    "error": null,
+    "id": "000000000000000000000000c0de0002",
+    "key_points": "[\"Trip to Lisbon in May\"]",
+    "kind": "casual",
+    "people": "[\"Alice\"]",
+    "started_at": 1760000332.75,
+    "status": "summarized",
+    "summary": "Alice and the user planned a trip to Lisbon.",
+    "title": "Planning the trip",
+    "topics": "[\"travel\"]",
+    "transcript_pruned_at": null,
+    "updated_at": 1760000360.0
+   }
+  ],
+  "facts": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "erased_at": null,
+    "fact": "Alice is vegetarian",
+    "id": 1,
+    "kind": "other",
+    "retired_at": null,
+    "retired_reason": null,
+    "source_at": 1760000002.0,
+    "status": "current",
+    "subject": "Alice",
+    "superseded_by": null
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0002",
+    "erased_at": null,
+    "fact": "Alice is vegetarian",
+    "id": 2,
+    "kind": "other",
+    "retired_at": null,
+    "retired_reason": null,
+    "source_at": 1760000334.75,
+    "status": "current",
+    "subject": "Alice",
+    "superseded_by": null
+   }
+  ],
+  "people": [
+   {
+    "created_at": 1760000000.0,
+    "id": 1,
+    "is_owner": 1,
+    "merged_into": null,
+    "name": "Me",
+    "speaker_id": 1
+   },
+   {
+    "created_at": 1760000360.0,
+    "id": 2,
+    "is_owner": 0,
+    "merged_into": null,
+    "name": "Alice",
+    "speaker_id": null
+   }
+  ],
+  "search_fts": [
+   {
+    "body": "Alice: Alice is vegetarian",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "fact",
+    "ref_id": "1"
+   },
+   {
+    "body": "Alice: Alice is vegetarian",
+    "conversation_id": "000000000000000000000000c0de0002",
+    "kind": "fact",
+    "ref_id": "2"
+   },
+   {
+    "body": "Book flights",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "action_item",
+    "ref_id": "1"
+   },
+   {
+    "body": "Book flights",
+    "conversation_id": "000000000000000000000000c0de0002",
+    "kind": "action_item",
+    "ref_id": "2"
+   },
+   {
+    "body": "Me: words at 200 hz\nSpeaker 1: words at 600 hz",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "transcript",
+    "ref_id": "000000000000000000000000c0de0001"
+   },
+   {
+    "body": "Planning the trip\nAlice and the user planned a trip to Lisbon.\nTrip to Lisbon in May\ntravel\nAlice Me",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "conversation",
+    "ref_id": "000000000000000000000000c0de0001"
+   },
+   {
+    "body": "Planning the trip\nAlice and the user planned a trip to Lisbon.\nTrip to Lisbon in May\ntravel\nAlice",
+    "conversation_id": "000000000000000000000000c0de0002",
+    "kind": "conversation",
+    "ref_id": "000000000000000000000000c0de0002"
+   },
+   {
+    "body": "Speaker 1: words at 600 hz",
+    "conversation_id": "000000000000000000000000c0de0002",
+    "kind": "transcript",
+    "ref_id": "000000000000000000000000c0de0002"
+   }
+  ],
+  "segments": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "device": "omi",
+    "ended_at": 1760000004.27,
+    "erased": 0,
+    "id": 1,
+    "is_owner": 1,
+    "kind": "speech",
+    "session_id": "s1",
+    "speaker": "Me",
+    "started_at": 1760000000.0,
+    "text": "words at 200 hz"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "device": "omi",
+    "ended_at": 1760000012.25,
+    "erased": 0,
+    "id": 2,
+    "is_owner": 0,
+    "kind": "speech",
+    "session_id": "s1",
+    "speaker": "Speaker 1",
+    "started_at": 1760000007.73,
+    "text": "words at 600 hz"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0002",
+    "device": "omi",
+    "ended_at": 1760000339.25,
+    "erased": 0,
+    "id": 3,
+    "is_owner": 0,
+    "kind": "speech",
+    "session_id": "s1",
+    "speaker": "Speaker 1",
+    "started_at": 1760000332.75,
+    "text": "words at 600 hz"
+   }
+  ],
+  "sessions": [
+   {
+    "device": "omi",
+    "error": null,
+    "id": "s1",
+    "kind": "conversation",
+    "last_chunk_at": 1760000360.0,
+    "last_speech_at": 1760000339.0,
+    "received_at": 1760000360.0,
+    "started_at": 1760000000.0,
+    "status": "done",
+    "stop_reason": "silence"
+   }
+  ],
+  "speaker_candidates": [
+   {
+    "embedding": "sha256:5dc323483c0607a9",
+    "label": "Speaker 1",
+    "session_id": "s1"
+   }
+  ],
+  "speakers": [
+   {
+    "created_at": 1760000000.0,
+    "embedding": "sha256:96a50e6c30a75949",
+    "id": 1,
+    "is_owner": 1,
+    "name": "Me"
+   }
+  ],
+  "voice_samples": [
+   {
+    "created_at": 1760000000.0,
+    "embedding": "sha256:96a50e6c30a75949",
+    "id": 1,
+    "session_id": null,
+    "source": "enrolled",
+    "speaker_id": 1
+   }
+  ]
+ },
+ "steps": [
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": null,
+    "session_seconds": 30.0,
+    "speech_seconds": 8.04,
+    "stop": false,
+    "trailing_silence_seconds": 18.0
+   },
+   "step": "ingest s1 -#0 @0"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": null,
+    "session_seconds": 60.0,
+    "speech_seconds": 0,
+    "stop": false,
+    "trailing_silence_seconds": 48.0
+   },
+   "step": "ingest s1 -#1 @30"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": "silence",
+    "session_seconds": 90.0,
+    "speech_seconds": 0,
+    "stop": true,
+    "trailing_silence_seconds": 78.0
+   },
+   "step": "ingest s1 -#2 @60"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": "silence",
+    "session_seconds": 120.0,
+    "speech_seconds": 0,
+    "stop": true,
+    "trailing_silence_seconds": 108.0
+   },
+   "step": "ingest s1 -#3 @90"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": "silence",
+    "session_seconds": 150.0,
+    "speech_seconds": 0,
+    "stop": true,
+    "trailing_silence_seconds": 138.0
+   },
+   "step": "ingest s1 -#4 @120"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": "silence",
+    "session_seconds": 180.0,
+    "speech_seconds": 0,
+    "stop": true,
+    "trailing_silence_seconds": 168.0
+   },
+   "step": "ingest s1 -#5 @150"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": "silence",
+    "session_seconds": 210.0,
+    "speech_seconds": 0,
+    "stop": true,
+    "trailing_silence_seconds": 198.0
+   },
+   "step": "ingest s1 -#6 @180"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": "silence",
+    "session_seconds": 240.0,
+    "speech_seconds": 0,
+    "stop": true,
+    "trailing_silence_seconds": 228.0
+   },
+   "step": "ingest s1 -#7 @210"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": "silence",
+    "session_seconds": 270.0,
+    "speech_seconds": 0,
+    "stop": true,
+    "trailing_silence_seconds": 258.0
+   },
+   "step": "ingest s1 -#8 @240"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": "silence",
+    "session_seconds": 300.0,
+    "speech_seconds": 0,
+    "stop": true,
+    "trailing_silence_seconds": 288.0
+   },
+   "step": "ingest s1 -#9 @270"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": "silence",
+    "session_seconds": 330.0,
+    "speech_seconds": 0,
+    "stop": true,
+    "trailing_silence_seconds": 318.0
+   },
+   "step": "ingest s1 -#10 @300"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": "silence",
+    "session_seconds": 360.0,
+    "speech_seconds": 6.0,
+    "stop": true,
+    "trailing_silence_seconds": 21.0
+   },
+   "step": "ingest s1 -#11 @330"
+  },
+  {
+   "out": true,
+   "step": "end s1"
+  },
+  {
+   "llm": [
+    {
+     "messages_sha256": "64144aa3d5df577ec84829c1c7ace5407b194877b2de668ea4106bae620deffe",
+     "schema": "Triage",
+     "user_head": "[0] Me: words at 200 hz\n[7] Speaker 1: words at 600 hz"
+    },
+    {
+     "messages_sha256": "fb08cb5aa5fdc339e5b38f9cc4ef2bb7681f3c8252a5b2b3bda051449207532f",
+     "schema": "SummaryNotes",
+     "user_head": "[0] Me: words at 200 hz\n[7] Speaker 1: words at 600 hz"
+    },
+    {
+     "messages_sha256": "76cabc5c0d2cbb0ce677da280260173ac70d3cf769b5a7d8079bf379595e3c68",
+     "schema": "ActionItemList",
+     "user_head": "[0] Me: words at 200 hz\n[7] Speaker 1: words at 600 hz"
+    },
+    {
+     "messages_sha256": "cd51fd6a001f705d59bb7614e1a4ed6b78c9bd18d487bc1a0870abb849125581",
+     "schema": "FactList",
+     "user_head": "[0] Me: words at 200 hz\n[7] Speaker 1: words at 600 hz"
+    },
+    {
+     "messages_sha256": "dafca67db07367bfc58295a872648c771ccd8cc8ec6feeac9e604feb34acbb92",
+     "schema": "FactReview",
+     "user_head": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\", \"said\": \"\"}]}"
+    },
+    {
+     "messages_sha256": "49ce254093cccc28cd150a684f7cd79d4493ee792288ac5c5b22efea67ccf163",
+     "schema": "Triage",
+     "user_head": "[0] Speaker 1: words at 600 hz"
+    },
+    {
+     "messages_sha256": "0ccf616520a2b59eabe7f956d2b109543e5bdffde37bd02b9055d80ca9f54761",
+     "schema": "SummaryNotes",
+     "user_head": "[0] Speaker 1: words at 600 hz"
+    },
+    {
+     "messages_sha256": "3f6828bf66d507e49b0086cb2983981b837bb4b0da50f6e945d1d687b6a06619",
+     "schema": "ActionItemList",
+     "user_head": "[0] Speaker 1: words at 600 hz"
+    },
+    {
+     "messages_sha256": "c9074a895f34f4207a57a9089a371a168a039debcc173e94b9c7b9111510739f",
+     "schema": "FactList",
+     "user_head": "[0] Speaker 1: words at 600 hz"
+    },
+    {
+     "messages_sha256": "dafca67db07367bfc58295a872648c771ccd8cc8ec6feeac9e604feb34acbb92",
+     "schema": "FactReview",
+     "user_head": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\", \"said\": \"\"}]}"
+    },
+    {
+     "messages_sha256": "378fd1e1745c6303fc1ee86cb070c8828e9a6ab73288728fa01454f101a7d874",
+     "schema": "FactLinks",
+     "user_head": "{\"known\": [{\"id\": 1, \"learned\": \"2025-10-09\", \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\"}], \"new\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\"}]}"
+    }
+   ],
+   "out": 1,
+   "step": "process_pending"
+  }
+ ]
+}
