@@ -56,6 +56,15 @@ android {
     }
 }
 
+// The uploader tests read docs/api/ingest-client-cases.json (the table every uploader shares,
+// from the module directory). Declared as an input so a change to it reruns the tests instead
+// of reusing a cached result.
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    inputs.file(rootProject.file("../docs/api/ingest-client-cases.json"))
+        .withPropertyName("ingestClientCases")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
 dependencies {
     // Deliberately tiny: framework UI (no AppCompat/Material), coroutines, ZXing, nothing else.
     // No analytics, crash reporting, Firebase or Google Play services.
