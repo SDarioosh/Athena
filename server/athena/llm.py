@@ -1,6 +1,11 @@
 """Old home of the summarizer, kept so existing imports work: ``athena.llm`` re-exports
 every name it had from the ``athena.summarize`` package (client, schemas, prompts,
-summarizer, storage and rules). New code imports from ``athena.summarize``.
+summarizer, storage and rules). New code imports from ``athena.summarize``. Not
+re-exported: the rules that became passes with a new signature (``summarize/passes.py``:
+``_todos_from_commands``, ``_drop_errands`` ... are ``todos_from_commands``,
+``drop_errands`` ...), the ``_ASKED`` and ``_SAID`` item keys (now ``DraftItem`` fields),
+and the reading of the rendered transcript (``_LINE``, ``_lines``, ``_said_lines``,
+``_spoken``; the rules read segments: ``rules.text.transcript_lines``).
 
 Patching a name here (``monkeypatch.setattr(llm, "X", ...)``) does not reach the code
 that uses it: patch it in the ``athena.summarize`` module that looks it up.
@@ -34,7 +39,6 @@ from .summarize.prompts import (  # noqa: F401
 )
 from .summarize.rules.commands import (  # noqa: F401
     _ADD_TO_NOTES,
-    _ASKED,
     _CLAUSE_JOIN,
     _CMD_WHEN,
     _COMMAND_WORDS,
@@ -52,7 +56,6 @@ from .summarize.rules.commands import (  # noqa: F401
     _LIST_SEP,
     _OTHER_COMMAND,
     _POINTS_BACK,
-    _SAID,
     _SENTENCE_MAX,
     _THANKS,
     _TODO_COMMAND,
@@ -66,28 +69,21 @@ from .summarize.rules.commands import (  # noqa: F401
     _list_header,
     _list_things,
     _mark_explicit,
-    _notes_from_commands,
     _split_commands,
-    _split_list_lines,
     _starts_command,
     _todo_text,
     _todo_title,
-    _todos_from_commands,
     _whole_sentences,
     _words,
 )
 from .summarize.rules.errands import (  # noqa: F401
     _IMMEDIATE,
-    _drop_errands,
 )
 from .summarize.rules.events import (  # noqa: F401
     _APPOINTMENT,
     _MEET,
     _MEETING_WITH,
     _PAST,
-    _drop_event_facts,
-    _events_from_lines,
-    _name_meetings,
 )
 from .summarize.rules.facts import (  # noqa: F401
     _ASKED_SOMEONE,
@@ -107,7 +103,6 @@ from .summarize.rules.facts import (  # noqa: F401
     _TITLE,
     _VAGUE,
     _WANTS,
-    _drop_passing_facts,
     _hedged,
     _intent_fact,
     _known_matches,
@@ -123,25 +118,20 @@ from .summarize.rules.notes import (  # noqa: F401
     _NOTE_PLACE,
     _NOTE_WORD,
     _NOTES_PHRASE,
-    _lone_note,
     _note_place,
     _note_storage,
 )
 from .summarize.rules.text import (  # noqa: F401
     _CLAUSE_END,
-    _LINE,
     _NAME_WORD,
     _SENTENCE_END,
     _STOP,
     _STOP_WORDS,
     _WHEN_WORDS,
     _content_words,
-    _lines,
     _meridiem,
     _overlaps,
     _said_in,
-    _said_lines,
-    _spoken,
 )
 from .summarize.schemas import (  # noqa: F401
     FACT_KINDS,

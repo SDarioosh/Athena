@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+
+from ...domain import CHAT, Segment
 
 _STOP_WORDS = """a an the and or but of to in on at by for with from about as is are was
 were be been being will would shall should can could may might must do does did has have had
@@ -31,8 +35,6 @@ def _content_words(text: str) -> set[str]:
 _NAME_WORD = r"(?!(?:the|a|an|my|our|your|this|that)\b)[\w'&-]+"
 
 
-# "[12] Me: text": a line of format_transcript
-_LINE = re.compile(r"^\[(?P<at>\d+)\] [^:]*: (?P<text>.*)$")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -60,18 +62,13 @@ _CLAUSE_END = re.compile(r";\s*|,?\s+(?:and|but)\s+(?:then\s+|also\s+)?|,\s+(?:t
                          re.IGNORECASE)
 
 
-def _spoken(parts: list[str]) -> list[tuple[str, str]]:
+def clauses(lines: Sequence[Line]) -> list[tuple[str, str]]:
     """Every clause of the transcript, with its sentence."""
     out = []
-    for part in parts:
-        for line in part.splitlines():
-            m = _LINE.match(line.strip())
-            if not m:
-                continue
-            for sentence in _SENTENCE_END.split(m["text"]):
-                sentence = sentence.strip()
-                out += [(c.strip(), sentence) for c in _CLAUSE_END.split(sentence)
-                        if c.strip()]
+    for line in lines:
+        for sentence in _SENTENCE_END.split(line.text):
+            sentence = sentence.strip()
+            out += [(c.strip(), sentence) for c in _CLAUSE_END.split(sentence) if c.strip()]
     return out
 
 
@@ -87,24 +84,61 @@ def _said_in(text: str, spoken: list[tuple[str, str]]) -> tuple[str, str]:
     return best if score >= 0.6 else ("", "")
 
 
-def _said_lines(parts: list[str]) -> dict[int, str]:
-    """The transcript's lines by offset, lines that start in the same second joined
-    (``_lines`` keeps the first only): what the review is shown as "said"."""
+def first_lines(lines: Sequence[Line]) -> dict[int, str]:
+    """The transcript's lines by offset (seconds from the conversation start); of lines
+    that start in the same second, the first."""
+    out: dict[int, str] = {}
+    for line in lines:
+        out.setdefault(line.at, line.text)
+    return out
+
+
+def joined_lines(lines: Sequence[Line]) -> dict[int, str]:
+    """The transcript's lines by offset, lines that start in the same second joined with
+    " / " (``first_lines`` keeps the first only): what the fact review is shown as
+    "said"."""
     out: dict[int, list[str]] = {}
-    for part in parts:
-        for line in part.splitlines():
-            m = _LINE.match(line.strip())
-            if m:
-                out.setdefault(int(m["at"]), []).append(m["text"])
+    for line in lines:
+        out.setdefault(line.at, []).append(line.text)
     return {k: " / ".join(v) for k, v in out.items()}
 
 
-def _lines(parts: list[str]) -> dict[int, str]:
-    """The transcript's lines by offset (seconds from the conversation start)."""
-    out: dict[int, str] = {}
-    for part in parts:
-        for line in part.splitlines():
-            m = _LINE.match(line.strip())
+@dataclass(frozen=True)
+class Line:
+    """One transcript line as the rules read it: its whole seconds from the
+    conversation start and its words."""
+
+    at: int
+    text: str
+
+
+# A later row of a segment's text that itself reads like a transcript line ("[15] Me:
+# text"): read as a line of its own (``transcript_lines``)
+_LINE_IN_TEXT = re.compile(r"^\[(?P<at>\d+)\] [^:]*: (?P<text>.*)$")
+
+
+def transcript_lines(segments: Iterable[Segment], origin: float) -> list[Line]:
+    """The lines the rules read, from the segments, the way they always read the
+    transcript the model is shown (``prompts.format_transcript``: "[12] Me: text", chat
+    lines "[12] Dana (chat): text"):
+
+    - a line's offset is ``max(0, int(started_at - origin))``;
+    - its text is what follows the first colon of "<speaker>: <text>", which must be
+      followed by a space (a speaker "Dr: Who" gives "Who: text"; a speaker "A:B" or
+      "Me:" gives no line); trailing whitespace is dropped, one leading space is the
+      separator's, and an empty text gives no line;
+    - only the text's first row counts; a later row (a text with line breaks) counts
+      only when it reads like a line itself ("[15] Me: text"), with its own offset."""
+    out = []
+    for s in segments:
+        who = f"{s.speaker} (chat)" if s.kind == CHAT else s.speaker
+        rows = f"{who}: {s.text}".splitlines()
+        first = rows[0].rstrip() if rows else ""
+        colon = first.find(":")
+        if colon >= 0 and first[colon + 1:colon + 2] == " ":
+            out.append(Line(max(0, int(s.started_at - origin)), first[colon + 2:]))
+        for row in rows[1:]:
+            m = _LINE_IN_TEXT.match(row.strip())
             if m:
-                out.setdefault(int(m["at"]), m["text"])
+                out.append(Line(int(m["at"]), m["text"]))
     return out

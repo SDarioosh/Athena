@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from .. import relevance_rules
-from ..dates import resolve_due, resolve_time
 from ..domain import NOTE_ITEM, Segment, clean_list_name
 from .client import LLMClient, LLMError
+from .draft import Context, SummaryDraft
+from .passes import CONVERSATION_PASSES, NOTE_PASSES, run_passes
 from .prompts import (
     ACTIONS_SYSTEM,
     DIGEST_SYSTEM,
@@ -28,32 +28,8 @@ from .prompts import (
     TRIAGE_SYSTEM,
     format_transcript,
 )
-from .rules.commands import (
-    _ASKED,
-    _COMMAND_WORDS,
-    _SAID,
-    _after_list_header,
-    _mark_explicit,
-    _notes_from_commands,
-    _split_list_lines,
-    _todos_from_commands,
-)
-from .rules.errands import _drop_errands
-from .rules.events import _drop_event_facts, _events_from_lines, _name_meetings
-from .rules.facts import (
-    _DECISION,
-    _HABIT,
-    _INTENT,
-    _OWNER_WORDS,
-    _VAGUE,
-    _drop_passing_facts,
-    _intent_fact,
-    _known_matches,
-    plausible_link,
-    scrub_facts,
-)
-from .rules.notes import _NOTE_WORD, _lone_note
-from .rules.text import _content_words, _lines, _said_in, _said_lines, _spoken
+from .rules.facts import plausible_link, scrub_facts
+from .rules.text import transcript_lines
 from .schemas import (
     ActionItemList,
     ConversationSummary,
@@ -80,7 +56,9 @@ class Summarizer:
     2. notes: title, summary, key points, people, topics with a template for that kind;
     3. action items, with due dates resolved against the conversation date;
     4. durable facts.
-    ``link_facts`` then relates new facts to the ones already known (pipeline).
+    Then fixed rules work on the answers, in the order of ``passes.NOTE_PASSES`` (a
+    voice note) or ``passes.CONVERSATION_PASSES``. ``link_facts`` then relates new facts
+    to the ones already known (pipeline).
     """
 
     def __init__(self, llm: LLMClient, owner_name: str = "Me",
@@ -112,7 +90,7 @@ class Summarizer:
 
         ``known`` (optional) returns the stored facts that may match some candidate facts
         (the pipeline passes the store's): a fact that repeats or updates one of them is
-        never cut by the per-conversation cap (``_review_facts``).
+        never cut by the per-conversation cap (``rules.facts.review_facts``).
 
         ``kind`` is the conversation's stored kind; only ``"note"`` (a voice note) changes
         anything: see ``_summarize_note``. Discarded conversations come back as
@@ -122,10 +100,10 @@ class Summarizer:
             raise ValueError("no segments to summarize")
         origin = segments[0].started_at
         parts = self._split(segments, origin)
-        if context:  # not a "[n] Name: text" line, so line parsing skips it
+        if context:  # for the model; the rules read the segments (``transcript_lines``)
             parts = [f"{context}\n{p}" for p in parts]
         if kind == "note":
-            return self._summarize_note(parts, origin, known)
+            return self._summarize_note(segments, parts, origin, known, context)
         if sum(len(s.text.split()) for s in segments) < self.min_words:
             return {"discard": True, "discard_reason": "too_short", "kind": "other"}
         junk = relevance_rules.discard_reason([s.text for s in segments])
@@ -155,22 +133,33 @@ class Summarizer:
                    for a in actions]
         result = ConversationSummary(**merged.model_dump(), action_items=_unique(actions),
                                      facts=_unique(facts))
-        out = to_storage(result, origin)
-        out["kind"] = triage.kind
-        _drop_passing_facts(out)
-        self._resolve_due_dates(out, origin)
-        spoken = _spoken(parts)
-        _drop_errands(out, spoken, _lines(parts), origin)
-        _name_meetings(out["action_items"], spoken)
-        _drop_event_facts(out)
-        self._review_facts(out, parts, origin, known)
-        _mark_explicit(out["action_items"], None)
-        if not any(s.is_owner for s in segments):  # models tend to add the user anyway
-            out["people"] = [p for p in out["people"] if p.lower() != self.owner.lower()]
-        return out
+        draft = SummaryDraft.from_storage(to_storage(result, origin), triage.kind)
+        ctx = self._context(segments, origin, known, context)
+        return run_passes(draft, ctx, CONVERSATION_PASSES).storage()
 
-    def _summarize_note(self, parts: list[str], origin: float,
-                        known: KnownFacts | None = None) -> dict[str, Any]:
+    def _context(self, segments: list[Segment], origin: float, known: KnownFacts | None,
+                 context: str | None) -> Context:
+        """What the rules read besides the summary (``passes.py``)."""
+        return Context(segments=segments, lines=transcript_lines(segments, origin),
+                       origin=origin, tz=self.tz, owner=self.owner, context=context,
+                       known=known, review=self._review, fact_min_score=self.fact_min_score,
+                       max_facts=self.max_facts)
+
+    def _review(self, asked: list[dict[str, Any]]) -> list[tuple[int, int]]:
+        """The fact review call (``REVIEW_SYSTEM``): (number, score) as the model gave
+        them; none when the call fails (every fact is kept)."""
+        try:
+            review = self.llm.structured(REVIEW_SYSTEM, json.dumps(
+                {"facts": asked}, ensure_ascii=False), FactReview)
+            assert isinstance(review, FactReview)
+            return [(r.number, r.score) for r in review.scores]
+        except LLMError as e:
+            log.warning("fact review failed, keeping the facts: %s", e)
+            return []
+
+    def _summarize_note(self, segments: list[Segment], parts: list[str], origin: float,
+                        known: KnownFacts | None = None,
+                        context: str | None = None) -> dict[str, Any]:
         """A voice note: no length check and no triage (never discarded), the note
         prompts for notes and to-dos, facts as usual; stored with kind "note"."""
         fmt = {"owner": self.owner}
@@ -185,65 +174,11 @@ class Summarizer:
             actions_sys, p, ActionItemList).action_items]
         facts = [f for p in parts for f in self.llm.structured(  # type: ignore[attr-defined]
             facts_sys, p, FactList).facts]
-        out = to_storage(ConversationSummary(**merged.model_dump(), action_items=_unique(actions),
-                                             facts=_unique(facts)), origin)
-        out["kind"] = "note"
-        _drop_passing_facts(out)
-        _todos_from_commands(out["action_items"], parts, origin, self.owner)
-        self._resolve_due_dates(out, origin)
-        self._command_dates(out, origin)
-        # only explicit commands make a note: none without the word "note(s)"
-        asked = _NOTE_WORD.search("\n".join(parts)) is not None
-        out["action_items"] = [i for i in out["action_items"]
-                               if i["kind"] != NOTE_ITEM or (asked and i["text"])]
-        if asked:  # a command the model missed or took for a task
-            _notes_from_commands(out["action_items"], parts, origin)
-        # a meeting said as a fragment ("Meeting with the team Tuesday 11 a.m."): small
-        # models often list no item for it, though the summary says it
-        _events_from_lines(out, _lines(parts), origin,
-                           datetime.fromtimestamp(origin, self.tz).date(), self.owner)
-        _lone_note(out)  # after the events: a note said with an event is no lone note
-        for item in out["action_items"]:
-            if item["kind"] == NOTE_ITEM:  # a note is filed as it is: no date or time
-                item.update(due=None, due_date=None, due_time=None, time_unclear=False,
-                            owner=None)
-        spoken = _spoken(parts)
-        _drop_errands(out, spoken, _lines(parts), origin)
-        # events first: a fact that only repeats a dated event goes before the review, so
-        # it can't take one of the cap's places
-        _name_meetings(out["action_items"], spoken)
-        _drop_event_facts(out)
-        # a decision the owner states in a voice note is kept (not reviewed or capped),
-        # whether the model listed it as a fact or as a to-do (``_intentions_to_facts``)
-        self._review_facts(out, parts, origin, known, keep_decisions=True)
-        self._intentions_to_facts(out, spoken)
-        out["action_items"] = _split_list_lines(out["action_items"])
-        _mark_explicit(out["action_items"], spoken)
-        return out
-
-    def _intentions_to_facts(self, out: dict[str, Any],
-                             spoken: list[tuple[str, str]]) -> None:
-        """A voice note's decisions and principles ("stop prioritizing side projects",
-        "focus on bugs before features") and vague wishes ("figure out how it could use
-        less battery") are facts about the owner, not to-dos: small models list them as
-        tasks anyway. An undated task without a list or command word that reads like one
-        becomes a fact ("The owner decided ..." / "The owner plans ..."), unless the
-        facts already say it."""
-        items = []
-        for item in out["action_items"]:
-            fact = self._intention(item, spoken)
-            if fact is None:
-                items.append(item)
-                continue
-            want = _content_words(item["text"])
-            if not any(want and (got := _content_words(f["fact"]))
-                       and len(want & got) >= 0.6 * min(len(want), len(got))
-                       for f in out["facts"]):
-                out["facts"].append({"subject": self.owner, "fact": fact,
-                                     "kind": "decision" if fact.startswith(
-                                         "The owner decided") else "plan",
-                                     "source_at": item.get("source_at")})
-        out["action_items"] = items
+        draft = SummaryDraft.from_storage(to_storage(ConversationSummary(
+            **merged.model_dump(), action_items=_unique(actions), facts=_unique(facts)),
+            origin), "note")
+        ctx = self._context(segments, origin, known, context)
+        return run_passes(draft, ctx, NOTE_PASSES).storage()
 
     def _fact_limit(self) -> str:
         """The facts prompt's cap sentence (``max_facts``)."""
@@ -252,142 +187,6 @@ class Summarizer:
         # room above the cap: filters and the review drop some, the review keeps the best
         return (f"\nList at most {max(5, 2 * self.max_facts)} facts: the ones the user would "
                 "most want recalled months from now.")
-
-    def _review_facts(self, out: dict[str, Any], parts: list[str], origin: float,
-                      known: KnownFacts | None = None, keep_decisions: bool = False) -> None:
-        """A second look at the model's facts. One call scores each 1-5 (worth recalling
-        in three months?, ``REVIEW_SYSTEM``) and facts under ``fact_min_score`` are left
-        out; then the best ``max_facts`` are kept (ties: the model's order). A fact the
-        review gives no score counts as ``fact_min_score``; a failed review call keeps
-        every fact. A fact that repeats or updates a stored one (``known``) is never cut
-        by the cap: it adds nothing new, and cutting an update would leave the old value
-        current. With ``keep_decisions`` (voice notes), the owner's decisions are neither
-        reviewed nor capped."""
-        facts = out["facts"]
-        if not facts:
-            return
-        owner = {self.owner.lower(), *_OWNER_WORDS}
-        kept = [keep_decisions and f.get("kind") == "decision"
-                and (f.get("subject") or "").strip().lower() in owner for f in facts]
-        asked_ids = [i for i, k in enumerate(kept) if not k]
-        scores: dict[int, int] = {}
-        if self.fact_min_score > 1 and asked_ids:
-            lines = _said_lines(parts)
-            asked = [{"number": i, "subject": facts[i]["subject"], "fact": facts[i]["fact"],
-                      "said": lines.get(int(facts[i]["source_at"] - origin), "")
-                      if facts[i].get("source_at") is not None else ""}
-                     for i in asked_ids]
-            try:
-                review = self.llm.structured(REVIEW_SYSTEM, json.dumps(
-                    {"facts": asked}, ensure_ascii=False), FactReview)
-                assert isinstance(review, FactReview)
-                scores = {r.number: min(5, max(1, r.score)) for r in review.scores
-                          if r.number in asked_ids}
-            except LLMError as e:
-                log.warning("fact review failed, keeping the facts: %s", e)
-        repeats = _known_matches(facts, known) if known is not None else set()
-        keep, ranked = [], []
-        for i, fact in enumerate(facts):
-            if kept[i]:
-                keep.append(i)
-                continue
-            score = scores.get(i, self.fact_min_score)
-            if score < self.fact_min_score:
-                log.info("dropped a fact the review scored %d: %r", score, fact["fact"])
-            elif i in repeats:
-                keep.append(i)
-            else:
-                ranked.append((-score, i))
-        ranked.sort()
-        if self.max_facts and len(ranked) > self.max_facts:
-            for _, i in ranked[self.max_facts:]:
-                log.info("dropped a fact over the cap of %d: %r", self.max_facts,
-                         facts[i]["fact"])
-            ranked = ranked[:self.max_facts]
-        keep += [i for _, i in ranked]
-        out["facts"] = [facts[i] for i in sorted(keep)]
-
-    def _intention(self, item: dict[str, Any], spoken: list[tuple[str, str]]) -> str | None:
-        """The fact an action item really is (see ``_intentions_to_facts``), or None."""
-        if (item["kind"] != "task" or item.get("due_date") or item.get("due_time")
-                or item.get("list_name") or item.get(_ASKED)):
-            return None
-        owner = (item.get("owner") or "").strip().lower()
-        if owner and owner not in {self.owner.lower(), *_OWNER_WORDS}:
-            return None  # someone else's to-do
-        text = item["text"]
-        clause, sentence = _said_in(text, spoken)
-        if (_COMMAND_WORDS.search(text) or _COMMAND_WORDS.search(sentence)
-                or _after_list_header(text, spoken)):
-            return None
-        here = (text, clause)
-        decided = any(_DECISION.search(x) for x in here) or (
-            _INTENT.search(f"{text}\n{sentence}") is not None
-            and any(_HABIT.search(x) for x in here))
-        if not decided and not any(_VAGUE.search(x) for x in here):
-            return None
-        return _intent_fact(text, decided)
-
-    def _resolve_due_dates(self, out: dict[str, Any], origin: float) -> None:
-        """Work the date and time out in code where the phrase names them; the model's
-        date guess only for the rest (small models get weekday arithmetic wrong).
-
-        A time with no date ("remind me at 5") is today, or tomorrow when that time had
-        already passed when the conversation started."""
-        start = datetime.fromtimestamp(origin, self.tz)
-        today = start.date()
-        for item in out["action_items"]:
-            day = resolve_due(item["due"], today) or (
-                None if item["due"] else resolve_due(item["text"], today))
-            if day is not None:
-                item["due_date"] = day.isoformat()
-            said = item.pop("time", None)
-            if said:
-                hhmm, unclear = resolve_time(said)
-                unclear = unclear or hhmm is None  # a time was said but can't be read
-            else:
-                hhmm, unclear = resolve_time(item["due"])
-                if hhmm is None and not unclear:
-                    hhmm, unclear = resolve_time(item["text"])
-            item["due_time"], item["time_unclear"] = hhmm, unclear
-            if hhmm and not item["due_date"]:
-                at = datetime.strptime(hhmm, "%H:%M").time()
-                item["due_date"] = (today if at >= start.time().replace(second=0, microsecond=0)
-                                    else today + timedelta(days=1)).isoformat()
-
-    def _command_dates(self, out: dict[str, Any], origin: float) -> None:
-        """The day and time of a to-do said out loud are the ones in its command: small
-        models drop them ("make a to-do to get eggs tomorrow" -> "Get eggs", no date;
-        "remind me at 5 to call mom" -> no time) and invent a midnight for "remind me to
-        call mom" (a to-do due at 00:00 in the hub). Only items a command asked for."""
-        start = datetime.fromtimestamp(origin, self.tz)
-        for item in out["action_items"]:
-            said, remind = item.pop(_SAID, (None, False))
-            if said is None or item["kind"] == NOTE_ITEM:
-                continue
-            day = resolve_due(said, start.date())
-            hhmm, unclear = resolve_time(said)
-            if day is None and hhmm is None:
-                if item.get("due_time") == "00:00" and not re.search(
-                        r"\bmidnight\b|\b12\s*a\.?m\b|\b0?0:00\b", said, re.IGNORECASE):
-                    log.info("dropped a midnight nobody said: %r", said)
-                    item.update(due_time=None, time_unclear=False)
-                    if not resolve_due(f"{item.get('due') or ''} {item['text']}", start.date()):
-                        item["due_date"] = None
-                    if item["kind"] == "reminder":
-                        item["kind"] = "task"
-                continue
-            if item.get("due_date") or item.get("due_time"):
-                continue  # the model kept a date: its own
-            if hhmm and day is None:
-                at = datetime.strptime(hhmm, "%H:%M").time()
-                day = start.date() if at >= start.time().replace(second=0, microsecond=0) \
-                    else start.date() + timedelta(days=1)
-            log.info("dated a spoken to-do the model left undated: %r", said)
-            item.update(due_date=day.isoformat() if day else None, due_time=hhmm,
-                        time_unclear=unclear)
-            if hhmm and item["kind"] == "task" and remind:
-                item["kind"] = "reminder"
 
     def link_facts(self, date: str, new: list[dict[str, Any]],
                    known: list[dict[str, Any]]) -> list[FactLink]:

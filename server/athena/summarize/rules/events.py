@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
 
 from ...dates import resolve_due, resolve_time
 from ...domain import NOTE_ITEM, short_title
+from ..draft import Context, DraftItem, SummaryDraft
 from .commands import _split_commands, _starts_command
 from .text import _SENTENCE_END, _WHEN_WORDS, _content_words, _meridiem, _overlaps
 
@@ -25,8 +25,7 @@ _PAST = re.compile(r"\b(?:had|was|were|met|went|did|attended|called|yesterday|ag
                    re.IGNORECASE)
 
 
-def _events_from_lines(out: dict[str, Any], lines: dict[int, str], origin: float,
-                       today: Any, owner: str) -> None:
+def events_from_lines(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
     """Make sure each appointment a voice note names with a day and a time is an event.
     Small models list nothing for a fragment like "Meeting with the Meshtastic team
     Tuesday 11 a.m." (no verb, no command word), so it reached neither the calendar nor
@@ -34,8 +33,9 @@ def _events_from_lines(out: dict[str, Any], lines: dict[int, str], origin: float
     the past tense, that no item already covers (most of its words, or the same day
     from the same line). An undated to-do with most of its words gets its day and time.
     """
-    items = out["action_items"]
-    for at, line in sorted(lines.items()):
+    draft = draft.copy()
+    items, origin, today = draft.action_items, ctx.origin, ctx.today
+    for at, line in sorted(ctx.by_offset.items()):
         # a to-do or note command said with it ("Meeting with Jason on Wednesday at 12 pm,
         # make a note to bring the slides") is its own item, never the event's name
         for sentence in (c for x in _SENTENCE_END.split(_meridiem(line))
@@ -55,24 +55,23 @@ def _events_from_lines(out: dict[str, Any], lines: dict[int, str], origin: float
             source_at = origin + at
 
             # the model's item for it, reworded ("Meet Jason" for "Lunch with Jason ...")
-            if any(i.get("due_date") == day.isoformat() and i.get("source_at") == source_at
+            if any(i.due_date == day.isoformat() and i.source_at == source_at
                    for i in items):
                 continue
-            twin = next((i for i in items if i["kind"] != NOTE_ITEM
-                         and _overlaps(want, i["text"])), None)
+            twin = next((i for i in items if i.kind != NOTE_ITEM
+                         and _overlaps(want, i.text)), None)
             if twin is not None:  # the model wrote it as an undated to-do: date it
-                if (twin["kind"] in ("task", "reminder") and not twin.get("due_date")
-                        and not twin.get("due_time") and not twin.get("list_name")):
+                if (twin.kind in ("task", "reminder") and not twin.due_date
+                        and not twin.due_time and not twin.list_name):
                     log.info("dated an appointment the model left undated: %r", sentence)
-                    twin.update(kind="event", due_date=day.isoformat(), due_time=hhmm,
-                                time_unclear=unclear)
+                    twin.kind, twin.due_date = "event", day.isoformat()
+                    twin.due_time, twin.time_unclear = hhmm, unclear
                 continue
             log.info("added an event the model left out: %r", sentence)
-            items.append({"text": what, "title": short_title(None, what), "kind": "event",
-                          "owner": owner, "due": None, "due_date": day.isoformat(),
-                          "due_time": hhmm, "time_unclear": unclear,
-                          "duration_minutes": None, "location": None, "list_name": None,
-                          "note_title": None, "source_at": source_at})
+            items.append(DraftItem(text=what, title=short_title(None, what), kind="event",
+                                   owner=ctx.owner, due_date=day.isoformat(), due_time=hhmm,
+                                   time_unclear=unclear, source_at=source_at))
+    return draft
 
 
 # "Meet the Meshtastic team" for "Meeting with Meshtastic team ...": the meeting's name
@@ -81,15 +80,16 @@ _MEET = re.compile(r"^meet(?:\s+(?:up\s+)?with)?\s+(?P<who>.+)$", re.IGNORECASE)
 _MEETING_WITH = re.compile(r"\bmeeting\s+with\s+(?P<who>.+)$", re.IGNORECASE)
 
 
-def _name_meetings(items: list[dict[str, Any]], spoken: list[tuple[str, str]]) -> None:
+def name_meetings(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
     """An event the model wrote as "Meet X" when the user said "meeting with X" is
     named as said: "Meet the Meshtastic team" means getting to know them, the calendar
     should say "Meeting with Meshtastic team". The day and time are left out."""
-    for item in items:
-        m = _MEET.match(item["text"].strip())
-        if item["kind"] != "event" or m is None:
+    draft = draft.copy()
+    for item in draft.action_items:
+        m = _MEET.match(item.text.strip())
+        if item.kind != "event" or m is None:
             continue
-        said = next((c for c, _ in spoken if (w := _MEETING_WITH.search(_meridiem(c)))
+        said = next((c for c, _ in ctx.spoken if (w := _MEETING_WITH.search(_meridiem(c)))
                      and _overlaps(_content_words(m["who"]), w["who"])), None)
         if said is None:
             continue
@@ -98,24 +98,27 @@ def _name_meetings(items: list[dict[str, Any]], spoken: list[tuple[str, str]]) -
         if not who:
             continue
         name = f"Meeting with {who}"
-        if not item.get("title") or _MEET.match(item["title"].strip()):
-            item["title"] = short_title(None, name)
-        item["text"] = name
+        if not item.title or _MEET.match(item.title.strip()):
+            item.title = short_title(None, name)
+        item.text = name
+    return draft
 
 
-def _drop_event_facts(out: dict[str, Any]) -> None:
+def drop_event_facts(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
     """A fact that only repeats a dated event of the same conversation with its weekday
     or time ("Shahyah has a meeting with the Meshtastic team on Tuesday at 11 a.m.") is
     left out: the event is on the calendar, and the fact would be wrong a week later.
     A fact that names no weekday or time ("Alice's wedding is on June 14") stays."""
-    events = [_content_words(i["text"]) for i in out["action_items"]
-              if i["kind"] == "event" and i.get("due_date")]
+    draft = draft.copy()
+    events = [_content_words(i.text) for i in draft.action_items
+              if i.kind == "event" and i.due_date]
     keep = []
-    for fact in out["facts"]:
+    for fact in draft.facts:
         text = fact["fact"]
         if _WHEN_WORDS.search(_meridiem(text)) and any(
                 _overlaps(want, text) for want in events):
             log.info("dropped a fact that repeats an event: %r", text)
             continue
         keep.append(fact)
-    out["facts"] = keep
+    draft.facts = keep
+    return draft

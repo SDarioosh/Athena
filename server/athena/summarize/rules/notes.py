@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from typing import Any
 
 from ...domain import NOTE_ITEM, clean_notes_name, short_title
+from ..draft import Context, SummaryDraft
 from ..schemas import ActionItem
 from .text import _NAME_WORD
 
@@ -87,18 +89,49 @@ def _note_storage(a: ActionItem, text: str, source_at: float | None) -> dict[str
             "note_title": title, "source_at": source_at}
 
 
-def _lone_note(out: dict[str, Any]) -> None:
+def note_word_said(ctx: Context) -> bool:
+    """Does the voice note say the word "note(s)" (``_NOTE_WORD``)? Looked for wherever
+    the model's transcript has words: the lines (every row of each text), the speaker
+    names, and the context put before the transcript."""
+    return any(_NOTE_WORD.search(x) for x in (
+        ctx.context or "", *(s.speaker for s in ctx.segments),
+        *(s.text for s in ctx.segments)))
+
+
+def keep_asked_notes(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
+    """Only explicit commands make a note: none in a voice note without the word
+    "note(s)" (``note_word_said``), and none without text."""
+    asked = note_word_said(ctx)
+    draft = draft.copy()
+    draft.action_items = [i for i in draft.action_items
+                          if i.kind != NOTE_ITEM or (asked and i.text)]
+    return draft
+
+
+def lone_note(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
     """A voice note that is only one note becomes that note: its summary (written from
     all of it, so nothing the transcriber cut is lost) is the note's text, and its title
     titles an untitled note. A line for named notes ("add to my hardware notes") keeps
     its own words; several notes keep theirs."""
-    items, title = out["action_items"], (out.get("title") or "").strip()
-    if len(items) != 1 or items[0]["kind"] != NOTE_ITEM:
-        return
+    draft = draft.copy()
+    items, title = draft.action_items, (draft.title or "").strip()
+    if len(items) != 1 or items[0].kind != NOTE_ITEM:
+        return draft
     note = items[0]
-    summary = " ".join((out.get("summary") or "").split())
-    if summary and not note.get("list_name"):
-        note["text"] = summary
-    if title and not note.get("note_title"):
-        note["note_title"] = title[:80]
-    note["title"] = short_title(note.get("note_title"), note["text"])
+    summary = " ".join((draft.summary or "").split())
+    if summary and not note.list_name:
+        note.text = summary
+    if title and not note.note_title:
+        note.note_title = title[:80]
+    note.title = short_title(note.note_title, note.text)
+    return draft
+
+
+def undate_notes(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
+    """A note is filed as it is: no date, time or owner."""
+    draft = draft.copy()
+    draft.action_items = [
+        dataclasses.replace(i, due=None, due_date=None, due_time=None, time_unclear=False,
+                            owner=None) if i.kind == NOTE_ITEM else i
+        for i in draft.action_items]
+    return draft
