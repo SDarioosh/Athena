@@ -384,7 +384,7 @@ def test_check_migration_script(tmp_path: Path, capsys: pytest.CaptureFixture) -
     assert live.read_bytes() == original and user_version(live) == 16
     # running it again finds nothing to do
     assert check.main([str(path)]) == 0
-    assert "user_version: 17 -> 17" in capsys.readouterr().out
+    assert "user_version: 18 -> 18" in capsys.readouterr().out
 
 
 def test_check_migration_refuses_a_live_database(tmp_path: Path,

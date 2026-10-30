@@ -60,16 +60,23 @@ def plan(threads: Sequence[Sequence[Line]]) -> Plan:
     one at most once, biggest overlaps first (ties: the earlier thread). An old thread left
     over is merged into the thread holding most of its lines: that thread already has an
     id, or it would have taken this one."""
-    shares = sorted((-n, i, old) for i, t in enumerate(threads)
-                    for old, n in Counter(x.thread for x in t if x.thread).items())
+    shares: list[tuple[int, int, int, str]] = []  # (-lines, thread, first line, old id)
+    for i, t in enumerate(threads):
+        first: dict[str, int] = {}
+        for pos, x in enumerate(t):
+            if x.thread:
+                first.setdefault(x.thread, pos)
+        counts = Counter(x.thread for x in t if x.thread)
+        shares += [(-n, i, first[old], old) for old, n in counts.items()]
+    shares.sort()
     ids: list[str | None] = [None] * len(threads)
     taken: set[str] = set()
-    for _, i, old in shares:
+    for _, i, _, old in shares:
         if ids[i] is None and old not in taken:
             ids[i] = old
             taken.add(old)
     absorb: dict[str, str] = {}
-    for _, i, old in shares:
+    for _, i, _, old in shares:
         into = ids[i]
         if old not in taken and old not in absorb and into is not None:
             absorb[old] = into

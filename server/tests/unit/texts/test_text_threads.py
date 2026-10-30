@@ -32,6 +32,9 @@ def test_plan_keeps_old_ids_and_merges_a_thread_a_backfill_joins():
     assert len(groups) == 1
     p = plan(groups)
     assert p.ids == ["a"] and p.absorb == {"b": "a"}  # tie: the earlier thread wins
+    # whatever the ids are called
+    ls = lines([0, 60, 4 * H, 8 * H, 8 * H + 60], ["z", "z", None, "b", "b"])
+    assert plan(split(ls, gap=6 * H)).ids == ["z"]
 
 
 def test_plan_gives_a_new_thread_no_id_and_each_old_id_once():
