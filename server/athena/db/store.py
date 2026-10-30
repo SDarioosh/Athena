@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from ..texts.repo import TextsRepo
 from .action_items import ActionItemsRepo
 from .connection import BUSY_TIMEOUT_MS, _begin_immediate, _init_lock, _row
 from .conversations import ConversationsRepo
@@ -26,7 +27,7 @@ from .voices import VoicesRepo
 
 
 class Store(SessionsRepo, MeetingsRepo, ConversationsRepo, FactsRepo, ForgetRepo, SearchRepo,
-            PeopleRepo, VoicesRepo, ActionItemsRepo):
+            PeopleRepo, VoicesRepo, ActionItemsRepo, TextsRepo):
     def __init__(self, path: Path | str) -> None:
         self.path = str(path)
         if self.path != ":memory:":

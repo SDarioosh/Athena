@@ -520,7 +520,7 @@
       "properties": {
         "kind": {
           "default": "",
-          "description": "'note' = all the user's notes (voice notes and notes written by hand); 'voice' = only voice notes (memos the user recorded for themselves); 'written' = only notes the user wrote by hand; 'conversation' = only conversations with other people (in person and online); 'meeting' = only online meetings; 'in_person' = only conversations recorded in person (no online meetings); empty = everything",
+          "description": "'note' = all the user's notes (voice notes and notes written by hand); 'voice' = only voice notes (memos the user recorded for themselves); 'written' = only notes the user wrote by hand; 'conversation' = only conversations with other people (in person, online and by text); 'meeting' = only online meetings; 'in_person' = only conversations recorded in person (no online meetings, no texts); 'text' = only text message threads (iMessage); empty = everything",
           "title": "Kind",
           "type": "string"
         },

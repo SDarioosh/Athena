@@ -40,7 +40,7 @@ def test_migration_backfills_people_from_names_and_speakers(tmp_path):
     store.close()
 
     store = Store(path)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 17
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 18
     rows = {r["name"]: dict(r) for r in store._conn.execute("SELECT * FROM people")}
     # one row per distinct name, any case; enrolled spellings first, then the first mention
     assert set(rows) == {"Sam", "Dana", "alice", "Bob"}
@@ -169,12 +169,13 @@ def test_list_people_json_shape_and_order(pipeline):
     me, alice, zoe = store.person_id("Me"), store.person_id("Alice"), store.person_id("Zoe")
     assert people == [
         {"id": me, "name": "Me", "aliases": [], "is_owner": True, "has_voice": True,
-         "conversations": 1, "first_seen": "2025-10-09", "last_seen": "2025-10-09"},
+         "conversations": 1, "first_seen": "2025-10-09", "last_seen": "2025-10-09",
+         "handles": []},
         {"id": alice, "name": "Alice", "aliases": [], "is_owner": False,
          "has_voice": False, "conversations": 1, "first_seen": "2025-10-09",
-         "last_seen": "2025-10-09"},
+         "last_seen": "2025-10-09", "handles": []},
         {"id": zoe, "name": "Zoe", "aliases": [], "is_owner": False, "has_voice": True,
-         "conversations": 0, "first_seen": None, "last_seen": None}]
+         "conversations": 0, "first_seen": None, "last_seen": None, "handles": []}]
     # the same order as the text mode: speakers first, then people mentioned
     text = call(build_mcp(store, pipeline.settings), "list_people")
     assert text.index("- Me") < text.index("Mentioned:") < text.index("- Alice")

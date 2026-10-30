@@ -22,6 +22,7 @@
         "started_at": "2026-10-19T17:00:00+00:00",
         "status": "summarized",
         "summary": "Buy oat milk and coffee beans, and ask Maria which cake Mom likes.",
+        "thread": null,
         "title": "Weekend errands",
         "topics": [
           "errands"
@@ -51,6 +52,7 @@
         "started_at": "2026-10-19T07:30:00+00:00",
         "status": "summarized",
         "summary": "Reminder to call Mom about the birthday dinner tomorrow at 6 p.m.",
+        "thread": null,
         "title": "Call Mom",
         "topics": [
           "family"
@@ -78,6 +80,7 @@
         "started_at": "2026-10-18T09:00:00+00:00",
         "status": "summarized",
         "summary": "The rye bread is ready at four; the bakery is closed on Monday.",
+        "thread": null,
         "title": "At the bakery",
         "topics": [
           "shopping"
@@ -100,6 +103,7 @@
         "started_at": "2026-10-17T21:00:00+00:00",
         "status": "discarded",
         "summary": null,
+        "thread": null,
         "title": null,
         "topics": [],
         "transcript_pruned_at": null,
@@ -127,6 +131,7 @@
         "started_at": "2026-10-16T20:00:00+00:00",
         "status": "summarized",
         "summary": "Casa Lupo is booked for twelve guests on November 8 at 7 p.m.; the user picks up Aunt Rosa from the station.",
+        "thread": null,
         "title": "Birthday dinner plans",
         "topics": [
           "family",
@@ -155,6 +160,7 @@
         "started_at": "2026-10-15T07:40:00+00:00",
         "status": "summarized",
         "summary": "A pasta-making cooking class for the team offsite instead of the escape room; ask Alice before she leaves for Berlin.",
+        "thread": null,
         "title": "Offsite idea: cooking class",
         "topics": [
           "offsite"
@@ -183,6 +189,7 @@
         "started_at": "2026-10-14T15:00:00+00:00",
         "status": "summarized",
         "summary": "Alice moves to Berlin on January 12; the user takes over her vendor contracts and the budget cut is now ten percent.",
+        "thread": null,
         "title": "1:1 with Alice: vendor contracts",
         "topics": [
           "work",
@@ -257,6 +264,7 @@
         "started_at": "2026-10-13T15:00:00+00:00",
         "status": "summarized",
         "summary": "The tool shed goes to the second supplier for about 3200 euros; the user confirms the order by Friday.",
+        "thread": null,
         "title": "Community garden budget",
         "topics": [
           "garden"
@@ -284,6 +292,7 @@
         "started_at": "2026-10-11T08:15:00+00:00",
         "status": "summarized",
         "summary": "The bike needs new brake pads before winter; ask at the bike shop on Lindenstrasse and check the rear light.",
+        "thread": null,
         "title": "Bike brake pads",
         "topics": [
           "bike"
@@ -312,6 +321,7 @@
         "started_at": "2026-10-10T18:00:00+00:00",
         "status": "summarized",
         "summary": "Jonas is training for the Lisbon marathon and recommended The Overstory.",
+        "thread": null,
         "title": "Dinner with Jonas",
         "topics": [
           "running",
@@ -379,6 +389,7 @@
         "started_at": "2026-10-09T16:00:00+00:00",
         "status": "summarized",
         "summary": "The newsletter shrinks to three sections and moves to Sunday mornings; the first new issue goes out on November 15.",
+        "thread": null,
         "title": "Community newsletter relaunch",
         "topics": [
           "newsletter"
@@ -408,6 +419,7 @@
         "started_at": "2026-10-07T09:30:00+00:00",
         "status": "summarized",
         "summary": "Ben finished the API migration; the client demo moved to October 23 and the user will review Ben's pull request.",
+        "thread": null,
         "title": "Standup: API migration and client demo",
         "topics": [
           "work"
@@ -436,6 +448,7 @@
         "started_at": "2026-10-03T11:00:00+00:00",
         "status": "summarized",
         "summary": "Tom raises the rent from 1450 to 1520 euros from January and needs the signed renewal by October 31; he will fix the bathroom fan.",
+        "thread": null,
         "title": "Lease renewal and rent increase",
         "topics": [
           "housing"
@@ -464,6 +477,7 @@
         "started_at": "2026-09-30T14:00:00+00:00",
         "status": "summarized",
         "summary": "Dr. Patel found a cracked lower left molar that needs a crown; the follow-up is on October 21 at 9 a.m.",
+        "thread": null,
         "title": "Dentist: cracked molar",
         "topics": [
           "health"
@@ -493,6 +507,7 @@
         "started_at": "2026-09-22T19:30:00+00:00",
         "status": "summarized",
         "summary": "Maria and the user planned a dinner for Mom's seventieth birthday at Casa Lupo; the user takes care of the gift.",
+        "thread": null,
         "title": "Mom's seventieth birthday",
         "topics": [
           "family",
@@ -522,6 +537,7 @@
         "started_at": "2026-09-15T10:00:00+00:00",
         "status": "summarized",
         "summary": "Alice said finance is cutting the Q4 budget by fifteen percent; the user will send a revised spreadsheet by Friday.",
+        "thread": null,
         "title": "Q4 budget cut",
         "topics": [
           "budget",

@@ -22,6 +22,7 @@
         "started_at": "2026-10-19T17:00:00+00:00",
         "status": "summarized",
         "summary": "Buy oat milk and coffee beans, and ask Maria which cake Mom likes.",
+        "thread": null,
         "title": "Weekend errands",
         "topics": [
           "errands"
@@ -51,6 +52,7 @@
         "started_at": "2026-10-19T07:30:00+00:00",
         "status": "summarized",
         "summary": "Reminder to call Mom about the birthday dinner tomorrow at 6 p.m.",
+        "thread": null,
         "title": "Call Mom",
         "topics": [
           "family"
@@ -78,6 +80,7 @@
         "started_at": "2026-10-18T09:00:00+00:00",
         "status": "summarized",
         "summary": "The rye bread is ready at four; the bakery is closed on Monday.",
+        "thread": null,
         "title": "At the bakery",
         "topics": [
           "shopping"

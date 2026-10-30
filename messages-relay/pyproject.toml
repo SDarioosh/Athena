@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "athena-messages-relay"
+version = "0.1.0"
+description = "Athena messages relay: uploads the Mac's iMessage history to the Athena server"
+requires-python = ">=3.8"
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["athena_messages_relay*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+# the relay runs on Python 3.8: typing.List/Dict/Optional and %-formatting stay
+ignore = ["UP006", "UP007", "UP031", "UP035", "UP036", "UP045"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["athena_messages_relay"]
+known-local-folder = ["conftest"]

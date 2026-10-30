@@ -138,9 +138,10 @@ class SessionKind:
         raise NotImplementedError
 
     # summaries -------------------------------------------------------------
-    def summary_context(self, conv: dict[str, Any] | None,
-                        segments: list[Segment]) -> dict[str, Any]:
-        """Extra arguments for ``Summarizer.summarize`` of a conversation of this kind."""
+    def summary_context(self, conv: dict[str, Any] | None, segments: list[Segment],
+                        timezone: str = "UTC") -> dict[str, Any]:
+        """Extra arguments for ``Summarizer.summarize`` of a conversation of this kind
+        (``timezone``: CONVO_TIMEZONE, for times the model is told)."""
         return {}
 
 
@@ -207,8 +208,8 @@ class MeetingKind(SessionKind):
         p.store.link_meeting(session_id, conv_id)
         return [conv_id]
 
-    def summary_context(self, conv: dict[str, Any] | None,
-                        segments: list[Segment]) -> dict[str, Any]:
+    def summary_context(self, conv: dict[str, Any] | None, segments: list[Segment],
+                        timezone: str = "UTC") -> dict[str, Any]:
         assert conv is not None  # for_conversation: only a conversation with a meeting
         # an online meeting: its topic, people, chat lines
         from .meetings.ingest.chat import summary_context
@@ -216,7 +217,23 @@ class MeetingKind(SessionKind):
         return {"context": summary_context(conv["meeting"], segments)}
 
 
-PLAIN, NOTE_KIND, MEETING = PlainKind(), NoteKind(), MeetingKind()
+class TextKind(SessionKind):
+    """A chat's text messages (``texts/``): uploaded as lines, never transcribed; the
+    upload threads them, so the worker never processes such a session."""
+    name = "text"
+
+    def split(self, p: Pipeline, session_id: str, device: str) -> list[str]:
+        return []  # threads are made when messages are stored (TextsRepo._rethread)
+
+    def summary_context(self, conv: dict[str, Any] | None, segments: list[Segment],
+                        timezone: str = "UTC") -> dict[str, Any]:
+        assert conv is not None and conv.get("thread")  # for_conversation: only a thread
+        from .texts.summary import context
+
+        return {"context": context(conv["thread"], segments, timezone)}
+
+
+PLAIN, NOTE_KIND, MEETING, TEXT_KIND = PlainKind(), NoteKind(), MeetingKind(), TextKind()
 
 
 def is_meeting(store: Store, session_id: str, device: str) -> bool:
@@ -235,7 +252,9 @@ def kind_of(store: Store, sess: dict[str, Any]) -> SessionKind:
 
 def for_conversation(conv: dict[str, Any] | None) -> SessionKind:
     """The kind whose summary rules a conversation (a ``Store.get_conversation`` row)
-    gets: a meeting's when it has a meeting block."""
+    gets: a thread's when it has a text block, a meeting's when it has a meeting block."""
+    if conv and conv.get("thread"):
+        return TEXT_KIND
     if conv and conv.get("meeting"):
         return MEETING
     return NOTE_KIND if conv and conv.get("kind") == NOTE else PLAIN

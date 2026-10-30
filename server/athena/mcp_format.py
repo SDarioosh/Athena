@@ -12,13 +12,20 @@ from collections.abc import Callable
 from typing import Any
 
 from .config import Settings
-from .domain import MEETING, NOTE, VOICE, WRITTEN
-from .links import local_time, meeting_label, speaker_label, transcript_link, written_label
+from .domain import MEETING, NOTE, TEXT, VOICE, WRITTEN
+from .links import (
+    local_time,
+    meeting_label,
+    speaker_label,
+    text_label,
+    transcript_link,
+    written_label,
+)
 
 CITE = "When answering, put the link next to each fact you use"
 
 KIND_HEADER = {NOTE: "notes", VOICE: "voice notes", WRITTEN: "written notes",
-               MEETING: "online meetings"}
+               MEETING: "online meetings", TEXT: "text threads"}
 
 
 class Fmt:
@@ -52,7 +59,7 @@ def cited(lines: list[str]) -> str:
 
 # ------------------------------------------------------------------ tools
 def transcript_lines(f: Fmt, rows: list[dict[str, Any]], written: dict[str, Any],
-                     meetings: dict[str, Any]) -> str:
+                     meetings: dict[str, Any], texts: dict[str, Any] | None = None) -> str:
     """search_transcripts."""
     lines = [f.header(len(rows), "transcript lines")]
     for r in rows:
@@ -61,7 +68,8 @@ def transcript_lines(f: Fmt, rows: list[dict[str, Any]], written: dict[str, Any]
                      f"\"{r['text']}\" "
                      f"(conversation \"{r['conversation_title'] or 'untitled'}\""
                      f"{note(r.get('conversation_kind'), written.get(r['conversation_id']))}"
-                     f"{meeting_label(meetings.get(r['conversation_id']))}, "
+                     f"{meeting_label(meetings.get(r['conversation_id']))}"
+                     f"{text_label((texts or {}).get(r['conversation_id']))}, "
                      f"id {r['conversation_id']}) {link}")
     return cited(lines)
 
@@ -73,7 +81,7 @@ def conversations(f: Fmt, convs: list[dict[str, Any]], kind: str | None) -> str:
         lines.append(
             f"- {f.when(c['started_at'])}–{f.when(c['ended_at'], '%H:%M')} "
             f"\"{title(c)}\"{note(c.get('kind'), c.get('written'))}"
-            f"{meeting_label(c.get('meeting'))} id {c['id']}; people: "
+            f"{meeting_label(c.get('meeting'))}{text_label(c.get('thread'))} id {c['id']}; people: "
             f"{', '.join(c['people']) or '—'}{participants(c.get('meeting'))}\n  "
             f"{c['summary'] or ''}\n  {f.link(c['id'])}")
     return cited(lines)
@@ -82,7 +90,8 @@ def conversations(f: Fmt, convs: list[dict[str, Any]], kind: str | None) -> str:
 def conversation(f: Fmt, c: dict[str, Any], speakers: list[str]) -> str:
     """get_conversation."""
     out = [f"\"{title(c)}\"{note(c.get('kind'), c.get('written'))}"
-           f"{meeting_label(c.get('meeting'))} — {f.when(c['started_at'])}–"
+           f"{meeting_label(c.get('meeting'))}{text_label(c.get('thread'))} — "
+           f"{f.when(c['started_at'])}–"
            f"{f.when(c['ended_at'], '%H:%M')} ({f.settings.timezone}), device {c['device']}"
            + (f", type {c['kind']}" if c.get("kind") else ""),
            f"Speakers: {', '.join(speakers) or '—'}. People: {', '.join(c['people']) or '—'}"
@@ -101,9 +110,13 @@ def transcript(f: Fmt, c: dict[str, Any], segs: list[Any], max_lines: int) -> st
     """get_transcript: one time per line keeps the result short (a line's clock time is
     the header's start time plus its seconds)."""
     origin = c["started_at"]
-    out = [f"\"{c['title'] or 'untitled'}\" {f.when(origin, '%Y-%m-%d %H:%M:%S')} "
-           f"{f.link(c['id'])}"]
-    out += [f"#{s.id} [{int(s.started_at - origin)}s] {speaker_label(s)}: {s.text}"
+    name = title(c) if c.get("thread") else c["title"] or "untitled"
+    out = [f"\"{name}\"{text_label(c.get('thread'))} "
+           f"{f.when(origin, '%Y-%m-%d %H:%M:%S')} {f.link(c['id'])}"]
+    # a text thread spans hours or days: each message also shows when it was sent
+    sent = (lambda s: f", {f.when(s.started_at, '%a %H:%M')}") if c.get("thread") \
+        else (lambda s: "")
+    out += [f"#{s.id} [{int(s.started_at - origin)}s{sent(s)}] {speaker_label(s)}: {s.text}"
             for s in segs[:max_lines]]
     if pruned := c.get("transcript_pruned_at"):
         out.append(f"The transcript was removed on {f.when(pruned, '%Y-%m-%d')}"
@@ -118,7 +131,8 @@ def transcript(f: Fmt, c: dict[str, Any], segs: list[Any], max_lines: int) -> st
 
 
 def action_items(f: Fmt, rows: list[dict[str, Any]], status: str,
-                 written: dict[str, Any], meetings: dict[str, Any]) -> str:
+                 written: dict[str, Any], meetings: dict[str, Any],
+                 texts: dict[str, Any] | None = None) -> str:
     """list_action_items, text format."""
     lines = [f.header(len(rows), f"{status} action items")]
     for r in rows:
@@ -129,6 +143,7 @@ def action_items(f: Fmt, rows: list[dict[str, Any]], status: str,
                      + f" — from \"{r['conversation_title']}\""
                      + note(r.get("conversation_kind"), written.get(r["conversation_id"]))
                      + meeting_label(meetings.get(r["conversation_id"]))
+                     + text_label((texts or {}).get(r["conversation_id"]))
                      + f" {f.when(r['conversation_at'])} " + f.said_at(r))
     return cited(lines)
 
@@ -144,7 +159,8 @@ def updated_item(item_id: int, item: dict[str, Any]) -> str:
 def facts(f: Fmt, rows: list[dict[str, Any]], confirmed: bool,
           sources: dict[int, list[dict[str, Any]]], history: dict[int, list[dict[str, Any]]],
           written: dict[str, Any], meetings: dict[str, Any],
-          until: Callable[[dict[str, Any]], str | None]) -> str:
+          until: Callable[[dict[str, Any]], str | None],
+          texts: dict[str, Any] | None = None) -> str:
     """list_facts, text format: each fact, where it was said again and what it
     replaced."""
     lines = [f.header(len(rows), "confirmed facts" if confirmed else "facts")]
@@ -154,7 +170,8 @@ def facts(f: Fmt, rows: list[dict[str, Any]], confirmed: bool,
                      f"{f.when(x['conversation_at'], '%Y-%m-%d')}"
                      + (f", until {end}" if end else "") + ") " + f.said_at(x)
                      + written_label(written.get(x["conversation_id"]))
-                     + meeting_label(meetings.get(x["conversation_id"])))
+                     + meeting_label(meetings.get(x["conversation_id"]))
+                     + text_label((texts or {}).get(x["conversation_id"])))
         for s in sources[x["id"]]:
             lines.append(f"  said again {f.when(s['conversation_at'], '%Y-%m-%d')} "
                          + f.said_at(s) + written_label(written.get(s["conversation_id"])))
@@ -225,12 +242,20 @@ def summary(c: dict[str, Any]) -> str:
         return "(being rewritten after the user forgot something; ask again later)"
     if c.get("transcript_pruned_at") and not c.get("summary"):
         return "(none; the transcript was removed by the retention setting)"
+    if c.get("thread") and c.get("status") == "discarded":
+        return ("(none: a short exchange; read it with get_transcript)"
+                if c.get("discard_reason") == "short" else
+                "(none: older than the summary window; read it with get_transcript)")
     return c["summary"] or "(pending)"
 
 
 def title(c: dict[str, Any]) -> str:
     if c.get("forget_pending"):
         return "untitled (being rewritten after a forget)"
+    if c.get("thread") and (c.get("status") == "discarded" or not c.get("title")):
+        from .texts.repo import plain_title  # a thread without a summary
+
+        return plain_title(c["thread"])
     if c.get("status") == "discarded":
         return f"(not summarized: looked like {c.get('discard_reason') or 'junk'})"
     return c.get("title") or "untitled (summary pending)"

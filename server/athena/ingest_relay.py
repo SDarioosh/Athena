@@ -8,6 +8,8 @@ second URL and token, the MCP HTTP app gets two plain HTTP routes:
     POST /sessions/{session_id}/end  same as /v1/sessions/{id}/end
     POST /ingest/text                same JSON and answer as /v1/ingest/text (written notes)
     DELETE /ingest/text/{source_id}  same as /v1/ingest/text/{source_id}
+    POST /ingest/messages            same JSON and answer as /v1/ingest/messages (texts)
+    DELETE /ingest/messages/chats/{source}/{chat}  same as /v1/ingest/messages/chats/...
 
 The phone relay's T5 sync, paired through Odysseus, also reads a few API routes the same
 way (:data:`READ_ROUTES`): the same paths without ``/v1``, same query, same JSON. The
@@ -67,6 +69,8 @@ _ANY_ADDRESS = {"", "0.0.0.0", "::", "[::]"}
 MAX_JSON_BYTES = 64 * 1024
 # A written note: its text (up to 4 bytes per character, escaped in JSON) and fields.
 MAX_TEXT_BODY_BYTES = MAX_TEXT_CHARS * 6 + 16 * 1024
+# Text messages: 1,000 messages of up to 4,000 characters, with their JSON.
+MAX_MESSAGES_BODY_BYTES = 16 * 1024 * 1024
 
 # Meetings: a join request is a link, a passcode and a title; ids are the launcher's
 # uuid4 hex. GET and POST answer quickly; DELETE waits for the bot to exit (SIGTERM, then
@@ -299,6 +303,27 @@ def add_ingest_routes(mcp: Any, settings: Settings,
         source_id = request.path_params["source_id"]
         return await forward_method("DELETE", f"/v1/ingest/text/{quote(source_id, safe='')}",
                                     headers=auth)
+
+    @mcp.custom_route("/ingest/messages", methods=["POST"], include_in_schema=False)
+    async def ingest_messages(request: Any) -> Any:
+        ctype = request.headers.get("content-type", "")
+        if not ctype.lower().startswith("application/json"):
+            return _json(415, "send application/json, like /v1/ingest/messages")
+        body = await _read_capped(request, MAX_MESSAGES_BODY_BYTES)
+        if body is None:
+            return _json(413, "upload too large: send fewer messages per call")
+        return await forward("/v1/ingest/messages", content=body,
+                             headers={**auth, "Content-Type": "application/json"})
+
+    @mcp.custom_route("/ingest/messages/chats/{source}/{chat_id:path}", methods=["DELETE"],
+                      include_in_schema=False)
+    async def delete_text_chat(request: Any) -> Any:
+        from urllib.parse import quote
+
+        source, chat_id = request.path_params["source"], request.path_params["chat_id"]
+        return await forward_method(
+            "DELETE", f"/v1/ingest/messages/chats/{quote(source, safe='')}/"
+            f"{quote(chat_id, safe='')}", headers=auth)
 
     @mcp.custom_route("/sessions/{session_id}/end", methods=["POST"], include_in_schema=False)
     async def end_session(request: Any) -> Any:

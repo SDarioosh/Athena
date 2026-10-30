@@ -124,7 +124,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> dict:
 
 def test_registry_is_numbered_by_version() -> None:
     assert MIGRATIONS[0] is None and all(MIGRATIONS[1:])
-    assert SCHEMA_VERSION == len(MIGRATIONS) - 1 == 17
+    assert SCHEMA_VERSION == len(MIGRATIONS) - 1 == 18
     for version, step in enumerate(MIGRATIONS[1:], start=1):
         assert step.__name__.startswith(f"_m{version:02d}_")
 
@@ -151,7 +151,7 @@ def test_v16_database_migrates_with_data_intact(tmp_path: Path, fresh: dict,
     path = v16_database(tmp_path / "convo.db", fixture)
     before = _contents(path)
     Store(path).close()
-    assert user_version(path) == 17
+    assert user_version(path) == 18
     after = _contents(path)
     # same rows in every table that was there (nothing rewritten); nothing new is filled
     assert {t: rows for t, rows in after.items() if t in before} == before
@@ -200,7 +200,7 @@ def test_opening_twice_changes_nothing(tmp_path: Path, fixture: str) -> None:
     schema, contents = describe(path), _contents(path)
     Store(path).close()
     assert describe(path) == schema and _contents(path) == contents
-    assert user_version(path) == 17
+    assert user_version(path) == 18
 
 
 def test_opening_a_new_database_twice_changes_nothing(tmp_path: Path) -> None:
@@ -261,7 +261,7 @@ def test_failed_step_leaves_previous_version_without_its_changes(
     monkeypatch.undo()  # the next start completes both
     for p in (path, path2):
         Store(p).close()
-        assert user_version(p) == 17
+        assert user_version(p) == 18
 
 
 def test_failed_last_step_on_v16(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -376,7 +376,7 @@ def test_check_migration_script(tmp_path: Path, capsys: pytest.CaptureFixture) -
     original = live.read_bytes()
     assert check.main([str(path)]) == 0
     out = capsys.readouterr().out
-    assert "user_version: 16 -> 17 (latest 17)" in out
+    assert "user_version: 16 -> 18 (latest 18)" in out
     assert "voice_enrollment" in out and "(new table)" in out
     assert "segments                         4         4" in out
     assert "lacks: none" in out and "integrity_check: ok" in out
@@ -384,7 +384,7 @@ def test_check_migration_script(tmp_path: Path, capsys: pytest.CaptureFixture) -
     assert live.read_bytes() == original and user_version(live) == 16
     # running it again finds nothing to do
     assert check.main([str(path)]) == 0
-    assert "user_version: 17 -> 17" in capsys.readouterr().out
+    assert "user_version: 18 -> 18" in capsys.readouterr().out
 
 
 def test_check_migration_refuses_a_live_database(tmp_path: Path,

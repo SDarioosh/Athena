@@ -5597,6 +5597,941 @@
    "status": 502
   }
  },
+ "ingest_messages__accepted": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "id": "0123456789abcdef0123456789abcdef",
+    "state": "starting"
+   },
+   "status": 202
+  }
+ },
+ "ingest_messages__conflict": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "active": {
+     "id": "0123456789abcdef0123456789abcdef",
+     "state": "in_meeting"
+    },
+    "detail": "a bot is already in a meeting",
+    "message": "Athena is already in a meeting"
+   },
+   "status": 409
+  }
+ },
+ "ingest_messages__conflict_no_detail": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "active": {
+     "id": "0123456789abcdef0123456789abcdef"
+    },
+    "detail": "Athena is already in a meeting",
+    "message": "Athena is already in a meeting"
+   },
+   "status": 409
+  }
+ },
+ "ingest_messages__empty_error": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "Service Unavailable"
+   },
+   "status": 503
+  }
+ },
+ "ingest_messages__error_list": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "bad; worse"
+   },
+   "status": 400
+  }
+ },
+ "ingest_messages__invalid": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "body.url: field required",
+    "errors": [
+     {
+      "loc": [
+       "body",
+       "url"
+      ],
+      "msg": "field required"
+     }
+    ]
+   },
+   "status": 422
+  }
+ },
+ "ingest_messages__no_query": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": null
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "items": [
+     1,
+     2
+    ],
+    "ok": true
+   },
+   "status": 200
+  }
+ },
+ "ingest_messages__no_token": {
+  "forwarded": [],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "no_token"
+  },
+  "response": {
+   "content_type": "text/plain",
+   "status": 401,
+   "text": "unauthorized"
+  }
+ },
+ "ingest_messages__not_found": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "not found"
+   },
+   "status": 404
+  }
+ },
+ "ingest_messages__not_json": {
+  "forwarded": [],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "send application/json, like /v1/ingest/messages"
+   },
+   "status": 415
+  }
+ },
+ "ingest_messages__ok": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "items": [
+     1,
+     2
+    ],
+    "ok": true
+   },
+   "status": 200
+  }
+ },
+ "ingest_messages__server_error": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "upstream broke"
+   },
+   "status": 500
+  }
+ },
+ "ingest_messages__timeout": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "Athena's ingest API is not reachable at http://127.0.0.1:8000 (is `convo-server serve` running?)"
+   },
+   "status": 502
+  }
+ },
+ "ingest_messages__unreachable": {
+  "forwarded": [
+   {
+    "body": "{\"source\": \"imessage\", \"messages\": []}",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "38",
+     "content-type": "application/json",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/ingest/messages",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "Athena's ingest API is not reachable at http://127.0.0.1:8000 (is `convo-server serve` running?)"
+   },
+   "status": 502
+  }
+ },
+ "ingest_messages_chat_delete__accepted": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "id": "0123456789abcdef0123456789abcdef",
+    "state": "starting"
+   },
+   "status": 202
+  }
+ },
+ "ingest_messages_chat_delete__conflict": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "active": {
+     "id": "0123456789abcdef0123456789abcdef",
+     "state": "in_meeting"
+    },
+    "detail": "a bot is already in a meeting",
+    "message": "Athena is already in a meeting"
+   },
+   "status": 409
+  }
+ },
+ "ingest_messages_chat_delete__conflict_no_detail": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "active": {
+     "id": "0123456789abcdef0123456789abcdef"
+    },
+    "detail": "Athena is already in a meeting",
+    "message": "Athena is already in a meeting"
+   },
+   "status": 409
+  }
+ },
+ "ingest_messages_chat_delete__empty_error": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "Service Unavailable"
+   },
+   "status": 503
+  }
+ },
+ "ingest_messages_chat_delete__error_list": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "bad; worse"
+   },
+   "status": 400
+  }
+ },
+ "ingest_messages_chat_delete__invalid": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "body.url: field required",
+    "errors": [
+     {
+      "loc": [
+       "body",
+       "url"
+      ],
+      "msg": "field required"
+     }
+    ]
+   },
+   "status": 422
+  }
+ },
+ "ingest_messages_chat_delete__no_query": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": null
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "items": [
+     1,
+     2
+    ],
+    "ok": true
+   },
+   "status": 200
+  }
+ },
+ "ingest_messages_chat_delete__no_token": {
+  "forwarded": [],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "no_token"
+  },
+  "response": {
+   "content_type": "text/plain",
+   "status": 401,
+   "text": "unauthorized"
+  }
+ },
+ "ingest_messages_chat_delete__not_found": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "not found"
+   },
+   "status": 404
+  }
+ },
+ "ingest_messages_chat_delete__ok": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "items": [
+     1,
+     2
+    ],
+    "ok": true
+   },
+   "status": 200
+  }
+ },
+ "ingest_messages_chat_delete__server_error": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "upstream broke"
+   },
+   "status": 500
+  }
+ },
+ "ingest_messages_chat_delete__timeout": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "Athena's ingest API is not reachable at http://127.0.0.1:8000 (is `convo-server serve` running?)"
+   },
+   "status": 502
+  }
+ },
+ "ingest_messages_chat_delete__unreachable": {
+  "forwarded": [
+   {
+    "body": "",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "DELETE",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 120.0,
+     "read": 120.0,
+     "write": 120.0
+    },
+    "url": "http://127.0.0.1:8000/v1/ingest/messages/chats/imessage/iMessage%3B-%3B%2B15550100"
+   }
+  ],
+  "request": {
+   "method": "DELETE",
+   "path": "/ingest/messages/chats/imessage/iMessage;-;+15550100",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "Athena's ingest API is not reachable at http://127.0.0.1:8000 (is `convo-server serve` running?)"
+   },
+   "status": 502
+  }
+ },
  "ingest_text__accepted": {
   "forwarded": [
    {

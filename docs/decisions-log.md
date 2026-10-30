@@ -4,6 +4,12 @@ The owner's decisions so far, moved here from [PROGRESS.md](../PROGRESS.md) on 2
 
 ## Decisions so far
 
+- Text messages (2026-10-30): the owner's iMessages go **into Athena**, not a separate
+  module: threads are conversations, so facts, people, search and the hub's jobs cover
+  texts as they are. Source: the Messages app on an always-on 2012 MacBook Pro signed into
+  the owner's Apple ID (OpenBubbles stays the phone's app; BlueBubbles not needed). Design:
+  `docs/messages.md`.
+
 - Knowledge layer: **hybrid**. Our SQLite is the source of truth, exposed over MCP.
 - Frontend: **Odysseus, forked** (the fork was called Barvis until 2026-10-19), modified
   for our system and kept in sync with upstream. Chosen after the side-by-side test; fork plan in `docs/frontend-decision.md`.

@@ -6,6 +6,7 @@ Moved here from [server/README.md](../../server/README.md) on 2026-10-29. How to
 
 Each change is marked inline with the MCP version that brought it (for example "MCP 0.15.0, additive").
 
+- MCP 0.21.0 (additive): text messages ([docs/messages.md](../messages.md)). Threads of the owner's texts are conversations: `search_conversations(kind="text")` (also read: `texts`, `sms`, `imessage`, `message`, `chat`) lists only them, `in_person` leaves them out, `conversation` and the default include them; titles are followed by `(Text messages with <name>)` or `(Group text: <name>)`, a thread without a summary is titled `Texts with <name>`; `get_transcript` lines of a thread also show when each message was sent (`[7200s, Thu 10:53]`). JSON fact and action-item rows have `source: "text"` for them. `list_people(format="json")` rows have `handles`: `[{source, handle}]`, the phone numbers and emails the person texts from (`[]` for none). The REST conversation rows (`/v1/conversations`, relay `/conversations`) have `thread`: `{source, chat, name, group, people}` or null. New relay routes `POST /ingest/messages` and `DELETE /ingest/messages/chats/{source}/{chat}` (below). The server instructions say how to find texts.
 - MCP 0.20.1 (patch): the server reports its own name as `athena` (was `convo-ai`). The hub registers the server as `convo` and doesn't read this name; nothing else changed.
 
 ## Tools
@@ -176,8 +177,13 @@ name):
 ```json
 {"people": [{"id": 3, "name": "Alice", "aliases": ["Ally"], "is_owner": false,
              "has_voice": true, "conversations": 4, "first_seen": "2025-10-09",
-             "last_seen": "2025-10-12"}]}
+             "last_seen": "2025-10-12",
+             "handles": [{"source": "imessage", "handle": "+15550100"}]}]}
 ```
+
+`handles` (MCP 0.21.0) are the phone numbers and emails a person texts from: a handle
+whose contact name is a person's name belongs to that person, so the hub can link a person
+to its contacts by number or email, whatever the person is called.
 
 The owner person is the one with the enrolled owner voice; without one, the person called
 `CONVO_OWNER_NAME`, else one called me, I, myself, owner, the owner, user or the user. Only
@@ -245,6 +251,8 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 | `POST /sessions/{session_id}/end` | `POST /v1/sessions/{id}/end` |
 | `POST /ingest/text` | `POST /v1/ingest/text` (same JSON fields and answer; written notes) |
 | `DELETE /ingest/text/{source_id}` | `DELETE /v1/ingest/text/{source_id}` |
+| `POST /ingest/messages` | `POST /v1/ingest/messages` (same JSON and answer; text messages from the messages relay, MCP 0.21.0) |
+| `DELETE /ingest/messages/chats/{source}/{chat}` | `DELETE /v1/ingest/messages/chats/{source}/{chat}` (an excluded chat; the chat id URL-encoded) |
 | `GET /health` | `GET /health` (here behind the token) |
 | `GET /conversations`, `GET /conversations/{id}`, `GET /conversations/{id}/transcript` | the `/v1` routes, same query |
 | `GET /action-items`, `PATCH /action-items/{id}` | the `/v1` routes |

@@ -34,11 +34,19 @@ MEETING = "meeting"
 IN_PERSON = "in_person"
 # A written note's session id is this prefix plus its source id.
 WRITTEN_SESSION_PREFIX = "written:"
+# ... and one more (MCP 0.21.0): threads of text messages (texts/, docs/messages.md).
+# CONVERSATION includes them; IN_PERSON leaves them out.
+TEXT = "text"
+# A chat's session id is this prefix plus the chat's row id (one session per chat holds
+# its lines; each thread of it is a conversation).
+TEXT_SESSION_PREFIX = "text:"
 
 
-# Transcript line kinds (segments.kind): spoken, or typed in a meeting's chat.
+# Transcript line kinds (segments.kind): spoken, typed in a meeting's chat, or a text
+# message (texts/).
 SPEECH = "speech"
 CHAT = "chat"
+TEXT_LINE = "text"
 # The device the Zoom bot uploads as.
 ZOOM_DEVICE = "zoom"
 

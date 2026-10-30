@@ -89,6 +89,11 @@ server. **Nothing in the data path touches the cloud.**
   the server. Protocol: `docs/twatch-ble-protocol.md`. See `android-relay/README.md`.
 - `meeting-bot/`: Zoom meeting bot: C++ bot on the Zoom Meeting SDK, core upload library,
   tests. See `meeting-bot/README.md`.
+- `messages-relay/`: the messages relay for the owner's always-on Mac (Python 3.8+,
+  standard library only): reads the Messages database read-only, names from Contacts,
+  filters codes and excluded chats, uploads to `POST /v1/ingest/messages`. The server
+  side is `server/athena/texts/`. Design: `docs/messages.md`; setup:
+  `messages-relay/README.md`.
 - `docs/`: research and decisions (`omi-ingestion.md`,
   `frontend-decision.md`, `xiao-esp32s3-sense-plan.md`: the plan for our own
   XIAO ESP32-S3 Sense pendant, which comes later; `t-watch-ultra-plan.md`: the same
@@ -150,8 +155,9 @@ server. **Nothing in the data path touches the cloud.**
 ## Architecture
 
 1. **Ingestion** — written notes from the hub skip steps 1–5 (`POST /v1/ingest/text`,
-   see the MCP tool contract). `POST /v1/ingest/chunk` (multipart): `audio`, `device`,
-   `session_id`, `sequence`, `timestamp` (chunk start, ISO-8601 or epoch),
+   see the MCP tool contract), and so do text messages (`POST /v1/ingest/messages`: each
+   message is a line, each thread of a chat a conversation; `docs/messages.md`).
+   `POST /v1/ingest/chunk` (multipart): `audio`, `device`, `session_id`, `sequence`, `timestamp` (chunk start, ISO-8601 or epoch),
    `codec`. Decodes with ffmpeg, runs Silero VAD, stores the chunk and its
    speech spans, and returns `{"ok": true, "stop": bool, "reason": ...}`.
    Stop when trailing silence ≥ `CONVO_SILENCE_STOP_SECONDS` or the session
@@ -299,6 +305,14 @@ server. **Nothing in the data path touches the cloud.**
   that cover it are written again; search entries and embeddings are redone, kept audio
   of the line is deleted. The fact's own sentence stays in `facts` (never served) so a
   repeat is recognized. Can't be undone. Idempotent ("already erased").
+- Text messages (MCP 0.21.0, additive; `docs/messages.md`): threads of the owner's texts
+  are conversations (device `imessage`, lines of kind `text`), marked `(Text messages with
+  <name>)` or `(Group text: <name>)`; `search_conversations(kind="text")` lists only them
+  and `in_person` leaves them out; JSON fact and action-item rows have `source: "text"`;
+  `list_people(format="json")` rows have `handles` (`[{source, handle}]`: the numbers and
+  emails a person texts from, so the hub links people to its contacts by them). Uploads
+  are `POST /v1/ingest/messages` (relay `POST /ingest/messages`) and `DELETE
+  /v1/ingest/messages/chats/{source}/{chat}`; their JSON fields are part of the contract.
 - Retention: `CONVO_TRANSCRIPT_RETENTION_DAYS` (0 = keep forever, the default and the
   owner's decision) deletes transcript lines and kept audio of conversations older than
   that; summaries, facts and action items stay, and `get_transcript` and the `/view`
@@ -318,6 +332,7 @@ server. **Nothing in the data path touches the cloud.**
 | MCP tools, their results and links | `server/athena/mcp_server.py` here (contract rules above) |
 | Watch app | `zepp-app/` here |
 | Watch/pendant firmware, BLE protocol, phone and PC relays | this repo (`firmware/`, `android-relay/`, `docs/twatch-ble-protocol.md`) |
+| Text messages: the Mac relay, threads, their summaries | this repo (`messages-relay/`, `server/athena/texts/`, `docs/messages.md`) |
 | Eval questions and scoring | `server/eval/bakeoff.py` here |
 | How Odysseus gates, routes or shows our tools; presets; Odysseus UI views | the hub repo (`SDarioosh/Barvis`) |
 | Upstream Odysseus bugs | the hub repo (offered upstream) |
@@ -360,6 +375,8 @@ server. **Nothing in the data path touches the cloud.**
   build-t4 -DBOARD=t4_s3 -DSDKCONFIG=build-t4/sdkconfig
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.t4_s3" build`
 - PC BLE relay (no Bluetooth needed): `python -m pytest -q firmware/recorder/tools`
+- Messages relay (no Mac needed; Python 3.8+): `python -m pytest -q messages-relay` and
+  `ruff check messages-relay`
 - Android relay: `cd android-relay && ./gradlew assembleDebug test lint` (JDK 17+,
   Android SDK platform 35)
 - Optional end-to-end: `server/scripts/smoke_upload.py` against a running
@@ -367,7 +384,8 @@ server. **Nothing in the data path touches the cloud.**
 
 Skip a check only if its project doesn't exist yet. CI (`.github/workflows/ci.yml`)
 runs the server checks on Python 3.11, the firmware host tests and `idf.py build`, the PC
-relay tests and the Android build and tests.
+relay tests, the messages relay tests on Python 3.8 and 3.12, and the Android build and
+tests.
 
 ## Conventions
 
