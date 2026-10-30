@@ -77,18 +77,19 @@ def counted(store: Any) -> Iterator[list[str]]:
         store._conn.set_trace_callback(None)
 
 
-# (arguments, sha256 of the result, statements before batching, the bound now)
+# (arguments, sha256 of the result, statements before batching, the bound now; MCP 0.21.0
+# added one: the text-thread labels of the listed facts, or the people's handles)
 CASES: list[tuple[dict[str, Any], str, int, int]] = [
     ({"limit": 200}, "a13f9e2410187ade7e42ddbf36e6abd1f5166358d1b7564235e01112997bc92e",
-     125, 8),
+     125, 9),
     ({"limit": 200, "format": "json"},
-     "d37899d9f07d0ad87980f417d948653723457bc739a66bc20a41f6b176143cc1", 97, 11),
+     "d37899d9f07d0ad87980f417d948653723457bc739a66bc20a41f6b176143cc1", 97, 12),
     ({"confirmed": True}, "920e9ce05348e044312967bb8bd7c4b094bba919a6cc5082ca467996f9d4ab7a",
-     46, 9),
+     46, 10),
     ({"subject": "Alice", "format": "json"},
-     "ba2d551eee26a617c9c712373aadc7cc2bf6dfbb8658fc2405fb2c4b22430f3e", 26, 12),
+     "ba2d551eee26a617c9c712373aadc7cc2bf6dfbb8658fc2405fb2c4b22430f3e", 26, 13),
 ]
-PEOPLE = ("31a9ba4c04f0c0144a44a67e5bdd7a89266f4d4b4568a05d5edf54b6b2acac6c", 19, 9)
+PEOPLE = ("04728d74b2ddea3833054e8d5e26247a39c231ce80fa74e07ba3a9fe90051b1f", 19, 10)
 
 
 @pytest.fixture

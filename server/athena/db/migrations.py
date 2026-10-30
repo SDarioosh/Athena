@@ -363,6 +363,71 @@ def _has_table(c: sqlite3.Connection, name: str) -> bool:
                      (name,)).fetchone() is not None
 
 
+# Text messages (POST /v1/ingest/messages; athena/texts/, docs/messages.md). A message is
+# a transcript line (segments, kind 'text') plus its receipt here: the source's own id,
+# sender handle, edit time. Each chat has one session (id 'text:<chat id>') holding its
+# lines; each thread of a chat is a conversation (text_threads). A receipt whose line is
+# gone (unsent, pruned by retention) stays, so a retry can't bring the line back.
+TEXTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS text_chats (
+    id INTEGER PRIMARY KEY,
+    source TEXT NOT NULL,                     -- imessage (later sms, whatsapp)
+    chat_key TEXT NOT NULL,                   -- the source's chat id
+    name TEXT,                                -- a group's name
+    is_group INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    UNIQUE (source, chat_key)
+);
+-- A sender's handle (phone number or email), the name the owner's contacts give it, and
+-- the person it is (people.id): a stable identity the hub links to its contacts by phone
+-- number or email (list_people "handles"), whatever the person is called.
+CREATE TABLE IF NOT EXISTS text_handles (
+    source TEXT NOT NULL,
+    handle TEXT NOT NULL,
+    name TEXT,
+    person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (source, handle)
+);
+CREATE TABLE IF NOT EXISTS text_chat_handles (
+    chat_id INTEGER NOT NULL REFERENCES text_chats(id) ON DELETE CASCADE,
+    handle TEXT NOT NULL,
+    PRIMARY KEY (chat_id, handle)
+);
+CREATE TABLE IF NOT EXISTS text_messages (
+    id INTEGER PRIMARY KEY,
+    source TEXT NOT NULL,
+    guid TEXT NOT NULL,                       -- the source's message id
+    chat_id INTEGER NOT NULL REFERENCES text_chats(id) ON DELETE CASCADE,
+    segment_id INTEGER REFERENCES segments(id) ON DELETE SET NULL,
+    sent_at REAL NOT NULL,
+    from_me INTEGER NOT NULL DEFAULT 0,
+    handle TEXT,                              -- the sender; NULL for the owner
+    text_hash TEXT NOT NULL,                  -- of the text and attachments as sent
+    edited_at REAL,
+    deleted INTEGER NOT NULL DEFAULT 0,       -- unsent: the line is gone for good
+    reply_to TEXT,
+    attachments TEXT NOT NULL DEFAULT '[]',   -- [{name, type}], never the file
+    UNIQUE (source, guid)
+);
+CREATE INDEX IF NOT EXISTS text_messages_chat ON text_messages(chat_id, sent_at);
+CREATE INDEX IF NOT EXISTS text_messages_segment ON text_messages(segment_id);
+CREATE INDEX IF NOT EXISTS text_messages_handle ON text_messages(source, handle);
+-- A thread of a chat: one conversation. lines_hash is of its messages' ids and texts, so
+-- threading again leaves an unchanged thread (and its summary) alone.
+CREATE TABLE IF NOT EXISTS text_threads (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    chat_id INTEGER NOT NULL REFERENCES text_chats(id) ON DELETE CASCADE,
+    lines_hash TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS text_threads_chat ON text_threads(chat_id);
+-- Years of messages: "conversations with X" and the summary queue stay index lookups.
+CREATE INDEX IF NOT EXISTS segments_speaker ON segments(speaker COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS conversations_status ON conversations(status, ended_at);
+"""
+
+
 # Each step brings the database from the version before it to its own number
 # (MIGRATIONS[n] reaches user_version n). It runs inside the transaction ``migrate``
 # opens, so it must not commit: no ``executescript``, no PRAGMAs that need autocommit.
@@ -541,6 +606,12 @@ def _m17_unnumbered_changes(c: sqlite3.Connection) -> None:
     _add_column(c, "segments", "kind", f"TEXT NOT NULL DEFAULT '{SPEECH}'")
 
 
+def _m18_text_messages(c: sqlite3.Connection) -> None:
+    # text messages: chats, handles, message receipts, threads; and two indexes that keep
+    # person filters and the summary queue fast with years of messages
+    _run_script(c, TEXTS_SCHEMA)
+
+
 # The schema's history, in order: MIGRATIONS[n] brings a database to user_version n.
 # Index 0 is an empty database. Add a change only as a new step at the end (AGENTS.md).
 MIGRATIONS: list[Callable[[sqlite3.Connection], None] | None] = [
@@ -562,6 +633,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None] | None] = [
     _m15_chunk_tracks,
     _m16_meetings,
     _m17_unnumbered_changes,
+    _m18_text_messages,
 ]
 SCHEMA_VERSION = len(MIGRATIONS) - 1
 

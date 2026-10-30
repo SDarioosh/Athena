@@ -17,6 +17,7 @@ from ..domain import (
     IN_PERSON,
     MEETING,
     NOTE,
+    TEXT,
     VOICE,
     WRITTEN,
     WRITTEN_DEVICE,
@@ -297,6 +298,11 @@ class ConversationsRepo:
             for r in c.execute(
                 "SELECT speaker, text, kind FROM segments WHERE conversation_id = ?"
                 " ORDER BY started_at", (conv_id,)))
+        text = self._texts_for(c, [conv_id]).get(conv_id)  # type: ignore[attr-defined]
+        if text:  # "texts with Mia" finds the thread by its chat and people
+            from ..texts.repo import label
+
+            transcript = f"{label(text)}\n{transcript}"
         meeting = self._meetings_for(c, [conv_id]).get(conv_id)
         if meeting:  # "budget meeting" finds the meeting by its topic and people
             transcript = "\n".join([
@@ -508,6 +514,8 @@ class ConversationsRepo:
         row["written"] = self.written_notes_for([conv_id]).get(conv_id)
         # a Zoom meeting: {"topic", "participants"} (``meetings_for``), else None
         row["meeting"] = self.meetings_for([conv_id]).get(conv_id)
+        # a thread of text messages: {"source", "chat", "name", "group", "people"}
+        row["thread"] = self.texts_for([conv_id]).get(conv_id)  # type: ignore[attr-defined]
         return row
 
     def list_conversations(self, *, since: float | None = None, until: float | None = None,
@@ -515,7 +523,8 @@ class ConversationsRepo:
                            limit: int = 50) -> list[dict[str, Any]]:
         """Newest first. ``kind``: NOTE = notes (voice and written), VOICE = only voice
         notes, WRITTEN = only notes written by hand, CONVERSATION = everything else,
-        MEETING = only online meetings, IN_PERSON = conversations that are no meeting."""
+        MEETING = only online meetings, IN_PERSON = conversations recorded in person (no
+        meeting, no text thread), TEXT = only threads of text messages."""
         sql = "SELECT * FROM conversations WHERE 1=1"
         params: list[Any] = []
         if kind == NOTE:
@@ -535,8 +544,11 @@ class ConversationsRepo:
                     " WHERE conversation_id IS NOT NULL)")
         elif kind == IN_PERSON:
             sql += (" AND kind IS NOT ? AND id NOT IN (SELECT conversation_id FROM"
-                    " meeting_info WHERE conversation_id IS NOT NULL)")
+                    " meeting_info WHERE conversation_id IS NOT NULL)"
+                    " AND id NOT IN (SELECT conversation_id FROM text_threads)")
             params.append(NOTE)
+        elif kind == TEXT:
+            sql += " AND id IN (SELECT conversation_id FROM text_threads)"
         if since is not None:
             sql += " AND ended_at >= ?"
             params.append(since)
@@ -553,11 +565,13 @@ class ConversationsRepo:
         rows = self._q(sql, params)
         written = self.written_notes_for(r["id"] for r in rows)
         meetings = self.meetings_for(r["id"] for r in rows)
+        texts = self.texts_for(r["id"] for r in rows)  # type: ignore[attr-defined]
         for row in rows:
             for k in ("key_points", "topics", "people"):
                 row[k] = json.loads(row[k])
             row["written"] = written.get(row["id"])
             row["meeting"] = meetings.get(row["id"])
+            row["thread"] = texts.get(row["id"])
         return rows
 
     def conversations_with_status(self, status: str) -> list[str]:

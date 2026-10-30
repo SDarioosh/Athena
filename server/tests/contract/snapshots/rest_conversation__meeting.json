@@ -105,6 +105,7 @@
     "started_at": "2026-10-13T15:00:00+00:00",
     "status": "summarized",
     "summary": "The tool shed goes to the second supplier for about 3200 euros; the user confirms the order by Friday.",
+    "thread": null,
     "title": "Community garden budget",
     "topics": [
       "garden"

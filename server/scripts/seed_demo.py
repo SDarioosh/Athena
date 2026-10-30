@@ -5,7 +5,10 @@ Transcripts are inserted directly (no audio); summaries, action items and facts 
 produced by the real llama-server pipeline. All people and events are made up.
 
     CONVO_INGEST_TOKEN=... CONVO_DATA_DIR=/tmp/demo CONVO_LLM_BASE_URL=... \
-        python scripts/seed_demo.py
+        python scripts/seed_demo.py [--texts]
+
+``--texts`` also adds fictional text messages (docs/messages.md): two chats, stored
+through the same path the messages relay uses, each thread summarized.
 """
 
 from __future__ import annotations
@@ -186,6 +189,43 @@ def insert_meeting(store: Store, pipeline: Pipeline, key: str, start: str,
     return conv_ids
 
 
+# Fictional text messages (--texts): (chat id, group name or None, [(minutes after the
+# chat's start, sender handle or None for the owner, text)]), uploaded like the relay does.
+TEXT_START = "2026-10-12T17:30"
+TEXT_HANDLES = {"+15550100": "Jonas", "+15550123": "Lena Example"}
+TEXT_CHATS: list[tuple[str, str | None, list[tuple[int, str | None, str]]]] = [
+    ("iMessage;-;+15550100", None, [
+        (0, "+15550100", "Are we still on for the long run on Sunday?"),
+        (2, None, "Yes! 7am at the river path?"),
+        (3, "+15550100", "Perfect. Can you bring the spare running belt? Mine broke."),
+        (5, None, "Sure, I'll bring it."),
+        (1440, "+15550100", "Also my sister moves to Porto next month, so I'll be driving "
+                            "down there a lot."),
+    ]),
+    ("iMessage;+;chat555", "Newsletter crew", [
+        (60, "+15550123", "Draft of the November issue is in the shared folder."),
+        (62, None, "Thanks Lena, I'll review it by Thursday."),
+        (64, "+15550123", "Great. Printing deadline is Friday the 14th."),
+    ]),
+]
+
+
+def insert_texts(pipeline: Pipeline) -> list[str]:
+    """Upload the fictional chats; returns the thread ids to summarize."""
+    t0 = datetime.fromisoformat(TEXT_START).replace(tzinfo=UTC).timestamp()
+    messages = [{"id": f"demo-{n}-{i}", "chat": chat, "at": t0 + minutes * 60,
+                 "from_me": handle is None, "handle": handle, "text": text}
+                for n, (chat, _, lines) in enumerate(TEXT_CHATS)
+                for i, (minutes, handle, text) in enumerate(lines)]
+    chats = [{"id": chat, "name": name, "group": name is not None,
+              "handles": sorted({h for _, h, _ in lines if h})}
+             for chat, name, lines in TEXT_CHATS]
+    pipeline.ingest_messages({"source": "imessage", "chats": chats, "messages": messages,
+                              "handles": [{"handle": h, "name": n}
+                                          for h, n in TEXT_HANDLES.items()]})
+    return [c["id"] for c in pipeline.store.list_conversations(kind="text", limit=100)
+            if c["status"] not in ("summarized", "discarded")]
+
 def main() -> int:
     settings = get_settings()
     store = Store(settings.db_path)
@@ -234,6 +274,12 @@ def main() -> int:
             print(f"{key}: {cid} summarized={ok} ({time.time() - t:.1f}s) {conv['title']!r}"
                   + (f" discarded: {conv['discard_reason']}" if conv["status"] == "discarded"
                      else ""))
+    if "--texts" in sys.argv[1:]:
+        for cid in insert_texts(pipeline):
+            ok = pipeline.summarize_conversation(cid)
+            failed += not ok
+            print(f"texts: {cid} summarized={ok} "
+                  f"{store.get_conversation(cid)['title']!r}")
     if failed:
         print(f"{failed} summaries failed; run again to retry them.", file=sys.stderr)
     return 1 if failed else 0

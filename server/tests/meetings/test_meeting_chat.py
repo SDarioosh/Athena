@@ -264,7 +264,7 @@ def test_mcp_version(mcp):
         async with Client(mcp) as client:
             return client.server_info.version
 
-    assert asyncio.run(go()) == "0.20.1"
+    assert asyncio.run(go()) == "0.21.0"
 
 
 def test_mcp_transcripts_show_chat(done_meeting, mcp):

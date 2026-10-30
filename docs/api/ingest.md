@@ -192,3 +192,10 @@ script, dismissed action items, and facts unless asked for. Lines erased with
 hidden; a transcript removed by retention says so. Errors: 400 for an unknown `format` or
 `include` name, 404 `conversation not found`.
 
+## Text messages
+
+`POST /v1/ingest/messages` (JSON) stores the owner's text messages, uploaded by the
+messages relay on the owner's Mac; `DELETE /v1/ingest/messages/chats/{source}/{chat}`
+removes a chat the owner excluded; `GET /v1/texts` counts chats, messages and threads by
+status. The upload's fields, the threading and summary rules and the settings
+(`CONVO_TEXT_*`) are in [docs/messages.md](../messages.md).

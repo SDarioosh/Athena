@@ -20,6 +20,7 @@
         "started_at": "2026-10-15T07:40:00+00:00",
         "status": "summarized",
         "summary": "A pasta-making cooking class for the team offsite instead of the escape room; ask Alice before she leaves for Berlin.",
+        "thread": null,
         "title": "Offsite idea: cooking class",
         "topics": [
           "offsite"
@@ -48,6 +49,7 @@
         "started_at": "2026-10-14T15:00:00+00:00",
         "status": "summarized",
         "summary": "Alice moves to Berlin on January 12; the user takes over her vendor contracts and the budget cut is now ten percent.",
+        "thread": null,
         "title": "1:1 with Alice: vendor contracts",
         "topics": [
           "work",
@@ -78,6 +80,7 @@
         "started_at": "2026-10-07T09:30:00+00:00",
         "status": "summarized",
         "summary": "Ben finished the API migration; the client demo moved to October 23 and the user will review Ben's pull request.",
+        "thread": null,
         "title": "Standup: API migration and client demo",
         "topics": [
           "work"
@@ -106,6 +109,7 @@
         "started_at": "2026-09-15T10:00:00+00:00",
         "status": "summarized",
         "summary": "Alice said finance is cutting the Q4 budget by fifteen percent; the user will send a revised spreadsheet by Friday.",
+        "thread": null,
         "title": "Q4 budget cut",
         "topics": [
           "budget",

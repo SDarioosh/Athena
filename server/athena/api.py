@@ -8,6 +8,10 @@ Device ingestion:
 Written notes (the hub's handwritten notes, reviewed text):
     POST   /v1/ingest/text         JSON {source_id, text, written_at, link, title?}
     DELETE /v1/ingest/text/{source_id}
+Text messages (the messages relay on the owner's Mac; athena/texts/, docs/messages.md):
+    POST   /v1/ingest/messages     JSON {source, handles?, chats?, messages}
+    DELETE /v1/ingest/messages/chats/{source}/{chat_id}   an excluded chat
+    GET    /v1/texts               counts: chats, messages, threads by status
 Read API (used by the knowledge-layer/MCP integration and for debugging):
     GET  /v1/sessions, /v1/sessions/{id}
     GET  /v1/conversations, /v1/conversations/{id}, /v1/conversations/{id}/transcript
@@ -337,6 +341,35 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         if out is None:
             return {"ok": True, "source_id": source_id, "result": "already"}
         return {"ok": True, "source_id": source_id, "result": "deleted", **out}
+
+    @v1.post("/ingest/messages")
+    async def ingest_messages(request: Request) -> dict[str, Any]:
+        """Store text messages (docs/messages.md, "Upload contract"). Idempotent per
+        message id; a 400 names the first bad field and stores nothing."""
+        try:
+            data = await request.json()
+        except ValueError as e:
+            raise HTTPException(400, "send a JSON body") from e
+        try:
+            out = await run_in_threadpool(pipeline.ingest_messages, data)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, **out}
+
+    @v1.delete("/ingest/messages/chats/{source}/{chat_id:path}")
+    def delete_text_chat(source: str, chat_id: str) -> dict[str, Any]:
+        """Remove a chat the owner excluded: its messages, threads, facts and to-dos."""
+        out = store.delete_text_chat(source, chat_id)
+        if out is None:
+            return {"ok": True, "result": "already"}
+        return {"ok": True, "result": "deleted", **out}
+
+    @v1.get("/texts")
+    def text_stats() -> dict[str, Any]:
+        out = store.text_stats()
+        out["last_message_at"] = iso(out["last_message_at"]) if out["last_message_at"] \
+            else None
+        return out
 
     @v1.post("/sessions/{session_id}/end")
     def end_session(session_id: str) -> dict[str, Any]:
