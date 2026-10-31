@@ -24,15 +24,14 @@ jobs:
 
   messages-relay:
     # the Mac's messages relay: standard library only, Python 3.8 (macOS 10.15) and newer
+    # In the python image: setup-python has no 3.8 for the newer Ubuntu runners.
     runs-on: ubuntu-latest
+    container: python:${{ matrix.python-version }}-slim
     strategy:
       matrix:
         python-version: ["3.8", "3.12"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
       - name: Lint and test the messages relay
         run: |
           pip install pytest ruff
