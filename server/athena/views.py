@@ -65,13 +65,15 @@ def render_conversation(settings: Settings, conv: dict[str, Any], segments: list
     if "facts" in include:
         lists += items("Facts", [e(f["fact"]) for f in conv.get("facts", [])])
     lines = []
+    # a text thread can span days: each message shows its weekday too
+    clock = "%a %H:%M" if conv.get("thread") else "%H:%M:%S"
     for s in segments:
         off = int(s.started_at - origin)
         cls = "spk owner" if s.is_owner else "spk"
         chat = getattr(s, "kind", "speech") == "chat"  # typed in the meeting chat
         lines.append(
             f'<div class="line{" chat" if chat else ""}" data-t="{off}"><span class="t">'
-            f'{e(local_time(settings, s.started_at, "%H:%M:%S") or "")}</span>'
+            f'{e(local_time(settings, s.started_at, clock) or "")}</span>'
             f'<span class="{cls}">{e(s.speaker)}'
             f'{" <span class=via>(chat)</span>" if chat else ""}:</span>{e(s.text)}</div>')
     summary = (f"<p>{e(_no_summary(conv) if hidden else conv.get('summary') or _no_summary(conv))}"
@@ -89,7 +91,7 @@ def render_conversation(settings: Settings, conv: dict[str, Any], segments: list
     return _PAGE.format(
         title=e(title_of(conv)),
         written=(_written(conv.get("written"), link=not shared)
-                 + _meeting(conv.get("meeting"))),
+                 + _meeting(conv.get("meeting")) + _thread(conv.get("thread"))),
         when=e(when_of(settings, conv)),
         people=e(", ".join(conv.get("people", [])) or "—"),
         sections=sections,
@@ -101,13 +103,20 @@ def title_of(conv: dict[str, Any]) -> str:
     """A page's title; hidden while erase_fact's rewrite is pending, like the summary."""
     if conv.get("forget_pending"):
         return "Untitled conversation"
+    if conv.get("thread") and (conv.get("status") == "discarded" or not conv.get("title")):
+        from .texts.repo import plain_title
+
+        return plain_title(conv["thread"])
     return conv.get("title") or "Untitled conversation"
 
 
 def when_of(settings: Settings, conv: dict[str, Any]) -> str:
-    """"2025-10-09 10:53 – 11:20 (Europe/Lisbon)"."""
-    return (f"{local_time(settings, conv['started_at'])} – "
-            f"{local_time(settings, conv['ended_at'], '%H:%M')} ({settings.timezone})")
+    """"2025-10-09 10:53 – 11:20 (Europe/Lisbon)"; the end's date too when it is
+    another day (a text thread)."""
+    start = local_time(settings, conv["started_at"]) or ""
+    end = local_time(settings, conv["ended_at"]) or ""
+    end = end[11:] if end[:10] == start[:10] else end
+    return f"{start} – {end} ({settings.timezone})"
 
 
 def _written(written: dict[str, Any] | None, *, link: bool = True) -> str:
@@ -124,6 +133,15 @@ def _written(written: dict[str, Any] | None, *, link: bool = True) -> str:
             f' rel="noreferrer noopener">Open {e(label)}</a></div>')
 
 
+def _thread(thread: dict[str, Any] | None) -> str:
+    """A thread of text messages: whose chat it is."""
+    if not thread:
+        return ""
+    from .texts.repo import label
+
+    return f'<div class="meta">{html.escape(label(thread))}</div>'
+
+
 def _meeting(meeting: dict[str, Any] | None) -> str:
     """An online meeting: its topic and participants."""
     if not meeting:
@@ -137,6 +155,9 @@ def _meeting(meeting: dict[str, Any] | None) -> str:
 def _no_summary(conv: dict) -> str:
     if conv.get("forget_pending"):
         return "Being rewritten after something here was forgotten."
+    if conv.get("thread") and conv.get("status") == "discarded":
+        return ("A short exchange; no summary." if conv.get("discard_reason") == "short" else
+                "Not summarized: older than the summary window. The messages are below.")
     if conv.get("status") == "discarded":
         return (f"Not summarized: this looked like {conv.get('discard_reason') or 'junk'} "
                 "(TV, noise or no real conversation).")

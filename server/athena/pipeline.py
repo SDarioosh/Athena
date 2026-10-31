@@ -239,6 +239,25 @@ class Pipeline:
         validate_source_id(source_id)
         return self.store.delete_written_note(source_id)
 
+    # ----------------------------------------------------------- text messages
+    def ingest_messages(self, data: Any, now: float | None = None) -> dict[str, Any]:
+        """Store an upload of text messages (``POST /v1/ingest/messages``; texts/). The
+        worker summarizes the threads it changed once they are quiet. Raises ValueError
+        for a bad upload; nothing of it is stored then."""
+        from .texts.contract import parse_upload
+
+        up = parse_upload(data)
+        owner = self.store.owner_name() or self.settings.owner_name
+        out = self.store.put_text_upload(up, owner=owner,
+                                         gap=self.settings.text_thread_gap_seconds, now=now)
+        m, t = out["messages"], out["threads"]
+        if m["added"] or m["updated"] or m["deleted"]:
+            log.info("texts (%s): %d added, %d updated, %d deleted, %d unchanged; threads: "
+                     "%d new, %d changed, %d merged away", up.source, m["added"],
+                     m["updated"], m["deleted"], m["unchanged"], t["created"], t["changed"],
+                     t["removed"])
+        return out
+
     def end_session(self, session_id: str, reason: str = "client") -> bool:
         if self.store.get_session(session_id) is None:
             return False
@@ -530,7 +549,14 @@ class Pipeline:
         conv = self.store.get_conversation(conv_id)
         kind = conv.get("kind") if conv else None
         stamp = conv["updated_at"] if conv else None
-        extra = session_kinds.for_conversation(conv).summary_context(conv, segments)
+        if conv and conv.get("thread"):
+            from .texts.summary import too_short
+
+            if too_short(segments, self.settings):  # no model call: "Texts with Mia"
+                self.store.save_discarded(conv_id, "short", None)
+                return True
+        extra = session_kinds.for_conversation(conv).summary_context(
+            conv, segments, self.settings.timezone)
         try:
             # facts that repeat or update stored ones are never cut by the fact cap
             summary = self.summarizer.summarize(
@@ -589,7 +615,13 @@ class Pipeline:
         # Snapshot both lists first, so a pending conversation that fails below isn't
         # retried again in the same call.
         now = time.time() if now is None else now
-        pending = self.store.conversations_with_status("pending")
+        from .texts.summary import archive_before
+
+        # recordings first; then a few quiet text threads, newest first (docs/messages.md)
+        pending = self.store.summary_queue(
+            now=now, quiet=self.settings.text_summary_quiet_seconds,
+            per_pass=self.settings.text_summaries_per_pass,
+            archive_before=archive_before(self.settings, now))
         failed = self.store.failed_conversations(before=now - retry_after)
         done = sum(self.summarize_conversation(c) for c in pending)
         for conv_id in failed:

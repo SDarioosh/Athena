@@ -30,6 +30,7 @@ from .domain import (
     ITEM_KINDS,
     MEETING,
     NOTE,
+    TEXT,
     UNSET,
     VOICE,
     WRITTEN,
@@ -40,11 +41,12 @@ from .speakers import relabel_matches, suggestion
 from .timeutil import iso as _iso  # noqa: F401  (the old name, still imported by tests)
 from .timeutil import parse_when
 
-INSTRUCTIONS = """These tools search the user's own recorded conversations (transcripts \
-with speaker names and timestamps, summaries, action items, facts, daily digests). Use them \
-for any question about what someone said, decided, promised or mentioned, and before \
-answering from memory. Questions about the user's plans, appointments and the people they \
-know ("What is Jonas allergic to?") are answered from these recordings too: search \
+INSTRUCTIONS = """These tools search the user's own recorded conversations and text \
+messages (transcripts with speaker names and timestamps, summaries, action items, facts, \
+daily digests). Use them for any question about what someone said, decided, promised or \
+mentioned, and before answering from memory. Questions about the user's plans, \
+appointments and the people they know ("What is Jonas allergic to?") are answered from \
+these recordings too: search \
 (list_facts, search_transcripts) before saying you don't know, and search instead of offering \
 to. Ground every claim in tool results and include the link given with it. Dates are in the \
 user's timezone; pass dates as YYYY-MM-DD.
@@ -80,6 +82,13 @@ its participants (everyone in the meeting, also those who never spoke). A line "
 search_conversations with the topic words and answer from its participants. To list \
 the user's online meetings, call search_conversations with kind="meeting".
 
+Text messages: the user's texts (iMessage) are here too, one conversation per thread of a \
+chat, marked "(Text messages with <name>)" or "(Group text: <name>)" after the title; a \
+line is one message, sent at its time. For "what did Mia text me" or "my texts with Leo" \
+call search_conversations with kind="text" and the person (and the topic words, if any); \
+search_transcripts finds the exact message. A text thread without a summary is titled \
+"Texts with <name>": read its lines with get_transcript.
+
 Showing a transcript: when the user asks to see or read a transcript, answer with its link \
 and a short summary of who said what; don't copy the transcript lines into your answer \
 (the link opens the full transcript). Quote only the lines the user asks about."""
@@ -92,9 +101,11 @@ RecKind = Annotated[str, Field(description=(
     "'note' = all the user's notes (voice notes and notes written by hand); "
     "'voice' = only voice notes (memos the user recorded for themselves); "
     "'written' = only notes the user wrote by hand; "
-    "'conversation' = only conversations with other people (in person and online); "
+    "'conversation' = only conversations with other people (in person, online and by "
+    "text); "
     "'meeting' = only online meetings; 'in_person' = only conversations recorded in "
-    "person (no online meetings); empty = everything"))]
+    "person (no online meetings, no texts); 'text' = only text message threads "
+    "(iMessage); empty = everything"))]
 ConvId = Annotated[str, Field(description="conversation id from a previous result")]
 
 
@@ -103,7 +114,7 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
     from mcp.types import ToolAnnotations
 
     tz = ZoneInfo(settings.timezone)
-    mcp = MCPServer("athena", instructions=INSTRUCTIONS, version="0.20.1")
+    mcp = MCPServer("athena", instructions=INSTRUCTIONS, version="0.21.0")
     ro = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     rw = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                          open_world_hint=False)
@@ -138,7 +149,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             known = ", ".join(r["name"] for r in store.speaker_stats()[:20])
             return f"No lines by {speaker!r} in that range. Known speakers: {known or 'none'}."
         return fmt.transcript_lines(f, rows, store.written_notes_for(_convs(rows)),
-                                    store.meetings_for(_convs(rows)))
+                                    store.meetings_for(_convs(rows)),
+                                    store.texts_for(_convs(rows)))
 
     @mcp.tool(annotations=ro)
     def search_conversations(query: Text = "", person: Person = "", since: Since = "",
@@ -233,7 +245,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
             rows = [r for r in rows if _involves(r, person, participants)]
         written, meetings = store.written_notes_for(_convs(rows)), store.meetings_for(_convs(rows))
         if fmt_ == "text":
-            return fmt.action_items(f, rows, st, written, meetings)
+            return fmt.action_items(f, rows, st, written, meetings,
+                                    texts=store.texts_for(_convs(rows)))
         return json.dumps(_action_items_json(store, settings, rows, participants, written,
                                              meetings), ensure_ascii=False)
 
@@ -308,7 +321,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         written.update(store.written_notes_for(
             _convs(r for rs in (*sources.values(), *history.values()) for r in rs)))
         return fmt.facts(f, rows, confirmed, sources, history, written, meetings,
-                         lambda x: serializers.valid_until(x, settings.timezone))
+                         lambda x: serializers.valid_until(x, settings.timezone),
+                         texts=store.texts_for(_convs(rows)))
 
     @mcp.tool(annotations=rw_merge)
     def retire_fact(fact_id: Annotated[int, Field(description="The fact's id (list_facts "
@@ -473,9 +487,11 @@ def _action_items_json(store: Store, settings: Settings, rows: list[dict[str, An
         settings.owner_name.strip().lower()} - {""}
     summaries = store.summaries_for(
         r["conversation_id"] for r in rows if r.get("kind") == "note")
+    texts = store.texts_for(_convs(rows))
     return [serializers.action_item(r, settings, mine_names=mine_names,
                                     participants=participants, written=written,
-                                    summaries=summaries, meetings=meetings) for r in rows]
+                                    summaries=summaries, meetings=meetings, texts=texts)
+            for r in rows]
 
 
 def _facts_json(store: Store, settings: Settings, rows: list[dict[str, Any]],
@@ -485,11 +501,12 @@ def _facts_json(store: Store, settings: Settings, rows: list[dict[str, Any]],
     owners |= OWNER_WORDS | {settings.owner_name.strip().lower()} - {""}
     owner_id = store.owner_person_id(_owner_names(settings))
     quotes = store.fact_quotes(rows)
+    texts = store.texts_for(_convs(rows))
     person_ids = store.person_ids(x["subject"] or "" for x in rows
                                   if serializers.about(x["subject"], owners, people) == "person")
     return [serializers.fact(x, settings, owners=owners, people=people, owner_id=owner_id,
                              person_ids=person_ids, quotes=quotes, written=written,
-                             meetings=meetings) for x in rows]
+                             meetings=meetings, texts=texts) for x in rows]
 
 
 def _people_json(store: Store, speaker_stats: list[dict[str, Any]],
@@ -502,7 +519,8 @@ def _people_json(store: Store, speaker_stats: list[dict[str, Any]],
                            + [p["name"] for p in mentioned], names)
     ordered = serializers.people_order(speaker_stats, mentioned, store.people(names),
                                        lambda name: ids[name])
-    return [serializers.person(p, settings) for p in ordered]
+    handles = store.person_handles()
+    return [serializers.person(p, settings, handles.get(p["id"])) for p in ordered]
 
 
 _owner_names = owner_names  # the old private name, still imported by tests
@@ -544,6 +562,8 @@ def _kind(value: str) -> str | None:
     v = (value or "").strip().lower()
     if not v or v in ("all", "any", "both"):
         return None
+    if any(w in v for w in ("text", "sms", "imessage", "message", "chat")):
+        return TEXT
     if "person" in v or "face" in v or "offline" in v:
         return IN_PERSON
     if "meet" in v or "zoom" in v or "online" in v:
@@ -557,7 +577,7 @@ def _kind(value: str) -> str | None:
     if "conv" in v:
         return CONVERSATION
     raise ValueError(f"bad kind {value!r}; use 'note', 'voice', 'written', 'conversation', "
-                     "'meeting', 'in_person' or ''")
+                     "'meeting', 'in_person', 'text' or ''")
 
 
 class BearerAuth:

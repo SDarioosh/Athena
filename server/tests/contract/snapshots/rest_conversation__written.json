@@ -68,6 +68,7 @@
     "started_at": "2026-10-19T17:00:00+00:00",
     "status": "summarized",
     "summary": "Buy oat milk and coffee beans, and ask Maria which cake Mom likes.",
+    "thread": null,
     "title": "Weekend errands",
     "topics": [
       "errands"

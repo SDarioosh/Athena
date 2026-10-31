@@ -49,8 +49,13 @@ _Last updated: 2026-10-29. Shortened: the Done log and each row's full status ar
 | 24 | Zoom meeting bot | built through Phase 5; **owner: real-SDK meeting test; publish the Zoom app to join other accounts' meetings** ([why](docs/api/meetings.md)) | [docs/zoom-meeting-bot-plan.md](docs/zoom-meeting-bot-plan.md), [meeting-bot/README.md](meeting-bot/README.md) |
 | 10 | End-to-end with real devices | not started | — |
 | 25 | Cleanup of Athena and the hub | in progress: Phases 0 and 1 merged, Phase 2 merged (gate next) | [docs/cleanup-plan.md](docs/cleanup-plan.md) |
+| 26 | Text messages (iMessage): messages relay on the owner's MacBook, threads as conversations, people by phone and email (MCP 0.21.0, migration 18) | built, tested (server and relay, relay on Python 3.8), **owner: set up the MacBook and Server verification**; real-device steps: Full Disk Access, the first import, an edit and an unsend on the Mac | [docs/messages.md](docs/messages.md), [messages-relay/README.md](messages-relay/README.md) |
 
 ## Next
+
+- **Owner: text messages on the MacBook** (row 26): follow `messages-relay/README.md` on the
+  2012 MacBook Pro, then the PR's Server verification (first import counts, a question about
+  a text through Odysseus, an edit and an unsend arriving).
 
 - **Owner: capture quality** (4.3 PR, Server verification step 2): the GPU eval is done
   (2026-10-24); still one real recording with a third person joining, and the owner-hint
@@ -120,6 +125,9 @@ Decisions so far: [docs/decisions-log.md](docs/decisions-log.md).
 
 The questions from round 2 were answered on 2026-10-18 and are under "Decisions so far".
 Still open:
+- Text messages: how far back should the first import go (`--since`), and should group
+  chats be in from the start? Is a year of summaries (`CONVO_TEXT_SUMMARY_DAYS=365`) right,
+  given the server's model time?
 - Voice-note commands: "add eggs, milk and bread to my shopping list" is now three lines; "salt
   and pepper" (no comma) stays one. Should "eggs and milk" (no comma) be two lines too?
 - Today insight: the T5's rule-based fallback puts today's all-day events in DO FIRST

@@ -55,6 +55,16 @@ def speaker_label(segment: Any) -> str:
     return f"{name} (chat)" if kind == "chat" else name
 
 
+def text_label(text: dict[str, Any] | None) -> str:
+    """" (Text messages with Mia Chen)" or " (Group text: Weekend crew)" after a title
+    (MCP 0.21.0); "" for anything but a thread of text messages."""
+    if not text:
+        return ""
+    from .texts.repo import label
+
+    return f" ({label(text)})"
+
+
 def written_label(written: dict[str, Any] | None) -> str:
     """" (written by hand: <hub link>)" after a title or fact; "" for spoken ones."""
     return f" (written by hand: {written['link']})" if written else ""

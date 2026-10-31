@@ -336,6 +336,20 @@ class Settings(BaseSettings):
     fact_min_score: int = Field(default=4, ge=1, le=5)
     max_facts_per_conversation: int = Field(default=3, ge=0)
 
+    # --- text messages (POST /v1/ingest/messages; athena/texts/, docs/messages.md) ---
+    # A chat's messages start a new thread (one conversation) after a gap this long.
+    text_thread_gap_seconds: float = Field(default=6 * 3600, gt=0)
+    # A thread is summarized once it has been quiet this long (a chat in progress isn't
+    # summarized after every message), after every waiting recording, newest first, at
+    # most this many per worker pass.
+    text_summary_quiet_seconds: float = Field(default=2 * 3600, ge=0)
+    text_summaries_per_pass: int = Field(default=10, ge=0)
+    # Threads that ended more than this many days ago are stored and searchable but not
+    # summarized (0 = summarize all). POST /v1/conversations/{id}/summarize does one.
+    text_summary_days: int = Field(default=365, ge=0)
+    # A thread with fewer words than this gets no summary (it reads "Texts with <name>").
+    text_summary_min_words: int = Field(default=12, ge=0)
+
     # --- meeting bot (POST /v1/meetings; athena/meetings/bot/launcher.py) ---
     # Read only when a join request arrives; nothing runs between meetings.
     # The bot program (athena-meeting-bot). Unset = meetings are off (501).

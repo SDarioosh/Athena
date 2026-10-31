@@ -22,6 +22,7 @@
         "started_at": "2026-10-16T20:00:00+00:00",
         "status": "summarized",
         "summary": "Casa Lupo is booked for twelve guests on November 8 at 7 p.m.; the user picks up Aunt Rosa from the station.",
+        "thread": null,
         "title": "Birthday dinner plans",
         "topics": [
           "family",
@@ -50,6 +51,7 @@
         "started_at": "2026-10-15T07:40:00+00:00",
         "status": "summarized",
         "summary": "A pasta-making cooking class for the team offsite instead of the escape room; ask Alice before she leaves for Berlin.",
+        "thread": null,
         "title": "Offsite idea: cooking class",
         "topics": [
           "offsite"
@@ -78,6 +80,7 @@
         "started_at": "2026-10-14T15:00:00+00:00",
         "status": "summarized",
         "summary": "Alice moves to Berlin on January 12; the user takes over her vendor contracts and the budget cut is now ten percent.",
+        "thread": null,
         "title": "1:1 with Alice: vendor contracts",
         "topics": [
           "work",

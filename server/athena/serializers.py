@@ -43,7 +43,8 @@ def said_at_link(settings: Settings, r: dict[str, Any]) -> str:
 def action_item(r: dict[str, Any], settings: Settings, *, mine_names: set[str],
                 participants: dict[str, list[dict[str, Any]]],
                 written: dict[str, dict[str, Any]], summaries: dict[str, dict[str, Any]],
-                meetings: dict[str, dict[str, Any]]) -> dict[str, Any]:
+                meetings: dict[str, dict[str, Any]],
+                texts: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """A list_action_items JSON row."""
     owner = (r["owner"] or "").strip().lower()
     kind = r.get("kind") or "task"
@@ -65,14 +66,15 @@ def action_item(r: dict[str, Any], settings: Settings, *, mine_names: set[str],
             "created_at": iso(r.get("created_at") or r["conversation_at"]),
             "timezone": settings.timezone, "link": said_at_link(settings, r), "with": others,
             "key_points": note_key_points(r, summaries.get(r["conversation_id"])),
-            "source": source(r["conversation_id"], meetings),
+            "source": source(r["conversation_id"], meetings, texts),
             **written_json(written.get(r["conversation_id"]))}
 
 
 def fact(f: dict[str, Any], settings: Settings, *, owners: set[str], people: set[str],
          owner_id: int | None, person_ids: dict[str, int | None],
          quotes: dict[int, str | None], written: dict[str, dict[str, Any]],
-         meetings: dict[str, dict[str, Any]]) -> dict[str, Any]:
+         meetings: dict[str, dict[str, Any]],
+         texts: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """A list_facts JSON row; ``person_ids`` maps a subject to its person (the
     subjects that are a person)."""
     who = about(f["subject"], owners, people)
@@ -88,19 +90,23 @@ def fact(f: dict[str, Any], settings: Settings, *, owners: set[str], people: set
                           and f["days"] >= settings.fact_confirm_days),
             "valid_until": valid_until(f, settings.timezone),
             "link": said_at_link(settings, f),
-            "source": source(f["conversation_id"], meetings),
+            "source": source(f["conversation_id"], meetings, texts),
             **written_json(written.get(f["conversation_id"]))}
 
 
-def person(p: dict[str, Any], settings: Settings) -> dict[str, Any]:
-    """A list_people JSON row."""
+def person(p: dict[str, Any], settings: Settings,
+           handles: list[dict[str, str]] | None = None) -> dict[str, Any]:
+    """A list_people JSON row. ``handles`` (MCP 0.21.0, additive): the phone numbers and
+    emails the person texts from, ``[{"source", "handle"}]``, so the hub links them to
+    its contacts by number or email, not only by name."""
     def day(ts: float | None) -> str | None:
         return (local_time(settings, ts, "%Y-%m-%d") or "?") if ts is not None else None
 
     return {"id": p["id"], "name": p["name"], "aliases": p["aliases"],
             "is_owner": p["is_owner"], "has_voice": p["has_voice"],
             "conversations": p["conversations"],
-            "first_seen": day(p["first_at"]), "last_seen": day(p["last_at"])}
+            "first_seen": day(p["first_at"]), "last_seen": day(p["last_at"]),
+            "handles": handles or []}
 
 
 def people_order(speakers: list[dict[str, Any]], mentioned: list[dict[str, Any]],
@@ -158,11 +164,15 @@ def note_key_points(r: dict[str, Any], summary: dict[str, Any] | None) -> list[s
     return [str(k).strip() for k in summary.get("key_points") or [] if str(k).strip()]
 
 
-def source(conv_id: str, meetings: dict[str, dict[str, Any]]) -> str | None:
+def source(conv_id: str, meetings: dict[str, dict[str, Any]],
+           texts: dict[str, dict[str, Any]] | None = None) -> str | None:
     """JSON rows' ``source`` (MCP 0.16.0): "meeting" when the fact or item comes from a
-    meeting (Zoom today), else null (a recording, a voice note or a written note; those are
-    told apart by ``conversation_kind`` and ``written_by_hand``)."""
-    return "meeting" if conv_id in meetings else None
+    meeting (Zoom today), "text" (MCP 0.21.0) when it comes from text messages, else null
+    (a recording, a voice note or a written note; those are told apart by
+    ``conversation_kind`` and ``written_by_hand``)."""
+    if conv_id in meetings:
+        return "meeting"
+    return "text" if texts and conv_id in texts else None
 
 
 def written_json(written: dict[str, Any] | None) -> dict[str, Any]:
