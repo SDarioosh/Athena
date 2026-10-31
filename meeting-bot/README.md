@@ -104,6 +104,8 @@ talks to Zoom: it plays fictional meeting scenarios (`ATHENA_SDKSTUB_SCENARIO`),
 | `failed owner_not_joined` / `meeting_not_started` / `waiting_room_timeout` | one of the three waits above passed `--waiting-room-seconds` |
 | `ended waiting_room_timeout` | moved back to the waiting room after being in, not let in again in time |
 | `failed wrong_passcode` / `meeting_not_found` / `join_token_expired` / `join_failed` / `auth_failed` / `sdk_error` / `work_dir` | join or start-up failed (the SDK code is logged) |
+| `failed external_meeting_not_allowed` | Zoom refused because the meeting is in another account and the Marketplace app isn't published (`MeetingFailCode` 63); only meetings of the app's own account work until then |
+| `failed outside_users_blocked` / `blocked_by_account_admin` / `zoom_signin_required` | the host lets in only certain accounts (62), an account admin blocks the app (64), or the meeting needs a signed-in join token (503, 504) |
 | `ended meeting_ended` / `removed` | the host ended the meeting / removed Athena |
 | `ended owner_left` | `obf`: Zoom ended the session without the host ending it |
 | `ended connection_lost` | dropped and not back in: 3 rejoin tries failed or 2 minutes passed |
@@ -135,6 +137,11 @@ against our stub; if the real build complains, fix them here (and in `sdkstub/h/
 - `MeetingFailCode` values `MEETING_FAIL_PASSWORD_ERR`, `MEETING_FAIL_MEETING_NOT_START`,
   `MEETING_FAIL_MEETING_NOT_EXIST`, `MEETING_FAIL_CANNOT_START_TOKENEXPIRE`
 - `EndMeetingReason_JBHTimeOut`
+- `MeetingFailCode` values `MEETING_FAIL_HOST_DISALLOW_OUTSIDE_USER_JOIN` (62),
+  `MEETING_FAIL_UNABLE_TO_JOIN_EXTERNAL_MEETING` (63), `MEETING_FAIL_BLOCKED_BY_ACCOUNT_ADMIN`
+  (64), `MEETING_FAIL_USER_LEVEL_TOKEN_NOT_HAVE_HOST_ZAK_OBF` (503),
+  `MEETING_FAIL_APP_CAN_NOT_ANONYMOUS_JOIN_MEETING` (504), names and numbers from the Linux
+  SDK reference
 - Now used for behaviour (the spike only had empty overrides or logged them):
   `IMeetingServiceEvent::onMeetingTopicChanged`, `IChatMsgInfo::IsChatToAll` as the private flag.
 - Lane 5B: `MEETING_STATUS_RECONNECTING` (the bot only logged status numbers before),

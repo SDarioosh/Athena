@@ -264,6 +264,7 @@ def main() -> int:
         ("nohost", "no_host", ["starting waiting_for_host", "failed meeting_not_started"], 1,
          False, None, None),
         ("passcode", "wrong_passcode", ["failed wrong_passcode"], 1, False, None, None),
+        ("external", "external", ["failed external_meeting_not_allowed"], 1, True, None, None),
         ("ownerlate", "owner_late", ["starting waiting_for_owner", "recording", "ended stopped"],
          0, True, "recording", {"--waiting-room-seconds": "30"}),
         ("noowner", "no_owner", ["starting waiting_for_owner", "failed owner_not_joined"], 1,

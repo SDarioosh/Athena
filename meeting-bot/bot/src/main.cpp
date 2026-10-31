@@ -584,6 +584,13 @@ JoinFail map_fail(int result) {
     case MEETING_FAIL_MEETING_NOT_EXIST: return JoinFail::NotFound;
     case MEETING_FAIL_CANNOT_START_TOKENEXPIRE: return JoinFail::TokenExpired;
     case MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING: return JoinFail::OwnerNotIn;
+    // 63: Zoom lets an unpublished Marketplace app join only meetings hosted in its own
+    // account ("your SDK app has to be published on Zoom Marketplace", SDK reference)
+    case MEETING_FAIL_UNABLE_TO_JOIN_EXTERNAL_MEETING: return JoinFail::ExternalNotAllowed;
+    case MEETING_FAIL_HOST_DISALLOW_OUTSIDE_USER_JOIN: return JoinFail::OutsideUsersBlocked;
+    case MEETING_FAIL_BLOCKED_BY_ACCOUNT_ADMIN: return JoinFail::BlockedByAdmin;
+    case MEETING_FAIL_USER_LEVEL_TOKEN_NOT_HAVE_HOST_ZAK_OBF:
+    case MEETING_FAIL_APP_CAN_NOT_ANONYMOUS_JOIN_MEETING: return JoinFail::SignInRequired;
     default: return JoinFail::Other;
   }
 }

@@ -359,6 +359,8 @@ gboolean join_cb(gpointer) {
     set_status(MEETING_STATUS_FAILED, MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING);
   } else if (s == "wrong_passcode") {
     set_status(MEETING_STATUS_FAILED, MEETING_FAIL_PASSWORD_ERR);
+  } else if (s == "external") {  // an unpublished app and another account's meeting
+    set_status(MEETING_STATUS_FAILED, MEETING_FAIL_UNABLE_TO_JOIN_EXTERNAL_MEETING);
   } else if (s == "no_owner" || (s == "owner_late" && g_join_attempts <= 2)) {
     set_status(MEETING_STATUS_FAILED, MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING);
   } else if (s == "waiting_room") {
