@@ -82,4 +82,3 @@ doc is under review; Phase 3 waits for the owner's frontend decision.
   with `ESCALATE: <reason>`. Write the blocker in PROGRESS.md.
 - The frontend is decided (our Odysseus fork). Hub-side work goes in the hub repo; changes
   to the MCP tool contract follow the rules in AGENTS.md.
-- Leave `orchestrator/` alone unless asked.

@@ -45,6 +45,15 @@
 #                          to force it through the hub's fork_deploy.sh, which passes no flags
 #   DOCKER                 docker command (default: docker if it works without sudo, else "sudo docker")
 #   CONVO_DOCKER_API_GPU   true: adds compose.gpu.yml (CUDA PyTorch, sound-api on the GPU, for pyannote)
+#   ATHENA_SECRETS_FILE    root-only env file with the tokens and keys (default
+#                          /etc/athena/secrets.env, used when it exists); compose.yml reads it
+#                          beside .env. The meeting check then asks from inside sound-api, so
+#                          no token is read on the host
+#   ATHENA_NET_SUBNET      a fixed subnet for Athena's network: adds compose.network.yml
+#                          (ATHENA_NET_BRIDGE, default br-athena; ATHENA_NET_NAME, default athena-net)
+#   ATHENA_DB_BACKUPS      N > 0: before a deploy changes anything, copy the database to
+#                          <data dir>/backups/ (SQLite online backup) and keep the newest N;
+#                          0 or unset: no copy
 # The native runner's BARVIS_SOUND_EXTRAS and BARVIS_SOUND_WHISPER_CMD are not used: the
 # image takes CONVO_DOCKER_EXTRAS, whisper is a container (COMPOSE_PROFILES) or
 # CONVO_DOCKER_WHISPER_URL.
@@ -140,6 +149,25 @@ set_compose_files() {  # the compose files for this checkout
     export BARVIS_SOUND_ZOOM_SDK_DIR=$ZOOM_SDK_DIR
     COMPOSE_FILES+=(-f "$SERVER_DIR/compose.meeting.yml")
   fi
+  # A fixed network for the host firewall (an older checkout has no compose.network.yml).
+  if [ -n "$(env_value ATHENA_NET_SUBNET "")" ] && [ -f "$SERVER_DIR/compose.network.yml" ]; then
+    COMPOSE_FILES+=(-f "$SERVER_DIR/compose.network.yml")
+  fi
+}
+
+# --- secrets --------------------------------------------------------------------------
+
+secrets_file() { env_value ATHENA_SECRETS_FILE /etc/athena/secrets.env; }
+
+secret_state() {  # is one of the settings $@ set? 0 yes, 1 no, 2 can't tell (the secrets
+                  # file exists but this user can't read it). Never prints a value.
+  local n f
+  for n in "$@"; do [ -n "$(env_value "$n" "")" ] && return 0; done
+  f=$(secrets_file)
+  [ -e "$f" ] || return 1
+  [ -r "$f" ] || return 2
+  for n in "$@"; do grep -qE "^$n=.+" "$f" && return 0; done
+  return 1
 }
 
 # --- an older native install (recognised, never written) -------------------------------
@@ -292,7 +320,7 @@ check_runner() {  # $1 the command; refuses before anything is stopped, built or
   local cmd
   read -r -a cmd <<< "$DOCKER"
   if ! "${cmd[@]}" compose version >/dev/null 2>&1 </dev/null; then
-    die "not running '$1': '$DOCKER compose version' failed: Docker Engine with the compose plugin is needed (server/README.md \"Docker\"); if docker needs sudo with a password, add your user to the docker group or set DOCKER. Nothing was changed"
+    die "not running '$1': '$DOCKER compose version' failed: Docker Engine with the compose plugin is needed (server/README.md \"Docker\"); if docker needs sudo, set DOCKER=\"sudo docker\" in server/.env (no docker group needed). Nothing was changed"
   fi
 }
 
@@ -313,6 +341,14 @@ dc() {
      && [[ " ${COMPOSE_FILES[*]} " == *"/compose.meeting.yml "* ]]; then
     cmd=("${cmd[0]}" "BARVIS_SOUND_ZOOM_SDK_DIR=$BARVIS_SOUND_ZOOM_SDK_DIR" "${cmd[@]:1}")
   fi
+  # the same for settings compose.yml and compose.network.yml read, when they come from the
+  # environment rather than from .env (which compose reads itself)
+  local n
+  if [ "${cmd[0]##*/}" = sudo ]; then
+    for n in ATHENA_SECRETS_FILE ATHENA_NET_SUBNET ATHENA_NET_BRIDGE ATHENA_NET_NAME; do
+      [ -z "${!n+x}" ] || cmd=("${cmd[0]}" "$n=${!n}" "${cmd[@]:1}")
+    done
+  fi
   "${cmd[@]}" compose --project-directory "$SERVER_DIR" "${COMPOSE_FILES[@]}" "$@"
 }
 
@@ -325,6 +361,9 @@ docker_preflight() {  # settings the containers would crash on, said before buil
   if [ "$(setting ATHENA_DIARIZER ecapa CONVO_DIARIZER)" = pyannote ] && [[ ,$extras, != *,pyannote,* ]]; then
     die "CONVO_DIARIZER=pyannote needs pyannote in the image: add CONVO_DOCKER_EXTRAS=$extras,pyannote to server/.env (and CONVO_DOCKER_API_GPU=true to run it on the GPU)"
   fi
+  local st=0
+  secret_state ATHENA_MCP_TOKEN CONVO_MCP_TOKEN || st=$?
+  [ "$st" != 1 ] || log "warning: CONVO_MCP_TOKEN is set neither in server/.env nor in $(secrets_file): sound-mcp does not start without it (16+ characters)"
   whisper_chosen || log "warning: no whisper for Docker: set COMPOSE_PROFILES=whisper-gpu or whisper-cpu, or CONVO_DOCKER_WHISPER_URL, in server/.env (README \"Docker\"); recordings are not transcribed until then"
 }
 
@@ -405,12 +444,35 @@ active_meetings() {  # sets MEETINGS (one line per active bot); status 1 + MEETI
   MEETINGS="" MEETINGS_NOTE=""
   url="http://$(probe_host "$HOST"):$PORT/v1/meetings?limit=100"
   token=$(setting ATHENA_INGEST_TOKEN "" CONVO_INGEST_TOKEN)
-  if [ -z "$token" ]; then MEETINGS_NOTE="no CONVO_INGEST_TOKEN to ask $url"; return 1; fi
-  # the token goes in on stdin, never on a command line (ps shows those to every user)
-  if ! out=$(printf 'Authorization: Bearer %s\n' "$token" \
-             | curl -s -m 5 -H @- -w '\n%{http_code}' "$url" 2>/dev/null); then
-    MEETINGS_NOTE="Athena's API is not answering on $url"
-    return 1
+  if [ -z "$token" ] && [ -e "$(secrets_file)" ]; then
+    # The token is in the secrets file: ask from inside sound-api with its own token, so
+    # the token never reaches this script.
+    url="sound-api (inside the container)"
+    if ! out=$(dc exec -T sound-api python -c '
+import json, os, sys, urllib.error, urllib.request
+token = os.environ.get("ATHENA_INGEST_TOKEN") or os.environ.get("CONVO_INGEST_TOKEN") or ""
+req = urllib.request.Request("http://127.0.0.1:8000/v1/meetings?limit=100",
+                             headers={"Authorization": "Bearer " + token})
+try:
+    with urllib.request.urlopen(req, timeout=5) as r:
+        body, code = r.read().decode(), r.status
+except urllib.error.HTTPError as e:
+    body, code = "", e.code
+except Exception:
+    sys.exit(1)
+sys.stdout.write("%s\n%s" % (body, code))
+' 2>/dev/null </dev/null); then
+      MEETINGS_NOTE="Athena's API is not answering in $url"
+      return 1
+    fi
+  else
+    if [ -z "$token" ]; then MEETINGS_NOTE="no CONVO_INGEST_TOKEN to ask $url"; return 1; fi
+    # the token goes in on stdin, never on a command line (ps shows those to every user)
+    if ! out=$(printf 'Authorization: Bearer %s\n' "$token" \
+               | curl -s -m 5 -H @- -w '\n%{http_code}' "$url" 2>/dev/null); then
+      MEETINGS_NOTE="Athena's API is not answering on $url"
+      return 1
+    fi
   fi
   code=${out##*$'\n'}
   if [ "$code" != 200 ]; then MEETINGS_NOTE="$url answered HTTP $code"; return 1; fi
@@ -447,10 +509,51 @@ guard_meetings() {  # $1: deploy | start | restart; exits non-zero while a bot i
   exit 1
 }
 
+# --- database backup ------------------------------------------------------------------
+
+# The server migrates the database when it starts, and an older checkout may not read a
+# migrated one. With ATHENA_DB_BACKUPS=N, deploy first copies it (SQLite's online backup,
+# safe while Athena runs) into <data dir>/backups/, as the containers' own user, and keeps
+# the newest N. Nothing happens on a machine without a database yet.
+backup_db() {
+  local keep out
+  keep=$(setting ATHENA_DB_BACKUPS 0)
+  [[ $keep =~ ^[0-9]+$ ]] || die "ATHENA_DB_BACKUPS must be a number (copies to keep), not \"$keep\""
+  [ "$keep" -gt 0 ] || return 0
+  log "copying the database to the data dir's backups/ (keeps $keep)"
+  if ! out=$(dc run --rm --no-deps -T --entrypoint python sound-api -c '
+import glob, os, sqlite3, sys, time
+from athena.config import Settings
+src = Settings().db_path
+if not src.exists():
+    print("no database yet"); sys.exit(0)
+folder = os.path.join(os.environ.get("ATHENA_DATA_DIR") or "/data", "backups")
+os.makedirs(folder, mode=0o700, exist_ok=True)
+dst = os.path.join(folder, "athena-%s.db" % time.strftime("%Y%m%d-%H%M%S", time.gmtime()))
+a = sqlite3.connect(src); b = sqlite3.connect(dst + ".part")
+with b:
+    a.backup(b)
+b.close(); a.close()
+os.chmod(dst + ".part", 0o600); os.replace(dst + ".part", dst)
+for old in sorted(glob.glob(os.path.join(folder, "athena-*.db")))[:-int(sys.argv[1])]:
+    os.remove(old)
+print(dst)
+' "$keep" </dev/null 2>&1); then
+    printf '%s\n' "$out" | tail -n 5 | sed 's/^/    /' >&2
+    die "could not copy the database; nothing was changed (ATHENA_DB_BACKUPS=0 deploys without a copy)"
+  fi
+  printf '%s\n' "$out" | tail -n 1 | sed 's/^/    /'
+}
+
 # --- install --------------------------------------------------------------------------
 
 first_env() {  # create server/.env with fresh tokens on a new machine
   [ -f .env ] && return 0
+  if [ -e "$(secrets_file)" ]; then  # the tokens live there: .env gets none
+    sed -e '/^CONVO_INGEST_TOKEN=/d' .env.example > .env
+    log "created server/.env without tokens (they are read from $(secrets_file)); review it (endpoints, CONVO_PUBLIC_URL, CONVO_MCP_HOST, COMPOSE_PROFILES)"
+    return 0
+  fi
   local t1 t2
   t1=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
   t2=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
@@ -465,8 +568,11 @@ zoom_sdk_notes() {  # what deploy does about the meeting bot, said once per depl
   if [ -n "$ZOOM_SDK_AUTO" ]; then
     log "meeting bot: found the Zoom Meeting SDK in $ZOOM_SDK_DIR (ATHENA_ZOOM_SDK_DIR unset; set it to off for no bot)"
   fi
-  if [ -z "$(setting ATHENA_ZOOM_SDK_KEY "" CONVO_ZOOM_SDK_KEY)" ] || [ -z "$(setting ATHENA_ZOOM_SDK_SECRET "" CONVO_ZOOM_SDK_SECRET)" ]; then
-    log "warning: CONVO_ZOOM_SDK_KEY / CONVO_ZOOM_SDK_SECRET are not set in server/.env: the meeting bot is built, but joining a meeting answers 501 until they are (README \"Meeting bot\")"
+  local k=0 c=0
+  secret_state ATHENA_ZOOM_SDK_KEY CONVO_ZOOM_SDK_KEY || k=$?
+  secret_state ATHENA_ZOOM_SDK_SECRET CONVO_ZOOM_SDK_SECRET || c=$?
+  if [ "$k" = 1 ] || [ "$c" = 1 ]; then
+    log "warning: CONVO_ZOOM_SDK_KEY / CONVO_ZOOM_SDK_SECRET are not set in server/.env (or the secrets file): the meeting bot is built, but joining a meeting answers 501 until they are (README \"Meeting bot\")"
   fi
 }
 
@@ -499,6 +605,7 @@ cmd_deploy() {
   load_config
   check_runner deploy
   guard_meetings deploy
+  backup_db
   update_checkout "${1:-}"
   first_env
   load_config  # .env may be new
@@ -608,7 +715,9 @@ main() {  # one function, so bash has read all of it before a deploy moves this 
       if old_projects; then for p in "${OLD[@]}"; do dc -p "$p" --profile '*' stop; done; fi
       dc stop && log "stopped" ;;
     logs) load_config; dc logs --tail 40 "${@:3}" "$(docker_service "${2:-serve}")" ;;
-    units) load_config; dc config ;;
+    units)  # values of tokens, keys, secrets and passwords are masked
+      load_config
+      dc config | sed -E 's/^([[:space:]]*-?[[:space:]]*[A-Za-z0-9_]*(TOKEN|SECRET|PASSWORD|_KEY)[A-Za-z0-9_]*[:=])[[:space:]]*[^[:space:]].*$/\1 "***"/' ;;
     odysseus) load_config; deploy_odysseus ;;
     status) cmd_status ;;
     -h|--help|help) usage ;;

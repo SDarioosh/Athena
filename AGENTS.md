@@ -23,7 +23,7 @@ server. **Nothing in the data path touches the cloud.**
   `docs/athena-rename-plan.md` step 16), the `convo-server` CLI
   (installed next to the new `athena`, both run the same code), the hub's server name `convo` (the name Odysseus registered
   our MCP server under; since MCP 0.20.1 the server reports itself as `athena`, was
-  `convo-ai`, and the hub never reads that), the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app's appId and vendor
+  `convo-ai`, and the hub never reads that), the Hermes eval profile `convo` (sandbox only), the Zepp app's appId and vendor
   `convo-ai` (its display name is now "Athena Rec Test"), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
   `SDarioosh/Athena`; GitHub redirects the old URL), the old native units' names
   `barvis-sound*` (`deploy.sh` still recognises them to switch to Docker), the `BARVIS_SOUND_*`
@@ -109,8 +109,6 @@ server. **Nothing in the data path touches the cloud.**
 - `docs/api/`: the API reference (`ingest.md`, `meetings.md`, `mcp.md`); `docs/changelog/`:
   what was done, by month; `docs/decisions-log.md`: the owner's decisions;
   `docs/archive/`: past QC and bug-hunt reports, kept as records.
-- `hermes/`: Hermes profile snippet used by the orchestrator.
-- `orchestrator/`: optional build loop. Leave it alone.
 
 ## Privacy rules (non-negotiable)
 
@@ -356,9 +354,14 @@ server. **Nothing in the data path touches the cloud.**
   has a **Server verification** section: exact commands, the expected result, and
   real-device steps ([format](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/sandbox.md#server-verification)).
 - The owner runs it and pastes the result into the PR; continue from that result.
-- Never write steps that touch the owner's production Odysseus install (Docker,
-  `~/models/odysseus`, port 7000). Server-side evals target the Odysseus test
-  instance on `127.0.0.1:7010`.
+- Never write steps that edit, restart or reconfigure the owner's production Odysseus
+  install (Docker, `/opt/odysseus`, formerly `~/models/odysseus`, port 7000); read-only
+  checks (status, health, reachability) are fine. The server has no Odysseus test instance
+  any more (retired 2026-10-31): evals that write chats run in the sandbox, and on the
+  server only when the owner chooses to.
+- On the server Athena runs as its own user, data in `/srv/athena`, deployed by an admin
+  account (`server/README.md` "Running as a service user"). Odysseus reaches it only
+  through `sound-mcp` (port 8001); Hermes has no access to Athena at all.
 
 ## Checks
 
@@ -408,9 +411,7 @@ tests.
 ## Rules for agents
 
 - Work on a feature branch (`feature/<name>`, docs: `docs/<name>`) and open a PR into
-  `main`. Small commits. Agents run by the orchestrator never push, merge or open PRs
-  (the orchestrator does). In interactive sessions, push and open PRs only when the
-  owner asks.
+  `main`. Small commits. Push and open PRs only when the owner asks.
 - Agents **never merge** and never push to `main` directly.
 - Never commit secrets, `.env`, tokens, databases, or audio files of any kind.
 - Frontend: the owner chose an Odysseus fork (`docs/frontend-decision.md`), now simply

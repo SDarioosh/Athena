@@ -7,6 +7,7 @@ it called a convo tool, cited a link to an expected conversation, and included a
 
     python eval/bakeoff.py --frontend raw     # llama-server + MCP directly (baseline)
     python eval/bakeoff.py --frontend hermes  # `hermes -p convo` one-shot per question
+        # (sandbox only: on the owner's server Hermes has no access to Athena)
     python eval/bakeoff.py --frontend odysseus  # Odysseus agent chat; env ODYSSEUS_URL,
         # ODYSSEUS_USER, ODYSSEUS_PASSWORD(_FILE) or ODYSSEUS_API_TOKEN, ODYSSEUS_PRESET,
         # ODYSSEUS_MODE (agent, or chat = the web UI default)

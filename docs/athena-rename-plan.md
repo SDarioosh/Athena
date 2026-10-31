@@ -35,8 +35,9 @@ installed devices (see [What stays](#what-stays-and-why)).
   - Hub: the focused tests in its `AGENTS.md`, plus the fork tests for the files
     touched.
 - **Server verification:** every step that changes deployment (7, 8, 9, 11, 12, 13)
-  has a Server verification section in its PR. It targets the test instance on
-  `127.0.0.1:7010`, never production.
+  has a Server verification section in its PR. The server's Odysseus test instance is
+  retired (2026-10-31): steps check production read-only, and the owner deploys with
+  `scripts/fork_deploy.sh deploy` (backup and automatic rollback).
 - **Update the "don't rename" lists** (`AGENTS.md` here, `AGENTS.md` in the hub) in the
   same PR that renames a name on them.
 

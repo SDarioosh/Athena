@@ -137,8 +137,8 @@ Real-device steps, none can run in the sandbox:
 3. Send a chat message, upload a file, use the voice recorder (over HTTPS).
 4. Close the UI, drain the watch: chunks reach the server and are acked as before.
 5. Open `/modules/sound`: the relay card shows the watch state and "sync now" works.
-6. Point the app at the Odysseus **test instance** (`127.0.0.1:7010`) and stop that
-   instance (never production): the page fails to load, the relay keeps draining.
+6. With Odysseus unreachable (phone off Tailscale, for example), the page fails to load
+   and the relay keeps draining. (The server's Odysseus test instance is retired.)
 7. Deploy only after verification: `scripts/fork_deploy.sh deploy` (hub side).
 
 ## 10. Open questions for the owner
