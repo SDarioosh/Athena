@@ -1,0 +1,4 @@
+1 unnamed speakers (times are Europe/Berlin). When answering, put the link next to each fact you use:
+- Speaker 1 in "At the bakery" 2026-10-18 11:00 (conversation id 000000000000000000000000c0de000e), 2 lines
+  #69 "Morning! Your sourdough is ready, and the rye bread comes out of the oven at four." https://athena.example.org/view/000000000000000000000000c0de000e?sig=c0004010f631faed0298639d8f2816b7#t=0
+  #71 "I'll keep one aside for you. We're closed on Monday for the holiday." https://athena.example.org/view/000000000000000000000000c0de000e?sig=c0004010f631faed0298639d8f2816b7#t=16

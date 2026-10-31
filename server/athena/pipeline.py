@@ -1,0 +1,760 @@
+"""Device-agnostic processing pipeline.
+
+ingest_chunk  -> decode, VAD, persist, silence/max-duration stop decision
+process_session -> reassemble by sequence, transcribe speech regions (whisper.cpp),
+                   diarize, store segments, delete raw audio, split into conversations,
+                   summarize (llama-server), embed
+make_digest   -> daily digest over the day's summarized conversations
+"""
+
+from __future__ import annotations
+
+import contextlib
+import itertools
+import logging
+import re
+import threading
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+import numpy as np
+
+from . import audio as audio_mod
+from . import session_kinds, transcribe_engine, voice_enroll
+from .clips import Window
+from .config import Settings
+from .db.store import Store
+from .diarize import Diarizer, PieceRef, load_voices
+from .domain import CONVERSATION, Segment
+from .lines import join_lines
+from .search import Embedder, index_conversation
+from .summarize.summarizer import Summarizer
+from .transcribe import Transcriber
+from .transcribe_engine import (  # noqa: F401  (still read from here)
+    ASR_AGC_DEADBAND,
+    CONTIGUOUS_TOLERANCE,
+    REGION_MERGE_GAP,
+)
+from .vad import VAD, Span
+from .validation import (  # noqa: F401  (the input checks; still read from here)
+    MAX_LINE_CHARS,
+    MAX_LINK_CHARS,
+    MAX_TEXT_CHARS,
+    MAX_TEXT_LINES,
+    MAX_TITLE_CHARS,
+    MAX_TRACK_NAME_CHARS,
+    SOURCE_ID,
+    TRACK,
+    check_chunk,
+    check_written_note,
+    validate_id,
+    validate_link,
+    validate_source_id,
+    validate_track,
+    written_lines,
+)
+from .vocabulary import words as vocabulary_words
+
+log = logging.getLogger(__name__)
+
+# whisper reads at most ~224 prompt tokens; names beyond this many are left out.
+MAX_PROMPT_NAMES = 30
+_PLACEHOLDER_NAME = re.compile(r"^(speaker\s*\d+|unknown|me)$", re.IGNORECASE)
+
+
+def chunk_filename(track: str, sequence: int, codec: str) -> str:
+    """A chunk's audio file name in its session folder. Without a track it is the name
+    used before tracks; a track is hex-encoded, so any valid track ('..', ':') makes a
+    safe, distinct name."""
+    if not track:
+        return f"{sequence:06d}.{codec}"
+    return f"t{track.encode().hex()}-{sequence:06d}.{codec}"
+
+
+@dataclass
+class IngestResult:
+    stop: bool
+    reason: str | None
+    speech_seconds: float
+    trailing_silence_seconds: float
+    session_seconds: float
+    duplicate: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"ok": True, "stop": self.stop, "reason": self.reason,
+                "duplicate": self.duplicate,
+                "speech_seconds": round(self.speech_seconds, 2),
+                "trailing_silence_seconds": round(self.trailing_silence_seconds, 2),
+                "session_seconds": round(self.session_seconds, 2)}
+
+
+class Pipeline:
+    def __init__(self, settings: Settings, store: Store, vad: VAD,
+                 transcriber: Transcriber | None = None, diarizer: Diarizer | None = None,
+                 summarizer: Summarizer | None = None,
+                 embedder: Embedder | None = None) -> None:
+        self.settings = settings
+        self.store = store
+        self.vad = vad
+        self.transcriber = transcriber
+        self.diarizer = diarizer
+        self.summarizer = summarizer
+        self.embedder = embedder
+        self._process_lock = threading.Lock()
+
+    # ------------------------------------------------------------------ ingest
+    def ingest_chunk(self, *, device: str, session_id: str, sequence: int, started_at: float,
+                     codec: str, data: bytes, sample_rate: int = audio_mod.SAMPLE_RATE,
+                     now: float | None = None, kind: str = CONVERSATION,
+                     track: str | None = None, track_name: str | None = None
+                     ) -> IngestResult:
+        """Store one chunk. ``track`` (optional) keeps one participant's audio apart
+        in a session with several; sequences count per track. Without it the session
+        works as before tracks. A session with any tracked chunk (a meeting) never
+        stops on trailing silence, so a quiet break doesn't end it: it stops at
+        ``CONVO_MAX_SESSION_SECONDS``, on ``end_session`` or, if its uploader dies,
+        after ``CONVO_SESSION_IDLE_SECONDS`` without uploads (``finalize_idle``)."""
+        from .db.sessions import DuplicateChunk, MeetingClosed
+
+        kind, codec, track, track_name = check_chunk(
+            device=device, session_id=session_id, sequence=sequence, kind=kind, codec=codec,
+            data=data, track=track, track_name=track_name)
+        late = self._late_meeting_chunk(session_id, track, sequence)
+        if late is not None:
+            return late
+        pcm = audio_mod.decode(data, codec, sample_rate)
+        if codec == "pcm16" and sample_rate != audio_mod.SAMPLE_RATE:
+            # Raw PCM carries no rate, and processing decodes the stored file as 16 kHz:
+            # store it at 16 kHz.
+            data = audio_mod.float_to_pcm16(pcm)
+        duration = audio_mod.duration_seconds(pcm)
+        spans = self.vad.detect(pcm)
+        speech = [(round(s.start, 3), round(s.end, 3)) for s in spans]
+
+        path = part = None
+        if data:
+            d = self.settings.audio_dir / device / session_id
+            d.mkdir(parents=True, exist_ok=True)
+            path = d / chunk_filename(track, sequence, codec)
+            # Unique temp name: a retry racing the original upload of the same chunk
+            # must not overwrite or delete the original's temp file.
+            part = path.with_name(f"{path.name}.{uuid.uuid4().hex}.part")
+            part.write_bytes(data)
+        try:
+            sess = self.store.add_chunk(session_id=session_id, device=device, sequence=sequence,
+                                        started_at=started_at, duration=duration, codec=codec,
+                                        audio_path=str(path) if path else None, speech=speech,
+                                        now=now, kind=kind, track=track,
+                                        track_name=track_name)
+            duplicate = False
+            if part and path:
+                part.replace(path)
+        except MeetingClosed:  # raced the worker: refused like _late_meeting_chunk
+            sess = self.store.get_session(session_id)
+            assert sess is not None
+            if part:
+                part.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):  # the folder this upload made, if empty
+                    part.parent.rmdir()
+            return self._meeting_closed(sess, track, sequence)
+        except DuplicateChunk:
+            # Retry of an already-stored chunk: keep the original, answer consistently.
+            sess = self.store.get_session(session_id)
+            assert sess is not None
+            duplicate = True
+        finally:
+            if part:
+                part.unlink(missing_ok=True)
+
+        speech_end = sess["last_speech_at"] or sess["started_at"]
+        trailing = max(0.0, sess["last_chunk_at"] - speech_end)
+        length = sess["last_chunk_at"] - sess["started_at"]
+        reason = None
+        if sess["status"] != "recording":
+            reason = sess["stop_reason"] or "ended"
+        elif (trailing >= self.settings.silence_stop_seconds
+              and session_kinds.stops_on_silence(self.store, session_id, track)):
+            reason = "silence"
+        elif length >= self.settings.max_session_seconds:
+            reason = "max_duration"
+        if reason and sess["status"] == "recording":
+            self.store.end_session(session_id, reason)
+        return IngestResult(stop=reason is not None, reason=reason,
+                            speech_seconds=sum(e - s for s, e in speech),
+                            trailing_silence_seconds=trailing, session_seconds=length,
+                            duplicate=duplicate)
+
+    def _late_meeting_chunk(self, session_id: str, track: str,
+                            sequence: int) -> IngestResult | None:
+        """A new chunk for a meeting (a session with tracks) that is being or was already
+        processed is answered ``stop: true`` and not stored: processing it alone would
+        replace the other tracks' lines in its time range, whose audio is already gone.
+        Until processing starts (status ``ended``), chunks of the last round are still
+        stored, e.g. the other tracks' chunks of the round that reached the max duration.
+        A retry of a stored chunk goes on and is answered ``duplicate: true``. Sessions
+        without tracks keep taking late chunks (transcribed on the next pass); so does
+        one an untracked chunk stopped on silence, whose first tracked chunk reopens it.
+        ``Store.add_chunk`` makes the same check inside its transaction (``MeetingClosed``),
+        so a chunk racing the worker is refused too; this one only skips the decode."""
+        sess = self.store.get_session(session_id)
+        if not session_kinds.refuses_late_chunk(self.store, sess, track, sequence):
+            return None
+        assert sess is not None
+        return self._meeting_closed(sess, track, sequence)
+
+    def _meeting_closed(self, sess: dict[str, Any], track: str,
+                        sequence: int) -> IngestResult:
+        reason = sess["stop_reason"] or "ended"
+        log.warning("meeting %s already processed (%s): chunk %s#%d not stored", sess["id"],
+                    reason, track or "-", sequence)
+        speech_end = sess["last_speech_at"] or sess["started_at"]
+        return IngestResult(stop=True, reason=reason, speech_seconds=0.0,
+                            trailing_silence_seconds=max(0.0, sess["last_chunk_at"]
+                                                         - speech_end),
+                            session_seconds=sess["last_chunk_at"] - sess["started_at"])
+
+    # ------------------------------------------------------------ written notes
+    def ingest_text(self, *, source_id: str, text: str, written_at: float, link: str,
+                    title: str | None = None, now: float | None = None) -> dict[str, Any]:
+        """Store a note written by hand in the hub (``POST /v1/ingest/text``) or replace
+        the one with the same ``source_id``: one owner line per written line, summarized
+        by the worker with the voice-note prompts. Raises ValueError for bad input."""
+        link, title = check_written_note(source_id=source_id, link=link,
+                                         written_at=written_at, title=title)
+        lines = written_lines(text)
+        speaker = self.store.owner_name() or self.settings.owner_name
+        out = self.store.put_written_note(source_id, lines, written_at, link, title, speaker,
+                                          now=now)
+        log.info("written note %s: %s, %d line(s)", out["conversation_id"], out["result"],
+                 out["lines"])
+        return out
+
+    def delete_text(self, source_id: str) -> dict[str, Any] | None:
+        """Remove a written note and its to-dos and facts; None when there is none."""
+        validate_source_id(source_id)
+        return self.store.delete_written_note(source_id)
+
+    def end_session(self, session_id: str, reason: str = "client") -> bool:
+        if self.store.get_session(session_id) is None:
+            return False
+        self.store.end_session(session_id, reason)
+        return True
+
+    def finalize_idle(self, now: float | None = None) -> list[str]:
+        now = time.time() if now is None else now
+        idle = self.settings.session_idle_seconds
+        # a meeting whose bot still runs isn't idle (everyone muted uploads nothing); a
+        # bot can't outlive CONVO_MAX_SESSION_SECONDS, so after that idle applies again
+        ids = self.store.idle_sessions(
+            now - idle, bot_started_after=now - self.settings.max_session_seconds - idle)
+        for sid in ids:
+            self.store.end_session(sid, "idle")
+        return ids
+
+    # ----------------------------------------------------------------- process
+    def process_pending(self, now: float | None = None) -> int:
+        """Process every ended session, then summarize what is still unsummarized.
+
+        This is the worker's pass, so failed summaries are retried with the worker's
+        back-off (``CONVO_SUMMARY_RETRY_SECONDS``), not on every pass.
+        """
+        n = 0
+        for sid in self.store.sessions_with_status("ended"):
+            self.process_session(sid)
+            n += 1
+        self.summarize_pending(retry_after=self.settings.summary_retry_seconds,
+                               stop_on_failure=True, now=now)
+        return n
+
+    def transcribe_live(self) -> int:
+        """Transcribe meetings that are still being recorded, window by window, so only
+        their last windows are left when they end (``meetings/transcribe/live.py``). Called on each
+        worker tick: with no meeting in progress it costs one indexed query and imports
+        nothing; ``CONVO_MEETING_LIVE_TRANSCRIBE=false`` makes it cost nothing. Returns
+        how many whisper windows were done."""
+        cfg = self.settings
+        if not cfg.meeting_live_transcribe or self.transcriber is None:
+            return 0
+        ids = self.store.live_meetings()
+        if not ids:
+            return 0
+        # never beside a session being processed (an API call can process one)
+        if not self._process_lock.acquire(blocking=False):
+            return 0
+        try:
+            from .meetings.transcribe import live as meeting_live
+
+            return meeting_live.step(self, ids, cfg.meeting_live_budget_seconds)
+        except Exception as e:  # whisper-server down: next tick, or the end pass
+            log.warning("live meeting transcription paused (%s: %s); trying again next tick",
+                        type(e).__name__, e)
+            return 0
+        finally:
+            self._process_lock.release()
+
+    def process_session(self, session_id: str) -> None:
+        with self._process_lock:
+            sess = self.store.get_session(session_id)
+            if sess is None:
+                raise KeyError(session_id)
+            self.store.set_session_status(session_id, "processing")
+            if voice_enroll.claims(self, sess):
+                # the hub's "Enroll my voice": this recording becomes a voiceprint, not a
+                # conversation (voice_enroll.py)
+                voice_enroll.enroll_session(self, sess)
+                return
+            kind = session_kinds.kind_of(self.store, sess)  # plain, note or meeting
+            try:
+                kept: dict[str, list[tuple[float, float]]] = {}  # meeting tracks' lines
+                segments, ranges, done = kind.transcribe(self, session_id, kept)
+            except Exception as e:  # keep audio so the session can be retried
+                log.exception("transcription failed for %s", session_id)
+                self.store.set_session_status(session_id, "failed", f"{type(e).__name__}: {e}",
+                                              only_if="processing")
+                return
+            self.store.replace_segments(session_id, sess["device"], segments, ranges)
+            kind.after_transcribe(self, session_id, segments, done, kept)
+            if not self.settings.keep_audio:
+                # Only the chunks transcribed here: one uploaded meanwhile waits for the
+                # next pass (add_chunk set the session back to 'ended').
+                self._delete_audio(session_id, sess["device"], done)
+            self.store.delete_empty_conversations()
+            touched = kind.split(self, session_id, sess["device"])
+            self.store.set_session_status(session_id, "done", only_if="processing")
+        for conv_id in touched:
+            self.summarize_conversation(conv_id)
+
+    def _transcribe_session(
+        self, session_id: str, *, note: bool = False,
+        kept: dict[str, list[tuple[float, float]]] | None = None,
+    ) -> tuple[list[Segment], list[tuple[float, float]], list[dict[str, Any]]]:
+        """Transcribe chunks that still have audio (``SessionKind.transcribe`` of a voice
+        note when ``note``, else of a plain session, which a session with tracks
+        transcribes as a meeting).
+
+        Returns segments, the covered time ranges and the chunks that were transcribed.
+        For a meeting, ``kept`` gets each named track's kept lines (``transcribe_meeting``).
+        """
+        kind = session_kinds.NOTE_KIND if note else session_kinds.PLAIN
+        return kind.transcribe(self, session_id, kept)
+
+    def _transcribe_recording(self, session_id: str, chunks: list[dict[str, Any]], *,
+                              owner_lines: bool) -> list[Segment]:
+        """Transcribe the chunks of a session that isn't transcribed track by track:
+        whisper over each run's speech, then the diarizer names the speakers. With
+        ``owner_lines`` (a voice note) the diarizer is skipped: every line is the
+        owner's."""
+        prompt = self.whisper_prompt()
+        runs: list[np.ndarray] = []
+        pieces: list[tuple[float, float, str, PieceRef]] = []
+        piece_words: list[list[tuple[float, float, str]]] = []  # run time, per piece
+        cfg = self.settings
+        context = ""
+        last_track = None
+        for track, run_start, run_audio, run_speech in self._track_runs(chunks):
+            if track != last_track:  # whisper's context never crosses participants
+                context, last_track = "", track
+            runs.append(run_audio)
+            got, got_words, context = self._whisper_run(len(runs) - 1, run_start, run_audio,
+                                                        run_speech, prompt, context)
+            pieces += got
+            piece_words += got_words
+        order = sorted(range(len(pieces)), key=lambda i: pieces[i][0])
+        pieces = [pieces[i] for i in order]
+        piece_words = [piece_words[i] for i in order]
+        labels = None
+        owner_name = ((self.store.owner_name() or self.settings.owner_name) if owner_lines
+                      else "")
+        if not owner_lines and self.diarizer is not None and pieces:
+            self.diarizer.voices = load_voices(self.store)  # pick up newly named speakers
+            labels, unnamed = self.diarizer.diarize_runs(runs, [p[3] for p in pieces])
+            self.store.put_speaker_candidates(session_id, unnamed)
+            if cfg.speaker_split_lines:
+                pieces, labels = self._split_pieces(runs, pieces, piece_words, labels)
+            if cfg.speaker_line_check:  # after splitting: each part is checked on its own
+                labels = self.diarizer.check_lines(runs, [p[3] for p in pieces], labels,
+                                                   cfg.speaker_line_floor)
+        if cfg.join_lines:  # after the check: an Unknown fragment can take its name
+            pieces, labels = join_lines(pieces, labels, cfg.join_gap_seconds,
+                                        cfg.join_max_seconds)
+        segments = []
+        for i, (s, e, text, _) in enumerate(pieces):
+            if owner_lines:
+                name, owner = owner_name, True
+            else:
+                name, owner = ((labels[i].name, labels[i].is_owner) if labels
+                               else ("Unknown", False))
+            segments.append(Segment(started_at=s, ended_at=e, text=text, speaker=name,
+                                    is_owner=owner))
+        return segments
+
+    def _whisper_run(self, run: int, run_start: float, run_audio: np.ndarray,
+                     run_speech: list[Span], prompt: str, context: str
+                     ) -> tuple[list[tuple[float, float, str, PieceRef]],
+                                list[list[tuple[float, float, str]]], str]:
+        """Transcribe one run's VAD speech in whisper windows.
+
+        Returns its pieces (epoch start, epoch end, text, ``PieceRef(run, ...)``), each
+        piece's words (run time) and the context for the run's next window
+        (``CONVO_WHISPER_CONTEXT_WORDS``)."""
+        pieces: list[tuple[float, float, str, PieceRef]] = []
+        piece_words: list[list[tuple[float, float, str]]] = []
+        for w in self._plan_windows(run_speech, run_audio.size / audio_mod.SAMPLE_RATE):
+            got, got_words, context = self._whisper_window(run, run_start, w,
+                                                           w.extract(run_audio), prompt,
+                                                           context)
+            pieces += got
+            piece_words += got_words
+        return pieces, piece_words, context
+
+    def _plan_windows(self, run_speech: list[Span], run_seconds: float) -> list[Window]:
+        """``transcribe_engine.plan_windows`` with this pipeline's settings."""
+        return transcribe_engine.plan_windows(self.settings, run_speech, run_seconds)
+
+    def _whisper_window(self, run: int, run_start: float, w: Window, clip: np.ndarray,
+                        prompt: str, context: str
+                        ) -> tuple[list[tuple[float, float, str, PieceRef]],
+                                   list[list[tuple[float, float, str]]], str]:
+        """``transcribe_engine.whisper_window`` with this pipeline's settings and
+        transcriber."""
+        return transcribe_engine.whisper_window(self.settings, self.transcriber, run,
+                                                run_start, w, clip, prompt, context)
+
+    def _split_pieces(self, runs: list[np.ndarray],
+                      pieces: list[tuple[float, float, str, PieceRef]],
+                      piece_words: list[list[tuple[float, float, str]]],
+                      labels: list[Any]) -> tuple[list[tuple[float, float, str, PieceRef]],
+                                                  list[Any]]:
+        """CONVO_SPEAKER_SPLIT_LINES: a line over a speaker change becomes one line per
+        speaker (``Diarizer.split_lines``), cut at word times."""
+        parts = self.diarizer.split_lines(runs, [p[3] for p in pieces], piece_words, labels)
+        out, out_labels = [], []
+        for (s, e, text, ref), ws, lab, cut in zip(pieces, piece_words, labels, parts,
+                                                     strict=True):
+            if len(cut) <= 1:
+                out.append((s, e, text, ref))
+                out_labels.append(cut[0][2] if cut else lab)
+                continue
+            base = s - ref.start  # wall-clock time of the run's start
+            kept = 0
+            for a, b, who in cut:
+                part = "".join(w[2] for w in ws[a:b]).strip()
+                if not any(ch.isalnum() for ch in part):  # only punctuation: no line
+                    continue
+                ra = ws[a][0]
+                rb = max(ra, ws[b - 1][1])  # whisper word times can run backwards
+                out.append((base + ra, base + rb, part, PieceRef(ref.run, ra, rb)))
+                out_labels.append(who)
+                kept += 1
+            if not kept:  # no part has words: keep the line whole
+                out.append((s, e, text, ref))
+                out_labels.append(lab)
+        return out, out_labels
+
+    def whisper_prompt(self) -> str:
+        """CONVO_WHISPER_PROMPT, the words set in the hub's settings (vocabulary.py) and
+        the names of known speakers, for whisper's spelling."""
+        known = ([s["name"] for s in self.store.speakers()]
+                 + [s["name"] for s in self.store.speaker_stats()]
+                 if self.settings.whisper_prompt_names else [])
+        vocab = vocabulary_words(self.store)
+        taken = {w.lower() for w in vocab}
+        names: list[str] = []
+        for n in known:
+            if not _PLACEHOLDER_NAME.match(n) and n.lower() not in taken:
+                taken.add(n.lower())
+                names.append(n)
+        parts = [self.settings.whisper_prompt.strip()]
+        if vocab:
+            parts.append(", ".join(vocab) + ".")
+        if names[:MAX_PROMPT_NAMES]:
+            parts.append(", ".join(names[:MAX_PROMPT_NAMES]) + ".")
+        return " ".join(p for p in parts if p)
+
+    def _track_runs(self, chunks: list[dict[str, Any]]):
+        """Yield (track, epoch_start, audio, speech_spans): each track's runs of
+        contiguous chunks, reassembled by that track's own sequence, track by track
+        ('' = chunks without a track, which is all of a session before tracks). Runs never
+        mix tracks, and ``join_lines`` never joins lines of two runs.
+
+        A session with tracks (a meeting) doesn't come here: ``meeting_tracks`` transcribes
+        it track by track and names lines by track."""
+        ordered = sorted(chunks, key=lambda c: (c.get("track") or "", c["sequence"]))
+        for track, group in itertools.groupby(ordered, key=lambda c: c.get("track") or ""):
+            for run_start, audio, spans in self._runs(list(group)):
+                yield track, run_start, audio, spans
+
+    def _runs(self, chunks: list[dict[str, Any]]):
+        """``transcribe_engine.runs``, decoding with ``_load_chunk``."""
+        return transcribe_engine.runs(chunks, self._load_chunk)
+
+    def _load_chunk(self, chunk: dict[str, Any]) -> np.ndarray:
+        return transcribe_engine.load_chunk(chunk)
+
+    def _delete_audio(self, session_id: str, device: str,
+                      chunks: list[dict[str, Any]]) -> None:
+        for c in chunks:
+            if c["audio_path"]:
+                Path(c["audio_path"]).unlink(missing_ok=True)
+        self.store.clear_chunk_audio(session_id,
+                                     [(c.get("track") or "", c["sequence"]) for c in chunks])
+        # rmdir, not rmtree: an upload in flight has its .part file in this folder.
+        with contextlib.suppress(OSError):
+            (self.settings.audio_dir / device / session_id).rmdir()
+
+    def _assign_conversations(self, session_id: str, device: str) -> list[str]:
+        """File a session that isn't a voice note into conversations (``SessionKind.split``
+        of a plain session: split at gaps, or one conversation if it is a meeting)."""
+        return session_kinds.PLAIN.split(self, session_id, device)
+
+    def _assign_meeting(self, session_id: str, device: str) -> list[str]:
+        """``SessionKind.split`` of a meeting: one conversation, never split or joined."""
+        return session_kinds.MEETING.split(self, session_id, device)
+
+    def _assign_note(self, session_id: str, device: str) -> list[str]:
+        """``SessionKind.split`` of a voice note: one conversation of kind NOTE."""
+        return session_kinds.NOTE_KIND.split(self, session_id, device)
+
+    # --------------------------------------------------------------- summaries
+    def summarize_conversation(self, conv_id: str) -> bool:
+        if self.summarizer is None:
+            return False
+        segments = self.store.conversation_segments(conv_id)
+        if not segments:
+            return False
+        conv = self.store.get_conversation(conv_id)
+        kind = conv.get("kind") if conv else None
+        stamp = conv["updated_at"] if conv else None
+        extra = session_kinds.for_conversation(conv).summary_context(conv, segments)
+        try:
+            # facts that repeat or update stored ones are never cut by the fact cap
+            summary = self.summarizer.summarize(
+                segments, kind=kind, known=lambda fs: self.store.facts_like(conv_id, fs),
+                **extra)
+        except Exception as e:
+            log.exception("summary failed for %s", conv_id)
+            self.store.mark_conversation_failed(conv_id, f"{type(e).__name__}: {e}")
+            return False
+        if summary.get("discard"):
+            log.info("conversation %s discarded: %s", conv_id, summary["discard_reason"])
+            self.store.save_discarded(conv_id, summary["discard_reason"], summary.get("kind"))
+            return True
+        fact_ids = self.store.save_summary(conv_id, summary, expect_updated_at=stamp)
+        if fact_ids is None:  # changed or removed while the model worked: next pass
+            log.info("conversation %s changed during its summary; summarizing it again",
+                     conv_id)
+            return False
+        try:
+            self._link_facts(conv_id, fact_ids, segments[0].started_at)
+        except Exception:  # the summary is saved; facts just stay unlinked
+            log.exception("linking facts failed for %s", conv_id)
+        if self.embedder is not None:
+            try:
+                index_conversation(self.store, self.embedder, conv_id)
+            except Exception:
+                log.exception("embedding failed for %s (FTS search still works)", conv_id)
+        return True
+
+    def _link_facts(self, conv_id: str, fact_ids: list[int], started_at: float) -> None:
+        """Merge new facts with known ones: drop repeats, let newer facts replace older."""
+        assert self.summarizer is not None
+        new = self.store.facts_by_id(fact_ids)
+        known = self.store.related_facts(conv_id, new)
+        if not new or not known:
+            return
+        tz = ZoneInfo(self.settings.timezone)
+        for k in known:
+            k["learned"] = datetime.fromtimestamp(k["conversation_at"], tz).strftime("%Y-%m-%d")
+        date = datetime.fromtimestamp(started_at, tz).strftime("%Y-%m-%d")
+        for link in self.summarizer.link_facts(date, new, known):
+            if link.relation != "new" and link.existing is not None:
+                self.store.link_fact(new[link.new]["id"], link.relation, link.existing)
+
+    def summarize_pending(self, *, retry_after: float = 0.0, stop_on_failure: bool = False,
+                          now: float | None = None) -> int:
+        """Summarize pending conversations and retry failed ones; return how many succeeded.
+
+        A failed conversation is retried once its last failure is at least
+        ``retry_after`` seconds old, oldest failure first. With ``stop_on_failure`` the
+        retries stop at the first one that fails again: llama-server is most likely
+        still down, so the rest wait for a later pass instead of each trying it now.
+        A failure refreshes the conversation's ``updated_at``, so it moves to the back
+        of the queue and a broken conversation can't block the others.
+        """
+        # Snapshot both lists first, so a pending conversation that fails below isn't
+        # retried again in the same call.
+        now = time.time() if now is None else now
+        pending = self.store.conversations_with_status("pending")
+        failed = self.store.failed_conversations(before=now - retry_after)
+        done = sum(self.summarize_conversation(c) for c in pending)
+        for conv_id in failed:
+            if self.summarize_conversation(conv_id):
+                done += 1
+            elif stop_on_failure:
+                break
+        return done
+
+    # ------------------------------------------------------------------ digest
+    def day_bounds(self, date: str) -> tuple[float, float]:
+        tz = ZoneInfo(self.settings.timezone)
+        day = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=tz)
+        return day.timestamp(), (day + timedelta(days=1)).timestamp()
+
+    def digest_conversations(self, date: str) -> list[dict[str, Any]]:
+        """The summarized conversations that started on ``date`` (local day), in order."""
+        start, end = self.day_bounds(date)
+        convs = [self.store.get_conversation(c["id"]) for c in
+                 self.store.list_conversations(since=start, until=end, limit=500)]
+        return sorted((c for c in convs if c and c["status"] == "summarized"
+                       and start <= c["started_at"] < end), key=lambda c: c["started_at"])
+
+    def make_digest(self, date: str) -> dict[str, Any] | None:
+        if self.summarizer is None:
+            raise RuntimeError("no LLM configured")
+        convs = self.digest_conversations(date)
+        if not convs:
+            return None
+        if self.store.rewrite_pending(c["id"] for c in convs):
+            return None  # a forget took a summary down: wait for its rewrite
+        digest = self.summarizer.digest(date, convs)
+        self.store.put_digest(date, digest)
+        return digest
+
+
+    # ---------------------------------------------------------------- retention
+    def prune_transcripts(self, now: float | None = None) -> dict[str, Any] | None:
+        """Apply ``CONVO_TRANSCRIPT_RETENTION_DAYS`` (0 = keep forever: nothing runs)."""
+        days = self.settings.transcript_retention_days
+        if days <= 0:
+            return None
+        now = time.time() if now is None else now
+        out = self.store.prune_transcripts(now - days * 86400)
+        for path in out["audio"]:
+            Path(path).unlink(missing_ok=True)
+        if out["conversations"] or out["audio"]:
+            log.info("retention: removed the transcripts of %d conversation(s) (%d lines) "
+                     "and %d audio chunk(s) older than %d days", out["conversations"],
+                     out["lines"], len(out["audio"]), days)
+        return out
+
+    # --------------------------------------------------------------- forgetting
+    def rewrite_forgotten(self) -> int:
+        """Rewrite the summaries ``erase_fact`` took down, then write again the digests it
+        took down once none of their conversations waits. Stops at the first model
+        failure (llama-server is most likely down; the rest wait for a later pass).
+        Returns how many conversations were rewritten."""
+        if self.summarizer is None:
+            return 0
+        done = 0
+        for row in self.store.pending_rewrites():
+            conv = self.store.get_conversation(row["conversation_id"])
+            if conv is None or conv["status"] != "summarized":
+                self.store.drop_rewrite(row["conversation_id"])
+                continue
+            try:
+                fields = self.summarizer.remove_facts(row, row["facts"])
+            except Exception:
+                log.exception("forget rewrite failed for %s", row["conversation_id"])
+                self.store.rewrite_failed(row["conversation_id"])
+                break
+            if not self.store.finish_rewrite(row["conversation_id"], row["queued_at"], fields):
+                continue  # erased again meanwhile: the next pass rewrites the new state
+            done += 1
+            if self.embedder is not None:
+                try:
+                    index_conversation(self.store, self.embedder, row["conversation_id"])
+                except Exception:
+                    log.exception("embedding failed for %s", row["conversation_id"])
+        for d in self.store.pending_digests():
+            # every conversation of the day, also those the old digest didn't have
+            day = d["conversation_ids"] + [c["id"] for c in self.digest_conversations(d["date"])]
+            # a resent written note waits for its new summary too
+            if self.store.rewrite_pending(day) or self.store.summaries_pending(day):
+                continue
+            try:
+                self.make_digest(d["date"])
+            except Exception:
+                log.exception("digest after a forget failed for %s", d["date"])
+                break
+            self.store.drop_pending_digest(d["date"])
+        if done:
+            self.store.compact()
+        return done
+
+
+class Worker(threading.Thread):
+    """Background loop: finalize idle sessions, process, and write yesterday's digest."""
+
+    def __init__(self, pipeline: Pipeline, interval: float = 15.0) -> None:
+        super().__init__(name="convo-worker", daemon=True)
+        self.pipeline = pipeline
+        self.interval = interval
+        self._stop_evt = threading.Event()
+        self._last_prune = 0.0
+
+    def start(self) -> None:
+        # A restart (e.g. a deploy) during processing leaves sessions in 'processing',
+        # which nothing picks up again. Only one worker runs per database.
+        n = self.pipeline.store.requeue_interrupted()
+        if n:
+            log.info("requeued %d session(s) interrupted by a restart", n)
+        super().start()
+
+    def stop(self, timeout: float = 10.0) -> None:
+        """Ask the loop to end and wait up to ``timeout`` seconds for the current pass
+        to finish (a long transcription may outlast it; the thread is a daemon)."""
+        self._stop_evt.set()
+        if self.is_alive() and self is not threading.current_thread():
+            self.join(timeout)
+            if self.is_alive():
+                log.warning("worker still busy %.0f s after stop; not waiting longer", timeout)
+
+    def run(self) -> None:  # pragma: no cover - timing loop
+        while not self._stop_evt.wait(self.interval):
+            self.tick()
+
+    def tick(self, now: float | None = None) -> None:
+        """One worker pass (``run`` calls this every ``interval`` seconds). Each step
+        runs on its own, so one that fails doesn't skip the ones after it."""
+        steps: list[tuple[str, Any]] = [
+            ("finalize_idle", lambda: self.pipeline.finalize_idle(now)),
+            ("process_pending", lambda: self.pipeline.process_pending(now)),
+            # after ended sessions: a finished one first
+            ("transcribe_live", self.pipeline.transcribe_live),
+            ("rewrite_forgotten", self.pipeline.rewrite_forgotten),
+            ("digest", self._maybe_digest),
+            ("prune", self._maybe_prune),
+        ]
+        for name, step in steps:
+            try:
+                step()
+            except Exception:
+                log.exception("worker step %s failed", name)
+
+    def _maybe_prune(self) -> None:
+        """Retention, at most once an hour (it only matters by the day)."""
+        if self.pipeline.settings.transcript_retention_days <= 0:
+            return
+        now = time.time()
+        if now - self._last_prune >= 3600:
+            self._last_prune = now
+            self.pipeline.prune_transcripts(now)
+
+    def _maybe_digest(self) -> None:
+        """Write yesterday's digest, and write it again when the conversations of that day
+        changed (a relay uploaded a recording late, conversations were merged)."""
+        p = self.pipeline
+        if p.summarizer is None or p.store.sessions_with_status("ended"):
+            return
+        tz = ZoneInfo(p.settings.timezone)
+        yesterday = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
+        digest = p.store.get_digest(yesterday)
+        if digest is not None and set(digest.get("conversation_ids", [])) == {
+                c["id"] for c in p.digest_conversations(yesterday)}:
+            return
+        p.make_digest(yesterday)

@@ -13,7 +13,7 @@ AppSettingsPage({
         onChange: (val) => props.settingsStorage.setItem(key, (val || '').trim()),
       })
     return View({ style: { padding: '12px 20px' } }, [
-      Text({ bold: true, paragraph: true }, 'convo-ai server'),
+      Text({ bold: true, paragraph: true }, 'Athena server'),
       field('serverUrl', 'Server URL', 'http://100.x.y.z:8000 (Tailscale IP)'),
       field('token', 'Ingest token', 'CONVO_INGEST_TOKEN from server/.env'),
       field('ownerName', 'Your name (voice profile)', 'Me (same as CONVO_OWNER_NAME)'),

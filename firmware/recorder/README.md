@@ -252,14 +252,15 @@ mic -> Opus (libopus, 16 kHz mono, 20 ms, 24 kbps VBR, complexity 1) -> 30 s Ogg
   sync window, last sync, counters). `ble forget` deletes every pairing. Pairing is passkey
   entry with LE Secure Connections: the watch shows a 6-digit code (also logged on the USB
   console) and you type it on the phone or PC, only in the sync window (protocol §3.1). If
-  a phone paired outside the window, remove `barvis-tw` in its Bluetooth settings and pair
-  again in the window.
+  a phone paired outside the window, remove `athena-tw` (older firmware: `barvis-tw`) in its
+  Bluetooth settings and pair again in the window.
 
 ### Drain from a PC: `tools/ble_relay.py`
 
 The phone's part, for testing before (or instead of) the Android app. Needs Python 3.10+
-and a Bluetooth adapter. The token comes from `CONVO_INGEST_TOKEN` or `--token-file`
-(there is no `--token` option, so it never lands in shell history).
+and a Bluetooth adapter. The token comes from `ATHENA_INGEST_TOKEN` (or its old name
+`CONVO_INGEST_TOKEN`) or `--token-file` (there is no `--token` option, so it never lands in
+shell history).
 
 ```bash
 python3 -m venv ~/.venvs/barvis-relay
@@ -269,18 +270,18 @@ python3 -m venv ~/.venvs/barvis-relay
 # watch shows a 6-digit code.
 # bleak can't type it, so pair through the OS and type the code:
 #   Linux:   bluetoothctl -> agent on -> default-agent -> scan on -> pair <address>
-#   Windows: Settings > Bluetooth & devices > Add device > Bluetooth > barvis-tw
+#   Windows: Settings > Bluetooth & devices > Add device > Bluetooth > athena-tw (older firmware: barvis-tw)
 #   macOS:   run the --list below; macOS asks for the code
 ~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py --list
 
 export BARVIS_SERVER=http://<server>:8000
-export CONVO_INGEST_TOKEN=...            # or --token-file ~/.config/barvis/token (chmod 600)
+export ATHENA_INGEST_TOKEN=...           # or --token-file ~/.config/barvis/token (chmod 600)
 ~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py --once   # drain once
 ~/.venvs/barvis-relay/bin/python firmware/recorder/tools/ble_relay.py          # keep relaying
 ```
 
 Windows (PowerShell): `py -m venv $HOME\venvs\barvis-relay`, then
-`$env:BARVIS_SERVER="http://<server>:8000"; $env:CONVO_INGEST_TOKEN="..."` and
+`$env:BARVIS_SERVER="http://<server>:8000"; $env:ATHENA_INGEST_TOKEN="..."` and
 `& $HOME\venvs\barvis-relay\Scripts\python firmware\recorder\tools\ble_relay.py --once`.
 
 Other options: `--list` (show the watch's status and queue, change nothing), `--dry-run
@@ -319,8 +320,8 @@ export BARVIS_TZ=Europe/Berlin           # the feed's time zone and the T5 clock
 - Exit codes: 0 ok, 1 some actions still waiting, 2 retry later, 3 token rejected,
   incompatible or bad settings, 4 T5 not found.
 - The code is in `tools/pda_relay.py` and `tools/barvis_relay/pda_*.py`. The tests are in
-  `tools/tests/test_pda.py` (fake T5, fake server) and `server/tests/test_pda_feed.py` (the
-  real API, seeded fictional data).
+  `tools/tests/test_pda.py` (fake T5, fake server) and
+  `server/tests/integration/test_pda_feed.py` (the real API, seeded fictional data).
 
 ## Build
 

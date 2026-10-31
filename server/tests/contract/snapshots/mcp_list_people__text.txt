@@ -1,0 +1,32 @@
+Speakers:
+- Me (owner) (voice known): 32 lines in 15 conversations, last 2026-10-19 19:00
+- Speaker 1: 5 lines in 2 conversations, last 2026-10-18 11:00
+- Speaker 2: 1 lines in 1 conversations, last 2026-10-17 23:00
+- Maria: 5 lines in 2 conversations, last 2026-10-16 22:00
+- Alice (voice known): 8 lines in 3 conversations, last 2026-10-14 17:00
+- Sam Example: 3 lines in 1 conversations, last 2026-10-13 17:00
+- Kai Example: 1 lines in 1 conversations, last 2026-10-13 17:00
+- Dana Example: 2 lines in 1 conversations, last 2026-10-13 17:00
+- Jonas: 3 lines in 1 conversations, last 2026-10-10 20:00
+- Omar Example: 2 lines in 1 conversations, last 2026-10-09 18:00
+- Priya Example: 3 lines in 1 conversations, last 2026-10-09 18:00
+- Lena Example: 2 lines in 1 conversations, last 2026-10-09 18:00
+- Ben: 3 lines in 1 conversations, last 2026-10-07 11:30
+- Tom: 3 lines in 1 conversations, last 2026-10-03 13:00
+- Dr. Patel: 3 lines in 1 conversations, last 2026-09-30 16:00
+Mentioned:
+- Mom: 3 conversations, last 2026-10-19
+- Me: 15 conversations, last 2026-10-19
+- Maria: 3 conversations, last 2026-10-19
+- Aunt Rosa: 1 conversations, last 2026-10-16
+- Alice: 4 conversations, last 2026-10-15
+- Sam Example: 1 conversations, last 2026-10-13
+- Kai Example: 1 conversations, last 2026-10-13
+- Dana Example: 1 conversations, last 2026-10-13
+- Jonas: 1 conversations, last 2026-10-10
+- Priya Example: 1 conversations, last 2026-10-09
+- Omar Example: 1 conversations, last 2026-10-09
+- Lena Example: 1 conversations, last 2026-10-09
+- Ben: 1 conversations, last 2026-10-07
+- Tom: 1 conversations, last 2026-10-03
+- Dr. Patel: 1 conversations, last 2026-09-30

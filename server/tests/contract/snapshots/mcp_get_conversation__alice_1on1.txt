@@ -1,0 +1,9 @@
+"1:1 with Alice: vendor contracts" — 2026-10-14 17:00–17:00 (Europe/Berlin), device trex3pro, type meeting
+Speakers: Alice, Me. People: Alice, Me
+Link: https://athena.example.org/view/000000000000000000000000c0de000a?sig=db3160667ccbc7cacc4fcb11ef4c9c29
+Summary: Alice moves to Berlin on January 12; the user takes over her vendor contracts and the budget cut is now ten percent.
+* Alice's move date is January 12
+* Budget cut now ten percent
+Action #12 [open]: Take over Alice's vendor contracts (owner Me) https://athena.example.org/view/000000000000000000000000c0de000a?sig=db3160667ccbc7cacc4fcb11ef4c9c29#t=24
+Fact [Q4 budget]: The Q4 budget cut is ten percent https://athena.example.org/view/000000000000000000000000c0de000a?sig=db3160667ccbc7cacc4fcb11ef4c9c29#t=32
+When answering, put the link next to each fact you use.

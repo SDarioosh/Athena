@@ -5,10 +5,13 @@ plugins {
 }
 
 android {
-    namespace = "org.barvis.sound.relay"
+    namespace = "org.athena.relay"
     compileSdk = 35
 
     defaultConfig {
+        // The app's identity on the phone: keep it unchanged (it differs from the Kotlin
+        // namespace on purpose), so new builds update the installed app in place and keep its
+        // pairing, token and settings.
         applicationId = "org.barvis.sound.relay"
         minSdk = 26
         targetSdk = 35
@@ -51,6 +54,15 @@ android {
         disable += setOf("GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion",
             "OldTargetApi", "BatteryLife")
     }
+}
+
+// The uploader tests read docs/api/ingest-client-cases.json (the table every uploader shares,
+// from the module directory). Declared as an input so a change to it reruns the tests instead
+// of reusing a cached result.
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    inputs.file(rootProject.file("../docs/api/ingest-client-cases.json"))
+        .withPropertyName("ingestClientCases")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 dependencies {

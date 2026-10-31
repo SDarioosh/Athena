@@ -1,6 +1,7 @@
 # Athena Zoom bot: phased plan
 
-As of 2026-10-27. Status: plan, nothing built yet. Each lane below is sized for one Claude
+As of 2026-10-27. Status (2026-10-29): **built through Phase 5** (server, bot and hub merged; the Phase 0 join test ran on
+the owner's server on 2026-10-27); the bot's newer SDK calls and one real meeting still need the owner's test. Each lane below is sized for one Claude
 subagent, one branch and one PR.
 
 ## Goal and priorities
@@ -108,7 +109,7 @@ meeting ends; the hub, API and worker are the services already running today.
 - `meeting-bot/`: the bot (`athena-meeting-bot`). Arguments: meeting link or id + passcode,
   Athena session id, a short-lived upload token. It joins as "Athena", records, uploads and
   exits.
-- `server/convo_server/meetings.py`: the launcher, imported lazily by the API. It checks the
+- `server/athena/meetings.py`: the launcher, imported lazily by the API. It checks the
   request, enforces the bot limit, starts the bot under safety caps, and tracks its state in
   SQLite (`meetings` table).
 - New API routes on the existing ingest API: `POST /v1/meetings` (join),
@@ -242,7 +243,7 @@ below are agreed.
       session and exit within 5 s.
 - [ ] Host tests for the track chunker with recorded PCM fixtures (no SDK needed in CI).
 
-**Lane 1B, launcher (`server/convo_server/meetings.py`, `api.py`):**
+**Lane 1B, launcher (`server/athena/meetings.py`, `api.py`):**
 
 - [x] `POST`/`GET`/`DELETE /v1/meetings`, behind the bearer token; `meetings` table; bot
       limit; `501` when `CONVO_MEETING_BOT_PATH` is unset.
@@ -260,7 +261,7 @@ below are agreed.
       dedicated Athena Zoom account (`CONVO_ZOOM_JOIN_TOKEN=zak`), once Phase 0 Test C shows
       Zoom accepts it. Tokens are fetched only on a join request; nothing refreshes in the
       background.
-- [x] Tests with a fake bot script; a test that importing `convo_server.api` starts no
+- [x] Tests with a fake bot script; a test that importing `athena.api` starts no
       thread and imports nothing from `meetings.py`.
 
 **Lane 1C, ingest (`api.py`, `pipeline.py`, `store.py`):**
@@ -354,7 +355,7 @@ The owner pastes a Zoom link on the Record a call page and Athena joins. Module 
 (Athena repo), then the hub PR (`SDarioosh/odysseus-expanded`), linked both ways. Depends on
 Phase 1B.
 
-**Lane 4A, Athena relay (`server/convo_server/ingest_relay.py`):**
+**Lane 4A, Athena relay (`server/athena/ingest_relay.py`):**
 
 - [x] Forward `POST /meetings`, `GET`/`DELETE /meetings/{id}` to the ingest API with
       `CONVO_INGEST_TOKEN`, behind `BearerAuth`. Not MCP tools.
@@ -411,7 +412,7 @@ summary ready soon after the meeting. Nothing new runs in the background between
 
 - [x] Transcribe each track's chunks while the meeting runs, so only the last chunk and the
       summary are left when it ends. Uses the existing worker and whisper-server; no new
-      process (`server/convo_server/meeting_live.py`, `CONVO_MEETING_LIVE_TRANSCRIBE`).
+      process (`server/athena/meeting_live.py`, `CONVO_MEETING_LIVE_TRANSCRIBE`).
       Target: summary within 2 minutes of the meeting ending (owner: measure on the
       server, see the 5D PR's Server verification).
 

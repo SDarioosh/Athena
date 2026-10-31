@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Runs athena-meeting-bot built against the sandbox stub SDK (meeting-bot/bot/sdkstub)
 through each fake meeting scenario and checks its status lines, exit code and timing
-against the launcher contract (server/convo_server/meetings.py, server/README.md "Bot
+against the launcher contract (server/athena/meetings/bot/launcher.py, docs/api/meetings.md "Bot
 contract"). A tiny local HTTP server stands in for Athena's upload API. Fictional data.
 
 usage: stub_scenarios.py <path to athena-meeting-bot>

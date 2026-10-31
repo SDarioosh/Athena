@@ -56,7 +56,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 BOT_NAME = "athena-meeting-bot"
-DEFAULT_CAP = "2G"  # CONVO_MEETING_BOT_MEMORY's default (convo_server/config.py)
+DEFAULT_CAP = "2G"  # CONVO_MEETING_BOT_MEMORY's default (athena/config.py)
 WARN_FRACTION = 0.75
 SAMPLE_RATE = 32000  # the SDK's raw audio: s16le mono 32 kHz
 # fictional values only: placeholders that are never real secrets
@@ -97,21 +97,28 @@ def suggest_cap(peak: int, headroom: float = 1.5, step: int = 256 * 1024 ** 2) -
     return f"{want // 1024 ** 3}G" if want % 1024 ** 3 == 0 else f"{want // 1024 ** 2}M"
 
 
+CAP_NAMES = ("ATHENA_MEETING_BOT_MEMORY", "CONVO_MEETING_BOT_MEMORY")  # new name, old name
+
+
 def configured_cap(env_file: Path | None) -> tuple[int, str]:
-    """The memory cap the launcher uses: CONVO_MEETING_BOT_MEMORY from the environment,
-    else from server/.env (only that one line is read), else 2G."""
-    value, source = os.environ.get("CONVO_MEETING_BOT_MEMORY", "").strip(), "environment"
-    if not value and env_file is not None:
+    """The memory cap the launcher uses: ATHENA_MEETING_BOT_MEMORY or its old name
+    CONVO_MEETING_BOT_MEMORY from the environment, else from server/.env (only those lines
+    are read), else 2G; the new name first, like the server's settings."""
+    found = {name: os.environ.get(name, "").strip() for name in CAP_NAMES}
+    where = "environment"
+    if not any(found.values()) and env_file is not None:
+        where = str(env_file)
         try:
             for line in env_file.read_text(errors="replace").splitlines():
                 key, sep, val = line.strip().partition("=")
-                if sep and key.strip() == "CONVO_MEETING_BOT_MEMORY":
-                    value, source = val.strip().strip("\"'"), str(env_file)
+                if sep and key.strip() in CAP_NAMES:
+                    found[key.strip()] = val.strip().strip("\"'")
         except OSError:
             pass
-    if not value:
-        return parse_size(DEFAULT_CAP), "default 2G"
-    return parse_size(value), f"CONVO_MEETING_BOT_MEMORY={value} ({source})"
+    for name in CAP_NAMES:
+        if found[name]:
+            return parse_size(found[name]), f"{name}={found[name]} ({where})"
+    return parse_size(DEFAULT_CAP), "default 2G"
 
 
 # ------------------------------------------------------------------ /proc parsing
@@ -977,9 +984,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fixture-seconds", type=float, default=12.0,
                     help="fixture: length of the generated PCM, looped (default 12)")
     ap.add_argument("--max-vmpeak", help="memory cap, e.g. 2G (default: "
-                    "CONVO_MEETING_BOT_MEMORY from the environment or server/.env, else 2G)")
+                    "ATHENA_/CONVO_MEETING_BOT_MEMORY from the environment or server/.env, "
+                    "else 2G)")
     ap.add_argument("--env-file", type=Path, default=None,
-                    help="where to read CONVO_MEETING_BOT_MEMORY (default server/.env)")
+                    help="where to read ATHENA_/CONVO_MEETING_BOT_MEMORY (default server/.env)")
     ap.add_argument("--interval", type=float, default=0.2, help="sampling interval (s)")
     ap.add_argument("--json", action="store_true", help="print the report as JSON")
     a = ap.parse_args(argv)

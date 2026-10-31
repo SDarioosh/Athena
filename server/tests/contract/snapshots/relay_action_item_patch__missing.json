@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "action item not found"
+  },
+  "content_type": "application/json",
+  "status": 404
+}

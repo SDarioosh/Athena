@@ -8,10 +8,10 @@ import logging
 import socket
 
 import pytest
-from barvis_relay import drain as d
-from barvis_relay import protocol as p
-from barvis_relay.anchors import Anchors
-from barvis_relay.uploader import AUTH, RETRY, SKIP, Uploader, UploadError, classify
+from athena_relay import drain as d
+from athena_relay import protocol as p
+from athena_relay.anchors import Anchors
+from athena_relay.uploader import AUTH, RETRY, SKIP, Uploader, UploadError, classify
 from conftest import T0_MS, TOKEN, FakeChunk, FakeWatch, make_session
 
 NOW = T0_MS / 1000 + 3600  # relay clock: an hour after the recordings

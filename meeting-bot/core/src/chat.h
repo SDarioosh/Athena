@@ -2,7 +2,7 @@
 // <work_dir>/chat.jsonl as they arrive (one JSON object per line, already in the shape of
 // the server's `lines[]`); participants and topic stay in memory and in
 // <work_dir>/participants.json. finish() sends them in one POST /v1/sessions/{id}/chat
-// (server/README.md, "Meeting chat, topic and participants"). Thread-safe.
+// (docs/api/meetings.md, "Meeting chat, topic and participants"). Thread-safe.
 #pragma once
 
 #include <cstdint>

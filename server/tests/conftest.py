@@ -7,14 +7,15 @@ import httpx
 import numpy as np
 import pytest
 
-from convo_server.audio import SAMPLE_RATE, to_wav_bytes
-from convo_server.config import Settings
-from convo_server.diarize import Diarizer, load_voices
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.pipeline import Pipeline
-from convo_server.store import Store
-from convo_server.transcribe import TranscriptPiece
-from convo_server.vad import EnergyVAD
+from athena.audio import SAMPLE_RATE, to_wav_bytes
+from athena.config import Settings
+from athena.db.store import Store
+from athena.diarize import Diarizer, load_voices
+from athena.pipeline import Pipeline
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
+from athena.transcribe import TranscriptPiece
+from athena.vad import EnergyVAD
 
 TOKEN = "test-token-0123456789abcdef"
 
@@ -110,6 +111,16 @@ def fake_llm_transport(summary: dict | None = None, digest: dict | None = None,
     return httpx.MockTransport(handler)
 
 
+def make_summarizer(summary: dict | None = None, *, scores: dict[str, int] | None = None,
+                    log: list | None = None, **opts) -> Summarizer:
+    """The owner "Me"'s summarizer in Europe/Berlin, answered by the fake llama-server
+    (``fake_llm_transport`` with ``summary``, ``scores`` and ``log``); ``opts`` go to
+    ``Summarizer`` (e.g. ``min_words=1``)."""
+    llm = LLMClient("http://llm.test/v1", "m",
+                    transport=fake_llm_transport(summary=summary, log=log, scores=scores))
+    return Summarizer(llm, "Me", timezone="Europe/Berlin", **opts)
+
+
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(ingest_token=TOKEN, data_dir=tmp_path / "data", silence_stop_seconds=60,
@@ -139,7 +150,7 @@ def pipeline(settings: Settings, llm_log: list) -> Pipeline:
 def client(pipeline: Pipeline):
     from fastapi.testclient import TestClient
 
-    from convo_server.api import create_app
+    from athena.api import create_app
 
     with TestClient(create_app(pipeline)) as c:
         c.headers["Authorization"] = f"Bearer {TOKEN}"

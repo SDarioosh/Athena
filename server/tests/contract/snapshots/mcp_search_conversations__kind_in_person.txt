@@ -1,0 +1,32 @@
+10 conversations (times are Europe/Berlin). When answering, put the link next to each fact you use:
+- 2026-10-18 11:00–11:00 "At the bakery" id 000000000000000000000000c0de000e; people: Me
+  The rye bread is ready at four; the bakery is closed on Monday.
+  https://athena.example.org/view/000000000000000000000000c0de000e?sig=c0004010f631faed0298639d8f2816b7
+- 2026-10-17 23:00–23:00 "(not summarized: looked like tv_or_media)" id 000000000000000000000000c0de000d; people: —
+  
+  https://athena.example.org/view/000000000000000000000000c0de000d?sig=57015eaee6dba84b896ca785e4c4882e
+- 2026-10-16 22:00–22:00 "Birthday dinner plans" id 000000000000000000000000c0de000c; people: Maria, Me, Aunt Rosa
+  Casa Lupo is booked for twelve guests on November 8 at 7 p.m.; the user picks up Aunt Rosa from the station.
+  https://athena.example.org/view/000000000000000000000000c0de000c?sig=3bda567d315255a7dd432e82127f4a6e
+- 2026-10-14 17:00–17:00 "1:1 with Alice: vendor contracts" id 000000000000000000000000c0de000a; people: Alice, Me
+  Alice moves to Berlin on January 12; the user takes over her vendor contracts and the budget cut is now ten percent.
+  https://athena.example.org/view/000000000000000000000000c0de000a?sig=db3160667ccbc7cacc4fcb11ef4c9c29
+- 2026-10-10 20:00–20:00 "Dinner with Jonas" id 000000000000000000000000c0de0007; people: Jonas, Me
+  Jonas is training for the Lisbon marathon and recommended The Overstory.
+  https://athena.example.org/view/000000000000000000000000c0de0007?sig=8edf69b52fa708eab051a1fa25d7c16b
+- 2026-10-07 11:30–11:30 "Standup: API migration and client demo" id 000000000000000000000000c0de0005; people: Ben, Alice, Me
+  Ben finished the API migration; the client demo moved to October 23 and the user will review Ben's pull request.
+  https://athena.example.org/view/000000000000000000000000c0de0005?sig=8f6c5a9e76beab44dcf8c55c6b3035a6
+- 2026-10-03 13:00–13:00 "Lease renewal and rent increase" id 000000000000000000000000c0de0004; people: Tom, Me
+  Tom raises the rent from 1450 to 1520 euros from January and needs the signed renewal by October 31; he will fix the bathroom fan.
+  https://athena.example.org/view/000000000000000000000000c0de0004?sig=2b5cbffcbc727c29bfb8d2f7b20b8066
+- 2026-09-30 16:00–16:00 "Dentist: cracked molar" id 000000000000000000000000c0de0003; people: Dr. Patel, Me
+  Dr. Patel found a cracked lower left molar that needs a crown; the follow-up is on October 21 at 9 a.m.
+  https://athena.example.org/view/000000000000000000000000c0de0003?sig=78af3b41afd383997de9db47a584d3c8
+- 2026-09-22 21:30–21:30 "Mom's seventieth birthday" id 000000000000000000000000c0de0002; people: Maria, Me, Mom
+  Maria and the user planned a dinner for Mom's seventieth birthday at Casa Lupo; the user takes care of the gift.
+  https://athena.example.org/view/000000000000000000000000c0de0002?sig=7b03dc7f7b65fca7db9ee25815324434
+- 2026-09-15 12:00–12:01 "Q4 budget cut" id 000000000000000000000000c0de0001; people: Alice, Me
+  Alice said finance is cutting the Q4 budget by fifteen percent; the user will send a revised spreadsheet by Friday.
+  https://athena.example.org/view/000000000000000000000000c0de0001?sig=2b54669d195fa8debf17a886d696a0f8
+When answering, put the link next to each fact you use.

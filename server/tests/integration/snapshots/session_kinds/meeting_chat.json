@@ -1,0 +1,453 @@
+{
+ "audio_files": [
+  "omi/s9/000000.wav"
+ ],
+ "rows": {
+  "action_items": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "created_at": 1760000030.0,
+    "due": "Friday",
+    "due_date": "2025-10-10",
+    "due_time": null,
+    "duration_minutes": null,
+    "edited": 0,
+    "explicit": 1,
+    "id": 1,
+    "kind": "task",
+    "list_name": null,
+    "location": null,
+    "note_title": null,
+    "owner": "Me",
+    "source_at": 1760000001.0,
+    "status": "open",
+    "text": "Book flights",
+    "time_unclear": 0,
+    "title": "Book flights"
+   }
+  ],
+  "chunks": [
+   {
+    "audio_path": "000000.wav",
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000030.0,
+    "sequence": 0,
+    "session_id": "s9",
+    "speech": "[[1.98, 8.01]]",
+    "started_at": 1760000000.0,
+    "track": "",
+    "track_name": null
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000030.0,
+    "sequence": 0,
+    "session_id": "m1",
+    "speech": "[[0.0, 6.0]]",
+    "started_at": 1760000000.0,
+    "track": "16778240",
+    "track_name": "Alice Example"
+   },
+   {
+    "audio_path": null,
+    "codec": "wav",
+    "duration": 30.0,
+    "received_at": 1760000030.0,
+    "sequence": 0,
+    "session_id": "m1",
+    "speech": "[[9.99, 14.01]]",
+    "started_at": 1760000000.0,
+    "track": "16780288",
+    "track_name": "cleo example"
+   }
+  ],
+  "conversation_people": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "name": "Alice"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "name": "Me"
+   }
+  ],
+  "conversations": [
+   {
+    "device": "zoom",
+    "discard_reason": null,
+    "ended_at": 1760000025.0,
+    "error": null,
+    "id": "000000000000000000000000c0de0001",
+    "key_points": "[\"Trip to Lisbon in May\"]",
+    "kind": "casual",
+    "people": "[\"Alice\", \"Me\"]",
+    "started_at": 1760000000.0,
+    "status": "summarized",
+    "summary": "Alice and the user planned a trip to Lisbon.",
+    "title": "Planning the trip",
+    "topics": "[\"travel\"]",
+    "transcript_pruned_at": null,
+    "updated_at": 1760000030.0
+   }
+  ],
+  "facts": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "erased_at": null,
+    "fact": "Alice is vegetarian",
+    "id": 1,
+    "kind": "other",
+    "retired_at": null,
+    "retired_reason": null,
+    "source_at": 1760000002.0,
+    "status": "current",
+    "subject": "Alice",
+    "superseded_by": null
+   }
+  ],
+  "meeting_chat": [
+   {
+    "line_key": "37a27c2a155303e3f333b8b768a469477926ae3d08b1a912aeb4e47ea8f6142d",
+    "session_id": "m1"
+   },
+   {
+    "line_key": "5cd308545bfead2b442328f5b6a5076b1a463dbfc4527767c8282856dc6783fb",
+    "session_id": "m1"
+   },
+   {
+    "line_key": "74fc59c2ef4a2eb073b9aea208f9d1dc032e5d4f3690775418cd3393e1da5b3c",
+    "session_id": "m1"
+   }
+  ],
+  "meeting_info": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "participants": "[{\"zoom_user_id\": \"16778240\", \"zoom_name\": \"Alice Example\", \"name\": \"Alice Example\", \"person_id\": 2, \"joined_at\": null, \"left_at\": null}, {\"zoom_user_id\": \"16779264\", \"zoom_name\": \"Bo Example\", \"name\": \"Bo Example\", \"person_id\": 3, \"joined_at\": null, \"left_at\": null}, {\"zoom_user_id\": \"16780288\", \"zoom_name\": \"Cleo Example\", \"name\": \"Me\", \"person_id\": 1, \"joined_at\": null, \"left_at\": null}]",
+    "session_id": "m1",
+    "topic": "Budget review",
+    "updated_at": 1760000030.0
+   }
+  ],
+  "people": [
+   {
+    "created_at": 1760000000.0,
+    "id": 1,
+    "is_owner": 1,
+    "merged_into": null,
+    "name": "Me",
+    "speaker_id": 1
+   },
+   {
+    "created_at": 1760000030.0,
+    "id": 2,
+    "is_owner": 0,
+    "merged_into": null,
+    "name": "Alice Example",
+    "speaker_id": null
+   },
+   {
+    "created_at": 1760000030.0,
+    "id": 3,
+    "is_owner": 0,
+    "merged_into": null,
+    "name": "Bo Example",
+    "speaker_id": null
+   },
+   {
+    "created_at": 1760000030.0,
+    "id": 4,
+    "is_owner": 0,
+    "merged_into": null,
+    "name": "Alice",
+    "speaker_id": null
+   }
+  ],
+  "people_aliases": [
+   {
+    "alias": "cleo example",
+    "person_id": 1
+   }
+  ],
+  "search_fts": [
+   {
+    "body": "Alice: Alice is vegetarian",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "fact",
+    "ref_id": "1"
+   },
+   {
+    "body": "Book flights",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "action_item",
+    "ref_id": "1"
+   },
+   {
+    "body": "Online meeting: Budget review\nParticipants: Alice Example, Bo Example, Me\nAlice Example: words at 300 hz\nMe: words at 700 hz\nAlice Example (chat): Slides: https://example.com/q4.pdf\nBo Example (chat): hi all\nBo Example (chat): thanks, bye",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "transcript",
+    "ref_id": "000000000000000000000000c0de0001"
+   },
+   {
+    "body": "Planning the trip\nAlice and the user planned a trip to Lisbon.\nTrip to Lisbon in May\ntravel\nAlice Me",
+    "conversation_id": "000000000000000000000000c0de0001",
+    "kind": "conversation",
+    "ref_id": "000000000000000000000000c0de0001"
+   }
+  ],
+  "segments": [
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "device": "zoom",
+    "ended_at": 1760000006.25,
+    "erased": 0,
+    "id": 3,
+    "is_owner": 0,
+    "kind": "speech",
+    "session_id": "m1",
+    "speaker": "Alice Example",
+    "started_at": 1760000000.0,
+    "text": "words at 300 hz"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "device": "zoom",
+    "ended_at": 1760000012.0,
+    "erased": 0,
+    "id": 1,
+    "is_owner": 0,
+    "kind": "chat",
+    "session_id": "m1",
+    "speaker": "Alice Example",
+    "started_at": 1760000012.0,
+    "text": "Slides: https://example.com/q4.pdf"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "device": "zoom",
+    "ended_at": 1760000014.0,
+    "erased": 0,
+    "id": 2,
+    "is_owner": 0,
+    "kind": "chat",
+    "session_id": "m1",
+    "speaker": "Bo Example",
+    "started_at": 1760000014.0,
+    "text": "hi all"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "device": "zoom",
+    "ended_at": 1760000014.26,
+    "erased": 0,
+    "id": 4,
+    "is_owner": 1,
+    "kind": "speech",
+    "session_id": "m1",
+    "speaker": "Me",
+    "started_at": 1760000009.74,
+    "text": "words at 700 hz"
+   },
+   {
+    "conversation_id": "000000000000000000000000c0de0001",
+    "device": "zoom",
+    "ended_at": 1760000025.0,
+    "erased": 0,
+    "id": 5,
+    "is_owner": 0,
+    "kind": "chat",
+    "session_id": "m1",
+    "speaker": "Bo Example",
+    "started_at": 1760000025.0,
+    "text": "thanks, bye"
+   }
+  ],
+  "sessions": [
+   {
+    "device": "omi",
+    "error": null,
+    "id": "s9",
+    "kind": "conversation",
+    "last_chunk_at": 1760000030.0,
+    "last_speech_at": 1760000008.01,
+    "received_at": 1760000030.0,
+    "started_at": 1760000000.0,
+    "status": "recording",
+    "stop_reason": null
+   },
+   {
+    "device": "zoom",
+    "error": null,
+    "id": "m1",
+    "kind": "conversation",
+    "last_chunk_at": 1760000030.0,
+    "last_speech_at": 1760000014.01,
+    "received_at": 1760000030.0,
+    "started_at": 1760000000.0,
+    "status": "done",
+    "stop_reason": "client"
+   }
+  ],
+  "speakers": [
+   {
+    "created_at": 1760000000.0,
+    "embedding": "sha256:96a50e6c30a75949",
+    "id": 1,
+    "is_owner": 1,
+    "name": "Me"
+   }
+  ],
+  "voice_samples": [
+   {
+    "created_at": 1760000000.0,
+    "embedding": "sha256:96a50e6c30a75949",
+    "id": 1,
+    "session_id": null,
+    "source": "enrolled",
+    "speaker_id": 1
+   }
+  ]
+ },
+ "steps": [
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": null,
+    "session_seconds": 30.0,
+    "speech_seconds": 6.0,
+    "stop": false,
+    "trailing_silence_seconds": 24.0
+   },
+   "step": "ingest m1 16778240#0 @0"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": null,
+    "session_seconds": 30.0,
+    "speech_seconds": 4.02,
+    "stop": false,
+    "trailing_silence_seconds": 15.99
+   },
+   "step": "ingest m1 16780288#0 @0"
+  },
+  {
+   "out": {
+    "added": 2,
+    "conversation_id": null,
+    "duplicates": 0,
+    "private_dropped": 1,
+    "result": "queued"
+   },
+   "step": "chat m1"
+  },
+  {
+   "out": true,
+   "step": "end m1"
+  },
+  {
+   "llm": [
+    {
+     "messages_sha256": "77dc5b7b3bc17a035d038b66a99512357a5c6bef03a60daf1f3fa35e3364c0bd",
+     "schema": "Triage",
+     "user_head": "This is an online meeting with the topic \"Budget review\".\nParticipants: Alice Example, Bo Example, Me.\nLines marked \"(chat)\" were typed in the meeting chat, not spoken; keep links and file names from them exactly as written.\n[0] Alice Example: words at 300 hz\n[9] Me: words at 700 hz\n[12] Alice Examp"
+    },
+    {
+     "messages_sha256": "62ba5bc67c5d6267af33732956dc3434fdb130ebb1e2ad2998416e3ba34b5928",
+     "schema": "SummaryNotes",
+     "user_head": "This is an online meeting with the topic \"Budget review\".\nParticipants: Alice Example, Bo Example, Me.\nLines marked \"(chat)\" were typed in the meeting chat, not spoken; keep links and file names from them exactly as written.\n[0] Alice Example: words at 300 hz\n[9] Me: words at 700 hz\n[12] Alice Examp"
+    },
+    {
+     "messages_sha256": "c37b1208f47918f701a0e37d68c3a5d1271da4e2d431580833ebf03cdb529ccc",
+     "schema": "ActionItemList",
+     "user_head": "This is an online meeting with the topic \"Budget review\".\nParticipants: Alice Example, Bo Example, Me.\nLines marked \"(chat)\" were typed in the meeting chat, not spoken; keep links and file names from them exactly as written.\n[0] Alice Example: words at 300 hz\n[9] Me: words at 700 hz\n[12] Alice Examp"
+    },
+    {
+     "messages_sha256": "c4acce6d515b007ace5637f4adacacf32a3a820b388b93e2529ca21037110167",
+     "schema": "FactList",
+     "user_head": "This is an online meeting with the topic \"Budget review\".\nParticipants: Alice Example, Bo Example, Me.\nLines marked \"(chat)\" were typed in the meeting chat, not spoken; keep links and file names from them exactly as written.\n[0] Alice Example: words at 300 hz\n[9] Me: words at 700 hz\n[12] Alice Examp"
+    },
+    {
+     "messages_sha256": "dafca67db07367bfc58295a872648c771ccd8cc8ec6feeac9e604feb34acbb92",
+     "schema": "FactReview",
+     "user_head": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\", \"said\": \"\"}]}"
+    }
+   ],
+   "out": 1,
+   "step": "process_pending"
+  },
+  {
+   "out": {
+    "added": 1,
+    "conversation_id": "000000000000000000000000c0de0001",
+    "duplicates": 0,
+    "private_dropped": 0,
+    "result": "attached"
+   },
+   "step": "chat m1"
+  },
+  {
+   "out": {
+    "added": 0,
+    "conversation_id": "000000000000000000000000c0de0001",
+    "duplicates": 1,
+    "private_dropped": 0,
+    "result": "unchanged"
+   },
+   "step": "chat m1"
+  },
+  {
+   "llm": [
+    {
+     "messages_sha256": "fe33df5be236e9fadf499f9fcb879e3bc32e3c4778152e57f2fe5b33d59433c3",
+     "schema": "Triage",
+     "user_head": "This is an online meeting with the topic \"Budget review\".\nParticipants: Alice Example, Bo Example, Me.\nLines marked \"(chat)\" were typed in the meeting chat, not spoken; keep links and file names from them exactly as written.\n[0] Alice Example: words at 300 hz\n[9] Me: words at 700 hz\n[12] Alice Examp"
+    },
+    {
+     "messages_sha256": "126166103c7a4152107b98728667e10175f4c0f671f452ce5bcdc957c82c757f",
+     "schema": "SummaryNotes",
+     "user_head": "This is an online meeting with the topic \"Budget review\".\nParticipants: Alice Example, Bo Example, Me.\nLines marked \"(chat)\" were typed in the meeting chat, not spoken; keep links and file names from them exactly as written.\n[0] Alice Example: words at 300 hz\n[9] Me: words at 700 hz\n[12] Alice Examp"
+    },
+    {
+     "messages_sha256": "7974d82e6c8eca8b68c32f7544e2ad5ac261d1648179ae40e996457be5a16cec",
+     "schema": "ActionItemList",
+     "user_head": "This is an online meeting with the topic \"Budget review\".\nParticipants: Alice Example, Bo Example, Me.\nLines marked \"(chat)\" were typed in the meeting chat, not spoken; keep links and file names from them exactly as written.\n[0] Alice Example: words at 300 hz\n[9] Me: words at 700 hz\n[12] Alice Examp"
+    },
+    {
+     "messages_sha256": "f395b48cafe951f96edc890bac320ee19b64c4292aa974b26b35498c4ddb9095",
+     "schema": "FactList",
+     "user_head": "This is an online meeting with the topic \"Budget review\".\nParticipants: Alice Example, Bo Example, Me.\nLines marked \"(chat)\" were typed in the meeting chat, not spoken; keep links and file names from them exactly as written.\n[0] Alice Example: words at 300 hz\n[9] Me: words at 700 hz\n[12] Alice Examp"
+    },
+    {
+     "messages_sha256": "dafca67db07367bfc58295a872648c771ccd8cc8ec6feeac9e604feb34acbb92",
+     "schema": "FactReview",
+     "user_head": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian\", \"said\": \"\"}]}"
+    }
+   ],
+   "out": 0,
+   "step": "process_pending"
+  },
+  {
+   "out": {
+    "duplicate": false,
+    "ok": true,
+    "reason": null,
+    "session_seconds": 30.0,
+    "speech_seconds": 6.03,
+    "stop": false,
+    "trailing_silence_seconds": 21.99
+   },
+   "step": "ingest s9 -#0 @0"
+  },
+  {
+   "out": {
+    "error": "NotAMeeting: s9"
+   },
+   "step": "chat s9"
+  }
+ ]
+}

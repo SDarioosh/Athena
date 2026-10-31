@@ -1,0 +1,14 @@
+{
+  "body": {
+    "configured": false,
+    "join_token": "none",
+    "missing": [
+      "CONVO_ZOOM_CLIENT_ID",
+      "CONVO_ZOOM_CLIENT_SECRET",
+      "CONVO_ZOOM_REDIRECT_URL"
+    ],
+    "signed_in": false
+  },
+  "content_type": "application/json",
+  "status": 200
+}

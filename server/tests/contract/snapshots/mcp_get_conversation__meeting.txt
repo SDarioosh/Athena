@@ -1,0 +1,8 @@
+"Community garden budget" (Online meeting: Q4 budget review: community garden) — 2026-10-13 17:00–17:00 (Europe/Berlin), device zoom, type meeting
+Speakers: Dana Example, Kai Example, Me, Sam Example. People: Sam Example, Me, Kai Example, Dana Example. Participants: Sam Example (17:00–17:00), Me (17:00–17:00), Dana Example (17:00–17:00), Kai Example (17:00–17:00), Rafael Example (17:00–17:00)
+Link: https://athena.example.org/view/000000000000000000000000c0de0009?sig=47f586de44c8f2155c5cdc4605779495
+Summary: The tool shed goes to the second supplier for about 3200 euros; the user confirms the order by Friday.
+* Second supplier is cheaper
+Action #11 [open]: Confirm the tool shed order with the second supplier (owner Me) due 2026-10-16 (Friday) https://athena.example.org/view/000000000000000000000000c0de0009?sig=47f586de44c8f2155c5cdc4605779495#t=38
+Fact [Community garden]: The community garden buys its tool shed from the second supplier https://athena.example.org/view/000000000000000000000000c0de0009?sig=47f586de44c8f2155c5cdc4605779495#t=38
+When answering, put the link next to each fact you use.

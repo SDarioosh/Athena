@@ -13,10 +13,10 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from barvis_relay import pda_protocol as q
-from barvis_relay.drain import LinkLost
-from barvis_relay.pda_actions import CalAdd
-from barvis_relay.uploader import UploadError, classify
+from athena_relay import pda_protocol as q
+from athena_relay.drain import LinkLost
+from athena_relay.pda_actions import CalAdd
+from athena_relay.uploader import UploadError, classify
 
 TOKEN = "fictional-pda-token-51f4"
 NOW = 1_792_486_800.0  # 2026-10-20T09:00:00Z

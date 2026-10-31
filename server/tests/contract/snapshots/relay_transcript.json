@@ -1,0 +1,51 @@
+{
+  "body": {
+    "conversation_id": "000000000000000000000000c0de0007",
+    "segments": [
+      {
+        "at": "2026-10-10T18:00:00+00:00",
+        "is_owner": false,
+        "kind": "speech",
+        "offset": 0.0,
+        "speaker": "Jonas",
+        "text": "I signed up for the Lisbon marathon in December, training every morning now."
+      },
+      {
+        "at": "2026-10-10T18:00:08+00:00",
+        "is_owner": true,
+        "kind": "speech",
+        "offset": 8.0,
+        "speaker": "Me",
+        "text": "That's ambitious! How far are you running?"
+      },
+      {
+        "at": "2026-10-10T18:00:16+00:00",
+        "is_owner": false,
+        "kind": "speech",
+        "offset": 16.0,
+        "speaker": "Jonas",
+        "text": "Thirty kilometers on Sundays. Also you have to read The Overstory, best book I read this year."
+      },
+      {
+        "at": "2026-10-10T18:00:24+00:00",
+        "is_owner": true,
+        "kind": "speech",
+        "offset": 24.0,
+        "speaker": "Me",
+        "text": "Adding it to my list. Do you want the satay?"
+      },
+      {
+        "at": "2026-10-10T18:00:32+00:00",
+        "is_owner": false,
+        "kind": "speech",
+        "offset": 32.0,
+        "speaker": "Jonas",
+        "text": "No thanks, I'm allergic to peanuts, remember?"
+      }
+    ],
+    "started_at": "2026-10-10T18:00:00+00:00",
+    "title": "Dinner with Jonas"
+  },
+  "content_type": "application/json",
+  "status": 200
+}

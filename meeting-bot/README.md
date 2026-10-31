@@ -2,15 +2,16 @@
 
 Athena's Zoom meeting bot (`docs/zoom-meeting-bot-plan.md`). `core/` holds the SDK-free
 library (chunks, encoding, upload queue, chat); `bot/` holds `athena-meeting-bot`, the Zoom
-side. `spike/` is the Phase 0 spike, kept for reference.
+side. The Phase 0 spike was removed; its findings are in `docs/meeting-bot-spike.md` and
+its code is in git history (`git show b96332dce842:meeting-bot/spike/`).
 
 ## Bot (`bot/`, `athena-meeting-bot`)
 
 The Zoom side: joins one meeting as "Athena" with the Zoom Meeting SDK for Linux, feeds each
 participant's raw audio, the participant list, the chat and the topic to `athena::Core`,
-and leaves on its own. The launcher (`server/convo_server/meetings.py`) starts it per
+and leaves on its own. The launcher (`server/athena/meetings/bot/launcher.py`) starts it per
 meeting; nothing of it runs between meetings. Its command line, environment and status
-lines are the launcher's "Bot contract" in `server/README.md`.
+lines are the launcher's "Bot contract" in `docs/api/meetings.md`.
 
 ### Build
 
@@ -27,7 +28,15 @@ ctest --test-dir build-bot --output-on-failure   # core tests + bot_logic
 As the spike: the link `build-bot/sdklib/libmeetingsdk.so.1` (the SDK's soname) is made in the
 build dir, and the binary carries an old-style RPATH (`--disable-new-dtags`) to the SDK,
 `qt_libs` and `qt_libs/Qt/lib`, so it runs without `LD_LIBRARY_PATH` on the machine it was
-built on. It needs the SDK's system libraries (`SDK_LIBS` in `spike/Dockerfile`).
+built on. It needs the SDK's system libraries (`SDK_LIBS` in `server/Dockerfile`).
+
+**On the server** the bot is not built by hand: `server/scripts/deploy.sh`, which runs
+Athena in Docker only, builds it into the `sound-api` image when it finds the SDK
+(`ATHENA_ZOOM_SDK_DIR`, or `~/zoom-sdk`), next to its start script
+(`server/docker/athena-meeting-bot-run`, which the launcher runs) and the SDK
+(`server/README.md` "Meeting bot in Docker"). The hand build above is for development and
+the tests; to run it outside Docker, point `CONVO_MEETING_BOT_PATH` at a copy of that start
+script with the binary and a `zoomsdk` link to the SDK next to it.
 
 **Sandbox / CI without the SDK:** `-DZOOM_SDK_DIR=$PWD/meeting-bot/bot/sdkstub` builds the
 bot against our own stub headers and a fake `libmeetingsdk.so` (`sdkstub/stub_meetingsdk.cpp`).
@@ -117,8 +126,9 @@ teardown, well within the 5 s rule.
 ### SDK names beyond the spike
 
 Everything else the bot calls was compiled and run against SDK 7.1.5 by
-`spike/cpp/athena_spike.cpp`. These names are new and checked only against our stub; if
-the real build complains, fix them here (and in `sdkstub/h/athena_sdkstub.h`):
+the spike's `cpp/athena_spike.cpp` (removed; `git show
+b96332dce842:meeting-bot/spike/cpp/athena_spike.cpp`). These names are new and checked only
+against our stub; if the real build complains, fix them here (and in `sdkstub/h/athena_sdkstub.h`):
 
 - `IMeetingParticipantsController::GetParticipantsList()` returning `IList<unsigned int>*`,
   with `IList::GetCount()` / `GetItem(int)`

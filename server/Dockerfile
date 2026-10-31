@@ -1,10 +1,10 @@
-# odysseus-sound server image: `convo-server serve` and `convo-server mcp --http`.
+# Athena server image: `convo-server serve` and `convo-server mcp --http`.
 # Built and run by compose.yml (README "Docker"). Settings come from server/.env at run
 # time; nothing secret is baked in.
 #
 # Stages: `server` is the image (the default target, the last stage, is exactly it).
 # `meeting` adds the Zoom meeting bot on top; only compose.meeting.yml builds it, for
-# sound-api, when BARVIS_SOUND_ZOOM_SDK_DIR is set (README "Meeting bot in Docker").
+# sound-api, when ATHENA_ZOOM_SDK_DIR is set (README "Meeting bot in Docker").
 # Without that target BuildKit skips the bot stages and needs no SDK.
 ARG BASE=python:3.12-slim
 # Libraries the Zoom Meeting SDK and its bundled Qt load (meeting-bot/spike/Dockerfile,
@@ -38,12 +38,14 @@ WORKDIR /app
 # (CUDA 13) and fails to load next to this one. The constraints keep these builds when
 # the extras are installed.
 COPY pyproject.toml ./
-RUN mkdir convo_server && touch convo_server/__init__.py \
+RUN mkdir athena && touch athena/__init__.py \
     && pip install --no-cache-dir --index-url "$TORCH_INDEX" torch torchaudio torchcodec \
     && pip freeze | grep -E '^(torch|torchaudio|torchcodec)==' > /tmp/torch-pins.txt \
     && pip install --no-cache-dir -c /tmp/torch-pins.txt ".[$EXTRAS]" \
-    && pip uninstall -y -q convo-server && rm -rf convo_server build
+    && pip uninstall -y -q athena-server && rm -rf athena build
 
+# convo_server: the package's old name, an alias of athena for old commands and imports.
+COPY athena ./athena
 COPY convo_server ./convo_server
 COPY scripts ./scripts
 RUN pip install --no-cache-dir --no-deps . && rm -rf build
@@ -96,7 +98,7 @@ COPY docker/athena-meeting-bot-run ${BOT_DIR}/athena-meeting-bot-run
 # The SDK's soname is libmeetingsdk.so.1 but it ships as libmeetingsdk.so (the spike's
 # link trick), made in the image's copy, never in the owner's folder. Then fail the build
 # if the bot misses a library, seen as the launcher starts it: an environment with only
-# the variables meetings.py keeps (_KEEP_ENV), through the start script.
+# the variables meetings/bot/launcher.py keeps (_KEEP_ENV), through the start script.
 RUN sdk=${BOT_DIR}/zoomsdk \
     && if [ ! -e $sdk/libmeetingsdk.so.1 ]; then ln -s libmeetingsdk.so $sdk/libmeetingsdk.so.1; fi \
     && chmod 0755 ${BOT_DIR}/athena-meeting-bot ${BOT_DIR}/athena-meeting-bot-run \

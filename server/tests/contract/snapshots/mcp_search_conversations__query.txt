@@ -1,0 +1,11 @@
+3 conversations (times are Europe/Berlin). When answering, put the link next to each fact you use:
+- 2026-09-15 12:00–12:01 "Q4 budget cut" id 000000000000000000000000c0de0001; people: Alice, Me
+  Alice said finance is cutting the Q4 budget by fifteen percent; the user will send a revised spreadsheet by Friday.
+  https://athena.example.org/view/000000000000000000000000c0de0001?sig=2b54669d195fa8debf17a886d696a0f8
+- 2026-10-14 17:00–17:00 "1:1 with Alice: vendor contracts" id 000000000000000000000000c0de000a; people: Alice, Me
+  Alice moves to Berlin on January 12; the user takes over her vendor contracts and the budget cut is now ten percent.
+  https://athena.example.org/view/000000000000000000000000c0de000a?sig=db3160667ccbc7cacc4fcb11ef4c9c29
+- 2026-10-13 17:00–17:00 "Community garden budget" (Online meeting: Q4 budget review: community garden) id 000000000000000000000000c0de0009; people: Sam Example, Me, Kai Example, Dana Example; participants: Sam Example, Me, Dana Example, Kai Example, Rafael Example
+  The tool shed goes to the second supplier for about 3200 euros; the user confirms the order by Friday.
+  https://athena.example.org/view/000000000000000000000000c0de0009?sig=47f586de44c8f2155c5cdc4605779495
+When answering, put the link next to each fact you use.

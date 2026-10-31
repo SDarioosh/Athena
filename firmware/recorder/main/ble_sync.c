@@ -29,13 +29,16 @@
 #include "nimble/nimble_port_freertos.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+#include "wire_ids.h"
 
 /* NimBLE's NVS-backed key store (CONFIG_BT_NIMBLE_NVS_PERSIST); it has no public header. */
 void ble_store_config_init(void);
 
 static const char *TAG = "ble";
 
-#define DEVICE_NAME "barvis-tw"
+/* Firmware before 2026-10-29 advertised "barvis-tw"; the relays accept both names
+ * (docs/twatch-ble-protocol.md). */
+#define DEVICE_NAME "athena-tw"
 #define WINDOW_MS (2 * 60 * 1000)
 #define IDLE_DISCONNECT_MS 30000
 #define BYE_DISCONNECT_MS 1000
@@ -65,16 +68,14 @@ static const char *TAG = "ble";
 #define TASK_STACK 6144
 #define TASK_PRIO 5
 
-/* f806xxxx-61c0-4fda-8b7b-26b08e916438, little-endian as NimBLE stores it. */
-#define BARVIS_UUID(n)                                                                       \
-    BLE_UUID128_INIT(0x38, 0x64, 0x91, 0x8e, 0xb0, 0x26, 0x7b, 0x8b, 0xda, 0x4f, 0xc0, 0x61, \
-                     (n) & 0xff, ((n) >> 8) & 0xff, 0x06, 0xf8)
+/* f806xxxx-61c0-4fda-8b7b-26b08e916438, little-endian as NimBLE stores it (wire_ids.h). */
+#define ATHENA_UUID(n) BLE_UUID128_INIT(ATHENA_UUID_BYTES(n))
 
-static const ble_uuid128_t s_svc_uuid = BARVIS_UUID(0x0000);
-static const ble_uuid128_t s_info_uuid = BARVIS_UUID(0x0001);
-static const ble_uuid128_t s_status_uuid = BARVIS_UUID(0x0002);
-static const ble_uuid128_t s_ctrl_uuid = BARVIS_UUID(0x0003);
-static const ble_uuid128_t s_data_uuid = BARVIS_UUID(0x0004);
+static const ble_uuid128_t s_svc_uuid = ATHENA_UUID(0x0000);
+static const ble_uuid128_t s_info_uuid = ATHENA_UUID(0x0001);
+static const ble_uuid128_t s_status_uuid = ATHENA_UUID(0x0002);
+static const ble_uuid128_t s_ctrl_uuid = ATHENA_UUID(0x0003);
+static const ble_uuid128_t s_data_uuid = ATHENA_UUID(0x0004);
 
 typedef enum { CHR_INFO = 1, CHR_STATUS, CHR_CTRL, CHR_DATA } chr_id_t;
 

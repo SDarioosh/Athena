@@ -161,7 +161,7 @@ own random base: `d023xxxx-51f4-43be-86e4-1653768283cd`.
   has a large screen, so it shows the code there. The feed holds conversation summaries,
   so an unauthenticated link must never read it.
 - The BLE name is `odysseus-pda`. The T5 advertises the service UUID, so the relay's scan
-  filter can tell it from `barvis-tw`.
+  filter can tell it from the watch (`athena-tw`, older firmware `barvis-tw`).
 
 ### 3.1 Blobs
 
@@ -689,7 +689,7 @@ a 3 × 4 grid of hour slots and the durations.
     into it, since every T5 to-do is a checklist item), events always weigh 0. The hub
     learns each weight from the owner's outcomes on its Today page over the last 28 days
     (done, "↑ first", "not today", moved, ignored), and keeps it at 0 until a list has been
-    shown often enough ([how the hub learns them](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/today-insight.md#weights)).
+    shown often enough ([how the hub learns them](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/today-insight.md#weights)).
     The T5 uses the weights only in the rule-based plan: with an insight for today, the
     hub's order stands. Integers only, no floats on the T5. A fictional day with known
     weights and its expected order is `firmware/pda/test/fixtures/insight_eval_day.json`,
@@ -805,7 +805,7 @@ a 3 × 4 grid of hour slots and the durations.
      (`app.py:419-466`). There is **no `?access_token=`** form for these tokens, unlike our
      MCP server. The app listens on `APP_BIND`:`APP_PORT` (default `127.0.0.1:7011`,
      `app.py:1439-1442`). Production is port 7000 with `APP_BIND=0.0.0.0`
-     ([hub deploy.md:203](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/deploy.md)),
+     ([hub deploy.md:203](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/deploy.md)),
      so the phone uses `http://<server's Tailscale name or 100.x address>:7000`, the same
      host as Athena on another port. If the owner turned auth off
      (`AUTH_ENABLED=false`), the middleware isn't installed (`app.py:266`), and the routes

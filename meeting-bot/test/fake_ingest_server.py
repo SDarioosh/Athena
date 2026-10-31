@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Fake Athena ingest API for the core's host tests (stdlib only, loopback, fictional data).
 
-    fake_ingest_server.py --mode ok|strict|503xN|503always|401|stop|hang|400first --log DIR
-                          [--token test-token]
+    fake_ingest_server.py --mode ok|strict|503xN|503always|401|stop|hang|400first|case
+                          --log DIR [--token test-token] [--case JSON]
 
 strict: as Athena's API, /chat and /end answer 404 for a session no chunk made yet.
+case: the first chunk call gets --case, one row of docs/api/ingest-client-cases.json
+({"status", "body"}; status 0 closes the connection unanswered, a string body is sent as
+text, a 3xx carries a Location header); every later call is answered as in "ok".
 Prints the port on its first stdout line. Every request is appended to DIR/requests.jsonl
-(chunk audio saved next to it); the routes and answers mimic server/convo_server/api.py.
+(chunk audio saved next to it); the routes and answers mimic server/athena/api.py.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import socket
 import threading
 import time
 from email.parser import BytesParser
@@ -50,10 +54,19 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # quiet
         pass
 
-    def answer(self, status: int, obj: dict) -> None:
-        data = json.dumps(obj).encode()
+    def answer(self, status: int, obj: dict | str | None) -> None:
+        if status == 0:  # a network error: no answer at all
+            self.close_connection = True
+            self.connection.shutdown(socket.SHUT_RDWR)
+            return
+        if isinstance(obj, str) or obj is None:
+            data, ctype = (obj or "").encode(), "text/html"
+        else:
+            data, ctype = json.dumps(obj).encode(), "application/json"
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        if 300 <= status < 400:
+            self.send_header("Location", "http://127.0.0.1:9/v1/ingest/chunk")
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -94,11 +107,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.answer(status, obj)
 
-    def decide(self, mode: str, calls: int, auth: str) -> tuple[int, dict]:
+    def decide(self, mode: str, calls: int, auth: str) -> tuple[int, dict | str | None]:
         if auth != f"Bearer {self.server.cfg.token}":
             return 401, {"detail": "invalid or missing bearer token"}
         if mode == "hang":
             return -1, {}
+        if mode == "case" and self.path == "/v1/ingest/chunk" and calls == 1:
+            case = json.loads(self.server.cfg.case)
+            return case["status"], case["body"]
         m = re.fullmatch(r"/v1/sessions/([^/]+)/(end|chat)", self.path)
         if m:
             if mode == "strict" and m.group(1) not in STATE["sessions"]:
@@ -126,6 +142,7 @@ def main() -> None:
     ap.add_argument("--mode", default="ok")
     ap.add_argument("--log", required=True)
     ap.add_argument("--token", default="test-token")
+    ap.add_argument("--case", default="{}")
     cfg = ap.parse_args()
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True

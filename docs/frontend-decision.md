@@ -1,5 +1,7 @@
 # convo-ai knowledge frontend: Hermes Agent vs Odysseus vs Hybrid (own SQLite + MCP)
 
+Status: **decided** (2026-10-18): the hybrid, with an Odysseus fork as the frontend ([decisions-log.md](decisions-log.md)).
+
 *Decision document. Researched 2026-10-18 against the copies installed on this machine:
 Hermes Agent v0.22.2 (git `d923a5eb`, 2026-10-15) at `~/.hermes/hermes-agent`, and
 Odysseus (git `0590edd4`, 2026-10-16, `HARNESS_VERSION` 0.20.19) at `~/models/odysseus`.
@@ -10,7 +12,7 @@ No `.env`, `auth.json` or other credential files were read.*
 ## Decision (owner, 2026-10-18)
 
 - **Knowledge layer: hybrid.** Our SQLite store is the source of truth, exposed by our MCP
-  server (`server/convo_server/mcp_server.py`).
+  server (`server/athena/mcp_server.py`).
 - **Frontend: Odysseus, as our own fork** (repo `SDarioosh/Barvis`; the fork was called
   Barvis until 2026-10-19 and is now simply Odysseus). The fork is modified to work with our
   system and kept in sync with upstream (see "Odysseus fork plan" below).

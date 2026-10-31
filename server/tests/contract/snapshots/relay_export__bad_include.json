@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "include takes summary, action_items, facts, transcript; not everything"
+  },
+  "content_type": "application/json",
+  "status": 400
+}

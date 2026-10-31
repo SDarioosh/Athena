@@ -1,0 +1,21 @@
+{
+  "body": {
+    "available": false,
+    "default_name": "Me",
+    "ended_at": null,
+    "error": null,
+    "expires_at": null,
+    "is_owner": null,
+    "min_speech_seconds": 30.0,
+    "name": null,
+    "owner_voice": "Me",
+    "recording": null,
+    "relabeled_lines": null,
+    "samples": null,
+    "speech_seconds": null,
+    "started_at": null,
+    "state": "none"
+  },
+  "content_type": "application/json",
+  "status": 200
+}

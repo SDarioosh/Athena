@@ -1,0 +1,7 @@
+2026-09-15: 1 recording(s): Q4 budget cut
+Alice said finance is cutting the Q4 budget by fifteen percent; the user will send a revised spreadsheet by Friday.
+* Q4 budget cut by fifteen percent
+* Alice moves to Berlin in January
+TODO: Send Alice the revised budget spreadsheet
+Conversation: https://athena.example.org/view/000000000000000000000000c0de0001?sig=2b54669d195fa8debf17a886d696a0f8
+When answering, put the link next to each fact you use.

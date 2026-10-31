@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "send application/json, like /v1/ingest/text"
+  },
+  "content_type": "application/json",
+  "status": 415
+}

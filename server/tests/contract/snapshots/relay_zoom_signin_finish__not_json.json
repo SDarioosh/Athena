@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "send application/json, like /v1/zoom/signin/finish"
+  },
+  "content_type": "application/json",
+  "status": 415
+}

@@ -1,7 +1,10 @@
 # Athena server
 
-The `convo_server` package (CLI `convo-server`, env prefix `CONVO_`) keeps the project's
-old name, convo-ai. Don't rename it.
+The Python package is `athena`, with the CLI `athena`. The old names keep working:
+`convo_server` is an alias of the package (`import convo_server.db.store` and
+`python -m convo_server.cli` give the same modules), and the `convo-server` CLI runs the
+same code, so deployed services and cron jobs need no change. The env prefix `CONVO_`
+keeps the project's old name, convo-ai. Don't rename it.
 
 Device-agnostic ingestion + processing pipeline. Everything runs on this machine:
 Silero VAD, whisper.cpp, ECAPA speaker embeddings (SpeechBrain), llama-server, SQLite.
@@ -26,6 +29,21 @@ uv pip install -p .venv/bin/python -e ".[vad,diarization,dev]"
 cp .env.example .env              # then set CONVO_INGEST_TOKEN and endpoints
 ```
 
+**Setting names.** Every setting is read as `ATHENA_<NAME>` and as its old name
+`CONVO_<NAME>` (the docs and `.env.example` still write the old one; both keep working).
+The environment beats `server/.env`; within each, `ATHENA_` beats `CONVO_`, and a setting
+given under both names with different values is logged once at startup, by name only
+(never the value). The server refuses to start without the ingest token under either name.
+In Docker, keep the settings `compose.yml` and `deploy.sh` read themselves under their
+`CONVO_` names for now (listed at the top of `.env.example`).
+
+**Database file.** `athena.db` in the data dir (`CONVO_DATA_DIR`, default `data`). An
+older install's `data/convo.db` is opened as it is while no `athena.db` exists: nothing is
+moved, copied or renamed, and its `-wal`/`-shm` files stay next to it. With both files,
+`athena.db` is used and a warning says `convo.db` is ignored. `CONVO_DB_FILE` (or
+`ATHENA_DB_FILE`) names the file explicitly (relative paths are in the data dir). Backups
+should copy whichever of the two exists.
+
 Requirements outside Python:
 
 - `ffmpeg` (decodes Opus/Ogg/anything)
@@ -34,7 +52,7 @@ Requirements outside Python:
 - llama-server with an OpenAI-compatible API (`CONVO_LLM_BASE_URL`, `CONVO_LLM_MODEL`).
   `CONVO_LLM_MODEL` is the default; the hub's settings page (Settings → AI Defaults →
   Background & summaries) can pick another model the LLM server lists
-  (`PUT /v1/settings/llm {"model": name | null}`, stored in `convo.db`, used from the
+  (`PUT /v1/settings/llm {"model": name | null}`, stored in the database, used from the
   next summary on; `null` goes back to `.env`). The LLM server's URL only comes from
   `.env`.
 - optional: a second llama-server with `--embeddings` for semantic search
@@ -121,7 +139,7 @@ other's name; two different named speakers stay apart (often a real interruption
   default on), so they are spelled right, plus `CONVO_WHISPER_PROMPT` (empty by default)
   and the words set in the hub's settings (Settings → AI Defaults → "Transcription
   vocabulary": comma-separated, at most 50, `GET`/`PUT /v1/settings/vocabulary
-  {"words": "RokTalk, Meshtastic" | [...] | null}`, stored in `convo.db`, used from the
+  {"words": "RokTalk, Meshtastic" | [...] | null}`, stored in the database, used from the
   next recording on). Order: `CONVO_WHISPER_PROMPT`, the words, then the names.
   Measured on AMI (`eval/recognition.py`): the names made WER and DER slightly better;
   a 12-word vocabulary list in `CONVO_WHISPER_PROMPT` broke whisper's timestamps (lines
@@ -146,7 +164,7 @@ other's name; two different named speakers stay apart (often a real interruption
   split by its token times. `CONVO_WHISPER_WINDOW_SECONDS=0` sends every region alone
   (the behaviour before). `CONVO_WHISPER_CONTEXT_WORDS` (0 = off) adds the end of the
   previous clip's text to the prompt; it made the eval worse.
-- Zoom names become people (`convo_server/meeting_names.py`, imported only by the meeting
+- Zoom names become people (`athena/meetings/people/names.py`, imported only by the meeting
   pipeline, never at startup). Each track's display names are cleaned first: pronouns
   ("(she/her)"), bracketed tags, "| Company", " - Company" (spaced dash only, so
   "Smith-Jones" stays), "@ Company", device suffixes ("Kath's iPhone", "(iPad)"), titles
@@ -169,7 +187,7 @@ other's name; two different named speakers stay apart (often a real interruption
   while `rename_speaker_everywhere("Kath Dlamini", "Kath")` merges them for good. Every
   display name a track used, raw and cleaned, is kept as an alias, so a participant who
   renames mid-meeting stays one person and the next meeting finds them again.
-- Learning voices from meetings (`convo_server/meeting_voices.py`,
+- Learning voices from meetings (`athena/meetings/people/voices.py`,
   `CONVO_LEARN_MEETING_VOICES`, default true; `false` turns it off; imported only after a
   meeting's lines are stored, and only with the setting on). A named participant's own
   track is one known voice, so a few seconds of it become that person's voice samples and
@@ -187,7 +205,7 @@ other's name; two different named speakers stay apart (often a real interruption
     murmur, is never learned), never while another track has VAD speech (±0.5 s): no
     crosstalk, no bleed of someone else's voice. Up to 12 windows spread over
     the meeting are decoded and the 3 loudest are embedded.
-  - Storage: `voice_samples` rows in `convo.db` with `source='meeting'` and the meeting's
+  - Storage: `voice_samples` rows in the database with `source='meeting'` and the meeting's
     session id; voiceprints never leave the server. A person keeps at most 3 meeting
     samples (the oldest are replaced first; processing a meeting again replaces its own);
     enrolled and named samples are never replaced. Matching uses them like every other
@@ -206,52 +224,108 @@ other's name; two different named speakers stay apart (often a real interruption
   `_NO_SPEECH_THOLD`, `_LOGPROB_THOLD`, `_ENTROPY_THOLD`, `_CARRY_INITIAL_PROMPT`,
   `_TEMPERATURE_INC`. They override whatever whisper-server was started with.
 
-## Deploy: one command, runs in the background
+## Deploy: one command, runs in Docker
 
 ```bash
-server/scripts/deploy.sh deploy     # update to origin/main, install, restart, check; then Odysseus
+server/scripts/deploy.sh deploy     # update to origin/main, build, restart, check; then Odysseus
 server/scripts/deploy.sh odysseus   # only update Odysseus
-server/scripts/deploy.sh status     # what runs and whether it answers
+server/scripts/deploy.sh status     # containers, checkout, an older native install
 server/scripts/deploy.sh logs mcp   # serve | mcp | whisper; add -f to follow
 server/scripts/deploy.sh stop       # start | restart | stop
 ```
 
-It works from any directory and needs no sudo. `deploy`:
+Athena runs as the containers of `server/compose.yml` (next section); Docker is the one
+deploy path (owner decision, 2026-10-29). It works from any directory, as your user
+(`sudo docker` only if `docker` needs it). `deploy`:
 
-1. Refuses tracked local changes, fetches the remote and fast-forwards `main` (or checks
+1. Checks that `docker compose` works, and refuses an older native install that still runs
+   unless you asked for the switch (below). Nothing is changed when it refuses.
+2. Refuses tracked local changes, fetches the remote and fast-forwards `main` (or checks
    out the ref you pass).
-2. Creates `server/.env` with new tokens if there is none, then creates or updates
-   `.venv` (`uv` if installed) with the `vad,diarization` extras (`+pyannote` when
-   `CONVO_DIARIZER=pyannote`).
-3. Runs these as systemd **user** services that start at boot (it turns on
-   `loginctl enable-linger`) and restart on a crash:
-
-   | service | runs | when |
-   |---|---|---|
-   | `barvis-sound` | `convo-server serve` | always |
-   | `barvis-sound-mcp` | `convo-server mcp --http` | `CONVO_MCP_TOKEN` is set |
-   | `barvis-sound-whisper` | `BARVIS_SOUND_WHISPER_CMD` | that is set |
-
-   `serve` and MCP restart on every deploy; whisper only when its command changed. A
-   session interrupted by the restart is processed again.
-4. Waits until each answers (`/health`, `/mcp`, the whisper URL). If the new commit
-   doesn't come up, it checks out the previous one and restarts that.
+3. Creates `server/.env` with new tokens if there is none.
+4. Builds the images and (re)creates what changed (`docker compose up -d --build
+   --remove-orphans --wait`), and waits until every container is healthy. If the new
+   commit doesn't come up, it checks out the previous one and starts that. The containers
+   have `restart: unless-stopped`, so Docker starts them at boot and after a crash; no
+   systemd unit is written.
 5. Updates Odysseus: runs `scripts/fork_deploy.sh deploy` in the Odysseus checkout, which
    rebuilds and restarts Odysseus (without running this script again). The checkout is
-   found from the running Odysseus container (`sudo docker ps`, so it may ask for your
-   password), or set `BARVIS_SOUND_ODYSSEUS_DIR=/path/to/odysseus` in `server/.env`;
-   `off` skips this step. If no Odysseus is found, it says so and stops there.
+   found from the running Odysseus container (`docker ps`), or set
+   `ATHENA_ODYSSEUS_DIR=/path/to/odysseus` in `server/.env`; `off` skips this step. If no
+   Odysseus is found, it says so and stops there.
 
-Everything is read from `server/.env` (settings: bottom of `.env.example`). Without
-systemd it starts background processes instead (pid files and logs in
-`data/run/`, `data/logs/`). It stops with an error if a port is already taken, e.g. by a
-`serve` you started by hand: stop that first. The hub's `scripts/fork_deploy.sh deploy`
-also runs this script before it rebuilds Odysseus, so either command updates both
-([hub docs/fork/deploy.md](https://github.com/SDarioosh/Barvis/blob/barvis/docs/fork/deploy.md)).
+A deploy runs the `deploy.sh` that was on disk when it started, also after it moved the
+checkout, so a change to `deploy.sh` takes effect from the deploy after the one that
+brought it.
+
+**During a meeting** `deploy`, `start` and `restart` refuse to run: restarting the API
+would end the recording. They ask `GET /v1/meetings` (with `CONVO_INGEST_TOKEN`) first; if
+a bot is active they stop with an error naming the meeting (title, Zoom number, state, id)
+and change nothing, not even the checkout. Let the meeting end (or stop the bot), then run
+it again, or add `--force` to restart anyway (`server/scripts/deploy.sh deploy --force`).
+The hub's `scripts/fork_deploy.sh` passes no flags: there, `ATHENA_FORCE=1
+scripts/fork_deploy.sh deploy` does the same (read from the environment only, never from
+`.env`; `BARVIS_SOUND_FORCE=1` works too). Without forcing, the hub run deploys Odysseus
+and ends with "module deploy failed" pointing at this message. If the API doesn't answer
+(not running, no token, an error), there is no meeting to protect: the command goes on as
+before and prints a note.
+
+Settings are read from the environment or `server/.env` (bottom of `.env.example`):
+`ATHENA_RUNNER` (`docker`, or `auto`, the default), `ATHENA_REMOTE`, `ATHENA_BRANCH`,
+`ATHENA_ZOOM_SDK_DIR`, `ATHENA_ODYSSEUS_DIR`, `ATHENA_FORCE`. Each is also read under its
+old name `BARVIS_SOUND_*` (`BARVIS_SOUND_RUNNER`, …): the environment wins over `.env`,
+and within one of them the `ATHENA_*` name wins. The native runner's
+`BARVIS_SOUND_EXTRAS` and `BARVIS_SOUND_WHISPER_CMD` are not used any more (the image takes
+`CONVO_DOCKER_EXTRAS`; whisper is a container or `CONVO_DOCKER_WHISPER_URL`). The hub's
+`scripts/fork_deploy.sh deploy` also runs this script before it rebuilds Odysseus, so
+either command updates both
+([hub docs/fork/deploy.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/deploy.md)).
+
+### Switching from the native install
+
+An older `deploy.sh` ran Athena natively: systemd user services `barvis-sound`,
+`barvis-sound-mcp` and `barvis-sound-whisper` (or background processes with pid files in
+`data/run/`). While one of them still runs (or is enabled), `deploy`, `start`, `restart`
+and `stop` refuse with `ATHENA_RUNNER` unset or `auto`, list what runs and change nothing;
+`status` shows it too. A runner set to `systemd` or `background` is an error as well. To
+switch, in `server/.env`:
+
+```bash
+ATHENA_RUNNER=docker               # BARVIS_SOUND_RUNNER=docker works too
+COMPOSE_PROFILES=whisper-gpu       # or whisper-cpu; or CONVO_DOCKER_WHISPER_URL=... (next section)
+```
+
+then `server/scripts/deploy.sh deploy`. It builds the images first (a failed build stops
+nothing), then stops and disables the native services, keeping their unit files and
+`.venv` for the way back, and starts the containers on the same ports, with the same
+`.env` and data dir, so Odysseus reaches MCP at the same URL. Without a whisper choice it
+refuses, so the switch never leaves recordings untranscribed. Only this checkout's native
+services are stopped (a unit's `WorkingDirectory`, the pid files in its data dir): a copy
+next to the real install never stops the real one, and with a compose project name of its
+own (`COMPOSE_PROJECT_NAME`) never takes Athena's containers down either. If the containers
+don't come up healthy, it takes them down, returns the checkout to the old commit and starts
+the native systemd services again, so Athena isn't left down (background processes from
+the older script can't be restarted that way; start them as before).
+
+### Back to the native install
+
+```bash
+cd ~/projects/<athena>            # the repo
+docker compose -p odysseus-sound -f server/compose.yml down   # data stays in server/data
+git checkout --detach d718bb6     # the last commit whose deploy.sh runs Athena natively
+# in server/.env: remove ATHENA_RUNNER=docker, set BARVIS_SOUND_RUNNER=systemd
+server/scripts/deploy.sh deploy d718bb6
+```
+
+The compose project is still called `odysseus-sound` (images `odysseus-sound*`).
+`deploy.sh` already handles the rename to `athena`: it builds, then takes the other
+name's containers down right before the new ones start (and the other way after a
+rollback), never during a meeting. The rename itself comes once every server has deployed
+with this `deploy.sh`, because the first deploy after a change runs the old one.
 
 ## Docker
 
-The same services as containers, from `server/compose.yml`, configured by the same
+Athena's services as containers, from `server/compose.yml`, configured by
 `server/.env`:
 
 | container | runs | notes |
@@ -263,7 +337,7 @@ The same services as containers, from `server/compose.yml`, configured by the sa
 
 llama-server stays outside Docker. Loopback URLs in `.env`
 (`CONVO_LLM_BASE_URL=http://127.0.0.1:8082/v1`, `CONVO_EMBED_BASE_URL`) are pointed at
-the Docker host by the image's entrypoint, so the same `.env` works both ways. The
+the Docker host by the image's entrypoint, so a native install's `.env` works as is. The
 server must listen on an address containers reach: `0.0.0.0`, or the Docker bridge
 (`172.17.0.1`) through a forwarder. Data stays in `CONVO_DATA_DIR` on the host, mounted
 at `/data`; the containers run as `PUID:PGID` (default `1000:1000`, see `id -u`), so the
@@ -288,11 +362,10 @@ curl -L -o data/whisper-models/ggml-large-v3-turbo-q5_0.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
 ```
 
-Then either let `deploy.sh` run it (`BARVIS_SOUND_RUNNER=docker` in `.env`; it stops the
-native services first and rolls back like before), or run Compose yourself:
+Then let `deploy.sh` run it (above), or run Compose yourself:
 
 ```bash
-server/scripts/deploy.sh deploy        # with BARVIS_SOUND_RUNNER=docker
+server/scripts/deploy.sh deploy
 server/scripts/deploy.sh status        # docker compose ps
 server/scripts/deploy.sh logs whisper  # serve | mcp | whisper
 
@@ -311,7 +384,9 @@ and paths outside the data dir (put a Parakeet model under `data/` and set
 `CONVO_PARAKEET_MODEL_DIR=/data/...`). pyannote needs `CONVO_DOCKER_EXTRAS=vad,diarization,pyannote`
 (`deploy.sh` refuses to build without it when `CONVO_DIARIZER=pyannote`) and runs on CPU
 unless the API has the GPU, below. A stdio MCP client (Hermes) still uses the native `.venv`; it can
-read the same data dir next to the containers.
+read the same data dir next to the containers. `deploy.sh` no longer installs into `.venv`,
+so update it by hand when you use it (Setup above; the editable install follows the
+checkout, only new dependencies need the install).
 
 ### pyannote on the GPU
 
@@ -334,18 +409,19 @@ prints `True`.
 
 ### Meeting bot in Docker
 
-The Zoom meeting bot ([Meeting bot](#meeting-bot), source in `meeting-bot/`) is built
+The Zoom meeting bot ([Meeting bot](../docs/api/meetings.md#meeting-bot), source in `meeting-bot/`) is built
 only when `deploy.sh` finds the unpacked Zoom Meeting SDK for Linux (the folder with
 `h/`, `libmeetingsdk.so` and `qt_libs/`; proprietary, so it stays outside the repo).
-Unpack it to `~/zoom-sdk` and that's all: with `BARVIS_SOUND_ZOOM_SDK_DIR` unset (neither
-in the environment nor in `server/.env`), `deploy.sh` uses `$HOME/zoom-sdk` when
+Unpack it to `~/zoom-sdk` and that's all: with `ATHENA_ZOOM_SDK_DIR` (old name
+`BARVIS_SOUND_ZOOM_SDK_DIR`) unset, neither in the environment nor in `server/.env`,
+`deploy.sh` uses `$HOME/zoom-sdk` when
 `$HOME/zoom-sdk/h/zoom_sdk.h` exists and says so in one line (`$HOME` of the user running
 `deploy.sh`; with `sudo docker` the folder is passed to compose on sudo's command line).
 Elsewhere, or to turn the bot off:
 
 ```bash
-BARVIS_SOUND_ZOOM_SDK_DIR=/home/you/zoom-sdk   # another folder; ~ and $HOME work too
-BARVIS_SOUND_ZOOM_SDK_DIR=off                  # no meeting bot even with ~/zoom-sdk (empty works too)
+ATHENA_ZOOM_SDK_DIR=/home/you/zoom-sdk   # another folder; ~ and $HOME work too
+ATHENA_ZOOM_SDK_DIR=off                  # no meeting bot even with ~/zoom-sdk (empty works too)
 CONVO_ZOOM_SDK_KEY=...                         # the Meeting SDK app's credentials
 CONVO_ZOOM_SDK_SECRET=...
 ```
@@ -376,21 +452,12 @@ them. Without an SDK (none found, or `off`) the image is exactly as before (no S
 libraries) and meetings answer 501.
 
 ```bash
-server/scripts/deploy.sh deploy   # BARVIS_SOUND_RUNNER=docker
-# by hand, from server/:
+server/scripts/deploy.sh deploy
+# by hand, from server/ (compose.meeting.yml reads the folder as BARVIS_SOUND_ZOOM_SDK_DIR):
 BARVIS_SOUND_ZOOM_SDK_DIR=$HOME/zoom-sdk docker compose -f compose.yml \
   -f compose.gpu.yml -f compose.meeting.yml up -d --build --wait   # leave out gpu if off
 docker compose exec sound-api /opt/athena-meeting-bot/athena-meeting-bot-run --ldd
 ```
-
-Native runners (`systemd`, `background`): with the SDK found (as above), `deploy.sh`
-builds the bot in `$CONVO_DATA_DIR/meeting-bot/build` (outside git; log in
-`data/logs/meeting-bot-build.log`), puts the same start script there with a `zoomsdk`
-link to the SDK, and adds `CONVO_MEETING_BOT_PATH=<that dir>/athena-meeting-bot-run` to
-`server/.env` if it has none. It needs `sudo apt install build-essential cmake pkg-config
-libglib2.0-dev libcurl4-openssl-dev libopus-dev libopusenc-dev libogg-dev` plus the SDK's
-libraries (`SDK_LIBS` in the Dockerfile; Ubuntu 24.04 has the same names). A missing
-tool or a failed build is a warning: Athena is deployed anyway, without a new bot.
 
 ### Meeting bot cost check
 
@@ -452,440 +519,37 @@ give the summarizer made-up facts); its audio is deleted unless `CONVO_KEEP_AUDI
 `GET /v1/speakers/enroll/next` shows the state (`none`, `waiting` with the `recording`
 coming in, `processing`, `done` with `samples`, `speech_seconds`, `relabeled_lines`,
 `failed` with `error`, `cancelled`, `expired` after 30 minutes without a recording),
-`DELETE` cancels while waiting (409 while processing). `convo_server/voice_enroll.py`.
+`DELETE` cancels while waiting (409 while processing). `athena/voice_enroll.py`.
 
-## Ingestion API
+## API reference
 
-`POST /v1/ingest/chunk` (multipart), header `Authorization: Bearer <token>`:
+The API is described in `docs/api/`:
 
-| field         | notes                                                              |
-|---------------|--------------------------------------------------------------------|
-| `audio`       | file; Opus/Ogg/WAV/… or raw `pcm16`                                |
-| `device`      | e.g. `trex3pro`, `omi` (`[A-Za-z0-9._:-]{1,128}`)                   |
-| `session_id`  | recording session, same charset                                   |
-| `sequence`    | int ≥ 0, order within the session; retries are idempotent          |
-| `timestamp`   | wall-clock start of the chunk: ISO-8601 or epoch s/ms              |
-| `codec`       | `opus` (default), `ogg`, `wav`, `pcm16`, `mp3`, `m4a`, `aac`, `webm` |
-| `sample_rate` | only for `pcm16` (default 16000)                                   |
-| `kind`        | `conversation` (default) or `note` (voice note); fixed per session  |
-| `track`       | optional: one participant's audio in a session with several (e.g. a Zoom user id), `[A-Za-z0-9._:-]{1,64}`; omitted or empty = no track |
-| `track_name`  | optional: that participant's display name, at most 200 characters; needs `track` |
+- [docs/api/ingest.md](../docs/api/ingest.md): uploads (`POST /v1/ingest/chunk`), tracks, written notes, the read API, sharing a conversation.
+- [docs/api/meetings.md](../docs/api/meetings.md): the meeting bot launcher, its bot contract, Zoom sign-in, meeting chat, topic and participants.
+- [docs/api/mcp.md](../docs/api/mcp.md): the MCP tools, their JSON fields, facts, people, forget and retention, and the relay routes on the MCP HTTP app.
 
-A **voice note** (`kind=note`) is the owner talking to themselves: no speaker matching
-(every line is the owner), never split on gaps or joined with nearby conversations, never
-discarded as too short, and summarized with a note prompt (the idea, plus the to-dos it
-implies). It shows up as a conversation with `kind` `note`. A chunk whose `kind` differs
-from its session's is rejected with 400. `POST /v1/ingest/chunk.json` takes the same
-`kind` field.
+### Ingestion API
 
-**Tracks** (a meeting: one track per participant). Without `track` a session works as
-before tracks. With it, sequences count per track, and a retry of the same
-(`session_id`, `track`, `sequence`) is a no-op (`"duplicate": true`; its `track_name` is
-ignored too). Each track is reassembled by its own sequence and transcribed on its own, so
-two people talking at once stay apart. `track_name` is stored per chunk: a participant who
-renames mid-meeting stays one track, and `GET /v1/sessions/{id}` lists every name seen
-(`tracks`: `track`, `name` (of the latest chunk in time, as sent), `names` (every name,
-in order of first use), `chunks`, `started_at`, `ended_at`; each
-chunk also has `track` and `track_name`, null without one). A session with any tracked
-chunk (a meeting) never stops on trailing silence, so a quiet break doesn't end it: it
-stops at `CONVO_MAX_SESSION_SECONDS`, on `POST /v1/sessions/{id}/end`, or after
-`CONVO_SESSION_IDLE_SECONDS` without uploads (the uploader died; not while the meeting
-bot that records it still runs, since Zoom sends no audio while everyone is muted: its exit
-ends the session); once ended, every track
-is told `stop: true`. If an untracked chunk stopped the session on silence first, the
-first tracked chunk reopens it (`recording` again, no stop reason). Errors (400): `track must match
-^[A-Za-z0-9._:-]{1,64}$`, `track_name is longer than 200 characters`, `track_name needs a
-track`. `POST /v1/ingest/chunk.json` takes the same two fields.
-
-**Meeting lines** (`convo_server/meeting_tracks.py`, imported only when a session with
-tracks is processed). Each track's VAD speech goes to whisper on its own (whisper's
-context never crosses tracks; the participants' names are added to its prompt for
-spelling), and every line from a track is that participant's:
-
-- A line is named by the track's latest `track_name`. A track named `CONVO_OWNER_NAME`
-  (unless it is the default "Me") or one of `CONVO_ZOOM_OWNER_NAMES` (extra names in
-  addition to `CONVO_OWNER_NAME`, comma-separated, any case, e.g. "Shahyah (phone)") is
-  the owner's: `is_owner=true`, named like the owner everywhere else (the enrolled owner
-  voice's name, else `CONVO_OWNER_NAME`, never the Zoom name; the Zoom names become
-  aliases of the owner). A track without a name is an unnamed "Speaker N".
-- No diarizer runs for these tracks (with `CONVO_LEARN_MEETING_VOICES` on, the speaker
-  embedder alone runs on at most 3 windows per person afterwards, see "Learning voices from
-  meetings" under Speakers). A track whose name is a room or
-  a device ("Conference Room", "Meeting Room 2", "Zoom Rooms", "Anna's iPhone", "Galaxy
-  S23", "Zoom user", "Polycom", a dial-in number) can hold several people: the configured
-  diarizer runs on that track only, and its voices are named from enrolled voices or
-  become "Speaker N" (numbered across the meeting) with a stored voice, so
-  `name_speaker` and `list_unnamed_speakers` work on them. With diarization off the
-  room's lines carry the room's name.
-- Lines of different tracks may overlap (crosstalk); all are kept, in start-time order.
-  `CONVO_JOIN_LINES` joins fragments within one track only.
-- Bleed (two participants in one room, one voice on both mics): a line on another track
-  that overlaps by at least half the shorter line and says nearly the same words is
-  dropped, keeping the louder line (RMS dBFS of each line on its own track). Nearly the
-  same: word similarity >= 0.9, or >= 0.7 when one line is at least 6 dB quieter
-  (whisper slips words on the far mic; two people saying the same sentence at once are
-  about as loud and both stay).
-- One meeting is one conversation: its lines are never split at a speech gap
-  (`CONVO_CONVERSATION_GAP_SECONDS` doesn't apply to a break inside a meeting), it never
-  extends the conversation before it on the same device, and a session without tracks
-  never joins a meeting's conversation. Two back-to-back meetings are two conversations.
-- Late chunks: once a meeting is being or has been processed, a new chunk (a new
-  (`track`, `sequence`)) is answered `stop: true` with the session's stop reason and is
-  not stored, so it can't replace the other tracks' lines, whose audio is gone. Until
-  processing starts (status `ended`), chunks are still stored: the other tracks' chunks
-  of the round that reached `CONVO_MAX_SESSION_SECONDS` are kept. A retry of a stored
-  chunk is `duplicate: true` as before. Sessions without tracks still take late chunks
-  and transcribe them on the next pass.
-- Live transcription (`convo_server/meeting_live.py`, `CONVO_MEETING_LIVE_TRANSCRIBE`,
-  default true): while a meeting records, the worker's existing 15 s tick transcribes each
-  person's track window by window, so when it ends only the last window of each track (and
-  any shared-room track) is left before the summary, which starts in the same tick. No
-  process, thread or timer is added: with no meeting the tick asks one indexed query
-  (`sessions_status`) and imports nothing; `false` skips even that and transcribes the
-  meeting at its end. Each tick spends at most about `CONVO_MEETING_LIVE_BUDGET_SECONDS`
-  (20) on it, one whisper request at a time, round robin over tracks, continuing next tick.
-  The result is the end-of-meeting result: windows are planned from the stored VAD spans
-  exactly as at the end, and only windows no later audio can change are sent (a window
-  is closed once the next speech region didn't fit in it, or its run ended), so a word
-  across a chunk boundary is never cut and whisper hears the same clips with the same
-  per-track context. Line joining continues from the track's last line, and each line's
-  loudness is stored for the bleed check, which runs at the end over all tracks. The
-  participants' names in whisper's prompt are those known at the time, so a late
-  joiner's name only reaches later windows (the one possible difference, spelling only).
-  Shared-room tracks wait for the end (diarized over the whole track). Progress is saved
-  per window (`meeting_live` table) and checked against the chunks before use: a restart
-  redoes at most one window, and a late chunk that changes a run restarts that track.
-  Audio is kept until the end pass succeeds (`CONVO_KEEP_AUDIO` rules unchanged), and
-  the live transcript is deleted once it is in the meeting's lines.
-
-Response: `{"ok": true, "stop": bool, "reason": "silence"|"max_duration"|"client"|"idle"|null,
-"duplicate": bool, "speech_seconds", "trailing_silence_seconds", "session_seconds"}`, plus
-`"track"` when the upload had one.
-
-`POST /v1/sessions/{id}/end` marks a session finished (device Stop button).
+Moved to [docs/api/ingest.md](../docs/api/ingest.md).
 
 ### Meeting bot
 
-Athena can join a Zoom meeting as a participant named "Athena" and record one track per
-participant (the bot itself, `athena-meeting-bot`, is lane 1A of
-`docs/zoom-meeting-bot-plan.md`). The launcher (`convo_server/meetings.py`) is imported
-on the first meeting request; nothing about it runs between meetings: no service, thread,
-timer or poller. Same bearer token as every route.
-
-| route | answer |
-|---|---|
-| `POST /v1/meetings` JSON `{"url": "<Zoom link>"}` or `{"meeting_id": "123 4567 8901", "passcode": "…"}`, optional `"title"` (≤ 200) | `202 {"id", "state": "starting", "session_id"}`; `503 {"detail": "zoom_signin_needed", "message"}` when the join token mode needs Athena's Zoom sign-in and it is missing or expired (the message says to sign in from Odysseus or run `convo-server zoom-login`); `502 {"detail": "zoom_unavailable", "message"}` when Zoom's API can't be reached; `400 {"detail"}` for a link that isn't a Zoom meeting or a bad body (`detail` is always a message string, e.g. `title is longer than 200 characters`; a title is stripped first); `413 {"detail"}` for a body over 16 KB; `409 {"detail": "busy", "message", "active": "<meeting id>"}` when `CONVO_MEETING_BOT_MAX` bots are active; `501 {"detail"}` when meetings are off (`CONVO_MEETING_BOT_PATH` unset or not executable, no SDK key/secret, a bad meeting setting); `500` when the bot can't be started |
-| `GET /v1/meetings/{id}` | `{"id", "state", "reason", "active", "session_id", "meeting_id", "title", "join_token_kind" (`zak`, `obf` or `none`), "created_at", "started_at", "ended_at"}` (ISO-8601; `started_at` = first recording); 404 |
-| `GET /v1/meetings?limit=20` | `{"meetings": [...]}`, newest first (the current one, if any, is first) |
-| `DELETE /v1/meetings/{id}` | the bot leaves: SIGTERM, it flushes and ends the session; SIGKILL after 10 s. Answers once it exited, with the final row (`ended`, `stopped`; never `active` for a bot that exited), within about 15 s. Idempotent; 404 |
-
-States: `starting` → `waiting_room` → `waiting_permission` → `recording` → `ended` or
-`failed`, each with a `reason` where it helps. `waiting_permission`: Zoom gives raw audio
-only to a host, co-host or an app the host allowed to record, so once fully in the meeting
-the bot asks for recording permission once (Zoom shows the host its own prompt) and waits;
-after a Deny the reason is `denied` and it keeps waiting, because the host can still allow
-it later from the participant menu. A bot that is already host, co-host or allowed goes
-straight to `recording`. `starting` may carry `waiting_for_owner` (join token `obf`: Zoom
-refuses the join until the owner is in the meeting; the bot keeps trying). `recording` may
-carry `no_audio` (Zoom delivers no audio). `ended` reasons: `meeting_ended`, `alone` (only
-participant for `CONVO_MEETING_ALONE_SECONDS`), `removed`, `owner_left` (join token
-`obf`: Zoom ends the bot's session when the owner leaves), `stopped` (DELETE),
-`max_duration`, `server_stop`, `exited`. `failed` reasons come from the bot
-(`wrong_passcode`, `meeting_not_started`, `waiting_room_timeout`, `owner_not_joined` (the
-owner didn't join within the wait), `join_token_expired`, `external_meeting_not_allowed`
-(another account's meeting and the Zoom app isn't published), `outside_users_blocked`,
-`blocked_by_account_admin`, `zoom_signin_required`, `join_failed`, `auth_failed`,
-`sdk_error`, …) or the launcher (`bot_not_started`, `bot_crashed`, `server_restarted`). The bot asks
-for recording permission once, never again, never leaves over it, and never leaves
-because someone asks it to.
-
-**Links** accepted: `https://zoom.us/j/<number>?pwd=…` and any subdomain of `zoom.us`
-(`us06web.zoom.us`, vanity `acme.zoom.us`; `http` or no scheme is read too),
-`/wc/join/<number>` and `/wc/<number>/join`, and `zoommtg://` / `zoomus://` links with
-`confno`; path words (`j`, `wc`, `join`) in any case. The number has 9-11 digits; `pwd` is
-optional. Refused with a message: personal links `/my/<name>` (no number in them),
-webinars `/w/` (not yet), registration and host start (`/s/`) links, Zoom for Government
-(`zoomgov.com`, with or without a scheme, its own message), any other host.
-`parse_zoom_link` holds the rules; the hub mirrors them.
-
-**Safety caps.** With `CONVO_MEETING_BOT_RUNNER=auto` (default) the first join checks once
-whether `systemd-run --user --scope` works. If so: `systemd-run --user --scope --quiet
---collect --unit=athena-meeting-<id> -p CPUQuota=$CONVO_MEETING_BOT_CPU -p
-MemoryMax=$CONVO_MEETING_BOT_MEMORY -p RuntimeMaxSec=<CONVO_MAX_SESSION_SECONDS + 90> nice
--n 10 <bot> …`. The launcher itself stops the bot at `CONVO_MAX_SESSION_SECONDS` + 60 s
-(SIGTERM, SIGKILL 10 s later, `ended`/`max_duration`); systemd's limit, 30 s after that,
-is only a backstop, and a bot it kills after its max duration is `max_duration` too, not
-`bot_crashed`. Else (Docker, background runner) the bot runs in its own process group at
-`nice 10` with `RLIMIT_AS` = `CONVO_MEETING_BOT_MEMORY` (no CPU cap), and the launcher
-stops it at the same lifetime. When the bot exits, anything it left in its process group
-(and the scope) is killed and its work dir is removed.
-
-**State, no polling.** The launcher starts the bot from the request's event loop and keeps
-one asyncio task per running bot: it reads the bot's status lines and waits for its exit
-on a pidfd (no thread). The task ends with the bot. After a server restart, active rows
-are checked on the next meeting request: if the pid is no longer that bot, the row
-becomes `failed`/`server_restarted`; a bot still running counts as busy and `DELETE`
-stops it. On exit the session is ended (`stop_reason` `meeting_<reason>`) if the bot
-didn't end it. When the server is its container's PID 1 (the sound-api container), its exit
-would kill every bot, so shutdown first sends them SIGTERM (final rows `ended server_stop`).
-
-**Upload token.** The bot never gets `CONVO_INGEST_TOKEN`. Each meeting gets a random
-token (stored only as a SHA-256 hash, cleared when the bot exits) that is accepted only
-for `POST /v1/ingest/chunk` with that meeting's `session_id`, `device=zoom` and `kind`
-`conversation` (the default; `note` answers 403), and
-`POST /v1/sessions/<that session>/end` and `/chat` (Phase 3). Every other route answers
-403; after the bot exits, 401.
-
-**SDK signature.** The Meeting SDK signature is signed locally (HS256) from
-`CONVO_ZOOM_SDK_KEY` / `CONVO_ZOOM_SDK_SECRET`: `appKey`, `mn`, `role` 0, `iat`, `exp` and
-`tokenExp` (Zoom: 30 min to 48 h; here `CONVO_MAX_SESSION_SECONDS` + 1 h).
-
-**Zoom sign-in (meetings in other accounts).** Since 2026-03-02 Zoom lets a Meeting SDK
-app join a meeting hosted by another Zoom account only on behalf of a signed-in Zoom user
-(developers.zoom.us/docs/meeting-sdk/obf-faq/). The owner signs Athena in once with
-**their own Zoom account**:
-
-1. In the Meeting SDK app on the Zoom Marketplace, add OAuth (user-managed) with the scope
-   `user:read:token` and a redirect URL. Nothing needs to answer at that URL.
-2. Set `CONVO_ZOOM_CLIENT_ID`, `CONVO_ZOOM_CLIENT_SECRET` and `CONVO_ZOOM_REDIRECT_URL`
-   in `server/.env`.
-3. Sign in **from Odysseus**: Record a call → **Sign in to Zoom**. Odysseus opens a Zoom
-   page; sign in with your own Zoom account and allow the app, then paste the address the
-   browser went to (or just its `code`) into Odysseus. No terminal needed. Or, on the
-   server, run `convo-server zoom-login`: it prints the Zoom URL and asks for the address
-   the same way. Both use PKCE and check `state`: a pasted address (or query) must carry
-   this sign-in's `state`, and one with `error=` is refused; a bare code has no state to
-   check (PKCE ties it to this sign-in).
-4. The refresh token is saved to `<data dir>/zoom/refresh_token.json` (mode 0600,
-   replaced atomically). `convo-server zoom-login --status` (or Odysseus) says whether
-   Athena is signed in and which join token the next meeting gets. Delete the file to
-   sign out.
-
-**Publishing the Zoom app.** Signing in is not enough on its own: Zoom lets an
-**unpublished** Marketplace app join only meetings hosted by the account the app was made
-in. Another account's meeting fails with `MeetingFailCode` 63, reason
-`external_meeting_not_allowed` (the hub says so). Notetakers such as Read.ai get in because
-their apps are published. To join other people's meetings, submit the Meeting SDK app for
-Marketplace review and publish it; publishing it **unlisted** keeps it out of the public
-Marketplace. Review can take weeks. Until then Athena works in meetings the owner hosts.
-
-The routes behind Odysseus's button (`convo_server/zoom_signin.py`, imported on the first
-sign-in request; bearer `CONVO_INGEST_TOKEN` like every `/v1` route). The MCP HTTP app
-forwards `GET /zoom/signin`, `POST /zoom/signin/start` and `POST /zoom/signin/finish`
-unchanged (status and JSON) with the ingest token, behind the MCP token, like `/meetings`;
-they are not MCP tools.
-
-| Route | Answer |
-|---|---|
-| `GET /v1/zoom/signin` | `200 {"configured": bool, "signed_in": bool, "join_token": "obf" \| "zak" \| "none", "missing": [...]}`. `configured`: client id, secret and redirect URL all set; `missing` names the unset ones (`CONVO_ZOOM_CLIENT_ID`, `CONVO_ZOOM_CLIENT_SECRET`, `CONVO_ZOOM_REDIRECT_URL`); `join_token` is what the next join uses (an invalid `CONVO_ZOOM_JOIN_TOKEN` shows as `none`; joins then answer 501). No network. |
-| `POST /v1/zoom/signin/start` (no body) | `200 {"url": "<Zoom authorize URL>", "expires_in": 600}`: open the URL, sign in, allow. The attempt (state, PKCE verifier, time) waits in `<data dir>/zoom/pending_login.json` (0600, replaced atomically) for 600 s; a new start replaces it. The verifier is never returned. `501 {"detail"}` naming the missing settings when not configured. |
-| `POST /v1/zoom/signin/finish` JSON `{"pasted": "<the address the browser went to, or its code>"}` | `200 {"ok": true, "signed_in": true, "join_token"}`, the refresh token saved and the attempt removed. `400 {"detail"}` (plain words) for no attempt waiting or one older than 10 minutes ("start the sign-in again"), a bad paste (another attempt's `state`, no `state`, `error=`, nothing pasted, more than 4096 characters) or Zoom refusing the code or the client; a bad paste or a refused code keeps the attempt until it expires, so the owner can paste again. `502 {"detail"}` when Zoom can't be reached; `501` when not configured; `413` for a body over 8 KB. The pasted text and tokens are never logged. |
-
-`CONVO_ZOOM_JOIN_TOKEN` picks the join token:
-- `auto` (default): `obf` once signed in, else `none`.
-- `obf`: an on-behalf-of token for the signed-in owner and this meeting number. Athena
-  shows as "Athena" but is admitted only once the owner is in the meeting: until then the
-  bot keeps trying (`starting`/`waiting_for_owner`) and gives up after
-  `CONVO_MEETING_WAITING_ROOM_SECONDS` (`failed`/`owner_not_joined`). Zoom ends the bot's
-  session when the owner leaves (`ended`/`owner_left`).
-- `zak`: join as the signed-in user, whether or not the owner is in the meeting. Meant
-  for a later option, a dedicated Zoom account for Athena signed in with `zoom-login`;
-  whether Zoom accepts a ZAK alone for meetings in other accounts is not settled yet.
-- `none`: no token, only meetings in the app's own account.
-
-A ZAK or OBF token is fetched when the join is requested and lasts about 2 hours (an OBF
-token is for that one meeting). The bot's wait (waiting room, owner) is therefore capped
-at the smaller of `CONVO_MEETING_WAITING_ROOM_SECONDS` and the token's lifetime minus
-5 minutes (`--waiting-room-seconds`), so it gives up with `owner_not_joined` or
-`waiting_room_timeout` rather than trying a dead token; if Zoom still says the token
-expired, the bot fails with `join_token_expired`. Start a new join to get a fresh token.
-
-Only on a join request, the launcher trades the refresh token for an access token, saves
-the new refresh token Zoom hands back (it rotates on every use) before using the access
-token, and asks `GET https://api.zoom.us/v2/users/me/token?type=zak` (or
-`type=onbehalf&meeting_id=<number>`). These are the only network calls, to Zoom's API,
-with a 5 s timeout each; no audio or transcript goes there, nothing refreshes in the
-background, and no token is logged or put on a command line. Zoom expires a refresh token
-that goes unused for a long time, and the owner can revoke it: when Zoom refuses it, the
-file is moved aside to `refresh_token.expired.json` (so `GET /v1/zoom/signin` says
-`signed_in: false`), `POST /v1/meetings` answers 503 `zoom_signin_needed` ("Athena's Zoom
-sign-in expired … sign in from Odysseus (Record a call → Sign in to Zoom) or run
-convo-server zoom-login") and starts nothing; sign in again either way.
-
-**Bot contract** (lane 1A implements it):
-
-```text
-<CONVO_MEETING_BOT_PATH> --meeting-id <9-11 digits> --session-id zoom-<id>
-    --upload-url http://127.0.0.1:<CONVO_PORT> --name Athena
-    --max-seconds <CONVO_MAX_SESSION_SECONDS> --alone-seconds <CONVO_MEETING_ALONE_SECONDS>
-    --waiting-room-seconds <min(CONVO_MEETING_WAITING_ROOM_SECONDS, 6900 with a join token)>
-    --codec opus|wav --work-dir <data dir>/meetings/<id>
-```
-
-- Environment (secrets never go in argv): `ATHENA_MEETING_JWT` (the SDK join token),
-  `ATHENA_UPLOAD_TOKEN` (bearer for uploads), `ATHENA_MEETING_PASSCODE` (the passcode or
-  the link's `pwd` value; absent when there is none), `ATHENA_ZOOM_JOIN_TOKEN` (ZAK or OBF
-  token from the owner's Zoom sign-in, fetched for this join, valid about 2 h) and `ATHENA_ZOOM_JOIN_TOKEN_KIND` (`zak` or `obf`;
-  both absent when the join token mode is `none`). Plus `PATH`, `HOME`, `LANG`, `TZ`, `TMPDIR`, `XDG_RUNTIME_DIR`,
-  `DBUS_SESSION_BUS_ADDRESS` from the server, nothing else.
-- stdin is `/dev/null`; the working directory is `--work-dir` (for unsent chunks; removed
-  after exit). stderr: free-form logs, into the server's log.
-- stdout: one line per state change, exactly `STATE <state>` or `STATE <state> <reason>`;
-  `<state>` one of `starting` (the launcher sets it; the bot sends it only with a
-  reason, `waiting_for_owner`, `waiting_for_host` or `reconnecting`), `waiting_room`, `waiting_permission`, `recording`,
-  `ended`, `failed`, `<reason>` `[a-z0-9_]{1,40}`. Other lines are ignored. Flush each line.
-  Ignore SIGPIPE/EPIPE on stdout: after a server restart nobody reads it, and the bot
-  keeps recording.
-- Uploads: `POST <upload-url>/v1/ingest/chunk` with `Authorization: Bearer
-  $ATHENA_UPLOAD_TOKEN`, `device=zoom`, the given `session_id`, `track` (Zoom user id),
-  `track_name` (display name), a sequence per track. Obey `"stop": true` (only for
-  `max_duration` or an ended session: a tracked session never stops on silence) by leaving
-  with `ended server_stop` (or `max_duration`). End with `POST
-  <upload-url>/v1/sessions/<session_id>/end`.
-- Leave on: meeting ended, alone for `--alone-seconds`, removed, SIGTERM, `--max-seconds`
-  after start. Waiting room longer than `--waiting-room-seconds`: `failed
-  waiting_room_timeout`, or `ended waiting_room_timeout` when the host moved the bot back
-  to the waiting room after it was in the meeting (let in again: back to `recording` or
-  `waiting_permission`, same session, same per-track sequences). While breakout rooms are
-  open the alone rule waits (the bot stays in the main room).
-- Network drop after joining (lane 5B): `STATE starting reconnecting` while the SDK
-  reconnects or the bot rejoins (up to 3 tries within 2 minutes of the drop); back in:
-  `recording` or `waiting_permission` again, same session id, same per-track sequences
-  (chunks of a track continue, never restart at 0). Given up: `STATE ended
-  connection_lost`; the meeting gone meanwhile: `ended meeting_ended`.
-- Recording permission: once fully in the meeting, without host, co-host or recording
-  rights, call the SDK's `RequestLocalRecordingPrivilege` **once** and print `STATE
-  waiting_permission` (once more after a rejoin, only if the host had allowed it before:
-  Zoom forgets it when the bot rejoins). Allowed: `STATE recording`. Denied: `STATE waiting_permission
-  denied`, then keep waiting (an Allow later still gives `STATE recording`). Never ask
-  again and never leave over permission; `--waiting-room-seconds` does not apply here
-  (the meeting's end, the alone rule, SIGTERM, `owner_left` and `--max-seconds` still
-  end it). If the host takes the permission away while recording, print `STATE
-  waiting_permission` again and resume (`STATE recording`, same tracks) once it is given
-  back. Already host, co-host or allowed: `STATE recording` straight away.
-- With an `obf` token: while Zoom refuses the join because the authorizing user isn't in
-  the meeting yet (SDK `MEETING_FAIL_AUTHORIZED_USER_NOT_INMEETING`), retry and print
-  `STATE starting waiting_for_owner` (once); after `--waiting-room-seconds` give up with
-  `STATE failed owner_not_joined`. Zoom ending the session because the owner left is
-  `STATE ended owner_left` (also when a rejoin after a network drop is refused because
-  the owner is no longer in the meeting). A join token Zoom calls expired: `STATE failed
-  join_token_expired`.
-- SIGTERM: flush the last chunks, end the session, print `STATE ended stopped`, exit 0
-  within 5 s (SIGKILL follows after 10 s), in every phase, also while rejoining.
-- Chat but no chunk ever uploaded (no recording permission): before the chat call the bot
-  uploads one second of silence without a `track` (sequence 0), so the session exists;
-  being silent it adds no transcript line, and a `zoom` session without tracks is a
-  meeting.
-- Exit 0 after `STATE ended <reason>`; non-zero after `STATE failed <reason>`. A non-zero
-  exit without a `failed` line becomes `failed`/`bot_crashed`.
+Moved to [docs/api/meetings.md](../docs/api/meetings.md) (with the bot contract).
 
 ### Meeting chat, topic and participants
 
-`POST /v1/sessions/{id}/chat` (JSON, same bearer token; lane 1B's per-meeting bot token
-also works for its own session) is the Zoom bot's one call when a meeting ends, before or
-after `/end`:
-
-```json
-{"lines": [{"at": "2026-10-13T15:00:21Z", "from": "Dana Example",
-            "zoom_user_id": "16782336", "text": "Here's the sheet: https://…/budget-v3.xlsx",
-            "private": false}],
- "topic": "Q4 budget review",
- "participants": [{"zoom_user_id": "16782336", "name": "Dana Example",
-                   "joined_at": "2026-10-13T15:00:02Z", "left_at": null}]}
-```
-
-- `at`, `joined_at`, `left_at`: ISO-8601 (naive = UTC) or epoch s/ms, 2000..2100.
-  `zoom_user_id`: the sender's Zoom user id, the same value as the chunk `track`
-  (`[A-Za-z0-9._:-]{1,64}`), optional. `from`, `name`: display names, at most 200
-  characters kept. `text`: control characters and line breaks become spaces, cut at 4,000
-  characters; empty lines are skipped. `private: true` (a message to Athena alone) is
-  dropped unread. Every field but `lines[].at` and `lines[].text` is optional; unknown
-  fields are ignored. `topic` (at most 200 characters) and `participants` replace the
-  stored ones when given; leaving them out keeps them.
-- A chat line becomes a transcript line of kind `chat` at `at` (start = end), from the
-  sender's person: the line is named exactly as the sender's track is (owner included);
-  a sender without a track by their cleaned names, made a person when new. One
-  `zoom_user_id` is one person: every name it uses in the call (chat `from`, then its
-  `participants` name, preferred as Zoom's latest) is matched together and kept as
-  aliases. No VAD, no whisper. A participant who never spoke or typed is only looked up, never made a
-  person.
-- Idempotent: each line is stored once per session (SHA-256 of its cleaned time, sender id,
-  sender name and text), also after `erase_fact` redacted it or retention removed it.
-- Order: before the meeting is processed the lines wait and join its conversation then;
-  during processing the session goes back for one more pass; afterwards they are added to
-  its conversation, which is summarized again on the worker's next pass.
-- Limits: body at most 1,000,000 bytes, at most 2,000 lines and 1,000 participants (413).
-  Errors: 404 unknown session, 409 not a meeting (no tracks and device not `zoom`), 422
-  not JSON or wrong types, 400 a bad time or `zoom_user_id`, 401 no token.
-- Response: `{"ok": true, "session_id", "result": "queued"|"attached"|"unchanged",
-  "added", "duplicates", "private_dropped", "conversation_id"}` (`conversation_id` once
-  the meeting has one; `attached`: added to a processed meeting).
-
-The summary prompt gets "This is an online meeting with the topic …", the participants, and
-chat lines as `[21] Dana Example (chat): …` (links and file names kept as written).
-`GET /v1/conversations/{id}` has `meeting` (`topic`, `participants`) for every
-conversation of a meeting session, a session with tracked chunks (any device) or device
-`zoom`, also when the bot never made the chat call (then `topic` is null and
-`participants` are the speakers heard); any other conversation has `meeting: null`. JSON
-fact and action-item rows say `"source": "meeting"` for exactly those conversations. Each
-transcript segment has `kind` (`speech` or `chat`). `participants` (`name`,
-`person_id`, `is_owner`, `zoom_name`, `joined_at`, `left_at`): the list the bot sent, one
-entry per `zoom_user_id` (two people with one name stay two; entries without an id are
-told apart by join time), each by their person's current name, then everyone else heard
-or seen in the chat, in order of first line. A participant Zoom shows only as a device or
-room ("iPhone", "Zoom user") whose lines are named "Speaker N" (no person) is listed by
-those speakers instead of twice; with one such participant they take its `zoom_name` and
-times. `convo_server/meeting_chat.py`
-is imported on the first chat call (or when a meeting is summarized), never at startup.
+Moved to [docs/api/meetings.md](../docs/api/meetings.md#meeting-chat-topic-and-participants).
 
 ### Written notes
 
-`POST /v1/ingest/text` (JSON, same bearer token) takes a note the owner wrote by hand in
-the hub (Odysseus) and reviewed there:
+Moved to [docs/api/ingest.md](../docs/api/ingest.md#written-notes).
 
-| field        | notes                                                                  |
-|--------------|------------------------------------------------------------------------|
-| `source_id`  | the hub's stable id: `hub-note:<id>` (id: `[A-Za-z0-9._-]{1,100}`)     |
-| `text`       | the reviewed text, at most 200,000 characters and 5,000 lines; a line over 4,000 characters is wrapped at a space |
-| `written_at` | when the page was written: ISO-8601 (naive = UTC) or epoch s/ms        |
-| `link`       | the note in the hub, `<hub>/#open=notes&note=<id>` (http/https, ≤ 2,000; no spaces, quotes, `( ) < > { } \| \ ^` or user info, `[ ]` only around an IPv6 host) |
-| `title`      | optional, ≤ 200 characters; shown with the link, not used as the summary title |
+### Sharing a conversation
 
-It becomes one conversation of kind `note` on device `handwriting`: each non-empty line
-(spaces trimmed, control characters dropped) is a line by the owner at `written_at` plus
-one second per line, so the usual `/view/<id>?sig=…#t=<seconds>` link points at a line.
-No audio, VAD, transcription or diarization. The worker summarizes it with the
-voice-note prompts (summary, to-dos, facts; never discarded). The text is the owner's
-words, never instructions: the model gets it as the note's text, like a transcript.
+Moved to [docs/api/ingest.md](../docs/api/ingest.md#sharing-a-conversation).
 
-Answer: `{"ok": true, "source_id", "result": "created"|"replaced"|"unchanged",
-"conversation_id", "lines", "erased_lines", "transcript_link"}`; 400 with a `detail` for a
-bad `source_id`, `link`, `written_at` or text with no words, 422 for a field over its
-size.
-
-- **Resend** (same `source_id`): the lines are replaced, the digests that covered the note
-  are taken down and written again, and the worker summarizes it again. Facts and to-dos
-  said again keep their ids (and a to-do its status); the others are dropped, so the
-  hub's syncs retire them. A retired fact stays retired. The same lines and `written_at`
-  is a no-op (`"unchanged"`; a new `link` or `title` is stored). A resend that lands while
-  the model is summarizing the old text is summarized again on the next pass.
-- **Erased facts stay erased.** The hub still has the words of a fact the owner erased
-  (`erase_fact`), so a resend brings them back: a line with the same words as a line
-  `erase_fact` redacted in this note, or one that says an erased fact of any note or
-  recording (every content word of a fact of up to three, three quarters of a longer
-  one), is stored as `[forgotten]` (`erased_lines` counts them). The same holds for a new
-  note.
-- Until the re-summary, a resend keeps the note's summary, facts and to-dos, and moves
-  each one's line offset (`#t=`) to the same line (or the one with most words in
-  common); a line crossed out leaves the fact without an offset.
-- `DELETE /v1/ingest/text/{source_id}` removes the note: its lines, conversation, to-dos and
-  facts (a fact another conversation said too stays, owned by that one), and its digests
-  are written again. An erased fact's sentence stays (never served) so a later note that
-  writes it again keeps it `[forgotten]`, and what a forgotten fact of the note had
-  replaced stays replaced. `{"ok": true, "result": "deleted", "conversation_id"}`, or
-  `"already"` when there is no such note (idempotent).
-- The `/view` page says "Written by hand" and links to the note in the hub. Conversations
-  in the API carry `written: {"source_id", "link", "title"}` (null for recordings).
+## VAD and transcriber
 
 VAD: Silero runs on each chunk. `CONVO_VAD_THRESHOLD` (0.5; 0.35 by default with
 `CONVO_DIARIZER=pyannote`), `CONVO_VAD_MIN_SILENCE_MS` and `CONVO_VAD_SPEECH_PAD_MS` tune
@@ -902,261 +566,9 @@ very quiet input, but hurt speaker naming at the watch's level).
 sherpa-onnx on CPU, extra `parakeet`, `CONVO_PARAKEET_MODEL_DIR`); see `.env.example`.
 whisper stays the default.
 
-Read API: `/v1/conversations`, `/v1/conversations/{id}`, `/v1/conversations/{id}/transcript`
-(`?start=&end=` offsets), `/v1/search?q=`, `/v1/action-items` (`?include_notes=true`
-adds note items), `/v1/digests/{date}`,
-`/v1/sessions`, `/v1/speakers`; `PATCH /v1/action-items/{id}` takes any of `status`,
-`kind`, `due_date`, `due_time`, `list_name`, `title` (`null` clears a date, time or list,
-and gives the title back from the text). Conversations carry a
-signed `link`, and action items and facts a `source_url`, of the form `<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=<seconds>`: an HTML
-transcript page that opens in a phone browser without the bearer token and jumps to that
-moment. Rotating `CONVO_INGEST_TOKEN` revokes all links.
-
-### Sharing a conversation
-
-`GET /v1/conversations/{id}/export?format=md|html&include=...` answers with one file to send
-to other people (`Content-Disposition: attachment`, a name like
-`2025-10-09 Planning the trip.md`, `Cache-Control: no-store`). The hub's Share button gets
-it through the MCP server's relay route `GET /conversations/{id}/export` (MCP 0.19.0).
-
-| parameter | values |
-|---|---|
-| `format` | `md` (Markdown, the default) or `html` (one self-contained page, the `/view` look, prints to PDF from a browser) |
-| `include` | comma list of `summary` (with key points), `action_items`, `facts`, `transcript`; default `summary,action_items,transcript` |
-
-What a shared copy holds: the title, date and time in `CONVO_TIMEZONE`, people, the
-meeting topic and participants, "Written by hand" for a written note, and the sections
-asked for; transcript lines as `HH:MM:SS Speaker: text` (`Name (chat)` for meeting chat).
-What it leaves out: signed transcript links, the link to the hub note, ids, the jump
-script, dismissed action items, and facts unless asked for. Lines erased with
-`erase_fact` read `[forgotten]`; a summary waiting for its rewrite after a forget stays
-hidden; a transcript removed by retention says so. Errors: 400 for an unknown `format` or
-`include` name, 404 `conversation not found`.
-
 ## Knowledge layer (MCP)
 
-`convo-server mcp` exposes the store to any MCP-capable frontend. The store stays the
-source of truth, so the frontend can be swapped. Tools:
-
-| tool | answers |
-|---|---|
-| `search_transcripts(speaker, query, since, until)` | "what did X say (about Y) on/since DATE": actual lines, with links |
-| `search_conversations(query, person, since, until, kind)` | conversations by topic / person / date; `kind`: `conversation`, `note` (voice and written notes), `voice` or `written` (MCP 0.14.0), `meeting` (online meetings only) or `in_person` (conversations that are no meeting; MCP 0.18.0) |
-| `get_conversation(id)`, `get_transcript(id, start_seconds, end_seconds)` | details |
-| `list_action_items(status, person, since, until, format)` | to-dos, events and reminders; `format="json"` returns a JSON array for programs (below), notes (kind `note`, `note_title`) included (the hub files voice-note items into its calendar, to-dos and notes from it) |
-| `update_action_item(item_id, status, kind, due_date, due_time, list_name, title)` | mark done/dismissed or reopen; change kind (`task`/`event`/`reminder`), date (`YYYY-MM-DD`, `none` clears), time (`HH:MM`, `none` clears), to-do list (`shopping`, `none` clears) or title (at most 60 characters, `none` = from the text); every argument but `item_id` is optional |
-| `list_facts(subject, query, limit, confirmed, format)` | facts about people, the user and things; `confirmed=true` keeps only confirmed facts (below); `format="json"` returns a JSON object for programs (the hub copies confirmed facts into its memory from it) |
-| `retire_fact(fact_id, reason)` | "forget that": the fact is retired for good (below); answers `Fact #12 retired.`, `Fact #12 was already retired.` or `No fact #12.` |
-| `erase_fact(fact_id, reason)` | forget completely: retired, and its words erased where they were said (below); answers `Fact #12 erased: 2 transcript line(s) redacted, 2 conversation summary(ies) being rewritten.`, `Fact #12 was already erased.` or `No fact #12.` |
-| `get_daily_digest(date)` | memory |
-| `list_people(format)` | speakers and people mentioned; `format="json"` returns each person's stable id for programs (the hub links people to its contacts by it, below) |
-| `name_speaker(conversation_id, speaker_label, name, remember_voice)` | "Speaker 1 was Alice": renames, re-summarizes, learns the voice so future recordings say Alice, and renames confident matches in other conversations |
-| `rename_speaker_everywhere(old_name, new_name)` | "it's Kath, not Kat": renames in every conversation (merges if the name exists); the person keeps their id |
-| `reassign_line(line_id, name)` | one line given to the wrong person (`#id` from `get_transcript`) |
-| `list_unnamed_speakers(limit)` | voices nobody has named yet, with quotes and a guess, for "who is this?" |
-
-Dates are `YYYY-MM-DD` in `CONVO_TIMEZONE`. Set `CONVO_PUBLIC_URL` to the address your
-phone uses (e.g. the server's Tailscale IP) so links work there.
-
-**Action items in JSON.** `list_action_items(format="json")` returns an array, newest
-conversation first, with no citation line:
-
-```json
-[{"id": 7, "status": "open", "kind": "reminder", "title": "Send the slides to Greta",
-  "explicit": true, "text": "Send the slides to Greta", "owner": "Me", "due": "Friday",
-  "due_date": "2025-10-10", "due_time": null, "duration_minutes": null, "location": null,
-  "list_name": null, "note_title": null, "time_unclear": false,
-  "conversation_id": "…", "conversation_title": "Errands", "conversation_kind": "note",
-  "conversation_at": "2025-10-09T08:53:20+00:00",
-  "created_at": "2025-10-09T08:55:02+00:00", "timezone": "Europe/Berlin",
-  "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=0",
-  "with": [{"id": 4, "name": "Greta"}, {"id": null, "name": "Tom"}], "key_points": [],
-  "source": null, "written_by_hand": false, "note_link": null}]
-```
-
-`key_points` (MCP 0.15.0, additive) is set on a note that is a whole voice note ("Make a
-note, AMOLED T4-S3 dimensions. The screen is 49 mm by 60 mm. ..."): its `text` is then
-the voice note's summary, and `key_points` are the voice note's key points ("Screen: 49mm
-x 60mm"), so the hub's note holds what was said. `[]` for every other item (to-dos,
-notes added to named notes, a voice note with several notes or with to-dos besides).
-
-`title` is a short imperative summary of at most 60 characters ("Call the plumber about
-the tap"), written by the model; when it gives none (or a longer one) code takes the
-start of the text (or the title) cut at a word boundary, and a note's title is its
-`note_title`. `explicit` is true when the user asked for the item: it has a due date or
-time, a `list_name`, kind `reminder`, `event` or `note`, or the voice note used a command
-word ("remind me", "todo", "to-do", "task:", "add a task", "add … to my … list", "note
-that"). It is worked out when the conversation is summarized and stored, so the hub
-files explicit items itself and offers the others as suggestions. An item the user later
-gives a date, time, list or reminder/event kind with `update_action_item` becomes
-explicit; a re-summary keeps an item explicit. Both fields are also in `GET
-/v1/action-items` and `GET /v1/conversations/{id}`. The text listing is unchanged.
-
-`with` (MCP 0.9.0) lists the other people in the item's conversation, for the hub's
-open loops ("you told Greta you'd send the slides"): the named speakers of its lines
-(by first line) and the people its summary lists, each with their stable person `id`
-(following merges and aliases; `null` for a speaker with no person row yet) and current
-`name`. People whose name (or a name they appear under there) is a word of the item's
-text come first, then the rest by first appearance; no duplicates. Unnamed labels
-("Speaker 2", "Unknown") and the owner (owner lines, the owner's person and its aliases,
-`CONVO_OWNER_NAME`, words like "me") are never listed; it is `[]` when nobody else is
-there and for notes. It is only in the MCP JSON rows, not in the HTTP API.
-
-**Confirmed facts.** A fact is confirmed when no newer fact has replaced it and it was
-said in at least `CONVO_FACT_CONFIRM_SOURCES` (default 3) distinct conversations (its own
-plus every "said again") that started on at least `CONVO_FACT_CONFIRM_DAYS` (default 2)
-distinct dates in `CONVO_TIMEZONE`. `list_facts(confirmed=true)` lists only those, in
-both formats. `list_facts(format="json")` returns current facts in the text mode's order
-(newest conversation first), with no citation line:
-
-```json
-{"facts": [{"id": 12, "subject": "Alice", "about": "person", "person_id": 3,
-            "fact": "Alice is vegetarian", "kind": "preference",
-            "conversation_id": "c-…", "quote": "Alice doesn't eat meat, remember?",
-            "times_said": 3, "days": 2,
-            "first_said": "2025-10-09", "last_said": "2025-10-10",
-            "confirmed": false, "valid_until": null, "source": null,
-            "link": "<CONVO_PUBLIC_URL>/view/<id>?sig=…#t=2"}]}
-```
-
-`about` is `owner` when the subject (trimmed, any case) is me, I, myself, owner, the
-owner, user, the user, `CONVO_OWNER_NAME` or the name of the enrolled owner voice;
-`person` when it is an enrolled speaker, a person named in a conversation or one of their
-former names (aliases, below); else `other`. `person_id` is the subject's person id (below) when `about` is `person`, and
-the owner's person id when it is `owner` (the owner person, below); null for `other`
-or when no such person exists.
-`kind` (MCP 0.11.0) is what sort of fact it is: `preference`, `plan`, `decision`,
-`relationship`, `personal` or `other` (null for facts stored before it). `conversation_id`
-is the conversation the fact was learned in, and `quote` the transcript line it was said
-on (at most 300 characters; null when there is no line, the transcript was pruned or the
-line erased), so a review page can show the words and group facts by conversation.
-`times_said` counts distinct conversations, `days` distinct local dates, and
-`first_said`/`last_said` are the first and last of those dates. `confirmed` is true when
-the fact meets the thresholds above, so a program can take every current fact with its
-counts without knowing them (`confirmed=true` as an argument still filters).
-`valid_until` (MCP 0.13.0, additive) is the last day a fact about one occasion is worth
-keeping, `YYYY-MM-DD`, else null. It is worked out when the facts are read
-(`fact_valid_until` in `dates.py`), from the fact's words and the local date
-(`CONVO_TIMEZONE`) of the conversation that first said it: a day or date it names
-("has a meeting with the Meshtastic team on Tuesday at 11 a.m." → that Tuesday; "is in
-Berlin until December 3" → December 3), "this/next week" or "the weekend" (that
-Sunday), "this/next month" or "in May" / "by the end of March" (the month's last day).
-None for a fact about something that repeats (birthday, anniversary, "every", "on
-Mondays"), that already happened ("was", "moved", "since", "last week"), or for a day
-more than a year ahead. The text format adds "until <date>". The hub ends the belief
-after that day. `link` is
-the same transcript link as in the text. `limit` goes up to 1000 in JSON mode (200 in text), so a
-program can hold every fact and reconcile by id: the hub asks for 1000 and retires any
-fact id that stops being returned (replaced, retired, or its conversation deleted).
-
-`source` (MCP 0.16.0, additive) is on every JSON fact row and every JSON
-`list_action_items` row: `"meeting"` when the fact or item comes from a Zoom meeting's
-conversation, else null (recordings, voice notes and written notes are told apart by
-`conversation_kind` and `written_by_hand`; other values may be added later, so treat an
-unknown one as null). In the text results a meeting's conversation is marked `(Online
-meeting: <topic>)` (`(Online meeting)` without a topic; MCP 0.17.0, before that `(Zoom
-meeting…)`: the mark names no platform) and lists its participants
-(`search_conversations`, `get_conversation` with join and leave times), and chat lines
-read `<name> (chat): …` (`get_transcript`, `search_transcripts`, the `/view` page).
-
-`written_by_hand` and `note_link` (MCP 0.12.0, additive) are on every JSON fact row and
-every JSON `list_action_items` row: true and the note's URL in the hub when the fact or
-item comes from a written note (`POST /v1/ingest/text`), else false and null. The text
-listings mark such facts, items and conversations `(written by hand: <link>)` instead of
-`(voice note)`.
-
-**Fact quality.** Small models list too many facts. The facts prompt leaves out
-thinking aloud, requests to someone else (action items), which tool was used and passing
-details of what was being worked on, never guesses anyone's gender, and asks for at most
-twice `CONVO_MAX_FACTS_PER_CONVERSATION` candidates (at least 5). Code drops what the model
-still returns of the first two: thinking aloud in the fact's main clause ("is
-considering …", "might …", "hasn't decided …"; not "an allergy that might cause …"), and
-requests: asking or telling someone to do something ("asked the landlord to fix …"), or
-"wants X to <errand>" when X is a person of the conversation ("wants Bo to send …", not
-"needs German to work in Zurich" or "wants Leo to attend the bilingual school"). Then one
-more model call scores each fact 1–5 (worth recalling in three months?), shown the
-line(s) it was said on; facts under `CONVO_FACT_MIN_SCORE` (default 4; 1 = no call) are
-left out (a fact it gives no score counts as that minimum), and at most
-`CONVO_MAX_FACTS_PER_CONVERSATION` (default 3; 0 = no cap) are kept, best first. A fact
-that shares its subject and a word with a stored fact (likely said again, or an update) is
-never cut by the cap, so an update can't be lost and a re-summary doesn't lose a fact that
-had replaced another. If the call fails, the facts are kept. In a voice note, facts that
-only repeat a dated event go first, and the owner's decisions are neither reviewed nor
-capped. Facts already stored are unchanged; a fact said again with a kind gives it to an
-older fact that had none. A fact's `quote` is the line `erase_fact` would redact: the line
-that starts in the cited second (the one sharing most words with the fact), else the
-nearest, else a nearby line that says the fact's words; for a pruned transcript, the
-newest conversation that said it again.
-
-**People.** Every enrolled voice and every person named in a conversation has a row in
-`people` with a stable id, so the hub can link them to its contacts. Names match in any
-case. `rename_speaker_everywhere` keeps the id and keeps the old name as an alias; if
-the new name is already a person, the two are merged and the id of the name that
-already existed survives (the other row gets `merged_into` it, its aliases and voice
-move, and its old id and names resolve to the survivor). Unnamed `Speaker N` labels are
-not people. `list_people(format="json")` lists the people not merged into another, in
-the text mode's order (speakers by last heard, then people mentioned, then the rest by
-name):
-
-```json
-{"people": [{"id": 3, "name": "Alice", "aliases": ["Ally"], "is_owner": false,
-             "has_voice": true, "conversations": 4, "first_seen": "2025-10-09",
-             "last_seen": "2025-10-12"}]}
-```
-
-The owner person is the one with the enrolled owner voice; without one, the person called
-`CONVO_OWNER_NAME`, else one called me, I, myself, owner, the owner, user or the user. Only
-that person has `"is_owner": true`, and owner facts carry its id. Next to an enrolled
-owner, a person called by one of those owner names ("Me" from summaries) is listed as
-the owner, with that name among the owner's aliases, not as a person of its own.
-`has_voice` means an enrolled or learned voice; `conversations` counts distinct
-conversations they spoke in or were named in (under their name or an alias), and
-`first_seen`/`last_seen` are the local dates (`CONVO_TIMEZONE`) of the first and last of
-those, null if none. The text mode is unchanged.
-
-**Retired facts.** `retire_fact(fact_id, reason)` (write, destructive) is how the owner
-forgets a fact from the hub's review page. The fact gets status `retired` (next to
-`current` and `superseded`) with `retired_at` and `retired_reason`, and leaves
-`list_facts` (both formats), search (keyword index and embeddings), `get_conversation`
-and `GET /v1/conversations/{id}`. Facts it had replaced stay replaced. It stays
-forgotten: a re-summary of its conversation (e.g. after `name_speaker`) marks the matching
-fact retired again (it keeps its id, see below; the hub still reconciles by the facts
-returned), and the fact linker is shown retired facts too, so the
-same fact said in a later conversation becomes another source of the retired fact
-instead of a new one. A later fact that *updates* a retired one is a new belief and is
-shown. Calling it again answers "already retired".
-
-**Erased facts** (MCP 0.10.0). `erase_fact(fact_id, reason)` (write, destructive) is what
-the hub's Forget calls; it does everything `retire_fact` does and takes the fact's words
-out of every place this module serves or stores them, while the rest of the conversation
-stays:
-
-| Where | What happens |
-|---|---|
-| Transcript | The line at the fact's `source_at` (whole seconds from the conversation start, so the line that starts within that second) reads `[forgotten]` (`segments.erased = 1`); speaker and times stay, so transcript links still open at that spot. Done in the fact's conversation and in every one that said it again (`fact_sources`). |
-| Title, summary, key points, topics | Taken off every read path at once (`get_conversation` says "being rewritten") and moved to `forget_rewrites`; the worker's local model rewrites them without the fact (`ForgetRewrite`, keep everything else word for word), then code drops any sentence, key point or topic that still has the fact's words in order. If the model is down they stay hidden and are retried on the next pass. |
-| Daily digest | Every digest that lists the conversation is taken down and written again once its conversations are rewritten. |
-| Search | The line index follows the line; the conversation's summary and transcript entries are redone; the fact's and the conversation's embeddings are deleted (the conversation is embedded again after the rewrite). |
-| Kept audio | With `CONVO_KEEP_AUDIO=true`, the audio chunks under the line are deleted. |
-| Database file | `PRAGMA secure_delete` is on, both full-text indexes are merged and the write-ahead log is checkpointed after an erase, so the words don't stay in free pages. |
-
-A later repeat linked "same" to an erased fact is erased the same way; a re-summary of a
-conversation it was said in hides the new notes until they are rewritten too. Not
-touched: action items (their own text), people, and facts the erased one had replaced.
-The fact's own sentence stays in the `facts` table, never served, so that a repeat can be
-recognized. It can't be undone. Calling it again erases only what is new and answers
-"already erased"; a fact retired earlier can be erased later.
-
-**Retention** (`CONVO_TRANSCRIPT_RETENTION_DAYS`, default 0 = keep forever). When set,
-the worker (at most hourly) deletes the transcript lines of conversations that ended more
-than that many days ago, and kept audio of finished sessions older than that. Pending and
-failed conversations keep their lines until they are summarized. A pruned conversation
-still answers everything its notes hold: title, summary, key points, topics, people,
-facts (with links) and action items, `search_conversations`, `list_facts`, digests.
-It no longer answers exact wording: `search_transcripts` doesn't find its lines,
-`get_transcript` says when the transcript was removed, and its links (`/view/<id>#t=…`)
-open the page with the summary, facts and that note instead of the lines. It can't be
-re-summarized.
+`convo-server mcp` exposes the store to any MCP-capable frontend. The tools, their JSON fields and the relay routes are in [docs/api/mcp.md](../docs/api/mcp.md).
 
 **Hermes** (stdio; add to the profile's `config.yaml`):
 
@@ -1183,53 +595,6 @@ CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 convo-server mcp --http   # docker
 #   http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>
 ```
 
-**Uploads through the MCP server.** `convo-server mcp --http` also serves plain HTTP
-routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
-`?access_token=`). They are not MCP tools, so no model ever sees them:
-
-| route | same as |
-|---|---|
-| `POST /ingest/chunk` | `POST /v1/ingest/chunk` (same multipart fields, same JSON answer) |
-| `POST /sessions/{session_id}/end` | `POST /v1/sessions/{id}/end` |
-| `POST /ingest/text` | `POST /v1/ingest/text` (same JSON fields and answer; written notes) |
-| `DELETE /ingest/text/{source_id}` | `DELETE /v1/ingest/text/{source_id}` |
-| `GET /health` | `GET /health` (here behind the token) |
-| `GET /conversations`, `GET /conversations/{id}`, `GET /conversations/{id}/transcript` | the `/v1` routes, same query |
-| `GET /action-items`, `PATCH /action-items/{id}` | the `/v1` routes |
-| `GET /digests/{date}`, `POST /digests/{date}` | the `/v1` routes |
-| `GET /settings/llm`, `PUT /settings/llm` | the `/v1` routes (the hub's settings page: the summary model) |
-| `GET /settings/vocabulary`, `PUT /settings/vocabulary` | the `/v1` routes (the hub's settings page: words whisper is nudged toward) |
-| `GET`, `POST`, `DELETE /speakers/enroll/next` | the `/v1` routes (the hub's "Enroll my voice": enroll the next recording; MCP 0.20.0) |
-| `POST /meetings` | `POST /v1/meetings` (same JSON `{url}` or `{meeting_id, passcode}`, `title?`; same answer: 202, 400, 409 busy with `message` and `active`, 501 meetings off, 500) |
-| `GET /meetings` | `GET /v1/meetings` (only `limit`, bounded to 1–100) |
-| `GET /meetings/{id}`, `DELETE /meetings/{id}` | the `/v1` routes (state; leave, answering once the bot exited) |
-| `GET /conversations/{id}/export` | `GET /v1/conversations/{id}/export` (same `format`, `include`; the file comes back as it is, not JSON; errors are JSON `detail`; the hub's Share button; MCP 0.19.0) |
-
-The meeting routes are for the hub's "Send Athena to a meeting" box (lane 4B of
-`docs/zoom-meeting-bot-plan.md`). An `{id}` that isn't a meeting id (32 lowercase hex
-characters) gets the API's own 404 `{"detail": "meeting not found"}` without being
-forwarded; `POST /meetings` takes `application/json` only (415 otherwise) and caps its
-body at 16 KB (413). `GET` and `POST` wait up to 15 s for the API, `DELETE` up to 30 s
-(the bot gets SIGTERM, SIGKILL after 10 s, and the answer waits for it to exit); a timeout
-or an API that isn't running is a 502 with a readable `detail`. The relay only forwards
-HTTP: it never imports the meeting code, so `mcp --http` loads and starts nothing new.
-
-The read routes are for the phone relay's T5 sync when it is paired through Odysseus
-(Odysseus forwards them for a token with `sound:read` / `sound:write`); the MCP token can
-read the same data through the tools anyway.
-
-Each request is forwarded unchanged to this module's own ingest API
-(`http://<CONVO_HOST>:<CONVO_PORT>`, `127.0.0.1` when `CONVO_HOST` is `0.0.0.0`) with
-`CONVO_INGEST_TOKEN`, so there is one ingest code path and the ingest token, which also
-signs transcript links, never leaves the module. The API's status and `detail` come back
-as they are; the body is capped like the API's (25 MB of audio); if `convo-server serve`
-isn't running the answer is 502 with a readable `detail`. `/ingest/text` takes
-`application/json` only (415 otherwise) and caps its body at about 1.2 MB. Odysseus uses these routes to
-add recordings (its call recorder, phones paired through it) with the URL and token of
-the `convo` MCP server it already has. **The MCP token can therefore add recordings**:
-treat it like the ingest token, and keep the MCP port on loopback, the Docker bridge or
-Tailscale. uvicorn's access log shows `access_token=***` instead of the token.
-
 Use only a local model in whichever frontend reads this. Results contain your transcripts.
 
 ## Summaries
@@ -1243,7 +608,7 @@ small local model does better on narrow questions):
    its transcript (still searchable; `POST /v1/conversations/{id}/summarize` retries) but
    gets no summary, action items or facts, and stays out of digests.
    Plain junk is discarded first, without a model call, by fixed rules
-   (`convo_server/relevance_rules.py`): under 3 words (`too_short`), only filler words
+   (`athena/relevance_rules.py`): under 3 words (`too_short`), only filler words
    such as "okay", "mm", "yeah" (`filler`), or a microphone check such as "testing, one,
    two" (`mic_check`). These rules only discard: anything with one content word, a name,
    a number, "yes"/"no", or words in another language goes to the model. No rule keeps a
@@ -1252,7 +617,7 @@ small local model does better on narrow questions):
    decisions and owners for meetings, instructions and the next date for appointments.
 3. **Action items** (promises, requests, appointments), each written as a task, with
    `due_date` (YYYY-MM-DD). When the deadline names a day ("by Friday", "October
-   thirty-first", "tomorrow") the date is worked out in code (`convo_server/dates.py`)
+   thirty-first", "tomorrow") the date is worked out in code (`athena/dates.py`)
    from the conversation date in `CONVO_TIMEZONE` ("by Friday" said on Wednesday
    2026-10-14 → 2026-10-16); the model's date is used only for vaguer deadlines.
    An action item is a concrete thing to do with an object and ideally a time ("send the
@@ -1411,5 +776,9 @@ the memory; large-v3-q5_0 was no better.
 ```
 
 Tests use fakes for whisper, the LLM and speaker embeddings, and the energy VAD, so they
-run without models. `scripts/smoke_upload.py` uploads real audio files as 30 s Opus
+run without models. They are in `tests/unit/{summarize,store,mcp,api,transcribe}/`,
+`tests/integration/` (the pipeline end to end), `tests/meetings/` (the meeting bot and
+meeting processing) and `tests/contract/` (snapshots of what the hub reads); each folder
+is a package, so a test imports shared helpers as `tests.conftest` or
+`tests.unit.mcp.test_mcp`. `scripts/smoke_upload.py` uploads real audio files as 30 s Opus
 chunks to a running server for an end-to-end check.

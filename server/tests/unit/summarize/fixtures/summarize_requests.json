@@ -1,0 +1,2615 @@
+{
+ "prompts": {
+  "133539eabc8a": "You write notes about one conversation for the user's private memory. Lines look like \"[73] Speaker: text\" where the number is the offset in seconds from the start of the conversation. \"Me\" is the user (the person wearing the recorder). Only state what the transcript supports; never invent names, dates or commitments. Use the transcript's language for content. Be concise. Output JSON only.\nThis is a casual conversation. summary: one or two sentences. key_points: news, plans and personal details worth remembering; skip small talk.\ntitle: short and specific (who/what). people: names of people who took part or were discussed (not \"Speaker 1\"); include \"Me\" only if they spoke. topics: a few keywords. Keys: title, summary, key_points, people, topics.",
+  "1daed109ebd7": "You write notes about one conversation for the user's private memory. Lines look like \"[73] Speaker: text\" where the number is the offset in seconds from the start of the conversation. \"Me\" is the user (the person wearing the recorder). Only state what the transcript supports; never invent names, dates or commitments. Use the transcript's language for content. Be concise. Output JSON only.\nThis is a meeting. summary: purpose and outcome. key_points: decisions made, open questions, deadlines and who is responsible.\ntitle: short and specific (who/what). people: names of people who took part or were discussed (not \"Speaker 1\"); include \"Me\" only if they spoke. topics: a few keywords. Keys: title, summary, key_points, people, topics.",
+  "23ff1d3fc296": "You write notes about one conversation for the user's private memory. Lines look like \"[73] Speaker: text\" where the number is the offset in seconds from the start of the conversation. \"Me\" is the user (the person wearing the recorder). Only state what the transcript supports; never invent names, dates or commitments. Use the transcript's language for content. Be concise. Output JSON only.\nThis is a call. summary: who called whom, why, and the outcome. key_points: what was agreed and any follow-up.\ntitle: short and specific (who/what). people: names of people who took part or were discussed (not \"Speaker 1\"); include \"Me\" only if they spoke. topics: a few keywords. Keys: title, summary, key_points, people, topics.",
+  "2c6ea42d570b": "You write a short daily digest of the user's conversations for 2025-10-06 from their structured notes. Only use the given notes. Output JSON only.",
+  "35ea2b92ab82": "You keep the user's memory of facts up to date. You get facts already known (with id and the date they were learned) and new facts from a conversation on 2025-10-06. For every new fact (by its number) say:\n- \"same\": it says the same thing as a known fact (give its id);\n- \"updates\": it is about the same thing as a known fact but the value changed or   conflicts, e.g. a new amount, date, place or decision (give its id);\n- \"new\": anything else.\nOnly link facts about the same subject and the same thing. Output JSON only: {\"links\": [{\"new\": <number>, \"relation\": \"...\", \"existing\": <id or null>}]}.",
+  "3726f8b11f08": "You merge partial notes of ONE long conversation (given in order) into a single set of notes with the same JSON shape. Deduplicate. Output JSON only.",
+  "5607e2a81ec9": "You list the action items of one conversation. Lines look like \"[73] Speaker: text\" where the number is the offset in seconds from the start of the conversation. \"Me\" is the user (the person wearing the recorder). Only state what the transcript supports; never invent names, dates or commitments. Use the transcript's language for content. Be concise. Output JSON only.\nThe conversation happened on Monday 2025-10-06.\nAn action item is something someone promised or was asked to do after this conversation: a promise (\"I'll send you the slides tonight\"), a request (\"can you water the plants while I'm away?\") or an appointment to keep. List each one the user would want to be reminded of later, small promises to someone too (\"I'll text you the address tonight\"); leave out things already done.\nAn action item is a concrete thing to do, with an object and ideally a time: \"send the slides to Greta\", \"call the plumber on Friday\". A statement of intent, priority, principle or decision (\"I should focus on X before Y\", \"stop prioritizing Z\", \"we decided to ...\", \"from now on ...\") is NOT an action item: it is a durable fact about the speaker, listed with the facts, not here. A vague wish with nothing concrete to act on (\"figure out how it could use less battery\") is not an action item either, unless it has a time, a named list or a command word (\"remind me\", \"to-do\", \"add a task\"). Something done during the conversation or right after it, that nobody needs reminding of, is NOT an action item either: a quick errand or bit of logistics (\"I'll move my truck\", \"let me grab my keys\", \"I'll get the door\", \"I'm going to park first\").\ntitle: a short imperative summary of the item, at most 60 characters, e.g. \"Call the plumber about the tap\"; never the whole sentence.\ntext: a task that starts with a verb and names who and what (an event: its name, see kind), e.g. \"Send Sam the slides\" or \"Water Lena's plants\". Never copy the spoken sentence, but keep the verb the speaker used (\"I'll move the car\" -> \"Move the car\", never \"Drive the car\").\nowner: who should do it (\"Me\" for the user), if clear. due: the deadline in the words used (\"Monday\", \"March 3\"), or null; due_date: that deadline as YYYY-MM-DD counted from the conversation date, or null. at_seconds: the bracketed number of the line it comes from.\nkind: \"event\" for a meeting, appointment, call or lunch on a set day, e.g. \"meeting with Jason on Wednesday at 12 pm\" -> text \"Meeting with Jason\", kind event, due \"Wednesday\", time \"12 pm\". An event's text and title name it as the user said it (\"Meeting with Jason\", \"Lunch with Ana\", \"Dentist appointment\"), never a verb that changes its meaning (\"Meet Jason\" sounds like meeting him for the first time); \"reminder\" when the user asks to be reminded at a time, e.g. \"remind me at 5 to call Mom\" -> text \"Call Mom\", kind reminder, time \"5\"; otherwise \"task\", e.g. \"get the proposal done on Wednesday\" -> text \"Get the proposal done\", kind task, due \"Wednesday\". Something repeating (\"every Monday\") is a task whose text starts \"Set up a repeating event: \". time: the time of day as said (\"12 pm\", \"half past two\"), or null. duration_minutes: how long an event lasts if said (\"for an hour\" = 60), else null. location: where an event is if said (\"Main Street\"), else null. list_name: the list the user wants it on if they name one, e.g. \"add milk to my shopping list\" -> text \"Milk\", list_name \"shopping\"; \"put call the bank on my work to-do list\" -> text \"Call the bank\", list_name \"work\"; else null.\nKeys: action_items[{text, title, kind, owner, due, due_date, time, duration_minutes, location, list_name, at_seconds}].",
+  "624e98ed0b74": "You list the to-dos in a voice note the user recorded for themselves. Lines look like \"[73] Speaker: text\" where the number is the offset in seconds from the start of the conversation. \"Me\" is the user (the person wearing the recorder). Only state what the transcript supports; never invent names, dates or commitments. Use the transcript's language for content. Be concise. Output JSON only.\nThe note was recorded on Monday 2025-10-06.\naction_items: things the note says the user wants or needs to do (\"call the plumber\", \"remember to buy milk\", \"email Bob about the invoice\"), appointments and meetings it mentions, and things to be reminded of.\nAn action item is a concrete thing to do, with an object and ideally a time: \"send the slides to Greta\", \"call the plumber on Friday\". A statement of intent, priority, principle or decision (\"I should focus on X before Y\", \"stop prioritizing Z\", \"we decided to ...\", \"from now on ...\") is NOT an action item: it is a durable fact about the speaker, listed with the facts, not here. A vague wish with nothing concrete to act on (\"figure out how it could use less battery\") is not an action item either, unless it has a time, a named list or a command word (\"remind me\", \"to-do\", \"add a task\"). Something done during the conversation or right after it, that nobody needs reminding of, is NOT an action item either: a quick errand or bit of logistics (\"I'll move my truck\", \"let me grab my keys\", \"I'll get the door\", \"I'm going to park first\").\ntitle: a short imperative summary of the item, at most 60 characters, e.g. \"Call the plumber about the tap\"; never the whole sentence.\ntext: imperative and self-contained (\"Call the plumber about the leaking tap\"); an event: its name, see kind. owner: \"Me\" unless the note says someone else should do it. due: the deadline as said (\"Friday\"); due_date: that deadline as YYYY-MM-DD counted from the note's date, or null if there is none. at_seconds: the bracketed number of the line it comes from. Return an empty list if there are none.\nkind: \"event\" for a meeting, appointment, call or lunch on a set day, e.g. \"meeting with Jason on Wednesday at 12 pm\" -> text \"Meeting with Jason\", kind event, due \"Wednesday\", time \"12 pm\". An event's text and title name it as the user said it (\"Meeting with Jason\", \"Lunch with Ana\", \"Dentist appointment\"), never a verb that changes its meaning (\"Meet Jason\" sounds like meeting him for the first time); \"reminder\" when the user asks to be reminded at a time, e.g. \"remind me at 5 to call Mom\" -> text \"Call Mom\", kind reminder, time \"5\"; otherwise \"task\", e.g. \"get the proposal done on Wednesday\" -> text \"Get the proposal done\", kind task, due \"Wednesday\". Something repeating (\"every Monday\") is a task whose text starts \"Set up a repeating event: \". time: the time of day as said (\"12 pm\", \"half past two\"), or null. duration_minutes: how long an event lasts if said (\"for an hour\" = 60), else null. location: where an event is if said (\"Main Street\"), else null. list_name: the list the user wants it on if they name one, e.g. \"add milk to my shopping list\" -> text \"Milk\", list_name \"shopping\"; \"put call the bank on my work to-do list\" -> text \"Call the bank\", list_name \"work\"; else null.\nkind \"note\" ONLY when the user explicitly asks to save a note: \"create a note ...\", \"make a note ...\", \"take a note ...\", \"note that ...\", \"add to my hardware notes ...\". text: what the note says, cleaned up, without the command words, e.g. \"create a note battery dimensions are 13mm x 14mm x 3mm\" -> text \"Battery dimensions are 13 mm x 14 mm x 3 mm\", title \"Battery dimensions\". list_name: the notes the user names to add it to, e.g. \"add to my hardware notes: the screen is 1.4 inch\" -> text \"The screen is 1.4 inch\", title \"Screen size\", list_name \"hardware\"; else null. A note has no due, time or owner. A plain statement without such a command (\"the wifi password is on the router\") is no note, and \"remember to ...\" is a task, not a note.\nAn appointment said without a verb is still an item: \"meeting with the design team Tuesday 11 a.m.\" -> text \"Meeting with the design team\", kind event, due \"Tuesday\", time \"11 a.m.\".\nKeys: action_items[{text, title, kind, owner, due, due_date, time, duration_minutes, location, list_name, at_seconds}].",
+  "71054334b5e1": "You sort recordings from a wearable microphone before they are summarized. Lines look like \"[73] Speaker: text\" where the number is the offset in seconds from the start of the conversation. \"Me\" is the user (the person wearing the recorder). Only state what the transcript supports; never invent names, dates or commitments. Use the transcript's language for content. Be concise. Output JSON only.\ndiscard=true only if it is not a real conversation the user took part in or listened to: a TV, radio, video or podcast playing (reason tv_or_media), noise or fragments (background_noise), unintelligible text (gibberish), or not people talking to each other (not_a_conversation). When in doubt, keep it: discard=false, reason \"none\".\nkind: meeting (work discussion with an agenda or several people), call (phone/video call), appointment (doctor, dentist, landlord, bank, any service visit), casual (friends, family, small talk), other.",
+  "83e82f063909": "You write notes about one conversation for the user's private memory. Lines look like \"[73] Speaker: text\" where the number is the offset in seconds from the start of the conversation. \"Me\" is the user (the person wearing the recorder). Only state what the transcript supports; never invent names, dates or commitments. Use the transcript's language for content. Be concise. Output JSON only.\nThis is an appointment. summary: with whom and about what. key_points: findings, instructions to follow, the next appointment (date, time, place), costs.\ntitle: short and specific (who/what). people: names of people who took part or were discussed (not \"Speaker 1\"); include \"Me\" only if they spoke. topics: a few keywords. Keys: title, summary, key_points, people, topics.",
+  "8f2950d7c6c0": "You write notes about one conversation for the user's private memory. Lines look like \"[73] Speaker: text\" where the number is the offset in seconds from the start of the conversation. \"Me\" is the user (the person wearing the recorder). Only state what the transcript supports; never invent names, dates or commitments. Use the transcript's language for content. Be concise. Output JSON only.\nsummary: the gist. key_points: the most important points.\ntitle: short and specific (who/what). people: names of people who took part or were discussed (not \"Speaker 1\"); include \"Me\" only if they spoke. topics: a few keywords. Keys: title, summary, key_points, people, topics.",
+  "9fd258100c04": "You pick durable facts from one conversation for the user's long-term memory. Lines look like \"[73] Speaker: text\" where the number is the offset in seconds from the start of the conversation. \"Me\" is the user (the person wearing the recorder). Only state what the transcript supports; never invent names, dates or commitments. Use the transcript's language for content. Be concise. Output JSON only.\nfacts: specific facts worth remembering for months: preferences, allergies, plans, relationships, jobs, moves, decisions, prices, dates of future events. Skip small talk, one-off logistics and anything only true for today: never how someone felt, slept, ate, drank or worked on one day (\"was very focused today\", \"did not drink enough water today\"), and never a plan for the next minutes or hours or the next step of what they are doing (\"plans to get a snack\", \"plans to wire it up on a breadboard to test it\"), and never passing curiosity about something that came up (\"is interested in hearing how it sounds\", \"wants to see the demo\"). Leave out thinking aloud: what someone is considering, wondering about or might do is not a fact until it is decided. Leave out a request to someone else (\"wants Bo to send the report\"): that is an action item. Leave out how a task was done or which tool was used for it, and passing details of whatever is being built, fixed or discussed in the conversation, unless they will still matter in a month. Each fact is a complete sentence that names its subject and makes sense on its own, e.g. {\"subject\": \"Alice\", \"fact\": \"Alice is vegetarian.\"}, never a bare value like \"May\". Read months later without the conversation, it must still say what it is about: name the thing (\"Alice's bakery\", \"the Lisbon flat\") instead of pointing back into the conversation (\"the technology\", \"the project\", \"this app\", \"that idea\"). If you can't name it, leave the fact out. Never guess anyone's gender: repeat the name, never \"he\" or \"she\". kind: preference (likes, dislikes, habits, how someone wants things done), plan (something they mean to do later), decision (a choice or principle they settled on), relationship (who someone is to someone else), personal (job, home, health, family, background), other. at_seconds: the bracketed number of the supporting line. Return an empty list if there are none.\nDecisions, priorities and principles someone states about how they want to work or live are facts about that person (the subject is the speaker, \"Me\" for the user), phrased as a decision, e.g. the user saying \"I should stop prioritizing side projects before the base system is stable\" -> {\"subject\": \"Me\", \"fact\": \"The owner decided to stabilise the base system before side projects.\"}. A plan with no time is a fact too when it will still matter in a month (a trip, a purchase, a project, a move): \"The owner plans to ...\". Fewer good facts are better than many weak ones. Keys: facts[{subject, fact, kind, at_seconds}].\nList at most 6 facts: the ones the user would most want recalled months from now.",
+  "a3415431c1c3": "You write up a voice note the user recorded for themselves, for their private memory. Lines look like \"[73] Speaker: text\" where the number is the offset in seconds from the start of the conversation. \"Me\" is the user (the person wearing the recorder). Only state what the transcript supports; never invent names, dates or commitments. Use the transcript's language for content. Be concise. Output JSON only.\nEvery line is the user talking to themselves: an idea, a plan or a reminder.\ntitle: short and specific (what the note is about). summary: the idea in one or two sentences. key_points: details worth keeping (may be empty). people: names of people mentioned (not \"Me\"). topics: a few keywords. Keys: title, summary, key_points, people, topics.",
+  "c7a0f7d9d60a": "You edit the notes of one conversation because the user asked to forget some facts. Remove every statement of the facts to forget, and anything that reveals them, from the title, the summary, the key points and the topics. Keep everything else word for word. Never add anything. Drop a key point or topic that is only about a fact to forget. If the title gives one away, write a neutral title about what else was discussed. Output JSON only.",
+  "db52b3eb6d70": "You check facts picked from one conversation before they go into the user's long-term memory. Score each fact from 1 to 5:\n5: certainly worth recalling in three months: an allergy, a job, a family member, a firm decision, a dated plan, a lasting preference;\n4: likely still useful in three months;\n3: true but minor or short-lived;\n2: thinking aloud (considering, might), a request or task for someone, how a task was done or which tool was used, details of what was being worked on that day;\n1: trivial, or vague (says \"the device\" or \"the project\" without naming it). A fact about a named project, place or thing is fine: score it like any other.\n\"said\" is the transcript line the fact came from. Score every fact by its number. Output JSON only: {\"scores\": [{\"number\": <number>, \"score\": <1-5>}]}."
+ },
+ "scenarios": {
+  "conversation_appointment": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "Triage",
+     "sha256": "7d1c93cf3eb182bef73d52fa1e54125a3b45fad8c90f35f45f33a66902c12a5f",
+     "system": "71054334b5e1",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "3ac06e3a4c537cfcd38ecc0f522476a21dbaaf1784ab9bb70e38b26c22e3c248",
+     "system": "83e82f063909",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "6de8b147322e40cc0f19b038268aa190ceb1a2ee3649465b89ef231e2e37c190",
+     "system": "5607e2a81ec9",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "adc0c85c2e7a01c57ee1fa17026b8e4de3b0c0c4665d0b75b1d686d304e12f27",
+     "system": "9fd258100c04",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactReview",
+     "sha256": "c2f8a9437c4dbc06b775761dc92ed3d56522eab32a9aadadcd1fa92a7cc499d9",
+     "system": "db52b3eb6d70",
+     "user": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian.\", \"said\": \"I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\"}, {\"number\": 1, \"subject\": \"Jason\", \"fact\": \"Jason has a meeting with Me on Wednesday at 12 pm.\", \"said\": \"Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\"}, {\"number\": 2, \"subject\": \"Alice\", \"fact\": \"Alice moved to Lisbon in May.\", \"said\": \"I moved to Lisbon in May and I water the plants every Monday.\"}, {\"number\": 3, \"subject\": \"Alice\", \"fact\": \"Alice works at the Porto bakery.\", \"said\": \"I work at the Porto bakery.\"}, {\"number\": 4, \"subject\": \"Me\", \"fact\": \"Me plans a trip to Lisbon next spring.\", \"said\": \"We plan a trip to Lisbon next spring.\"}]}"
+    }
+   ],
+   "result": {
+    "action_items": [
+     {
+      "due": "Friday",
+      "due_date": "2025-10-10",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741200.0,
+      "text": "Send Sam the slides",
+      "time_unclear": false,
+      "title": "Send Sam the slides"
+     },
+     {
+      "due": "Wednesday",
+      "due_date": "2025-10-08",
+      "due_time": "12:00",
+      "duration_minutes": 60,
+      "explicit": true,
+      "kind": "event",
+      "list_name": null,
+      "location": "Main Street",
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741230.0,
+      "text": "Meeting with Jason on Main Street, for an hour",
+      "time_unclear": false,
+      "title": "Meeting with Jason on Main Street, for an hour"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741260.0,
+      "text": "Milk",
+      "time_unclear": false,
+      "title": "Milk"
+     },
+     {
+      "due": null,
+      "due_date": "2025-10-06",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741320.0,
+      "text": "Set up a repeating event: water the plants every Monday",
+      "time_unclear": false,
+      "title": "Set up a repeating event: water the plants every Monday"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": false,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": null,
+      "source_at": 1759741350.0,
+      "text": "Save the wifi password",
+      "time_unclear": false,
+      "title": "Save the wifi password"
+     }
+    ],
+    "facts": [
+     {
+      "fact": "Alice is vegetarian.",
+      "kind": "personal",
+      "source_at": 1759741200.0,
+      "subject": "Alice"
+     },
+     {
+      "fact": "Jason has a meeting with Me on Wednesday at 12 pm.",
+      "kind": "plan",
+      "source_at": 1759741230.0,
+      "subject": "Jason"
+     },
+     {
+      "fact": "Alice works at the Porto bakery.",
+      "kind": "personal",
+      "source_at": 1759741350.0,
+      "subject": "Alice"
+     },
+     {
+      "fact": "Me plans a trip to Lisbon next spring.",
+      "kind": "plan",
+      "source_at": 1759741380.0,
+      "subject": "Me"
+     }
+    ],
+    "key_points": [
+     "Alice is vegetarian",
+     "Trip in spring"
+    ],
+    "kind": "appointment",
+    "people": [
+     "Alice",
+     "Me"
+    ],
+    "summary": "Alice and the user made plans. Alice is vegetarian.",
+    "title": "Plans with Alice",
+    "topics": [
+     "travel"
+    ]
+   }
+  },
+  "conversation_call": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "Triage",
+     "sha256": "7d1c93cf3eb182bef73d52fa1e54125a3b45fad8c90f35f45f33a66902c12a5f",
+     "system": "71054334b5e1",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "d5b98d2b393772a35fe11795b2344fa4d4e2ed315b8c4492e87d963bb8b5b1fb",
+     "system": "23ff1d3fc296",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "6de8b147322e40cc0f19b038268aa190ceb1a2ee3649465b89ef231e2e37c190",
+     "system": "5607e2a81ec9",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "adc0c85c2e7a01c57ee1fa17026b8e4de3b0c0c4665d0b75b1d686d304e12f27",
+     "system": "9fd258100c04",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactReview",
+     "sha256": "c2f8a9437c4dbc06b775761dc92ed3d56522eab32a9aadadcd1fa92a7cc499d9",
+     "system": "db52b3eb6d70",
+     "user": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian.\", \"said\": \"I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\"}, {\"number\": 1, \"subject\": \"Jason\", \"fact\": \"Jason has a meeting with Me on Wednesday at 12 pm.\", \"said\": \"Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\"}, {\"number\": 2, \"subject\": \"Alice\", \"fact\": \"Alice moved to Lisbon in May.\", \"said\": \"I moved to Lisbon in May and I water the plants every Monday.\"}, {\"number\": 3, \"subject\": \"Alice\", \"fact\": \"Alice works at the Porto bakery.\", \"said\": \"I work at the Porto bakery.\"}, {\"number\": 4, \"subject\": \"Me\", \"fact\": \"Me plans a trip to Lisbon next spring.\", \"said\": \"We plan a trip to Lisbon next spring.\"}]}"
+    }
+   ],
+   "result": {
+    "action_items": [
+     {
+      "due": "Friday",
+      "due_date": "2025-10-10",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741200.0,
+      "text": "Send Sam the slides",
+      "time_unclear": false,
+      "title": "Send Sam the slides"
+     },
+     {
+      "due": "Wednesday",
+      "due_date": "2025-10-08",
+      "due_time": "12:00",
+      "duration_minutes": 60,
+      "explicit": true,
+      "kind": "event",
+      "list_name": null,
+      "location": "Main Street",
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741230.0,
+      "text": "Meeting with Jason on Main Street, for an hour",
+      "time_unclear": false,
+      "title": "Meeting with Jason on Main Street, for an hour"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741260.0,
+      "text": "Milk",
+      "time_unclear": false,
+      "title": "Milk"
+     },
+     {
+      "due": null,
+      "due_date": "2025-10-06",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741320.0,
+      "text": "Set up a repeating event: water the plants every Monday",
+      "time_unclear": false,
+      "title": "Set up a repeating event: water the plants every Monday"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": false,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": null,
+      "source_at": 1759741350.0,
+      "text": "Save the wifi password",
+      "time_unclear": false,
+      "title": "Save the wifi password"
+     }
+    ],
+    "facts": [
+     {
+      "fact": "Alice is vegetarian.",
+      "kind": "personal",
+      "source_at": 1759741200.0,
+      "subject": "Alice"
+     },
+     {
+      "fact": "Jason has a meeting with Me on Wednesday at 12 pm.",
+      "kind": "plan",
+      "source_at": 1759741230.0,
+      "subject": "Jason"
+     },
+     {
+      "fact": "Alice works at the Porto bakery.",
+      "kind": "personal",
+      "source_at": 1759741350.0,
+      "subject": "Alice"
+     },
+     {
+      "fact": "Me plans a trip to Lisbon next spring.",
+      "kind": "plan",
+      "source_at": 1759741380.0,
+      "subject": "Me"
+     }
+    ],
+    "key_points": [
+     "Alice is vegetarian",
+     "Trip in spring"
+    ],
+    "kind": "call",
+    "people": [
+     "Alice",
+     "Me"
+    ],
+    "summary": "Alice and the user made plans. Alice is vegetarian.",
+    "title": "Plans with Alice",
+    "topics": [
+     "travel"
+    ]
+   }
+  },
+  "conversation_casual": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "Triage",
+     "sha256": "7d1c93cf3eb182bef73d52fa1e54125a3b45fad8c90f35f45f33a66902c12a5f",
+     "system": "71054334b5e1",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "55013bcfcc581bbfe47f3082eecc69684bad335dee79094d8db98556df7687a4",
+     "system": "133539eabc8a",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "6de8b147322e40cc0f19b038268aa190ceb1a2ee3649465b89ef231e2e37c190",
+     "system": "5607e2a81ec9",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "adc0c85c2e7a01c57ee1fa17026b8e4de3b0c0c4665d0b75b1d686d304e12f27",
+     "system": "9fd258100c04",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactReview",
+     "sha256": "c2f8a9437c4dbc06b775761dc92ed3d56522eab32a9aadadcd1fa92a7cc499d9",
+     "system": "db52b3eb6d70",
+     "user": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian.\", \"said\": \"I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\"}, {\"number\": 1, \"subject\": \"Jason\", \"fact\": \"Jason has a meeting with Me on Wednesday at 12 pm.\", \"said\": \"Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\"}, {\"number\": 2, \"subject\": \"Alice\", \"fact\": \"Alice moved to Lisbon in May.\", \"said\": \"I moved to Lisbon in May and I water the plants every Monday.\"}, {\"number\": 3, \"subject\": \"Alice\", \"fact\": \"Alice works at the Porto bakery.\", \"said\": \"I work at the Porto bakery.\"}, {\"number\": 4, \"subject\": \"Me\", \"fact\": \"Me plans a trip to Lisbon next spring.\", \"said\": \"We plan a trip to Lisbon next spring.\"}]}"
+    }
+   ],
+   "result": {
+    "action_items": [
+     {
+      "due": "Friday",
+      "due_date": "2025-10-10",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741200.0,
+      "text": "Send Sam the slides",
+      "time_unclear": false,
+      "title": "Send Sam the slides"
+     },
+     {
+      "due": "Wednesday",
+      "due_date": "2025-10-08",
+      "due_time": "12:00",
+      "duration_minutes": 60,
+      "explicit": true,
+      "kind": "event",
+      "list_name": null,
+      "location": "Main Street",
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741230.0,
+      "text": "Meeting with Jason on Main Street, for an hour",
+      "time_unclear": false,
+      "title": "Meeting with Jason on Main Street, for an hour"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741260.0,
+      "text": "Milk",
+      "time_unclear": false,
+      "title": "Milk"
+     },
+     {
+      "due": null,
+      "due_date": "2025-10-06",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741320.0,
+      "text": "Set up a repeating event: water the plants every Monday",
+      "time_unclear": false,
+      "title": "Set up a repeating event: water the plants every Monday"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": false,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": null,
+      "source_at": 1759741350.0,
+      "text": "Save the wifi password",
+      "time_unclear": false,
+      "title": "Save the wifi password"
+     }
+    ],
+    "facts": [
+     {
+      "fact": "Alice is vegetarian.",
+      "kind": "personal",
+      "source_at": 1759741200.0,
+      "subject": "Alice"
+     },
+     {
+      "fact": "Jason has a meeting with Me on Wednesday at 12 pm.",
+      "kind": "plan",
+      "source_at": 1759741230.0,
+      "subject": "Jason"
+     },
+     {
+      "fact": "Alice works at the Porto bakery.",
+      "kind": "personal",
+      "source_at": 1759741350.0,
+      "subject": "Alice"
+     },
+     {
+      "fact": "Me plans a trip to Lisbon next spring.",
+      "kind": "plan",
+      "source_at": 1759741380.0,
+      "subject": "Me"
+     }
+    ],
+    "key_points": [
+     "Alice is vegetarian",
+     "Trip in spring"
+    ],
+    "kind": "casual",
+    "people": [
+     "Alice",
+     "Me"
+    ],
+    "summary": "Alice and the user made plans. Alice is vegetarian.",
+    "title": "Plans with Alice",
+    "topics": [
+     "travel"
+    ]
+   }
+  },
+  "conversation_discarded": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "Triage",
+     "sha256": "7d1c93cf3eb182bef73d52fa1e54125a3b45fad8c90f35f45f33a66902c12a5f",
+     "system": "71054334b5e1",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    }
+   ],
+   "result": {
+    "discard": true,
+    "discard_reason": "tv_or_media",
+    "kind": "casual"
+   }
+  },
+  "conversation_filler": {
+   "requests": [],
+   "result": {
+    "discard": true,
+    "discard_reason": "filler",
+    "kind": "other"
+   }
+  },
+  "conversation_meeting": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "Triage",
+     "sha256": "7d1c93cf3eb182bef73d52fa1e54125a3b45fad8c90f35f45f33a66902c12a5f",
+     "system": "71054334b5e1",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "35bca6f1ec00f073f06b8823fa7685ef3da95c3209d8bbbc82f9d94c3c3601ac",
+     "system": "1daed109ebd7",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "6de8b147322e40cc0f19b038268aa190ceb1a2ee3649465b89ef231e2e37c190",
+     "system": "5607e2a81ec9",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "adc0c85c2e7a01c57ee1fa17026b8e4de3b0c0c4665d0b75b1d686d304e12f27",
+     "system": "9fd258100c04",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactReview",
+     "sha256": "c2f8a9437c4dbc06b775761dc92ed3d56522eab32a9aadadcd1fa92a7cc499d9",
+     "system": "db52b3eb6d70",
+     "user": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian.\", \"said\": \"I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\"}, {\"number\": 1, \"subject\": \"Jason\", \"fact\": \"Jason has a meeting with Me on Wednesday at 12 pm.\", \"said\": \"Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\"}, {\"number\": 2, \"subject\": \"Alice\", \"fact\": \"Alice moved to Lisbon in May.\", \"said\": \"I moved to Lisbon in May and I water the plants every Monday.\"}, {\"number\": 3, \"subject\": \"Alice\", \"fact\": \"Alice works at the Porto bakery.\", \"said\": \"I work at the Porto bakery.\"}, {\"number\": 4, \"subject\": \"Me\", \"fact\": \"Me plans a trip to Lisbon next spring.\", \"said\": \"We plan a trip to Lisbon next spring.\"}]}"
+    }
+   ],
+   "result": {
+    "action_items": [
+     {
+      "due": "Friday",
+      "due_date": "2025-10-10",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741200.0,
+      "text": "Send Sam the slides",
+      "time_unclear": false,
+      "title": "Send Sam the slides"
+     },
+     {
+      "due": "Wednesday",
+      "due_date": "2025-10-08",
+      "due_time": "12:00",
+      "duration_minutes": 60,
+      "explicit": true,
+      "kind": "event",
+      "list_name": null,
+      "location": "Main Street",
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741230.0,
+      "text": "Meeting with Jason on Main Street, for an hour",
+      "time_unclear": false,
+      "title": "Meeting with Jason on Main Street, for an hour"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741260.0,
+      "text": "Milk",
+      "time_unclear": false,
+      "title": "Milk"
+     },
+     {
+      "due": null,
+      "due_date": "2025-10-06",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741320.0,
+      "text": "Set up a repeating event: water the plants every Monday",
+      "time_unclear": false,
+      "title": "Set up a repeating event: water the plants every Monday"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": false,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": null,
+      "source_at": 1759741350.0,
+      "text": "Save the wifi password",
+      "time_unclear": false,
+      "title": "Save the wifi password"
+     }
+    ],
+    "facts": [
+     {
+      "fact": "Alice is vegetarian.",
+      "kind": "personal",
+      "source_at": 1759741200.0,
+      "subject": "Alice"
+     },
+     {
+      "fact": "Jason has a meeting with Me on Wednesday at 12 pm.",
+      "kind": "plan",
+      "source_at": 1759741230.0,
+      "subject": "Jason"
+     },
+     {
+      "fact": "Alice works at the Porto bakery.",
+      "kind": "personal",
+      "source_at": 1759741350.0,
+      "subject": "Alice"
+     },
+     {
+      "fact": "Me plans a trip to Lisbon next spring.",
+      "kind": "plan",
+      "source_at": 1759741380.0,
+      "subject": "Me"
+     }
+    ],
+    "key_points": [
+     "Alice is vegetarian",
+     "Trip in spring"
+    ],
+    "kind": "meeting",
+    "people": [
+     "Alice",
+     "Me"
+    ],
+    "summary": "Alice and the user made plans. Alice is vegetarian.",
+    "title": "Plans with Alice",
+    "topics": [
+     "travel"
+    ]
+   }
+  },
+  "conversation_other": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "Triage",
+     "sha256": "7d1c93cf3eb182bef73d52fa1e54125a3b45fad8c90f35f45f33a66902c12a5f",
+     "system": "71054334b5e1",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "3faf61656ead449ba94e4b40ba9f32b11d0821885983f3310e5b7c25e1fb6df4",
+     "system": "8f2950d7c6c0",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "6de8b147322e40cc0f19b038268aa190ceb1a2ee3649465b89ef231e2e37c190",
+     "system": "5607e2a81ec9",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "adc0c85c2e7a01c57ee1fa17026b8e4de3b0c0c4665d0b75b1d686d304e12f27",
+     "system": "9fd258100c04",
+     "user": "[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list.\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday.\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactReview",
+     "sha256": "c2f8a9437c4dbc06b775761dc92ed3d56522eab32a9aadadcd1fa92a7cc499d9",
+     "system": "db52b3eb6d70",
+     "user": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian.\", \"said\": \"I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\"}, {\"number\": 1, \"subject\": \"Jason\", \"fact\": \"Jason has a meeting with Me on Wednesday at 12 pm.\", \"said\": \"Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\"}, {\"number\": 2, \"subject\": \"Alice\", \"fact\": \"Alice moved to Lisbon in May.\", \"said\": \"I moved to Lisbon in May and I water the plants every Monday.\"}, {\"number\": 3, \"subject\": \"Alice\", \"fact\": \"Alice works at the Porto bakery.\", \"said\": \"I work at the Porto bakery.\"}, {\"number\": 4, \"subject\": \"Me\", \"fact\": \"Me plans a trip to Lisbon next spring.\", \"said\": \"We plan a trip to Lisbon next spring.\"}]}"
+    }
+   ],
+   "result": {
+    "action_items": [
+     {
+      "due": "Friday",
+      "due_date": "2025-10-10",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741200.0,
+      "text": "Send Sam the slides",
+      "time_unclear": false,
+      "title": "Send Sam the slides"
+     },
+     {
+      "due": "Wednesday",
+      "due_date": "2025-10-08",
+      "due_time": "12:00",
+      "duration_minutes": 60,
+      "explicit": true,
+      "kind": "event",
+      "list_name": null,
+      "location": "Main Street",
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741230.0,
+      "text": "Meeting with Jason on Main Street, for an hour",
+      "time_unclear": false,
+      "title": "Meeting with Jason on Main Street, for an hour"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741260.0,
+      "text": "Milk",
+      "time_unclear": false,
+      "title": "Milk"
+     },
+     {
+      "due": null,
+      "due_date": "2025-10-06",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741320.0,
+      "text": "Set up a repeating event: water the plants every Monday",
+      "time_unclear": false,
+      "title": "Set up a repeating event: water the plants every Monday"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": false,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": null,
+      "source_at": 1759741350.0,
+      "text": "Save the wifi password",
+      "time_unclear": false,
+      "title": "Save the wifi password"
+     }
+    ],
+    "facts": [
+     {
+      "fact": "Alice is vegetarian.",
+      "kind": "personal",
+      "source_at": 1759741200.0,
+      "subject": "Alice"
+     },
+     {
+      "fact": "Jason has a meeting with Me on Wednesday at 12 pm.",
+      "kind": "plan",
+      "source_at": 1759741230.0,
+      "subject": "Jason"
+     },
+     {
+      "fact": "Alice works at the Porto bakery.",
+      "kind": "personal",
+      "source_at": 1759741350.0,
+      "subject": "Alice"
+     },
+     {
+      "fact": "Me plans a trip to Lisbon next spring.",
+      "kind": "plan",
+      "source_at": 1759741380.0,
+      "subject": "Me"
+     }
+    ],
+    "key_points": [
+     "Alice is vegetarian",
+     "Trip in spring"
+    ],
+    "kind": "other",
+    "people": [
+     "Alice",
+     "Me"
+    ],
+    "summary": "Alice and the user made plans. Alice is vegetarian.",
+    "title": "Plans with Alice",
+    "topics": [
+     "travel"
+    ]
+   }
+  },
+  "conversation_split_with_context": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "Triage",
+     "sha256": "cce9a5a86dce584e6cd1a7c6678bb178806285f8265d78ac06301ac51bd0b68a",
+     "system": "71054334b5e1",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "cc75e1fa4f289530d89c42cf6038c23d0f647cf428dd346d0cdeaa6339d1ac9f",
+     "system": "133539eabc8a",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "d85d8280c1a54d138f40e2e9c227f17ff4de28f7035445b85eb0115eb548ad4f",
+     "system": "133539eabc8a",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "90551400441aa29acd4ceb60c6f0d13842f58e428998faa1705c003c56f99fd9",
+     "system": "133539eabc8a",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "a85145601109dbec2b574371ddf993f7ca6d3fd6d1e2bc147e9bec69e1888807",
+     "system": "133539eabc8a",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "887897c3503d929f3720a4733818b5b77cfccce4a51e2e9521c439604636782c",
+     "system": "3726f8b11f08",
+     "user": "[{\"title\": \"Plans with Alice\", \"summary\": \"Alice and the user made plans. Alice is vegetarian.\", \"key_points\": [\"Alice is vegetarian\", \"Trip in spring\"], \"people\": [\"Alice\", \"Me\", \"Speaker 1\", \"alice\"], \"topics\": [\"travel\", \"Travel\"]}, {\"title\": \"Plans with Alice\", \"summary\": \"Alice and the user made plans. Alice is vegetarian.\", \"key_points\": [\"Alice is vegetarian\", \"Trip in spring\"], \"people\": [\"Alice\", \"Me\", \"Speaker 1\", \"alice\"], \"topics\": [\"travel\", \"Travel\"]}, {\"title\": \"Plans with Alice\", \"summary\": \"Alice and the user made plans. Alice is vegetarian.\", \"key_points\": [\"Alice is vegetarian\", \"Trip in spring\"], \"people\": [\"Alice\", \"Me\", \"Speaker 1\", \"alice\"], \"topics\": [\"travel\", \"Travel\"]}, {\"title\": \"Plans with Alice\", \"summary\": \"Alice and the user made plans. Alice is vegetarian.\", \"key_points\": [\"Alice is vegetarian\", \"Trip in spring\"], \"people\": [\"Alice\", \"Me\", \"Speaker 1\", \"alice\"], \"topics\": [\"travel\", \"Travel\"]}]"
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "6e7627ea1e0f816752b4b17b84d05bfe15e638e8b95d8a4614cfffbc709b6e73",
+     "system": "5607e2a81ec9",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "b7f5163b73f999833a503f93ad38b3e83fc4bc03eb6d6f97d18ef16cdd6d3c50",
+     "system": "5607e2a81ec9",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "17b0f2d4777aa6bf8c51fdb4d770edaffffd40dfc0b000c66d9a4b7a05d8290e",
+     "system": "5607e2a81ec9",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "7a50b6f4cfd31cc40a6511496643e15f7052f530855c9a6d5c5cc0bacf6fa379",
+     "system": "5607e2a81ec9",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "13aed74f8c71226e1fe2ffbce6882ef308d072b3b6d325c33b9485994974ed3e",
+     "system": "9fd258100c04",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[0] Alice: I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "5390a2cbf3c0fdccd545c7af4abefab67bf439ae1917333794b74f3ff7c913f1",
+     "system": "9fd258100c04",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[30] Me: Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\n[60] Me: Add milk to my shopping list."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "118d1da35344f8aa705d942a1edc47de00e13fda6c6390684d48363089d4485a",
+     "system": "9fd258100c04",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[90] Me: I'll move my truck right now.\n[120] Alice: I moved to Lisbon in May and I water the plants every Monday."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "cbd8786b569920fdc2c92ee13532cb595f648a46ccea0841159a492d8965cba9",
+     "system": "9fd258100c04",
+     "user": "Online meeting: Planning\nParticipants: Alice, Me\n[150] Alice: I work at the Porto bakery.\n[180] Me: We plan a trip to Lisbon next spring."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactReview",
+     "sha256": "c2f8a9437c4dbc06b775761dc92ed3d56522eab32a9aadadcd1fa92a7cc499d9",
+     "system": "db52b3eb6d70",
+     "user": "{\"facts\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian.\", \"said\": \"I'm vegetarian, so no fish for me. I'll send Sam the slides on Friday.\"}, {\"number\": 1, \"subject\": \"Jason\", \"fact\": \"Jason has a meeting with Me on Wednesday at 12 pm.\", \"said\": \"Meeting with Jason on Wednesday at 12 pm on Main Street, for an hour.\"}, {\"number\": 2, \"subject\": \"Alice\", \"fact\": \"Alice moved to Lisbon in May.\", \"said\": \"I moved to Lisbon in May and I water the plants every Monday.\"}, {\"number\": 3, \"subject\": \"Alice\", \"fact\": \"Alice works at the Porto bakery.\", \"said\": \"I work at the Porto bakery.\"}, {\"number\": 4, \"subject\": \"Me\", \"fact\": \"Me plans a trip to Lisbon next spring.\", \"said\": \"We plan a trip to Lisbon next spring.\"}]}"
+    }
+   ],
+   "result": {
+    "action_items": [
+     {
+      "due": "Friday",
+      "due_date": "2025-10-10",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741200.0,
+      "text": "Send Sam the slides",
+      "time_unclear": false,
+      "title": "Send Sam the slides"
+     },
+     {
+      "due": "Wednesday",
+      "due_date": "2025-10-08",
+      "due_time": "12:00",
+      "duration_minutes": 60,
+      "explicit": true,
+      "kind": "event",
+      "list_name": null,
+      "location": "Main Street",
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741230.0,
+      "text": "Meeting with Jason on Main Street, for an hour",
+      "time_unclear": false,
+      "title": "Meeting with Jason on Main Street, for an hour"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741260.0,
+      "text": "Milk",
+      "time_unclear": false,
+      "title": "Milk"
+     },
+     {
+      "due": null,
+      "due_date": "2025-10-06",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741320.0,
+      "text": "Set up a repeating event: water the plants every Monday",
+      "time_unclear": false,
+      "title": "Set up a repeating event: water the plants every Monday"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": false,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": null,
+      "source_at": 1759741350.0,
+      "text": "Save the wifi password",
+      "time_unclear": false,
+      "title": "Save the wifi password"
+     }
+    ],
+    "facts": [
+     {
+      "fact": "Alice is vegetarian.",
+      "kind": "personal",
+      "source_at": 1759741200.0,
+      "subject": "Alice"
+     },
+     {
+      "fact": "Jason has a meeting with Me on Wednesday at 12 pm.",
+      "kind": "plan",
+      "source_at": 1759741230.0,
+      "subject": "Jason"
+     },
+     {
+      "fact": "Alice works at the Porto bakery.",
+      "kind": "personal",
+      "source_at": 1759741350.0,
+      "subject": "Alice"
+     }
+    ],
+    "key_points": [
+     "Alice is vegetarian",
+     "Trip in spring"
+    ],
+    "kind": "casual",
+    "people": [
+     "Alice",
+     "Me"
+    ],
+    "summary": "Alice and the user made plans. Alice is vegetarian.",
+    "title": "Plans with Alice",
+    "topics": [
+     "travel"
+    ]
+   }
+  },
+  "digest": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "DailyDigest",
+     "sha256": "703d5bd9222537ad5e7f642ee6a915caf86d01786d3ce69e28028e9e7f377b15",
+     "system": "2c6ea42d570b",
+     "user": "[{\"time\": \"09:00 UTC\", \"title\": \"Plans\", \"summary\": \"Plans were made.\", \"key_points\": [\"Trip\"], \"people\": [\"Alice\"], \"action_items\": [\"Send slides\"]}, {\"time\": \"10:00 UTC\", \"title\": \"Idea\", \"summary\": \"An idea.\", \"key_points\": [], \"people\": [], \"action_items\": [], \"voice_note\": true}, {\"time\": \"11:00 UTC\", \"title\": \"Written\", \"summary\": \"Written.\", \"key_points\": [], \"people\": [], \"action_items\": [], \"written_note\": true}]"
+    }
+   ],
+   "result": {
+    "conversation_ids": [
+     "c1",
+     "c2",
+     "c3"
+    ],
+    "date": "2025-10-06",
+    "headline": "A day of plans",
+    "highlights": [
+     "Lisbon"
+    ],
+    "open_action_items": [
+     "Slides"
+    ],
+    "people": [
+     "Alice"
+    ],
+    "summary": "Plans."
+   }
+  },
+  "link_facts": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactLinks",
+     "sha256": "09c34920649c4262dda9ddcc94730a16a6164430d6ff3fbc94b95e6d402ba49b",
+     "system": "35ea2b92ab82",
+     "user": "{\"known\": [{\"id\": 7, \"learned\": \"2025-09-01\", \"subject\": \"Alice\", \"fact\": \"Alice is a vegetarian cook.\"}, {\"id\": 8, \"learned\": \"2025-09-02\", \"subject\": \"Alice\", \"fact\": \"Alice works at the Porto bakery.\"}], \"new\": [{\"number\": 0, \"subject\": \"Alice\", \"fact\": \"Alice is vegetarian.\"}, {\"number\": 1, \"subject\": \"Alice\", \"fact\": \"Alice works at the Lisbon bakery now.\"}, {\"number\": 2, \"subject\": \"Me\", \"fact\": \"Me likes tea.\"}]}"
+    }
+   ],
+   "result": [
+    {
+     "existing": 8,
+     "new": 1,
+     "relation": "updates"
+    },
+    {
+     "existing": null,
+     "new": 2,
+     "relation": "new"
+    }
+   ]
+  },
+  "remove_facts": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ForgetRewrite",
+     "sha256": "92fec1022953dbe9d1415e12d1728b167223d6bd60d980f57e7df2139c3fb4a1",
+     "system": "c7a0f7d9d60a",
+     "user": "{\"facts_to_forget\": [\"Alice is vegetarian\"], \"notes\": {\"title\": \"Plans\", \"summary\": \"Plans were made. Alice is vegetarian.\", \"key_points\": [\"Alice is vegetarian\", \"Trip\"], \"topics\": [\"food\"]}}"
+    }
+   ],
+   "result": {
+    "key_points": [
+     "Trip"
+    ],
+    "summary": "Plans were made. A trip was planned.",
+    "title": "Conversation",
+    "topics": [
+     "food"
+    ]
+   }
+  },
+  "voice_note": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "4a56dd59f4307833545c8a7591ce179eb68cc0cddcd857777de434af039a08b9",
+     "system": "a3415431c1c3",
+     "user": "[0] Me: Um, make a to-do to get eggs tomorrow.\n[10] Me: Create a note battery dimensions are 13mm x 14mm x 3mm.\n[20] Me: I should stop prioritizing side projects before the base system is stable.\n[30] Me: Figure out how it could use less battery.\n[40] Me: Add eggs, milk and bread to my shopping list. Remind me at 5 to call Mom.\n[50] Me: Meeting with the design team Tuesday 11 a.m. Bo is my brother.\n[60] Me: Add to my hardware notes: the screen is 1.4 inch."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "dfb277eb8bf0ecfc4cc57fd29bfaf4fed1d9fea68eebf43c52d7225aafc19fec",
+     "system": "624e98ed0b74",
+     "user": "[0] Me: Um, make a to-do to get eggs tomorrow.\n[10] Me: Create a note battery dimensions are 13mm x 14mm x 3mm.\n[20] Me: I should stop prioritizing side projects before the base system is stable.\n[30] Me: Figure out how it could use less battery.\n[40] Me: Add eggs, milk and bread to my shopping list. Remind me at 5 to call Mom.\n[50] Me: Meeting with the design team Tuesday 11 a.m. Bo is my brother.\n[60] Me: Add to my hardware notes: the screen is 1.4 inch."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "f7e2f0b3c8d18cdfbdb4ef09ce2419be215a517b4553be9b311dbc78b7b5b0ad",
+     "system": "9fd258100c04",
+     "user": "[0] Me: Um, make a to-do to get eggs tomorrow.\n[10] Me: Create a note battery dimensions are 13mm x 14mm x 3mm.\n[20] Me: I should stop prioritizing side projects before the base system is stable.\n[30] Me: Figure out how it could use less battery.\n[40] Me: Add eggs, milk and bread to my shopping list. Remind me at 5 to call Mom.\n[50] Me: Meeting with the design team Tuesday 11 a.m. Bo is my brother.\n[60] Me: Add to my hardware notes: the screen is 1.4 inch."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactReview",
+     "sha256": "d769ad0ac181c2932230efcf41828c746e5e5e201b79d1ce50d5202351e0e33a",
+     "system": "db52b3eb6d70",
+     "user": "{\"facts\": [{\"number\": 1, \"subject\": \"Bo\", \"fact\": \"Bo is the owner's brother.\", \"said\": \"Meeting with the design team Tuesday 11 a.m. Bo is my brother.\"}]}"
+    }
+   ],
+   "result": {
+    "action_items": [
+     {
+      "due": null,
+      "due_date": "2025-10-07",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741200.0,
+      "text": "Get eggs",
+      "time_unclear": false,
+      "title": "Get eggs"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "note",
+      "list_name": null,
+      "location": null,
+      "note_title": "Battery dimensions",
+      "owner": null,
+      "source_at": 1759741210.0,
+      "text": "Battery dimensions are 13 mm x 14 mm x 3 mm",
+      "time_unclear": false,
+      "title": "Battery dimensions"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741240.0,
+      "text": "Eggs",
+      "time_unclear": false,
+      "title": "Eggs"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741240.0,
+      "text": "Milk",
+      "time_unclear": false,
+      "title": "Milk"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741240.0,
+      "text": "Bread",
+      "time_unclear": false,
+      "title": "Bread"
+     },
+     {
+      "due": null,
+      "due_date": "2025-10-06",
+      "due_time": "17:00",
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "reminder",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741240.0,
+      "text": "Call Mom at 5",
+      "time_unclear": false,
+      "title": "Call Mom at 5"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "note",
+      "list_name": "hardware",
+      "location": null,
+      "note_title": null,
+      "owner": null,
+      "source_at": 1759741260.0,
+      "text": "The screen is 1.4 inch",
+      "time_unclear": false,
+      "title": "The screen is 1.4 inch"
+     },
+     {
+      "due": null,
+      "due_date": "2025-10-07",
+      "due_time": "11:00",
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "event",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741250.0,
+      "text": "Meeting with the design team",
+      "time_unclear": false,
+      "title": "Meeting with the design team"
+     }
+    ],
+    "facts": [
+     {
+      "fact": "The owner decided to stabilise the base system first.",
+      "kind": "decision",
+      "source_at": 1759741220.0,
+      "subject": "Me"
+     },
+     {
+      "fact": "Bo is the owner's brother.",
+      "kind": "relationship",
+      "source_at": 1759741250.0,
+      "subject": "Bo"
+     },
+     {
+      "fact": "The owner decided to stop prioritizing side projects.",
+      "kind": "decision",
+      "source_at": 1759741220.0,
+      "subject": "Me"
+     },
+     {
+      "fact": "The owner plans to figure out how it could use less battery.",
+      "kind": "plan",
+      "source_at": 1759741230.0,
+      "subject": "Me"
+     }
+    ],
+    "key_points": [
+     "Alice is vegetarian",
+     "Trip in spring"
+    ],
+    "kind": "note",
+    "people": [
+     "Alice",
+     "Me"
+    ],
+    "summary": "Alice and the user made plans. Alice is vegetarian.",
+    "title": "Plans with Alice",
+    "topics": [
+     "travel"
+    ]
+   }
+  },
+  "voice_note_split": {
+   "requests": [
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "cad83bff680f3a4c2b5ce0db689cce635a37d8099c9457308cadf731fd74f0e5",
+     "system": "a3415431c1c3",
+     "user": "[0] Me: Um, make a to-do to get eggs tomorrow.\n[10] Me: Create a note battery dimensions are 13mm x 14mm x 3mm."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "0538076483aa069aee16a94a1b0d603801841b5141fc97e14c4f571aa2601064",
+     "system": "a3415431c1c3",
+     "user": "[20] Me: I should stop prioritizing side projects before the base system is stable."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "f03c4f21c1feec3fbb385bc96f248afe37b49f2a703e9ad8150cd0f81c8e8639",
+     "system": "a3415431c1c3",
+     "user": "[30] Me: Figure out how it could use less battery."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "cf5c30df50f264fdee3c03383977f7df3b56ecb2be26933c67a9bdf1b8449297",
+     "system": "a3415431c1c3",
+     "user": "[40] Me: Add eggs, milk and bread to my shopping list. Remind me at 5 to call Mom."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "6fa9d93c080de9f0dc6d2c7dcea2a5892a7bc3b3bde3831c9e28817056c1e3fc",
+     "system": "a3415431c1c3",
+     "user": "[50] Me: Meeting with the design team Tuesday 11 a.m. Bo is my brother."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "8ba890c79b06c23676180f702ef99cb9de397f5e3e226abc46597f3ad0b30f9a",
+     "system": "a3415431c1c3",
+     "user": "[60] Me: Add to my hardware notes: the screen is 1.4 inch."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "SummaryNotes",
+     "sha256": "2015a089d4346ec34225797e419944c3d1f0bc4bca5bc5e282098d45005f1753",
+     "system": "3726f8b11f08",
+     "user": "[{\"title\": \"Plans with Alice\", \"summary\": \"Alice and the user made plans. Alice is vegetarian.\", \"key_points\": [\"Alice is vegetarian\", \"Trip in spring\"], \"people\": [\"Alice\", \"Me\", \"Speaker 1\", \"alice\"], \"topics\": [\"travel\", \"Travel\"]}, {\"title\": \"Plans with Alice\", \"summary\": \"Alice and the user made plans. Alice is vegetarian.\", \"key_points\": [\"Alice is vegetarian\", \"Trip in spring\"], \"people\": [\"Alice\", \"Me\", \"Speaker 1\", \"alice\"], \"topics\": [\"travel\", \"Travel\"]}, {\"title\": \"Plans with Alice\", \"summary\": \"Alice and the user made plans. Alice is vegetarian.\", \"key_points\": [\"Alice is vegetarian\", \"Trip in spring\"], \"people\": [\"Alice\", \"Me\", \"Speaker 1\", \"alice\"], \"topics\": [\"travel\", \"Travel\"]}, {\"title\": \"Plans with Alice\", \"summary\": \"Alice and the user made plans. Alice is vegetarian.\", \"key_points\": [\"Alice is vegetarian\", \"Trip in spring\"], \"people\": [\"Alice\", \"Me\", \"Speaker 1\", \"alice\"], \"topics\": [\"travel\", \"Travel\"]}, {\"title\": \"Plans with Alice\", \"summary\": \"Alice and the user made plans. Alice is vegetarian.\", \"key_points\": [\"Alice is vegetarian\", \"Trip in spring\"], \"people\": [\"Alice\", \"Me\", \"Speaker 1\", \"alice\"], \"topics\": [\"travel\", \"Travel\"]}, {\"title\": \"Plans with Alice\", \"summary\": \"Alice and the user made plans. Alice is vegetarian.\", \"key_points\": [\"Alice is vegetarian\", \"Trip in spring\"], \"people\": [\"Alice\", \"Me\", \"Speaker 1\", \"alice\"], \"topics\": [\"travel\", \"Travel\"]}]"
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "1a01028ccda70b5e2a4af4bc91f10c332ff9ee271a4b84fd96eeb0978b34eff0",
+     "system": "624e98ed0b74",
+     "user": "[0] Me: Um, make a to-do to get eggs tomorrow.\n[10] Me: Create a note battery dimensions are 13mm x 14mm x 3mm."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "66076424bd13c3fbd5bc9dfb43cc8a468ff80a9cdde514c96374652047308ee5",
+     "system": "624e98ed0b74",
+     "user": "[20] Me: I should stop prioritizing side projects before the base system is stable."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "d01de2ce84ba5b7e0374aef8b6652ac6a714d413ce6b9b4b6f6ca020627e4171",
+     "system": "624e98ed0b74",
+     "user": "[30] Me: Figure out how it could use less battery."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "e2a79e9b141ad4bed201564d3ac7bd04ba82e1cdadcc00b9428932538bb50f91",
+     "system": "624e98ed0b74",
+     "user": "[40] Me: Add eggs, milk and bread to my shopping list. Remind me at 5 to call Mom."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "9f474c33b29a98c5a683056b0a915b0def1e63b9311aca98df0f57a0387ebe1d",
+     "system": "624e98ed0b74",
+     "user": "[50] Me: Meeting with the design team Tuesday 11 a.m. Bo is my brother."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "ActionItemList",
+     "sha256": "9e674d4af7eb7c024beb65dd5cd364b67d0fe2fa0306c952cc7a1a402770bb73",
+     "system": "624e98ed0b74",
+     "user": "[60] Me: Add to my hardware notes: the screen is 1.4 inch."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "54a5265b22a8cffffad0f1e86729306994f3dc5866214da1266c4de28d1bd3a2",
+     "system": "9fd258100c04",
+     "user": "[0] Me: Um, make a to-do to get eggs tomorrow.\n[10] Me: Create a note battery dimensions are 13mm x 14mm x 3mm."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "e160e4b53e19616c3b577d74e39e4b1a02e3abc512600be1457e95712d81bcc9",
+     "system": "9fd258100c04",
+     "user": "[20] Me: I should stop prioritizing side projects before the base system is stable."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "7b347b3447d27209aeeb804ef032a06ac65e2283a8a54ab0b621efdad3988a74",
+     "system": "9fd258100c04",
+     "user": "[30] Me: Figure out how it could use less battery."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "0f5d8b667123f7452197ccefbe76aeb9779acedbd45d33b176b964aa920651ac",
+     "system": "9fd258100c04",
+     "user": "[40] Me: Add eggs, milk and bread to my shopping list. Remind me at 5 to call Mom."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "02c5e065765134a058e7ab666b82ba5fa6cc53a66fbff5fbb27a516418a76c91",
+     "system": "9fd258100c04",
+     "user": "[50] Me: Meeting with the design team Tuesday 11 a.m. Bo is my brother."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactList",
+     "sha256": "4542e2181dc9fcc5909c6587a96e0f2a8fbf680fa1bb6a6055a3203f2c022990",
+     "system": "9fd258100c04",
+     "user": "[60] Me: Add to my hardware notes: the screen is 1.4 inch."
+    },
+    {
+     "rest": {
+      "chat_template_kwargs": {
+       "enable_thinking": false
+      },
+      "model": "test-model",
+      "temperature": 0.2
+     },
+     "schema": "FactReview",
+     "sha256": "d769ad0ac181c2932230efcf41828c746e5e5e201b79d1ce50d5202351e0e33a",
+     "system": "db52b3eb6d70",
+     "user": "{\"facts\": [{\"number\": 1, \"subject\": \"Bo\", \"fact\": \"Bo is the owner's brother.\", \"said\": \"Meeting with the design team Tuesday 11 a.m. Bo is my brother.\"}]}"
+    }
+   ],
+   "result": {
+    "action_items": [
+     {
+      "due": null,
+      "due_date": "2025-10-07",
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741200.0,
+      "text": "Get eggs",
+      "time_unclear": false,
+      "title": "Get eggs"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "note",
+      "list_name": null,
+      "location": null,
+      "note_title": "Battery dimensions",
+      "owner": null,
+      "source_at": 1759741210.0,
+      "text": "Battery dimensions are 13 mm x 14 mm x 3 mm",
+      "time_unclear": false,
+      "title": "Battery dimensions"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741240.0,
+      "text": "Eggs",
+      "time_unclear": false,
+      "title": "Eggs"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741240.0,
+      "text": "Milk",
+      "time_unclear": false,
+      "title": "Milk"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "task",
+      "list_name": "shopping",
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741240.0,
+      "text": "Bread",
+      "time_unclear": false,
+      "title": "Bread"
+     },
+     {
+      "due": null,
+      "due_date": "2025-10-06",
+      "due_time": "17:00",
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "reminder",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741240.0,
+      "text": "Call Mom at 5",
+      "time_unclear": false,
+      "title": "Call Mom at 5"
+     },
+     {
+      "due": null,
+      "due_date": null,
+      "due_time": null,
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "note",
+      "list_name": "hardware",
+      "location": null,
+      "note_title": null,
+      "owner": null,
+      "source_at": 1759741260.0,
+      "text": "The screen is 1.4 inch",
+      "time_unclear": false,
+      "title": "The screen is 1.4 inch"
+     },
+     {
+      "due": null,
+      "due_date": "2025-10-07",
+      "due_time": "11:00",
+      "duration_minutes": null,
+      "explicit": true,
+      "kind": "event",
+      "list_name": null,
+      "location": null,
+      "note_title": null,
+      "owner": "Me",
+      "source_at": 1759741250.0,
+      "text": "Meeting with the design team",
+      "time_unclear": false,
+      "title": "Meeting with the design team"
+     }
+    ],
+    "facts": [
+     {
+      "fact": "The owner decided to stabilise the base system first.",
+      "kind": "decision",
+      "source_at": 1759741220.0,
+      "subject": "Me"
+     },
+     {
+      "fact": "Bo is the owner's brother.",
+      "kind": "relationship",
+      "source_at": 1759741250.0,
+      "subject": "Bo"
+     },
+     {
+      "fact": "The owner decided to stop prioritizing side projects.",
+      "kind": "decision",
+      "source_at": 1759741220.0,
+      "subject": "Me"
+     },
+     {
+      "fact": "The owner plans to figure out how it could use less battery.",
+      "kind": "plan",
+      "source_at": 1759741230.0,
+      "subject": "Me"
+     }
+    ],
+    "key_points": [
+     "Alice is vegetarian",
+     "Trip in spring"
+    ],
+    "kind": "note",
+    "people": [
+     "Alice",
+     "Me"
+    ],
+    "summary": "Alice and the user made plans. Alice is vegetarian.",
+    "title": "Plans with Alice",
+    "topics": [
+     "travel"
+    ]
+   }
+  }
+ },
+ "schemas": {
+  "ActionItemList": {
+   "json_schema": {
+    "name": "ActionItemList",
+    "schema": {
+     "$defs": {
+      "ActionItem": {
+       "properties": {
+        "at_seconds": {
+         "anyOf": [
+          {
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Offset in seconds where it was mentioned",
+         "title": "At Seconds"
+        },
+        "due": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Deadline as stated, e.g. 'Friday'",
+         "title": "Due"
+        },
+        "due_date": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "The deadline as YYYY-MM-DD, if a date can be worked out from the conversation date",
+         "title": "Due Date"
+        },
+        "duration_minutes": {
+         "anyOf": [
+          {
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "How long an event lasts, if said",
+         "title": "Duration Minutes"
+        },
+        "kind": {
+         "default": "task",
+         "description": "event (meeting, appointment, call at a set day), reminder (remind me at a time), note (the user asked to save a note) or task",
+         "enum": [
+          "task",
+          "event",
+          "reminder",
+          "note"
+         ],
+         "title": "Kind",
+         "type": "string"
+        },
+        "list_name": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "The user's list it goes on, if they name one ('add milk to my shopping list' -> 'shopping')",
+         "title": "List Name"
+        },
+        "location": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Where an event is, if said",
+         "title": "Location"
+        },
+        "owner": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Who should do it, if stated",
+         "title": "Owner"
+        },
+        "text": {
+         "description": "What needs to be done, imperative, self-contained; an event: its name as said, e.g. 'Meeting with Jason'",
+         "title": "Text",
+         "type": "string"
+        },
+        "time": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Time of day as said, e.g. '12 pm', or null",
+         "title": "Time"
+        },
+        "title": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "A short imperative summary (an event: its name), at most 60 characters, e.g. 'Call the plumber about the tap'; for a note, its title, e.g. 'Battery dimensions'",
+         "title": "Title"
+        }
+       },
+       "required": [
+        "text"
+       ],
+       "title": "ActionItem",
+       "type": "object"
+      }
+     },
+     "properties": {
+      "action_items": {
+       "items": {
+        "$ref": "#/$defs/ActionItem"
+       },
+       "title": "Action Items",
+       "type": "array"
+      }
+     },
+     "required": [
+      "action_items"
+     ],
+     "title": "ActionItemList",
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  },
+  "DailyDigest": {
+   "json_schema": {
+    "name": "DailyDigest",
+    "schema": {
+     "properties": {
+      "headline": {
+       "title": "Headline",
+       "type": "string"
+      },
+      "highlights": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Highlights",
+       "type": "array"
+      },
+      "open_action_items": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Open Action Items",
+       "type": "array"
+      },
+      "people": {
+       "items": {
+        "type": "string"
+       },
+       "title": "People",
+       "type": "array"
+      },
+      "summary": {
+       "title": "Summary",
+       "type": "string"
+      }
+     },
+     "required": [
+      "headline",
+      "summary",
+      "highlights",
+      "open_action_items",
+      "people"
+     ],
+     "title": "DailyDigest",
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  },
+  "FactLinks": {
+   "json_schema": {
+    "name": "FactLinks",
+    "schema": {
+     "$defs": {
+      "FactLink": {
+       "properties": {
+        "existing": {
+         "anyOf": [
+          {
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "id of the known fact it repeats or updates",
+         "title": "Existing"
+        },
+        "new": {
+         "description": "Number of the new fact",
+         "title": "New",
+         "type": "integer"
+        },
+        "relation": {
+         "enum": [
+          "new",
+          "same",
+          "updates"
+         ],
+         "title": "Relation",
+         "type": "string"
+        }
+       },
+       "required": [
+        "new",
+        "relation"
+       ],
+       "title": "FactLink",
+       "type": "object"
+      }
+     },
+     "properties": {
+      "links": {
+       "items": {
+        "$ref": "#/$defs/FactLink"
+       },
+       "title": "Links",
+       "type": "array"
+      }
+     },
+     "required": [
+      "links"
+     ],
+     "title": "FactLinks",
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  },
+  "FactList": {
+   "json_schema": {
+    "name": "FactList",
+    "schema": {
+     "$defs": {
+      "Fact": {
+       "properties": {
+        "at_seconds": {
+         "anyOf": [
+          {
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "At Seconds"
+        },
+        "fact": {
+         "description": "Durable fact worth remembering months from now",
+         "title": "Fact",
+         "type": "string"
+        },
+        "kind": {
+         "default": "other",
+         "description": "One of: preference, plan, decision, relationship, personal, other",
+         "title": "Kind",
+         "type": "string"
+        },
+        "subject": {
+         "description": "Person, project or thing the fact is about",
+         "title": "Subject",
+         "type": "string"
+        }
+       },
+       "required": [
+        "subject",
+        "fact"
+       ],
+       "title": "Fact",
+       "type": "object"
+      }
+     },
+     "properties": {
+      "facts": {
+       "items": {
+        "$ref": "#/$defs/Fact"
+       },
+       "title": "Facts",
+       "type": "array"
+      }
+     },
+     "required": [
+      "facts"
+     ],
+     "title": "FactList",
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  },
+  "FactReview": {
+   "json_schema": {
+    "name": "FactReview",
+    "schema": {
+     "$defs": {
+      "FactScore": {
+       "properties": {
+        "number": {
+         "description": "Number of the fact",
+         "title": "Number",
+         "type": "integer"
+        },
+        "score": {
+         "description": "1 (leave out) to 5 (certainly worth keeping)",
+         "title": "Score",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "number",
+        "score"
+       ],
+       "title": "FactScore",
+       "type": "object"
+      }
+     },
+     "description": "The second look at a conversation's facts (``Summarizer._review_facts``).",
+     "properties": {
+      "scores": {
+       "items": {
+        "$ref": "#/$defs/FactScore"
+       },
+       "title": "Scores",
+       "type": "array"
+      }
+     },
+     "required": [
+      "scores"
+     ],
+     "title": "FactReview",
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  },
+  "ForgetRewrite": {
+   "json_schema": {
+    "name": "ForgetRewrite",
+    "schema": {
+     "description": "A conversation's notes rewritten without facts the user erased (erase_fact).",
+     "properties": {
+      "key_points": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Key Points",
+       "type": "array"
+      },
+      "summary": {
+       "title": "Summary",
+       "type": "string"
+      },
+      "title": {
+       "title": "Title",
+       "type": "string"
+      },
+      "topics": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Topics",
+       "type": "array"
+      }
+     },
+     "required": [
+      "title",
+      "summary",
+      "key_points",
+      "topics"
+     ],
+     "title": "ForgetRewrite",
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  },
+  "SummaryNotes": {
+   "json_schema": {
+    "name": "SummaryNotes",
+    "schema": {
+     "properties": {
+      "key_points": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Key Points",
+       "type": "array"
+      },
+      "people": {
+       "items": {
+        "type": "string"
+       },
+       "title": "People",
+       "type": "array"
+      },
+      "summary": {
+       "title": "Summary",
+       "type": "string"
+      },
+      "title": {
+       "title": "Title",
+       "type": "string"
+      },
+      "topics": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Topics",
+       "type": "array"
+      }
+     },
+     "required": [
+      "title",
+      "summary",
+      "key_points",
+      "people",
+      "topics"
+     ],
+     "title": "SummaryNotes",
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  },
+  "Triage": {
+   "json_schema": {
+    "name": "Triage",
+    "schema": {
+     "description": "Cheap first call: is this worth summarizing, and what kind of conversation is it?",
+     "properties": {
+      "discard": {
+       "title": "Discard",
+       "type": "boolean"
+      },
+      "kind": {
+       "enum": [
+        "meeting",
+        "call",
+        "casual",
+        "appointment",
+        "other"
+       ],
+       "title": "Kind",
+       "type": "string"
+      },
+      "reason": {
+       "enum": [
+        "none",
+        "tv_or_media",
+        "background_noise",
+        "gibberish",
+        "not_a_conversation"
+       ],
+       "title": "Reason",
+       "type": "string"
+      }
+     },
+     "required": [
+      "discard",
+      "reason",
+      "kind"
+     ],
+     "title": "Triage",
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ }
+}

@@ -13,9 +13,10 @@ Setup (once; Python 3.10+, a Bluetooth LE adapter):
     ~/.venvs/barvis-relay/bin/pip install -r firmware/recorder/tools/requirements.txt
     # Windows: py -m venv %USERPROFILE%\\venvs\\barvis-relay, then its Scripts\\pip
 
-The token comes from the CONVO_INGEST_TOKEN environment variable or --token-file (a file
-holding only the token); there is deliberately no --token option, so it can't end up in your
-shell history. The server URL comes from --server or BARVIS_SERVER.
+The token comes from the ATHENA_INGEST_TOKEN environment variable (or its old name
+CONVO_INGEST_TOKEN, which still works) or --token-file (a file holding only the token);
+there is deliberately no --token option, so it can't end up in your shell history. The server
+URL comes from --server or BARVIS_SERVER.
 
 First pairing. The watch accepts new bonds only in its 2-minute sync window (hold BOOT, or
 `ble pair` on the console) and shows a 6-digit code on its screen, which you type on the PC.
@@ -24,7 +25,8 @@ bleak can't type it, so the operating system pairs:
     # Linux: bluetoothctl -> `agent on`, `default-agent`, `scan on`, `pair <address>`, type the
     #   code. (Or keep bluetoothctl open with its agent and run --pair below: BlueZ asks
     #   for the code in the bluetoothctl window.)
-    # Windows: Settings > Bluetooth & devices > Add device > Bluetooth > "barvis-tw", type the code
+    # Windows: Settings > Bluetooth & devices > Add device > Bluetooth > "athena-tw"
+    #   (older firmware: "barvis-tw"), type the code
     # macOS: run --list below; macOS asks for the code when the relay first connects
 
 Then look at the queue without changing anything:
@@ -33,7 +35,7 @@ Then look at the queue without changing anything:
 
 Drain once and exit (exit code 0 = all delivered):
 
-    export BARVIS_SERVER=http://<server>:8000 CONVO_INGEST_TOKEN=...   # or --token-file
+    export BARVIS_SERVER=http://<server>:8000 ATHENA_INGEST_TOKEN=...   # or --token-file
     python firmware/recorder/tools/ble_relay.py --once
 
 Keep running (scan, drain whenever the watch advertises, back off 1/2/5/10/15 min while the
@@ -65,12 +67,12 @@ import stat
 import sys
 from pathlib import Path
 
-from barvis_relay import drain as d
-from barvis_relay import protocol as p
-from barvis_relay.anchors import Anchors, default_state_dir
-from barvis_relay.uploader import Uploader
+from athena_relay import drain as d
+from athena_relay import protocol as p
+from athena_relay.anchors import Anchors, default_state_dir
+from athena_relay.uploader import Uploader
 
-log = logging.getLogger("barvis_relay.ble")
+log = logging.getLogger("athena_relay.ble")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LINK_RETRY_SECONDS = 5
 SCAN_ERROR_RETRY_SECONDS = 30
@@ -146,7 +148,7 @@ async def find_watch(address: str | None, timeout: float):
         return await BleakScanner.find_device_by_address(address, timeout=timeout)
 
     def match(_dev, adv) -> bool:
-        return p.SERVICE_UUID in [u.lower() for u in adv.service_uuids]
+        return p.is_watch(adv.service_uuids, adv.local_name)
 
     return await BleakScanner.find_device_by_filter(match, timeout=timeout,
                                                     service_uuids=[p.SERVICE_UUID])
@@ -230,7 +232,11 @@ def read_token(token_file: Path | None) -> str | None:
         if os.name == "posix" and path.stat().st_mode & (stat.S_IRGRP | stat.S_IROTH):
             log.warning("%s is readable by other users; chmod 600 it", path)
         return path.read_text().strip()
-    return os.environ.get("CONVO_INGEST_TOKEN", "").strip() or None
+    for name in ("ATHENA_INGEST_TOKEN", "CONVO_INGEST_TOKEN"):  # the new name, then the old
+        token = os.environ.get(name, "").strip()
+        if token:
+            return token
+    return None
 
 
 def inside_repo(path: Path) -> bool:
@@ -248,8 +254,8 @@ async def main_async(args: argparse.Namespace) -> int:
         server = args.server or os.environ.get("BARVIS_SERVER")
         token = read_token(args.token_file)
         if not server or not token:
-            log.error("need --server (or BARVIS_SERVER) and the token in CONVO_INGEST_TOKEN "
-                      "or --token-file")
+            log.error("need --server (or BARVIS_SERVER) and the token in ATHENA_INGEST_TOKEN "
+                      "(or CONVO_INGEST_TOKEN) or --token-file")
             return 3
         try:
             uploader = Uploader(server, token, timeout=args.http_timeout)
@@ -326,7 +332,8 @@ def main(argv: list[str] | None = None) -> int:
                                  epilog="See the module docstring for setup and pairing.")
     ap.add_argument("--server", help="server base URL (default: $BARVIS_SERVER)")
     ap.add_argument("--token-file", type=Path,
-                    help="file holding the ingest token (default: $CONVO_INGEST_TOKEN)")
+                    help="file holding the ingest token (default: $ATHENA_INGEST_TOKEN, "
+                         "or $CONVO_INGEST_TOKEN)")
     ap.add_argument("--address", help="watch address (macOS: its CoreBluetooth UUID); "
                                       "default: scan for the service")
     ap.add_argument("--pair", action="store_true",

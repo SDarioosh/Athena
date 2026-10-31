@@ -1,0 +1,10 @@
+"Community garden budget" 2026-10-13 17:00:00 https://athena.example.org/view/000000000000000000000000c0de0009?sig=47f586de44c8f2155c5cdc4605779495
+#46 [0s] Sam Example: Let's go through the Q4 budget for the community garden project.
+#47 [8s] Me: The main open item is the tool shed, the quote came in at four thousand euros.
+#48 [16s] Sam Example: That's more than we planned. Dana, do you have the updated sheet?
+#52 [21s] Dana Example (chat): Here's the updated sheet: https://files.example.org/garden-budget-v3.xlsx
+#53 [24s] Dana Example (chat): Tab 2 has the shed quotes from both suppliers.
+#49 [30s] Kai Example: The second supplier is cheaper, about three thousand two hundred.
+#50 [38s] Me: Then let's go with the second supplier. I'll confirm the order by Friday.
+#51 [46s] Sam Example: Agreed. That's all for today, thanks everyone.
+When answering, put the link next to each fact you use. To show the transcript, give the link above and a short summary; don't copy these lines into your answer.

@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 
 import ble_relay
-from barvis_relay import drain as d
-from barvis_relay import protocol as p
-from barvis_relay.anchors import Anchors
-from barvis_relay.uploader import Uploader
+from athena_relay import drain as d
+from athena_relay import protocol as p
+from athena_relay.anchors import Anchors
+from athena_relay.uploader import Uploader
 from conftest import TOKEN, FakeWatch, make_session
 
 
@@ -103,3 +103,13 @@ def test_token_file(tmp_path, monkeypatch) -> None:
     assert ble_relay.read_token(f) == TOKEN
     monkeypatch.setenv("CONVO_INGEST_TOKEN", " env-token ")
     assert ble_relay.read_token(None) == "env-token"
+
+
+def test_token_new_name_first(monkeypatch) -> None:
+    assert ble_relay.read_token(None) is None
+    monkeypatch.setenv("ATHENA_INGEST_TOKEN", " new-token ")
+    assert ble_relay.read_token(None) == "new-token"
+    monkeypatch.setenv("CONVO_INGEST_TOKEN", "old-token")
+    assert ble_relay.read_token(None) == "new-token"
+    monkeypatch.setenv("ATHENA_INGEST_TOKEN", " ")  # blank: the old name
+    assert ble_relay.read_token(None) == "old-token"

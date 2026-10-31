@@ -1,0 +1,701 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "fact_id": {
+          "description": "The fact's id (list_facts format=json)",
+          "title": "Fact Id",
+          "type": "integer"
+        },
+        "reason": {
+          "default": "",
+          "description": "Why, e.g. 'wrong' or 'private'; optional",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fact_id"
+      ],
+      "title": "erase_factArguments",
+      "type": "object"
+    },
+    "name": "erase_fact",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "erase_factOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "conversation_id": {
+          "description": "conversation id from a previous result",
+          "title": "Conversation Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id"
+      ],
+      "title": "get_conversationArguments",
+      "type": "object"
+    },
+    "name": "get_conversation",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "get_conversationOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "date": {
+          "description": "YYYY-MM-DD",
+          "title": "Date",
+          "type": "string"
+        }
+      },
+      "required": [
+        "date"
+      ],
+      "title": "get_daily_digestArguments",
+      "type": "object"
+    },
+    "name": "get_daily_digest",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "get_daily_digestOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "conversation_id": {
+          "description": "conversation id from a previous result",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "end_seconds": {
+          "default": -1,
+          "title": "End Seconds",
+          "type": "number"
+        },
+        "max_lines": {
+          "default": 100,
+          "title": "Max Lines",
+          "type": "integer"
+        },
+        "start_seconds": {
+          "default": 0,
+          "title": "Start Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "conversation_id"
+      ],
+      "title": "get_transcriptArguments",
+      "type": "object"
+    },
+    "name": "get_transcript",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "get_transcriptOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "format": {
+          "default": "text",
+          "description": "'text' (default) or 'json' (a JSON array, for programs)",
+          "title": "Format",
+          "type": "string"
+        },
+        "person": {
+          "default": "",
+          "description": "Person's name as it appears in transcripts",
+          "title": "Person",
+          "type": "string"
+        },
+        "since": {
+          "default": "",
+          "description": "Start date YYYY-MM-DD (inclusive) or ISO time",
+          "title": "Since",
+          "type": "string"
+        },
+        "status": {
+          "default": "open",
+          "description": "open, done, dismissed or all",
+          "title": "Status",
+          "type": "string"
+        },
+        "until": {
+          "default": "",
+          "description": "End date YYYY-MM-DD (inclusive) or ISO time",
+          "title": "Until",
+          "type": "string"
+        }
+      },
+      "title": "list_action_itemsArguments",
+      "type": "object"
+    },
+    "name": "list_action_items",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "list_action_itemsOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "confirmed": {
+          "default": false,
+          "description": "true = only confirmed facts: said in several conversations on different days, not replaced since",
+          "title": "Confirmed",
+          "type": "boolean"
+        },
+        "format": {
+          "default": "text",
+          "description": "'text' (default) or 'json' (a JSON object, for programs)",
+          "title": "Format",
+          "type": "string"
+        },
+        "limit": {
+          "default": 50,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "query": {
+          "default": "",
+          "description": "Free-text words to look for; empty = no text filter",
+          "title": "Query",
+          "type": "string"
+        },
+        "subject": {
+          "default": "",
+          "description": "Person/thing the fact is about",
+          "title": "Subject",
+          "type": "string"
+        }
+      },
+      "title": "list_factsArguments",
+      "type": "object"
+    },
+    "name": "list_facts",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "list_factsOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "format": {
+          "default": "text",
+          "description": "'text' (default) or 'json' (a JSON object with each person's stable id, for programs)",
+          "title": "Format",
+          "type": "string"
+        }
+      },
+      "title": "list_peopleArguments",
+      "type": "object"
+    },
+    "name": "list_people",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "list_peopleOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 10,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "list_unnamed_speakersArguments",
+      "type": "object"
+    },
+    "name": "list_unnamed_speakers",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "list_unnamed_speakersOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "conversation_id": {
+          "description": "conversation id from a previous result",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "name": {
+          "description": "The person's real name",
+          "title": "Name",
+          "type": "string"
+        },
+        "remember_voice": {
+          "default": true,
+          "title": "Remember Voice",
+          "type": "boolean"
+        },
+        "speaker_label": {
+          "description": "e.g. 'Speaker 1'",
+          "title": "Speaker Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "speaker_label",
+        "name"
+      ],
+      "title": "name_speakerArguments",
+      "type": "object"
+    },
+    "name": "name_speaker",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "name_speakerOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "line_id": {
+          "description": "The line's #number from get_transcript or search_transcripts",
+          "title": "Line Id",
+          "type": "integer"
+        },
+        "name": {
+          "description": "Who really said it",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "line_id",
+        "name"
+      ],
+      "title": "reassign_lineArguments",
+      "type": "object"
+    },
+    "name": "reassign_line",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "reassign_lineOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "new_name": {
+          "description": "The correct name",
+          "title": "New Name",
+          "type": "string"
+        },
+        "old_name": {
+          "description": "Speaker name as it appears now",
+          "title": "Old Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "old_name",
+        "new_name"
+      ],
+      "title": "rename_speaker_everywhereArguments",
+      "type": "object"
+    },
+    "name": "rename_speaker_everywhere",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "rename_speaker_everywhereOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "fact_id": {
+          "description": "The fact's id (list_facts format=json)",
+          "title": "Fact Id",
+          "type": "integer"
+        },
+        "reason": {
+          "default": "",
+          "description": "Why, e.g. 'wrong' or 'private'; optional",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fact_id"
+      ],
+      "title": "retire_factArguments",
+      "type": "object"
+    },
+    "name": "retire_fact",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "retire_factOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "kind": {
+          "default": "",
+          "description": "'note' = all the user's notes (voice notes and notes written by hand); 'voice' = only voice notes (memos the user recorded for themselves); 'written' = only notes the user wrote by hand; 'conversation' = only conversations with other people (in person and online); 'meeting' = only online meetings; 'in_person' = only conversations recorded in person (no online meetings); empty = everything",
+          "title": "Kind",
+          "type": "string"
+        },
+        "limit": {
+          "default": 10,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "person": {
+          "default": "",
+          "description": "Person's name as it appears in transcripts",
+          "title": "Person",
+          "type": "string"
+        },
+        "query": {
+          "default": "",
+          "description": "Free-text words to look for; empty = no text filter",
+          "title": "Query",
+          "type": "string"
+        },
+        "since": {
+          "default": "",
+          "description": "Start date YYYY-MM-DD (inclusive) or ISO time",
+          "title": "Since",
+          "type": "string"
+        },
+        "until": {
+          "default": "",
+          "description": "End date YYYY-MM-DD (inclusive) or ISO time",
+          "title": "Until",
+          "type": "string"
+        }
+      },
+      "title": "search_conversationsArguments",
+      "type": "object"
+    },
+    "name": "search_conversations",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "search_conversationsOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 30,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "query": {
+          "default": "",
+          "description": "Free-text words to look for; empty = no text filter",
+          "title": "Query",
+          "type": "string"
+        },
+        "since": {
+          "default": "",
+          "description": "Start date YYYY-MM-DD (inclusive) or ISO time",
+          "title": "Since",
+          "type": "string"
+        },
+        "speaker": {
+          "default": "",
+          "description": "Person's name as it appears in transcripts",
+          "title": "Speaker",
+          "type": "string"
+        },
+        "until": {
+          "default": "",
+          "description": "End date YYYY-MM-DD (inclusive) or ISO time",
+          "title": "Until",
+          "type": "string"
+        }
+      },
+      "title": "search_transcriptsArguments",
+      "type": "object"
+    },
+    "name": "search_transcripts",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "search_transcriptsOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "due_date": {
+          "default": "",
+          "description": "YYYY-MM-DD, 'none' to clear; empty = unchanged",
+          "title": "Due Date",
+          "type": "string"
+        },
+        "due_time": {
+          "default": "",
+          "description": "HH:MM (24 h, local), 'none' to clear; empty = unchanged",
+          "title": "Due Time",
+          "type": "string"
+        },
+        "item_id": {
+          "title": "Item Id",
+          "type": "integer"
+        },
+        "kind": {
+          "default": "",
+          "description": "task, event or reminder; empty = unchanged",
+          "title": "Kind",
+          "type": "string"
+        },
+        "list_name": {
+          "default": "",
+          "description": "the to-do list it goes on, e.g. 'shopping'; 'none' to clear; empty = unchanged",
+          "title": "List Name",
+          "type": "string"
+        },
+        "status": {
+          "default": "",
+          "description": "open, done or dismissed; empty = unchanged",
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "description": "a short title, at most 60 characters; 'none' = from the text; empty = unchanged",
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id"
+      ],
+      "title": "update_action_itemArguments",
+      "type": "object"
+    },
+    "name": "update_action_item",
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "update_action_itemOutput",
+      "type": "object"
+    }
+  }
+]

@@ -30,8 +30,9 @@ Audio (--audio), i.e. how far the people around the wearer are from the mic:
     python eval/recognition.py run --label sim2m --audio sim --distance 2
     python eval/recognition.py run --label sim2m-o16 --audio sim --distance 2 --opus-kbps 16
 
-Settings come from the CONVO_* environment like the server (CONVO_WHISPER_SERVER_URL,
-CONVO_WHISPER_PROMPT, CONVO_DIARIZER, ...); the flags below override them. Results go to
+Settings come from the CONVO_* (or ATHENA_*) environment like the server
+(CONVO_WHISPER_SERVER_URL, CONVO_WHISPER_PROMPT, CONVO_DIARIZER, ...); the flags below
+override them. Results go to
 eval/results/recognition-<label>.json (gitignored).
 
 Metrics, per meeting window and pooled:
@@ -92,19 +93,19 @@ def _server_dir() -> Path:
 
 sys.path.insert(0, str(_server_dir()))
 
-from convo_server import audio as audio_mod  # noqa: E402
-from convo_server.audio import SAMPLE_RATE  # noqa: E402
-from convo_server.config import Settings  # noqa: E402
-from convo_server.pipeline import Pipeline  # noqa: E402
-from convo_server.store import Store  # noqa: E402
-from convo_server.vad import make_vad  # noqa: E402
+from athena import audio as audio_mod  # noqa: E402
+from athena.audio import SAMPLE_RATE  # noqa: E402
+from athena.config import Settings  # noqa: E402
+from athena.db.store import Store  # noqa: E402
+from athena.pipeline import Pipeline  # noqa: E402
+from athena.vad import make_vad  # noqa: E402
 
 try:
-    from convo_server.cli import build_diarizer, build_transcriber
-    from convo_server.diarize import enroll_voice
+    from athena.cli import build_diarizer, build_transcriber
+    from athena.diarize import enroll_voice
 except ImportError:  # server code from before PR #24 (no prompt, one voiceprint each)
-    from convo_server.diarize import Diarizer, EcapaEmbedder, enrollment_embedding, load_voices
-    from convo_server.transcribe import WhisperServerTranscriber
+    from athena.diarize import Diarizer, EcapaEmbedder, enrollment_embedding, load_voices
+    from athena.transcribe import WhisperServerTranscriber
 
     def build_transcriber(settings):  # type: ignore[no-redef]
         return WhisperServerTranscriber(settings.whisper_server_url, settings.language)
@@ -761,7 +762,7 @@ class CachedTranscriber:
     def transcribe(self, audio: np.ndarray, prompt: str = ""):
         import hashlib
 
-        from convo_server.transcribe import TranscriptPiece
+        from athena.transcribe import TranscriptPiece
 
         h = hashlib.sha1(self.key.encode() + prompt.encode()
                          + np.ascontiguousarray(audio, np.float32).tobytes()).hexdigest()
@@ -836,7 +837,7 @@ def _name_by_overlap(store: Store, sid: str, t0: float, turns, spk: str, name: s
                      offset: float, threshold: float) -> int:
     """What a user does with name_speaker: name the label that covers most of ``spk``'s
     speech in session ``sid``. Returns how many lines elsewhere were relabelled."""
-    from convo_server.speakers import relabel_matches
+    from athena.speakers import relabel_matches
 
     segs = store.session_segments(sid)
     cover: dict[tuple[str, str], dict[str, float]] = {}

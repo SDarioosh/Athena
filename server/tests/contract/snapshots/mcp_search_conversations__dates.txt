@@ -1,0 +1,11 @@
+3 conversations (times are Europe/Berlin). When answering, put the link next to each fact you use:
+- 2026-09-30 16:00–16:00 "Dentist: cracked molar" id 000000000000000000000000c0de0003; people: Dr. Patel, Me
+  Dr. Patel found a cracked lower left molar that needs a crown; the follow-up is on October 21 at 9 a.m.
+  https://athena.example.org/view/000000000000000000000000c0de0003?sig=78af3b41afd383997de9db47a584d3c8
+- 2026-09-22 21:30–21:30 "Mom's seventieth birthday" id 000000000000000000000000c0de0002; people: Maria, Me, Mom
+  Maria and the user planned a dinner for Mom's seventieth birthday at Casa Lupo; the user takes care of the gift.
+  https://athena.example.org/view/000000000000000000000000c0de0002?sig=7b03dc7f7b65fca7db9ee25815324434
+- 2026-09-15 12:00–12:01 "Q4 budget cut" id 000000000000000000000000c0de0001; people: Alice, Me
+  Alice said finance is cutting the Q4 budget by fifteen percent; the user will send a revised spreadsheet by Friday.
+  https://athena.example.org/view/000000000000000000000000c0de0001?sig=2b54669d195fa8debf17a886d696a0f8
+When answering, put the link next to each fact you use.

@@ -9,7 +9,8 @@ after the server answered; a temporary failure leaves it queued on the T5. The T
 token; the data goes server -> this PC -> BLE and never touches the cloud.
 
 Run it through the watch relay's CLI (`ble_relay.py pda ...`) or directly. The token and
-server come from the same places as for the watch drain: CONVO_INGEST_TOKEN or
+server come from the same places as for the watch drain: ATHENA_INGEST_TOKEN (or
+CONVO_INGEST_TOKEN) or
 --token-file, --server or BARVIS_SERVER.
 
 Pairing works like the watch's (see ble_relay.py --help): open the T5's pairing window on
@@ -21,7 +22,7 @@ Look at the T5 without changing anything:
 
 Sync once and exit (exit code 0 = everything delivered):
 
-    export BARVIS_SERVER=http://<server>:8000 CONVO_INGEST_TOKEN=... BARVIS_TZ=Europe/Berlin
+    export BARVIS_SERVER=http://<server>:8000 ATHENA_INGEST_TOKEN=... BARVIS_TZ=Europe/Berlin
     export ODYSSEUS_URL=http://127.0.0.1:7010 ODYSSEUS_TOKEN=ody_...   # or --odysseus-token-file
     python firmware/recorder/tools/ble_relay.py pda --once --calendar-href <calendar id> \\
         --templates "Call,Meeting,Reminder"
@@ -48,17 +49,17 @@ import sys
 import time
 from pathlib import Path
 
-from barvis_relay import pda_protocol as q
-from barvis_relay import pda_sync as s
-from barvis_relay.anchors import default_state_dir
-from barvis_relay.pda_actions import NoCalendar
-from barvis_relay.pda_calendar import OdysseusCalendar
-from barvis_relay.pda_feed import HttpApi, resolve_tz
-from barvis_relay.pda_insight import OdysseusInsight
-from barvis_relay.pda_todos import OdysseusTodos
-from barvis_relay.protocol import iso_ms
+from athena_relay import pda_protocol as q
+from athena_relay import pda_sync as s
+from athena_relay.anchors import default_state_dir
+from athena_relay.pda_actions import NoCalendar
+from athena_relay.pda_calendar import OdysseusCalendar
+from athena_relay.pda_feed import HttpApi, resolve_tz
+from athena_relay.pda_insight import OdysseusInsight
+from athena_relay.pda_todos import OdysseusTodos
+from athena_relay.protocol import iso_ms
 
-log = logging.getLogger("barvis_relay.pda_ble")
+log = logging.getLogger("athena_relay.pda_ble")
 NOT_FOUND = 4
 LINK_RETRY_SECONDS = 5
 SCAN_ERROR_RETRY_SECONDS = 30
@@ -262,8 +263,8 @@ async def main_async(args: argparse.Namespace) -> int:
     server = args.server or os.environ.get("BARVIS_SERVER")
     token = read_token(args.token_file)
     if not args.list and (not server or not token):
-        log.error("need --server (or BARVIS_SERVER) and the token in CONVO_INGEST_TOKEN "
-                  "or --token-file")
+        log.error("need --server (or BARVIS_SERVER) and the token in ATHENA_INGEST_TOKEN "
+                  "(or CONVO_INGEST_TOKEN) or --token-file")
         return 3
     tz_name = args.tz or os.environ.get("BARVIS_TZ") or "UTC"
     try:
@@ -347,7 +348,8 @@ def main(argv: list[str] | None = None) -> int:
                                  epilog="See the docstring of pda_relay.py for setup.")
     ap.add_argument("--server", help="server base URL (default: $BARVIS_SERVER)")
     ap.add_argument("--token-file", type=Path,
-                    help="file holding the server token (default: $CONVO_INGEST_TOKEN)")
+                    help="file holding the server token (default: $ATHENA_INGEST_TOKEN, "
+                         "or $CONVO_INGEST_TOKEN)")
     ap.add_argument("--address", help="T5 address (macOS: its CoreBluetooth UUID); "
                                       "default: scan for the service")
     ap.add_argument("--pair", action="store_true", help="ask the OS to pair after connecting")

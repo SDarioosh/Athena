@@ -1,7 +1,13 @@
 # Athena rename: work order
 
-Status: **planned, not started** (written 2026-10-27). Each step below is one PR. Tick
-it off here in the same PR that does it.
+Status: **step 1 in progress** (Athena's links done 2026-10-29); steps 7, 8 and 14 done in
+code (cleanup lane 4E, 2026-10-29); for the others see each step (written 2026-10-27). On 2026-10-29 the owner also chose to
+rename the hub's stored `"odysseus-sound"` values and server name `convo` with a data
+migration (cleanup lane 4F; filed calendar event IDs stay), and the watch's Bluetooth name
+(lane 1I, **done** 2026-10-29: `athena-tw`, relays accept `barvis-tw` too); the "What stays"
+table below predates that. Since 2026-10-29 the steps run
+inside the cleanup ([cleanup-plan.md](cleanup-plan.md), "Renaming to Athena" maps each step
+to its lane). Each step below is one PR. Tick it off here in the same PR that does it.
 
 The project was called convo-ai, then barvis-ai, barvis-sound and odysseus-sound. The
 prose already says Athena. This plan renames the old names in code, settings and
@@ -14,7 +20,8 @@ installed devices (see [What stays](#what-stays-and-why)).
   one. This is the pattern the hub's `scripts/fork_deploy.sh` already uses for
   `BARVIS_*` → `FORK_*`. The server, the phone, the watches and the hub must keep
   working after each step on its own, in any deploy order.
-- **No data migrations.** No step rewrites rows in `convo.db` or in the hub's data.
+- **No data migrations.** No step rewrites rows in the database (`convo.db`, now `athena.db`)
+  or in the hub's data.
 - **One concern per PR.** Do a mechanical rename as its own PR, with no behaviour
   changes mixed in, so the diff can be reviewed by `git diff -M --stat`.
 - **Do the big renames (steps 3, 6, 10) when no other PR is open** in that repo. They
@@ -105,6 +112,16 @@ clone of the current URL.
 
 ## Step 3: Python package and CLI (Athena)
 
+**Done** (2026-10-29): the package is `athena` (distribution `athena-server`), console
+scripts `athena` and `convo-server` (both `athena.cli:main`). Changed from the plan below:
+`convo_server` stays as an alias package (`server/convo_server/__init__.py`, a meta-path
+finder: `convo_server.db.store is athena.db.store`, `python -m convo_server.cli` works, and a
+venv installed before the rename that knows only the `convo_server` folder still finds
+`athena`), because commands outside the repos may use the old name; cleanup lane 4B
+kept it (step 16). The hub's docs name `convo_server` paths in
+comments only (`docs/fork/sandbox.md` imports `convo_server.mcp_server`, which the alias
+keeps working). Tested in `server/tests/unit/api/test_convo_server_alias.py`.
+
 - `git mv server/convo_server server/athena`, and change the imports in `server/`
   (about 50 files), `server/Dockerfile`, `server/eval/`, `server/scripts/`, and the
   `server/tests` file that imports the PC relay.
@@ -122,6 +139,10 @@ clone of the current URL.
 
 ## Step 4: PC relay package (Athena)
 
+**Done** (2026-10-29): `athena_relay`, with `barvis_relay/` as a stub that aliases each
+submodule (`barvis_relay.uploader is athena_relay.uploader`); the state dir rule is tested
+for old dir only, new only, both and neither (`tools/tests/test_relay_names.py`).
+
 - `git mv firmware/recorder/tools/barvis_relay firmware/recorder/tools/athena_relay`,
   then change the imports in `ble_relay.py`, `pda_relay.py`, the tests (`tools/tests/`,
   10 files), the one `server/tests` file and `ci.yml`.
@@ -136,16 +157,28 @@ clone of the current URL.
 
 ## Step 5: firmware macros (Athena)
 
+**Done** (2026-10-29): the Opus tags were string literals in `session_rec.c`, not macros; they
+and the UUID bytes are now `ATHENA_TAG_*` and `ATHENA_UUID_BYTES` in `main/wire_ids.h`,
+with the same bytes. `test/test_wire_ids.c` pins every UUID and tag byte against literals
+copied from the firmware before the rename. `idf.py build` runs in CI.
+
 - In `firmware/recorder/main/ble_sync.c` and the other files that use them (13 files),
   rename `BARVIS_UUID` and the `BARVIS_*` Opus tag macros to `ATHENA_*`.
 - **The values stay the same:** the UUID bytes, the Opus tag bytes and
-  `DEVICE_NAME "barvis-tw"`. They are the wire protocol, which
+  `DEVICE_NAME "barvis-tw"` (the name was renamed later after all, decided 2026-10-29:
+  `athena-tw`, relays accept both; see "What stays"). They are the wire protocol, which
   `docs/twatch-ble-protocol.md` describes and the phone and PC relays rely on.
 - Done when: the host tests pass and `idf.py build` passes for all three boards. Byte
   check: build the BLE service table before and after, and compare it (a
   `ble_uuid128_t` dump in a host test, or the `.rodata` of `ble_sync.o`).
 
 ## Step 6: Android Kotlin package (Athena)
+
+Status: **done** (cleanup branch `feature/cleanup-1h`); the real-device check is in its PR.
+Kept on purpose: the `applicationId`, the intent action strings
+`org.barvis.sound.relay.*`, the Keystore alias `barvis_relay_token_v1`, and an
+`activity-alias` named `org.barvis.sound.relay.ui.MainActivity` for the launcher entry, so
+home-screen icons pinned by an older version keep working.
 
 - Move `android-relay/app/src/{main,test}/java/org/barvis/sound/relay` to
   `org/athena/relay` (57 files), change the `package` and `import` lines, and set
@@ -161,7 +194,23 @@ clone of the current URL.
 
 ## Step 7: settings `CONVO_*` → `ATHENA_*` (Athena)
 
-- About 98 variables. `server/convo_server/config.py` (pydantic `BaseSettings`,
+**Done** (2026-10-29, cleanup lane 4E) in the server, the eval and scripts, and the PC
+relay: `athena/config.py` reads each setting as `ATHENA_<NAME>` and `CONVO_<NAME>` with one
+custom settings source (no field aliases, no copying of `os.environ`). The environment beats
+`server/.env`, and within each the new name wins, so an eval's `CONVO_DATA_DIR=/tmp/demo`
+in the environment still beats `ATHENA_DATA_DIR` in `.env`. Both names with different
+values: one warning naming the variable and where the used one came from, never a value.
+The ingest token check takes either name. `athena.config.env_setting` reads one setting by
+both names for scripts that don't load `Settings` (`eval/bakeoff.py`; the standalone
+`scripts/meeting_bot_cost.py` and the PC relay's `ATHENA_INGEST_TOKEN` do the same inline).
+Changed from the plan below: `.env.example` keeps the `CONVO_` lines and says at the top
+that `ATHENA_` works too (deploy.sh's `--init` and a test read those lines), and the docs
+keep writing `CONVO_*` with one note each. Not done here: `deploy.sh` and `compose.yml`
+(cleanup lane 4A owns them) still read `CONVO_*` only for the few settings they read
+themselves; `.env.example` lists those, to keep under their old names until they read both.
+The Zepp side service reads no setting; `ci.yml` keeps the old names, which still work.
+
+- About 98 variables. `server/athena/config.py` (pydantic `BaseSettings`,
   `env_prefix="CONVO_"`) reads `ATHENA_<name>` first and falls back to `CONVO_<name>`.
   Do this with a custom settings source or `AliasChoices` per field, not by copying
   `os.environ`.
@@ -185,6 +234,19 @@ clone of the current URL.
 
 ## Step 8: database file (Athena)
 
+**Done** (2026-10-29, cleanup lane 4E), differently from the plan below (owner decision in
+the cleanup plan, 4E: no file is ever moved by code). `Settings.db_path` is `athena.db` in
+the data dir, but an existing `convo.db` is opened as it is while no `athena.db` exists, so
+a server that has one keeps using it (with its `-wal`/`-shm` and init-lock files next to
+it) and no empty `athena.db` is created beside it; every process (`serve`, `mcp`, the CLI)
+makes the same choice, with nothing to wait for. Both files: `athena.db` is used and one
+warning says `convo.db` is ignored (the owner decides what to do with it). A fresh data dir
+gets `athena.db`. New setting `CONVO_DB_FILE` / `ATHENA_DB_FILE` names the file explicitly
+(relative to the data dir). `eval/bakeoff.py` resolves the file the same way and
+`scripts/check_migration.py` refuses a file named `athena.db` too. Switching to
+`athena.db` is up to the owner: stop the services, `sqlite3 convo.db ".backup athena.db"`
+(or move the file with its `-wal`/`-shm`), start them again, and update backup jobs.
+
 - `Settings.db_path` becomes `data_dir / "athena.db"`. On start:
   - only `convo.db` exists: rename it, and its `-wal` and `-shm` files, to `athena.db`
     while nothing has it open;
@@ -201,6 +263,15 @@ clone of the current URL.
   3. Owner: update any backup job that copies `convo.db` (question 0.2).
 
 ## Step 9: deploy.sh, services and Docker (Athena)
+
+**Partly done** (2026-10-29, cleanup lane 4A): `deploy.sh` runs Docker only and reads
+`ATHENA_*` settings beside `BARVIS_SOUND_*` (new name wins). Native units are no longer
+written, so their rename is moot; `deploy.sh` still recognises `barvis-sound*` units to switch
+to Docker. The compose project and image keep the name `odysseus-sound` and the services
+`sound-api`/`sound-mcp` stay: a deploy runs the script that was on disk when it started, so an
+old script would start a second project on the same ports. Follow-up: `name: athena` and the
+image names, after every server has deployed this version once (the new script already
+handles both project names).
 
 - `BARVIS_SOUND_*` settings become `ATHENA_*` (`ATHENA_REMOTE`, `ATHENA_BRANCH`,
   `ATHENA_EXTRAS`, `ATHENA_WHISPER_CMD`, `ATHENA_RUNNER`, `ATHENA_ODYSSEUS_DIR`). The
@@ -291,6 +362,15 @@ clone of the current URL.
 
 ## Step 14: Android relay on the new routes (Athena)
 
+**Done in code** (2026-10-29, cleanup lane 4E; Gradle build and the real phone are CI's and
+the owner's): `net/Routes.kt` calls `/api/codex/athena/…`; `HubRoutes` sends a call that gets
+a 404 there to `/api/codex/sound/…` and remembers per hub URL, for the app's lifetime, which
+routes the first answer that shows a route proved (a 2xx, or a 4xx other than 401, 404, 408,
+429). 401, 403, 5xx and network errors never fall back. Health and Test connection, chunk
+upload, session end and the T5 sync's reads and writes all go through it. JVM tests:
+`HubRoutesTest`, `HttpUploaderTest`, `PdaHttpTest`. The PC relay and the T5 firmware don't
+use the hub's `sound` routes (the PC relay uploads to Athena directly).
+
 - `net/Routes.kt` uses `/api/codex/athena/…`. On a `404` from an older hub, it falls
   back to `/api/codex/sound/…` once and remembers which works.
 - README and `docs/android-app-plan.md` say the new routes and scopes.
@@ -299,6 +379,9 @@ clone of the current URL.
 
 ## Step 15: Zepp test app name (Athena)
 
+**Done** (2026-10-29), also the page title, the settings heading and the microphone hint.
+The real-device install is in that PR's Server verification.
+
 - `zepp-app/app.json`: `appName` "Convo Rec Test" becomes "Athena Rec Test", in both
   places. `appId` (1092611) and the vendor stay the same, so the watch treats it as the
   same app.
@@ -306,7 +389,24 @@ clone of the current URL.
 
 ## Step 16: final pass (both repos)
 
+**Athena part, cleanup lane 4B** (2026-10-29): removed the module shims the package split
+left at old paths, after `git grep` found no importer in either repo (code, tests, eval,
+scripts, meeting bot, relays, CI, Docker, the hub's docs): `athena/store.py` (now
+`athena/db/` and `athena/domain.py`), `athena/llm.py` (now `athena/summarize/`),
+`athena/meeting_chat.py`, `meeting_live.py`, `meeting_names.py`, `meeting_tracks.py`,
+`meeting_voices.py` and `zoom_signin.py` (now `athena/meetings/...`), and the launcher
+names `athena.meetings` still served from its time as the launcher module (now
+`athena.meetings.bot.launcher`). The loggers keep their old names (`athena.meeting_live`
+...), so log filters still match. Kept, by owner decision (old names keep working through
+Phase 4): the `convo_server` alias package (it now aliases only paths that exist:
+`convo_server.db.store`, not `convo_server.store`), the `convo-server` CLI, the
+`barvis_relay` stub and the `CONVO_*` settings (Athena has no other old-name setting
+aliases). They go in a later PR of their own once the owner confirms that no unit, cron
+job, profile or note outside the repos uses them.
+
 - Remove the `barvis_relay` stub (step 4) if nothing still uses it.
+- Remove the `convo_server` alias package (step 3) once the owner confirms no unit, cron
+  job or profile outside the repos uses `convo_server`.
 - `AGENTS.md` in both repos: the "don't rename" lists keep only the names under
   [What stays](#what-stays-and-why).
 - Remove the `/api/modules/sound/*` aliases (step 12) if the owner agrees. Keep the
@@ -326,7 +426,7 @@ is ever renamed, it gets its own plan, with a backup and a rollback.
 | Stored `"odysseus-sound"` values | hub: belief source (`src/evidence_intake.py`), note label (`src/module_action_items.py`, `src/notes_evidence.py`), memory source (`src/today_insight.py`), calendar uid prefix | Needs a migration of the owner's hub data. Anything missed is filed or remembered twice. |
 | Android `applicationId` `org.barvis.sound.relay` | installed phone app | It becomes a separate app: reinstall, pair again, and recordings waiting in the old app are lost. |
 | Zepp `appId` and vendor | installed watch app | It becomes a new app on the watch. |
-| BLE name `barvis-tw`, BLE UUIDs, Opus tag bytes | T-Watch firmware, phone and PC relays | Every watch needs reflashing and pairing again. |
+| BLE UUIDs, Opus tag bytes (the BLE name is renamed after all, decided 2026-10-29 and **done**: `athena-tw`; older firmware advertises `barvis-tw` and the phone and PC relays accept both for good) | T-Watch firmware, phone and PC relays | Every watch needs reflashing and pairing again. |
 | Hermes profiles `convo-ai`, `convo` | owner's Hermes setup, outside these repos | The build loop and eval profile; only the owner can rename them. |
 | Hub branch `barvis` | hub repo, clones, `fork_deploy.sh` default ref | Every clone and the deploy default would need updating, for no visible gain. |
 | `/api/codex/sound/*`, scopes `sound:*` | installed phone relays, existing API tokens | They stay as aliases next to the new names (steps 13, 14). |

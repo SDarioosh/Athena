@@ -1,0 +1,1323 @@
+{
+ "bot_not_started": {
+  "events": [
+   [
+    "add_meeting",
+    {
+     "created_at": "<time>",
+     "id": "<mid>",
+     "join_token_kind": "none",
+     "meeting_id": "123456789",
+     "runner": "plain",
+     "session_id": "zoom-<mid>",
+     "state": "starting",
+     "title": null,
+     "unit": null,
+     "upload_token_hash": "<sha256>"
+    },
+    {}
+   ],
+   [
+    "popen",
+    [
+     "nice",
+     "-n",
+     "10",
+     "<tmp>/bot-record",
+     "--meeting-id",
+     "123456789",
+     "--session-id",
+     "zoom-<mid>",
+     "--upload-url",
+     "http://127.0.0.1:8000",
+     "--name",
+     "Athena",
+     "--max-seconds",
+     "600",
+     "--alone-seconds",
+     "60",
+     "--waiting-room-seconds",
+     "600",
+     "--codec",
+     "opus",
+     "--work-dir",
+     "<tmp>/data/meetings/<mid>"
+    ],
+    {
+     "close_fds": true,
+     "cwd": "<tmp>/data/meetings/<mid>",
+     "env": [
+      "ATHENA_MEETING_JWT",
+      "ATHENA_UPLOAD_TOKEN",
+      "<kept>"
+     ],
+     "start_new_session": true,
+     "stderr": null,
+     "stdin": "DEVNULL",
+     "stdout": "PIPE"
+    }
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "ended_at": "<time>",
+     "pid": null,
+     "reason": "bot_not_started",
+     "state": "failed",
+     "upload_token_hash": null
+    }
+   ],
+   [
+    "end_session",
+    "zoom-<mid>",
+    "meeting_bot_not_started"
+   ]
+  ],
+  "list": [
+   200,
+   {
+    "meetings": [
+     {
+      "active": false,
+      "created_at": "<time>",
+      "ended_at": "<time>",
+      "id": "<mid>",
+      "join_token_kind": "none",
+      "meeting_id": "123456789",
+      "reason": "bot_not_started",
+      "session_id": "zoom-<mid>",
+      "started_at": null,
+      "state": "failed",
+      "title": null
+     }
+    ]
+   }
+  ],
+  "start": [
+   500,
+   {
+    "detail": "could not start the meeting bot: [Errno 8] Exec format error"
+   }
+  ]
+ },
+ "exits_crash": {
+  "events": [
+   [
+    "add_meeting",
+    {
+     "created_at": "<time>",
+     "id": "<mid>",
+     "join_token_kind": "none",
+     "meeting_id": "123456789",
+     "runner": "plain",
+     "session_id": "zoom-<mid>",
+     "state": "starting",
+     "title": null,
+     "unit": null,
+     "upload_token_hash": "<sha256>"
+    },
+    {}
+   ],
+   [
+    "popen",
+    [
+     "nice",
+     "-n",
+     "10",
+     "<tmp>/bot-crash",
+     "--meeting-id",
+     "123456789",
+     "--session-id",
+     "zoom-<mid>",
+     "--upload-url",
+     "http://127.0.0.1:8000",
+     "--name",
+     "Athena",
+     "--max-seconds",
+     "600",
+     "--alone-seconds",
+     "60",
+     "--waiting-room-seconds",
+     "600",
+     "--codec",
+     "opus",
+     "--work-dir",
+     "<tmp>/data/meetings/<mid>"
+    ],
+    {
+     "close_fds": true,
+     "cwd": "<tmp>/data/meetings/<mid>",
+     "env": [
+      "ATHENA_MEETING_JWT",
+      "ATHENA_UPLOAD_TOKEN",
+      "<kept>"
+     ],
+     "start_new_session": true,
+     "stderr": null,
+     "stdin": "DEVNULL",
+     "stdout": "PIPE"
+    }
+   ],
+   [
+    "prlimit",
+    "bot1",
+    "RLIMIT_AS",
+    [
+     2147483648,
+     2147483648
+    ]
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "pid": "bot1"
+    }
+   ],
+   [
+    "pidfd_open",
+    "bot1"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "reason": null,
+     "state": "waiting_room"
+    }
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "reason": null,
+     "started_at": "<time>",
+     "state": "recording"
+    }
+   ],
+   [
+    "killpg",
+    "bot1",
+    "SIGKILL"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "ended_at": "<time>",
+     "pid": null,
+     "reason": "bot_crashed",
+     "state": "failed",
+     "upload_token_hash": null
+    }
+   ],
+   [
+    "end_session",
+    "zoom-<mid>",
+    "meeting_bot_crashed"
+   ]
+  ],
+  "final": [
+   200,
+   {
+    "active": false,
+    "created_at": "<time>",
+    "ended_at": "<time>",
+    "id": "<mid>",
+    "join_token_kind": "none",
+    "meeting_id": "123456789",
+    "reason": "bot_crashed",
+    "session_id": "zoom-<mid>",
+    "started_at": "<time>",
+    "state": "failed",
+    "title": null
+   }
+  ]
+ },
+ "exits_exit": {
+  "events": [
+   [
+    "add_meeting",
+    {
+     "created_at": "<time>",
+     "id": "<mid>",
+     "join_token_kind": "none",
+     "meeting_id": "123456789",
+     "runner": "plain",
+     "session_id": "zoom-<mid>",
+     "state": "starting",
+     "title": null,
+     "unit": null,
+     "upload_token_hash": "<sha256>"
+    },
+    {}
+   ],
+   [
+    "popen",
+    [
+     "nice",
+     "-n",
+     "10",
+     "<tmp>/bot-exit",
+     "--meeting-id",
+     "123456789",
+     "--session-id",
+     "zoom-<mid>",
+     "--upload-url",
+     "http://127.0.0.1:8000",
+     "--name",
+     "Athena",
+     "--max-seconds",
+     "600",
+     "--alone-seconds",
+     "60",
+     "--waiting-room-seconds",
+     "600",
+     "--codec",
+     "opus",
+     "--work-dir",
+     "<tmp>/data/meetings/<mid>"
+    ],
+    {
+     "close_fds": true,
+     "cwd": "<tmp>/data/meetings/<mid>",
+     "env": [
+      "ATHENA_MEETING_JWT",
+      "ATHENA_UPLOAD_TOKEN",
+      "<kept>"
+     ],
+     "start_new_session": true,
+     "stderr": null,
+     "stdin": "DEVNULL",
+     "stdout": "PIPE"
+    }
+   ],
+   [
+    "prlimit",
+    "bot1",
+    "RLIMIT_AS",
+    [
+     2147483648,
+     2147483648
+    ]
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "pid": "bot1"
+    }
+   ],
+   [
+    "pidfd_open",
+    "bot1"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "reason": null,
+     "state": "waiting_room"
+    }
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "reason": null,
+     "started_at": "<time>",
+     "state": "recording"
+    }
+   ],
+   [
+    "killpg",
+    "bot1",
+    "SIGKILL"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "ended_at": "<time>",
+     "pid": null,
+     "reason": "meeting_ended",
+     "state": "ended",
+     "upload_token_hash": null
+    }
+   ],
+   [
+    "end_session",
+    "zoom-<mid>",
+    "meeting_meeting_ended"
+   ]
+  ],
+  "final": [
+   200,
+   {
+    "active": false,
+    "created_at": "<time>",
+    "ended_at": "<time>",
+    "id": "<mid>",
+    "join_token_kind": "none",
+    "meeting_id": "123456789",
+    "reason": "meeting_ended",
+    "session_id": "zoom-<mid>",
+    "started_at": "<time>",
+    "state": "ended",
+    "title": null
+   }
+  ]
+ },
+ "exits_failed": {
+  "events": [
+   [
+    "add_meeting",
+    {
+     "created_at": "<time>",
+     "id": "<mid>",
+     "join_token_kind": "none",
+     "meeting_id": "123456789",
+     "runner": "plain",
+     "session_id": "zoom-<mid>",
+     "state": "starting",
+     "title": null,
+     "unit": null,
+     "upload_token_hash": "<sha256>"
+    },
+    {}
+   ],
+   [
+    "popen",
+    [
+     "nice",
+     "-n",
+     "10",
+     "<tmp>/bot-failed",
+     "--meeting-id",
+     "123456789",
+     "--session-id",
+     "zoom-<mid>",
+     "--upload-url",
+     "http://127.0.0.1:8000",
+     "--name",
+     "Athena",
+     "--max-seconds",
+     "600",
+     "--alone-seconds",
+     "60",
+     "--waiting-room-seconds",
+     "600",
+     "--codec",
+     "opus",
+     "--work-dir",
+     "<tmp>/data/meetings/<mid>"
+    ],
+    {
+     "close_fds": true,
+     "cwd": "<tmp>/data/meetings/<mid>",
+     "env": [
+      "ATHENA_MEETING_JWT",
+      "ATHENA_UPLOAD_TOKEN",
+      "<kept>"
+     ],
+     "start_new_session": true,
+     "stderr": null,
+     "stdin": "DEVNULL",
+     "stdout": "PIPE"
+    }
+   ],
+   [
+    "prlimit",
+    "bot1",
+    "RLIMIT_AS",
+    [
+     2147483648,
+     2147483648
+    ]
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "pid": "bot1"
+    }
+   ],
+   [
+    "pidfd_open",
+    "bot1"
+   ],
+   [
+    "killpg",
+    "bot1",
+    "SIGKILL"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "ended_at": "<time>",
+     "pid": null,
+     "reason": "wrong_passcode",
+     "state": "failed",
+     "upload_token_hash": null
+    }
+   ],
+   [
+    "end_session",
+    "zoom-<mid>",
+    "meeting_wrong_passcode"
+   ]
+  ],
+  "final": [
+   200,
+   {
+    "active": false,
+    "created_at": "<time>",
+    "ended_at": "<time>",
+    "id": "<mid>",
+    "join_token_kind": "none",
+    "meeting_id": "123456789",
+    "reason": "wrong_passcode",
+    "session_id": "zoom-<mid>",
+    "started_at": null,
+    "state": "failed",
+    "title": null
+   }
+  ]
+ },
+ "exits_ownerleft": {
+  "events": [
+   [
+    "add_meeting",
+    {
+     "created_at": "<time>",
+     "id": "<mid>",
+     "join_token_kind": "none",
+     "meeting_id": "123456789",
+     "runner": "plain",
+     "session_id": "zoom-<mid>",
+     "state": "starting",
+     "title": null,
+     "unit": null,
+     "upload_token_hash": "<sha256>"
+    },
+    {}
+   ],
+   [
+    "popen",
+    [
+     "nice",
+     "-n",
+     "10",
+     "<tmp>/bot-ownerleft",
+     "--meeting-id",
+     "123456789",
+     "--session-id",
+     "zoom-<mid>",
+     "--upload-url",
+     "http://127.0.0.1:8000",
+     "--name",
+     "Athena",
+     "--max-seconds",
+     "600",
+     "--alone-seconds",
+     "60",
+     "--waiting-room-seconds",
+     "600",
+     "--codec",
+     "opus",
+     "--work-dir",
+     "<tmp>/data/meetings/<mid>"
+    ],
+    {
+     "close_fds": true,
+     "cwd": "<tmp>/data/meetings/<mid>",
+     "env": [
+      "ATHENA_MEETING_JWT",
+      "ATHENA_UPLOAD_TOKEN",
+      "<kept>"
+     ],
+     "start_new_session": true,
+     "stderr": null,
+     "stdin": "DEVNULL",
+     "stdout": "PIPE"
+    }
+   ],
+   [
+    "prlimit",
+    "bot1",
+    "RLIMIT_AS",
+    [
+     2147483648,
+     2147483648
+    ]
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "pid": "bot1"
+    }
+   ],
+   [
+    "pidfd_open",
+    "bot1"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "reason": null,
+     "state": "waiting_room"
+    }
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "reason": null,
+     "started_at": "<time>",
+     "state": "recording"
+    }
+   ],
+   [
+    "killpg",
+    "bot1",
+    "SIGKILL"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "ended_at": "<time>",
+     "pid": null,
+     "reason": "owner_left",
+     "state": "ended",
+     "upload_token_hash": null
+    }
+   ],
+   [
+    "end_session",
+    "zoom-<mid>",
+    "meeting_owner_left"
+   ]
+  ],
+  "final": [
+   200,
+   {
+    "active": false,
+    "created_at": "<time>",
+    "ended_at": "<time>",
+    "id": "<mid>",
+    "join_token_kind": "none",
+    "meeting_id": "123456789",
+    "reason": "owner_left",
+    "session_id": "zoom-<mid>",
+    "started_at": "<time>",
+    "state": "ended",
+    "title": null
+   }
+  ]
+ },
+ "hung_bot_delete": {
+  "delete": [
+   200,
+   {
+    "active": false,
+    "created_at": "<time>",
+    "ended_at": "<time>",
+    "id": "<mid>",
+    "join_token_kind": "none",
+    "meeting_id": "123456789",
+    "reason": "stopped",
+    "session_id": "zoom-<mid>",
+    "started_at": "<time>",
+    "state": "ended",
+    "title": null
+   }
+  ],
+  "events": [
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "stop_requested_at": "<time>"
+    }
+   ],
+   [
+    "send_signal",
+    "bot1",
+    "SIGTERM"
+   ],
+   [
+    "kill",
+    "bot1",
+    "SIGTERM"
+   ],
+   [
+    "killpg",
+    "bot1",
+    "SIGKILL"
+   ],
+   [
+    "killpg",
+    "bot1",
+    "SIGKILL"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "ended_at": "<time>",
+     "pid": null,
+     "reason": "stopped",
+     "state": "ended",
+     "upload_token_hash": null
+    }
+   ],
+   [
+    "end_session",
+    "zoom-<mid>",
+    "meeting_stopped"
+   ]
+  ]
+ },
+ "limit_reached": {
+  "after": [
+   "ended/stopped",
+   "ended/stopped"
+  ],
+  "third": [
+   409,
+   {
+    "active": "<mid>",
+    "detail": "busy",
+    "message": "Athena is already in a meeting (2 of 2 bots). Stop it first (DELETE /v1/meetings/<id>) or wait until it ends."
+   }
+  ]
+ },
+ "restart_stale_and_live": {
+  "busy": [
+   409,
+   {
+    "active": "orphan",
+    "detail": "busy",
+    "message": "Athena is already in a meeting (1 of 1 bot). Stop it first (DELETE /v1/meetings/<id>) or wait until it ends."
+   }
+  ],
+  "delete": [
+   200,
+   {
+    "active": false,
+    "created_at": "<time>",
+    "ended_at": "<time>",
+    "id": "orphan",
+    "join_token_kind": null,
+    "meeting_id": "123456789",
+    "reason": "stopped",
+    "session_id": "zoom-orphan",
+    "started_at": null,
+    "state": "ended",
+    "title": null
+   }
+  ],
+  "events": [
+   [
+    "update_meeting",
+    "old",
+    {
+     "ended_at": "<time>",
+     "pid": null,
+     "reason": "server_restarted",
+     "state": "failed",
+     "upload_token_hash": null
+    }
+   ],
+   [
+    "end_session",
+    "zoom-old",
+    "meeting_server_restarted"
+   ],
+   [
+    "update_meeting",
+    "orphan",
+    {
+     "stop_requested_at": "<time>"
+    }
+   ],
+   [
+    "kill",
+    "orphan",
+    "SIGTERM"
+   ],
+   [
+    "update_meeting",
+    "orphan",
+    {
+     "ended_at": "<time>",
+     "pid": null,
+     "reason": "stopped",
+     "state": "ended",
+     "upload_token_hash": null
+    }
+   ],
+   [
+    "end_session",
+    "zoom-orphan",
+    "meeting_stopped"
+   ]
+  ],
+  "list": [
+   200,
+   {
+    "meetings": [
+     {
+      "active": true,
+      "created_at": "<time>",
+      "ended_at": null,
+      "id": "orphan",
+      "join_token_kind": null,
+      "meeting_id": "123456789",
+      "reason": null,
+      "session_id": "zoom-orphan",
+      "started_at": null,
+      "state": "recording",
+      "title": null
+     },
+     {
+      "active": false,
+      "created_at": "<time>",
+      "ended_at": "<time>",
+      "id": "old",
+      "join_token_kind": null,
+      "meeting_id": "123456789",
+      "reason": "server_restarted",
+      "session_id": "zoom-old",
+      "started_at": null,
+      "state": "failed",
+      "title": null
+     }
+    ]
+   }
+  ]
+ },
+ "shutdown_container_init": {
+  "events": [
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "stop_requested_at": "<time>"
+    }
+   ],
+   [
+    "send_signal",
+    "bot1",
+    "SIGTERM"
+   ],
+   [
+    "kill",
+    "bot1",
+    "SIGTERM"
+   ],
+   [
+    "killpg",
+    "bot1",
+    "SIGKILL"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "ended_at": "<time>",
+     "pid": null,
+     "reason": "server_stop",
+     "state": "ended",
+     "upload_token_hash": null
+    }
+   ],
+   [
+    "end_session",
+    "zoom-<mid>",
+    "meeting_server_stop"
+   ]
+  ],
+  "row": {
+   "created_at": "<time>",
+   "ended_at": "<time>",
+   "id": "<mid>",
+   "join_token_kind": "none",
+   "meeting_id": "123456789",
+   "pid": null,
+   "reason": "server_stop",
+   "runner": "plain",
+   "session_id": "zoom-<mid>",
+   "started_at": "<time>",
+   "state": "ended",
+   "stop_requested_at": "<time>",
+   "title": null,
+   "unit": null,
+   "upload_token_hash": null
+  }
+ },
+ "start_record_and_delete": {
+  "bot_argv": [
+   "--meeting-id",
+   "81234567890",
+   "--session-id",
+   "zoom-<mid>",
+   "--upload-url",
+   "http://127.0.0.1:8000",
+   "--name",
+   "Athena",
+   "--max-seconds",
+   "600",
+   "--alone-seconds",
+   "60",
+   "--waiting-room-seconds",
+   "6900",
+   "--codec",
+   "opus",
+   "--work-dir",
+   "<tmp>/data/meetings/<mid>"
+  ],
+  "bot_env": [
+   "ATHENA_MEETING_JWT",
+   "ATHENA_MEETING_PASSCODE",
+   "ATHENA_UPLOAD_TOKEN",
+   "ATHENA_ZOOM_JOIN_TOKEN",
+   "ATHENA_ZOOM_JOIN_TOKEN_KIND"
+  ],
+  "bot_env_kind": "zak",
+  "caps": {
+   "nice": 10,
+   "own_group": true,
+   "rlimit_as": 2147483648
+  },
+  "delete": [
+   200,
+   {
+    "active": false,
+    "created_at": "<time>",
+    "ended_at": "<time>",
+    "id": "<mid>",
+    "join_token_kind": "zak",
+    "meeting_id": "81234567890",
+    "reason": "stopped",
+    "session_id": "zoom-<mid>",
+    "started_at": "<time>",
+    "state": "ended",
+    "title": "Budget sync (fictional)"
+   }
+  ],
+  "delete_again": [
+   200,
+   {
+    "active": false,
+    "created_at": "<time>",
+    "ended_at": "<time>",
+    "id": "<mid>",
+    "join_token_kind": "zak",
+    "meeting_id": "81234567890",
+    "reason": "stopped",
+    "session_id": "zoom-<mid>",
+    "started_at": "<time>",
+    "state": "ended",
+    "title": "Budget sync (fictional)"
+   }
+  ],
+  "duplicate": [
+   409,
+   {
+    "active": "<mid>",
+    "detail": "busy",
+    "message": "Athena is already in a meeting (1 of 1 bot). Stop it first (DELETE /v1/meetings/<id>) or wait until it ends."
+   }
+  ],
+  "events": [
+   [
+    "add_meeting",
+    {
+     "created_at": "<time>",
+     "id": "<mid>",
+     "join_token_kind": "zak",
+     "meeting_id": "81234567890",
+     "runner": "plain",
+     "session_id": "zoom-<mid>",
+     "state": "starting",
+     "title": "Budget sync (fictional)",
+     "unit": null,
+     "upload_token_hash": "<sha256>"
+    },
+    {}
+   ],
+   [
+    "popen",
+    [
+     "nice",
+     "-n",
+     "10",
+     "<tmp>/bot-record",
+     "--meeting-id",
+     "81234567890",
+     "--session-id",
+     "zoom-<mid>",
+     "--upload-url",
+     "http://127.0.0.1:8000",
+     "--name",
+     "Athena",
+     "--max-seconds",
+     "600",
+     "--alone-seconds",
+     "60",
+     "--waiting-room-seconds",
+     "6900",
+     "--codec",
+     "opus",
+     "--work-dir",
+     "<tmp>/data/meetings/<mid>"
+    ],
+    {
+     "close_fds": true,
+     "cwd": "<tmp>/data/meetings/<mid>",
+     "env": [
+      "ATHENA_MEETING_JWT",
+      "ATHENA_MEETING_PASSCODE",
+      "ATHENA_UPLOAD_TOKEN",
+      "ATHENA_ZOOM_JOIN_TOKEN",
+      "ATHENA_ZOOM_JOIN_TOKEN_KIND",
+      "<kept>"
+     ],
+     "start_new_session": true,
+     "stderr": null,
+     "stdin": "DEVNULL",
+     "stdout": "PIPE"
+    }
+   ],
+   [
+    "prlimit",
+    "bot1",
+    "RLIMIT_AS",
+    [
+     2147483648,
+     2147483648
+    ]
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "pid": "bot1"
+    }
+   ],
+   [
+    "pidfd_open",
+    "bot1"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "reason": null,
+     "state": "waiting_room"
+    }
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "reason": null,
+     "started_at": "<time>",
+     "state": "recording"
+    }
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "stop_requested_at": "<time>"
+    }
+   ],
+   [
+    "send_signal",
+    "bot1",
+    "SIGTERM"
+   ],
+   [
+    "kill",
+    "bot1",
+    "SIGTERM"
+   ],
+   [
+    "killpg",
+    "bot1",
+    "SIGKILL"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "ended_at": "<time>",
+     "pid": null,
+     "reason": "stopped",
+     "state": "ended",
+     "upload_token_hash": null
+    }
+   ],
+   [
+    "end_session",
+    "zoom-<mid>",
+    "meeting_stopped"
+   ]
+  ],
+  "list": [
+   200,
+   {
+    "meetings": [
+     {
+      "active": true,
+      "created_at": "<time>",
+      "ended_at": null,
+      "id": "<mid>",
+      "join_token_kind": "zak",
+      "meeting_id": "81234567890",
+      "reason": null,
+      "session_id": "zoom-<mid>",
+      "started_at": "<time>",
+      "state": "recording",
+      "title": "Budget sync (fictional)"
+     }
+    ]
+   }
+  ],
+  "recording": [
+   200,
+   {
+    "active": true,
+    "created_at": "<time>",
+    "ended_at": null,
+    "id": "<mid>",
+    "join_token_kind": "zak",
+    "meeting_id": "81234567890",
+    "reason": null,
+    "session_id": "zoom-<mid>",
+    "started_at": "<time>",
+    "state": "recording",
+    "title": "Budget sync (fictional)"
+   }
+  ],
+  "start": [
+   202,
+   {
+    "id": "<mid>",
+    "session_id": "zoom-<mid>",
+    "state": "starting"
+   }
+  ]
+ },
+ "systemd_runner": {
+  "delete": [
+   200,
+   {
+    "active": false,
+    "created_at": "<time>",
+    "ended_at": "<time>",
+    "id": "<mid>",
+    "join_token_kind": "none",
+    "meeting_id": "123456789",
+    "reason": "stopped",
+    "session_id": "zoom-<mid>",
+    "started_at": "<time>",
+    "state": "ended",
+    "title": null
+   }
+  ],
+  "events": [
+   [
+    "popen",
+    [
+     "systemd-run",
+     "--user",
+     "--scope",
+     "--quiet",
+     "--collect",
+     "true"
+    ],
+    {
+     "close_fds": true,
+     "cwd": null,
+     "env": [
+      "<kept>"
+     ],
+     "start_new_session": false,
+     "stderr": "DEVNULL",
+     "stdin": "DEVNULL",
+     "stdout": "DEVNULL"
+    }
+   ],
+   [
+    "pidfd_open",
+    "probe"
+   ],
+   [
+    "add_meeting",
+    {
+     "created_at": "<time>",
+     "id": "<mid>",
+     "join_token_kind": "none",
+     "meeting_id": "123456789",
+     "runner": "systemd",
+     "session_id": "zoom-<mid>",
+     "state": "starting",
+     "title": null,
+     "unit": "athena-meeting-<mid>",
+     "upload_token_hash": "<sha256>"
+    },
+    {}
+   ],
+   [
+    "popen",
+    [
+     "systemd-run",
+     "--user",
+     "--scope",
+     "--quiet",
+     "--collect",
+     "--unit=athena-meeting-<mid>",
+     "-p",
+     "CPUQuota=150%",
+     "-p",
+     "MemoryMax=1536M",
+     "-p",
+     "RuntimeMaxSec=690",
+     "nice",
+     "-n",
+     "10",
+     "<tmp>/bot-record",
+     "--meeting-id",
+     "123456789",
+     "--session-id",
+     "zoom-<mid>",
+     "--upload-url",
+     "http://127.0.0.1:8000",
+     "--name",
+     "Athena",
+     "--max-seconds",
+     "600",
+     "--alone-seconds",
+     "60",
+     "--waiting-room-seconds",
+     "600",
+     "--codec",
+     "opus",
+     "--work-dir",
+     "<tmp>/data/meetings/<mid>"
+    ],
+    {
+     "close_fds": true,
+     "cwd": "<tmp>/data/meetings/<mid>",
+     "env": [
+      "ATHENA_MEETING_JWT",
+      "ATHENA_UPLOAD_TOKEN",
+      "<kept>"
+     ],
+     "start_new_session": true,
+     "stderr": null,
+     "stdin": "DEVNULL",
+     "stdout": "PIPE"
+    }
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "pid": "bot1"
+    }
+   ],
+   [
+    "pidfd_open",
+    "bot1"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "reason": null,
+     "state": "waiting_room"
+    }
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "reason": null,
+     "started_at": "<time>",
+     "state": "recording"
+    }
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "stop_requested_at": "<time>"
+    }
+   ],
+   [
+    "send_signal",
+    "bot1",
+    "SIGTERM"
+   ],
+   [
+    "kill",
+    "bot1",
+    "SIGTERM"
+   ],
+   [
+    "killpg",
+    "bot1",
+    "SIGKILL"
+   ],
+   [
+    "update_meeting",
+    "<mid>",
+    {
+     "ended_at": "<time>",
+     "pid": null,
+     "reason": "stopped",
+     "state": "ended",
+     "upload_token_hash": null
+    }
+   ],
+   [
+    "end_session",
+    "zoom-<mid>",
+    "meeting_stopped"
+   ],
+   [
+    "popen",
+    [
+     "systemctl",
+     "--user",
+     "stop",
+     "athena-meeting-<mid>.scope"
+    ],
+    {
+     "close_fds": true,
+     "cwd": null,
+     "env": [
+      "<kept>"
+     ],
+     "start_new_session": false,
+     "stderr": "DEVNULL",
+     "stdin": "DEVNULL",
+     "stdout": "DEVNULL"
+    }
+   ],
+   [
+    "pidfd_open",
+    "scope-stop"
+   ]
+  ]
+ }
+}

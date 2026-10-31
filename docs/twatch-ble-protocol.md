@@ -2,7 +2,7 @@
 
 Status: **v1, implemented** by the recorder firmware (`firmware/recorder/main/ble_*`), the
 PC test relay (`firmware/recorder/tools/ble_relay.py`) and the Android relay app
-(`android-relay/`). Nothing here is verified on hardware yet (see the end).
+(`android-relay/`). Verified on the watch with the PC relay (PROGRESS round 14); the Android relay is not yet tested on a phone (checked 2026-10-29).
 
 This document is the contract between those three. If code and this document disagree,
 fix one of them in the same PR. Plan context: [t-watch-ultra-plan.md](t-watch-ultra-plan.md)
@@ -158,8 +158,9 @@ ours, random, base `f806xxxx-61c0-4fda-8b7b-26b08e916438`:
 - `ble forget` on the console deletes all bonds. Up to 4 bonds are kept; a fifth replaces
   the oldest.
 - A phone that paired outside the window keeps a bond the watch has deleted, so its later
-  connections fail with an authentication error. Remove `barvis-tw` in the phone's
-  Bluetooth settings and pair again in the window. The Android app shows this hint.
+  connections fail with an authentication error. Remove `athena-tw` (older firmware:
+  `barvis-tw`) in the phone's Bluetooth settings and pair again in the window. The Android
+  app shows this hint.
 - PC test: bleak can't type a passkey, so the operating system pairs, once, during the
   window: Linux `bluetoothctl` (`agent on`, `default-agent`, `scan on`, `pair <addr>`, type
   the code), Windows *Settings → Bluetooth & devices → Add device*, macOS the system prompt
@@ -385,7 +386,11 @@ Otherwise it doesn't advertise, and while connected it doesn't advertise either 
 relay at a time). Advertising is connectable, undirected, **interval 1000–1250 ms**, or
 **152.5–211.25 ms while the sync window is open** (someone is connecting right then; at
 ~1 s Windows' connection scan sometimes missed the watch for its whole 20 s timeout),
-advertising data = flags + the 128-bit service UUID, scan response = name `barvis-tw`.
+advertising data = flags + the 128-bit service UUID, scan response = name `athena-tw`.
+Firmware built before 2026-10-29 advertises `barvis-tw` instead. Relays find the watch by
+the service UUID and accept both names wherever they look at the name (a bond is kept by
+address, so a reflashed watch stays paired); both names stay accepted for good. Update the
+relays before flashing: a watch flashed first just waits, its recordings stay queued.
 
 So a recording that runs on reaches the phone every ~10 min, and a stopped one within
 seconds of the phone being in range.

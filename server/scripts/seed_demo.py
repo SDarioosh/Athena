@@ -14,11 +14,13 @@ import sys
 import time
 from datetime import UTC, datetime
 
-from convo_server.config import get_settings
-from convo_server.llm import LLMClient, Summarizer
-from convo_server.pipeline import Pipeline
-from convo_server.store import CONVERSATION, NOTE, Segment, Store
-from convo_server.vad import EnergyVAD
+from athena.config import get_settings
+from athena.db.store import Store
+from athena.domain import CONVERSATION, NOTE, Segment
+from athena.pipeline import Pipeline
+from athena.summarize.client import LLMClient
+from athena.summarize.summarizer import Summarizer
+from athena.vad import EnergyVAD
 
 ME = "Me"
 
@@ -169,7 +171,7 @@ def insert_meeting(store: Store, pipeline: Pipeline, key: str, start: str,
     conv_ids = pipeline._assign_conversations(sid, device)
     store.set_session_status(sid, "done")
     if key in MEETING_CHAT:  # as the bot sends it after the meeting
-        from convo_server.meeting_chat import ChatIn, ingest_chat
+        from athena.meetings.ingest.chat import ChatIn, ingest_chat
 
         topic, people, chat = MEETING_CHAT[key]
         ids = {name: f"1678{i:04d}" for i, name in enumerate(people)}

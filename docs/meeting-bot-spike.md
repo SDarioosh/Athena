@@ -1,6 +1,7 @@
 # Zoom bot spike (Phase 0): findings
 
-Status: **template, prepared by lane 0A; the owner's run fills it in.** Fields to fill are
+Status: **template, prepared by lane 0A; the owner's run fills it in.** (2026-10-29: the owner's join test of 2026-10-27 is in
+[PROGRESS.md](../PROGRESS.md) and the changelog, not filled in here; tests B and D are still open.) Fields to fill are
 marked `____`. Plan: [zoom-meeting-bot-plan.md](zoom-meeting-bot-plan.md), Phase 0, as
 updated in PR #118 (the bot is mainly for other people's meetings) and PR #119 (the bot
 leaves when the meeting ends). Owner's decisions (2026-10-27): the bot sends Zoom's
@@ -10,8 +11,11 @@ his own Zoom account), so only while he is in the meeting**; a separate Athena Z
 (ZAK, owner absent) is a later option, tested only in the optional
 [Later](#later-optional-athenas-own-zoom-account) section.
 
-The spike code is in [`meeting-bot/spike/`](../meeting-bot/spike/) on branch
-`feature/meeting-bot-0a`. It is throwaway: Phase 1 lanes take the findings, not the code.
+The spike code was in `meeting-bot/spike/` (branch `feature/meeting-bot-0a`, then `main`).
+It was throwaway: Phase 1 lanes took the findings, not the code. It has been **removed**
+from the repo; it lives in git history at commit `b96332dce8428fa39c4cbd067b56da621b9568c0`
+(`git show b96332dce842:meeting-bot/spike/`, or `git checkout b96332dce842 -- meeting-bot/spike` to run
+the steps below again).
 The Zoom Meeting SDK is proprietary and never enters the repo: the owner downloads it,
 and the build reads it from a folder outside git.
 

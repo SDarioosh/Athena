@@ -1,0 +1,74 @@
+{
+  "body": {
+    "action_items": [
+      {
+        "conversation_id": "000000000000000000000000c0de000a",
+        "created_at": "2026-10-20T12:00:00+00:00",
+        "due": null,
+        "due_date": null,
+        "due_time": null,
+        "duration_minutes": null,
+        "edited": 0,
+        "explicit": false,
+        "id": 12,
+        "kind": "task",
+        "list_name": null,
+        "location": null,
+        "note_title": null,
+        "owner": "Me",
+        "source_at": "2026-10-14T15:00:24+00:00",
+        "source_url": "https://athena.example.org/view/000000000000000000000000c0de000a?sig=db3160667ccbc7cacc4fcb11ef4c9c29#t=24",
+        "status": "open",
+        "text": "Take over Alice's vendor contracts",
+        "time_unclear": false,
+        "title": "Take over Alice's vendor contracts"
+      }
+    ],
+    "device": "trex3pro",
+    "discard_reason": null,
+    "ended_at": "2026-10-14T15:00:39+00:00",
+    "error": null,
+    "facts": [
+      {
+        "conversation_id": "000000000000000000000000c0de000a",
+        "erased_at": null,
+        "fact": "The Q4 budget cut is ten percent",
+        "id": 13,
+        "kind": "other",
+        "retired_at": null,
+        "retired_reason": null,
+        "source_at": "2026-10-14T15:00:32+00:00",
+        "source_url": "https://athena.example.org/view/000000000000000000000000c0de000a?sig=db3160667ccbc7cacc4fcb11ef4c9c29#t=32",
+        "status": "current",
+        "subject": "Q4 budget",
+        "superseded_by": null
+      }
+    ],
+    "forget_pending": false,
+    "id": "000000000000000000000000c0de000a",
+    "key_points": [
+      "Alice's move date is January 12",
+      "Budget cut now ten percent"
+    ],
+    "kind": "meeting",
+    "link": "https://athena.example.org/view/000000000000000000000000c0de000a?sig=db3160667ccbc7cacc4fcb11ef4c9c29",
+    "meeting": null,
+    "people": [
+      "Alice",
+      "Me"
+    ],
+    "started_at": "2026-10-14T15:00:00+00:00",
+    "status": "summarized",
+    "summary": "Alice moves to Berlin on January 12; the user takes over her vendor contracts and the budget cut is now ten percent.",
+    "title": "1:1 with Alice: vendor contracts",
+    "topics": [
+      "work",
+      "budget"
+    ],
+    "transcript_pruned_at": null,
+    "transcript_url": "/v1/conversations/000000000000000000000000c0de000a/transcript",
+    "written": null
+  },
+  "content_type": "application/json",
+  "status": 200
+}

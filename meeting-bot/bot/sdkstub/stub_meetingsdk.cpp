@@ -6,7 +6,7 @@
 // scenario with ATHENA_SDKSTUB_SCENARIO (stub only; the real SDK ignores it):
 //   record (default)  in the meeting, may record at once; Dana talks; chat; Lee leaves
 //   permission        may not record until the one request is granted (after 1 s)
-//   denied            the request is declined; never granted
+//   denied            the request is declined after the chat; never granted
 //   ended / removed   the host ends the meeting / removes the bot after 3 s
 //   alone             nobody else in the meeting
 //   waiting_room      left in the waiting room
@@ -175,7 +175,10 @@ SDKError Recording::RequestLocalRecordingPrivilege() {
   std::string s = scenario();
   if (s == "permission") later(1000, grant_cb);
   if (s == "drop_rejoin" && g_stays > 1) later(300, grant_cb);
-  if (s == "denied") later(500, deny_cb);
+  // After the chat: stub_scenarios.py stops the bot 0.5 s after "waiting_permission denied"
+  // and checks the chat, so it must be in by then. The chat timer (1 s) is added when the
+  // bot is in the meeting, before it asks, so it always fires first (even on a slow loop).
+  if (s == "denied") later(1200, deny_cb);
   return SDKERR_SUCCESS;
 }
 

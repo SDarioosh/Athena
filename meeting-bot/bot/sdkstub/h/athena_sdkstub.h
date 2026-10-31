@@ -1,8 +1,8 @@
 // SANDBOX-ONLY COMPILE STUB, written by Athena. NOT Zoom's headers and NOT derived from them.
 //
 // Declares just the Zoom Meeting SDK for Linux names that meeting-bot/bot/src/main.cpp uses,
-// modelled on the calls of meeting-bot/spike/cpp/athena_spike.cpp (which compiled and ran
-// against the real SDK 7.1.5). Purpose: compile-check the bot in a sandbox or CI with
+// modelled on the calls of the Phase 0 spike's athena_spike.cpp (which compiled and ran
+// against the real SDK 7.1.5; removed, in git history at b96332dce842). Purpose: compile-check the bot in a sandbox or CI with
 // -DZOOM_SDK_DIR=meeting-bot/bot/sdkstub. Enum values here are placeholders, not Zoom's;
 // the binary built against this stub never talks to Zoom (see stub_meetingsdk.cpp).
 // Real builds use the owner's unpacked SDK (-DZOOM_SDK_DIR=$HOME/zoom-sdk).

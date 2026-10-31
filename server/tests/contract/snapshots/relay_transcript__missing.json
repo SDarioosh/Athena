@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "conversation not found"
+  },
+  "content_type": "application/json",
+  "status": 404
+}

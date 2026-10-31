@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "send multipart/form-data, like /v1/ingest/chunk"
+  },
+  "content_type": "application/json",
+  "status": 415
+}

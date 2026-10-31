@@ -1,0 +1,23 @@
+{
+  "bad_sig": {
+    "body": {
+      "detail": "not found"
+    },
+    "content_type": "application/json",
+    "status": 404
+  },
+  "missing": {
+    "body": {
+      "detail": "not found"
+    },
+    "content_type": "application/json",
+    "status": 404
+  },
+  "no_sig": {
+    "body": {
+      "detail": "not found"
+    },
+    "content_type": "application/json",
+    "status": 404
+  }
+}
