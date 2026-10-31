@@ -1,0 +1,17 @@
+# Athena's containers on a network with a fixed subnet and bridge name, so a host firewall
+# can name it (README "Docker", "A fixed network"). Added on top of compose.yml by deploy.sh
+# when ATHENA_NET_SUBNET is set (server/.env); by hand, from server/:
+#
+#   docker compose -f compose.yml -f compose.network.yml up -d --wait
+#
+# The subnet must not overlap any other Docker network (docker network ls). The first
+# start with it moves the containers to the new network (they are recreated once).
+networks:
+  default:
+    name: ${ATHENA_NET_NAME:-athena-net}
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: ${ATHENA_NET_BRIDGE:-br-athena}
+    ipam:
+      config:
+        - subnet: ${ATHENA_NET_SUBNET:?set ATHENA_NET_SUBNET in server/.env, e.g. 172.29.10.0/24}

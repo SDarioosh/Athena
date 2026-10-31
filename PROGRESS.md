@@ -4,7 +4,7 @@ Athena (formerly convo-ai / barvis-ai / barvis-sound / odysseus-sound) is the fi
 [Odysseus](https://github.com/SDarioosh/odysseus-expanded), our Odysseus fork: wearables → local server
 (VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 
-_Last updated: 2026-10-29. Shortened: the Done log and each row's full status are in
+_Last updated: 2026-10-31. Shortened: the Done log and each row's full status are in
 [docs/changelog/2026-10.md](docs/changelog/2026-10.md), the decisions in [docs/decisions-log.md](docs/decisions-log.md)._
 
 ## Status
@@ -35,6 +35,7 @@ _Last updated: 2026-10-29. Shortened: the Done log and each row's full status ar
 | 11d | T5 PDA, phone side | built, unit-tested, not on hardware | [docs/t5-pda-plan.md](docs/t5-pda-plan.md) |
 | 12 | One-command deploy | built, **needs the owner's server run** | `server/scripts/deploy.sh`, [server/README.md](server/README.md) |
 | 12b | Docker, step 1 (module containers) | built, **needs the owner's server run** | [server/README.md](server/README.md#docker) |
+| 12c | Athena as its own user on the server (secrets file, DB copy before deploy, fixed network, hardened containers); orchestrator removed | built, **owner: server migration** (hub plan, steps 4-9) | [server/README.md](server/README.md#running-as-a-service-user) |
 | 13 | Speaker recognition and focused summaries | PRs open, **owner: Server verification** | SDarioosh/Athena#31, SDarioosh/Athena#38 |
 | 14 | T5 E-Paper Pro PDA firmware | milestones 0–3 on the owner's T5; relays and power still open | [firmware/pda/README.md](firmware/pda/README.md) |
 | 15 | Today insight and confirmed facts | built, tested, **owner: Server verification** | [docs/api/mcp.md](docs/api/mcp.md) |

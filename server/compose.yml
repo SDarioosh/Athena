@@ -6,6 +6,10 @@
 # the services' environment (env_file) and for the ${...} values below. The CONVO_DOCKER_*
 # lines at the bottom of .env.example only matter here.
 #
+# Secrets (tokens, keys) can live in a root-only file outside the checkout instead:
+# ATHENA_SECRETS_FILE (default /etc/athena/secrets.env), read as a second env_file when it
+# exists. Compose then has to run as root (DOCKER="sudo docker"); nothing prints it.
+#
 # Services:
 #   sound-api    convo-server serve: ingestion API + worker (devices and phones)
 #   sound-mcp    convo-server mcp --http: what Odysseus talks to
@@ -27,9 +31,15 @@ x-sound: &sound
     args:
       EXTRAS: ${CONVO_DOCKER_EXTRAS:-vad,diarization}
   image: odysseus-sound:${CONVO_DOCKER_TAG:-current}
-  env_file: .env
-  # Run as the host user, so files in the data dir stay theirs (id -u / id -g).
+  env_file:
+    - path: .env
+    - path: ${ATHENA_SECRETS_FILE:-/etc/athena/secrets.env}
+      required: false
+  # Run as the host user that owns the data dir (id -u / id -g), e.g. a service user.
   user: "${PUID:-1000}:${PGID:-1000}"
+  # Nothing in the containers needs to gain privileges or capabilities.
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
   volumes:
     # The same data dir a native install uses (CONVO_DATA_DIR, relative to server/).
     - type: bind
@@ -82,7 +92,6 @@ services:
       ATHENA_HOST: sound-api
       CONVO_PORT: "8000"
       ATHENA_PORT: "8000"
-      CONVO_MCP_TOKEN: ${CONVO_MCP_TOKEN:?set CONVO_MCP_TOKEN in server/.env (16+ characters)}
       CONVO_PUBLIC_URL: ${ATHENA_PUBLIC_URL:-${CONVO_PUBLIC_URL:-http://127.0.0.1:${CONVO_PORT:-8000}}}
       ATHENA_PUBLIC_URL: ${ATHENA_PUBLIC_URL:-${CONVO_PUBLIC_URL:-http://127.0.0.1:${CONVO_PORT:-8000}}}
     ports:
@@ -107,12 +116,18 @@ services:
         CUDA_ARCH: ${CONVO_DOCKER_CUDA_ARCH:-75;80;86;89}
         CUDA_VERSION: ${CONVO_DOCKER_CUDA_VERSION:-12.4.1}
     image: odysseus-sound-whisper:cuda
+    # The same user as the other services; it only reads the models.
+    user: "${PUID:-1000}:${PGID:-1000}"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
     environment:
+      HOME: /tmp
       WHISPER_MODEL: ${CONVO_DOCKER_WHISPER_MODEL:-ggml-large-v3-turbo-q5_0.bin}
       WHISPER_ARGS: ${CONVO_DOCKER_WHISPER_ARGS:-}
     volumes:
+      # In the data dir unless set (it follows CONVO_DATA_DIR).
       - type: bind
-        source: ${CONVO_DOCKER_WHISPER_MODELS:-./data/whisper-models}
+        source: ${CONVO_DOCKER_WHISPER_MODELS:-${CONVO_DATA_DIR:-./data}/whisper-models}
         target: /models
         read_only: true
     networks:

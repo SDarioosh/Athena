@@ -354,9 +354,14 @@ server. **Nothing in the data path touches the cloud.**
   has a **Server verification** section: exact commands, the expected result, and
   real-device steps ([format](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/sandbox.md#server-verification)).
 - The owner runs it and pastes the result into the PR; continue from that result.
-- Never write steps that touch the owner's production Odysseus install (Docker,
-  `~/models/odysseus`, port 7000). Server-side evals target the Odysseus test
-  instance on `127.0.0.1:7010`.
+- Never write steps that edit, restart or reconfigure the owner's production Odysseus
+  install (Docker, `/opt/odysseus`, formerly `~/models/odysseus`, port 7000); read-only
+  checks (status, health, reachability) are fine. The server has no Odysseus test instance
+  any more (retired 2026-10-31): evals that write chats run in the sandbox, and on the
+  server only when the owner chooses to.
+- On the server Athena runs as its own user, data in `/srv/athena`, deployed by an admin
+  account (`server/README.md` "Running as a service user"). Odysseus reaches it only
+  through `sound-mcp` (port 8001); Hermes has no access to Athena at all.
 
 ## Checks
 

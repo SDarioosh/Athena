@@ -272,7 +272,8 @@ before and prints a note.
 
 Settings are read from the environment or `server/.env` (bottom of `.env.example`):
 `ATHENA_RUNNER` (`docker`, or `auto`, the default), `ATHENA_REMOTE`, `ATHENA_BRANCH`,
-`ATHENA_ZOOM_SDK_DIR`, `ATHENA_ODYSSEUS_DIR`, `ATHENA_FORCE`. Each is also read under its
+`ATHENA_ZOOM_SDK_DIR`, `ATHENA_ODYSSEUS_DIR`, `ATHENA_FORCE`, `ATHENA_SECRETS_FILE`,
+`ATHENA_DB_BACKUPS`, `ATHENA_NET_SUBNET` (next section). Each is also read under its
 old name `BARVIS_SOUND_*` (`BARVIS_SOUND_RUNNER`, …): the environment wins over `.env`,
 and within one of them the `ATHENA_*` name wins. The native runner's
 `BARVIS_SOUND_EXTRAS` and `BARVIS_SOUND_WHISPER_CMD` are not used any more (the image takes
@@ -280,6 +281,41 @@ and within one of them the `ATHENA_*` name wins. The native runner's
 `scripts/fork_deploy.sh deploy` also runs this script before it rebuilds Odysseus, so
 either command updates both
 ([hub docs/fork/deploy.md](https://github.com/SDarioosh/odysseus-expanded/blob/barvis/docs/fork/deploy.md)).
+
+### Running as a service user
+
+On a host where Athena runs as its own user (no sudo, not in the docker group) and an
+admin account deploys it:
+
+- The checkout belongs to the admin (e.g. `/opt/athena`): whoever can change
+  `compose.yml` or `.env` controls what root runs at the next deploy. The containers don't
+  need the checkout at run time.
+- The data dir belongs to the service user (e.g. `/srv/athena/data`, `0750`):
+  `CONVO_DATA_DIR=/srv/athena/data` and `PUID`/`PGID` set to its ids in `server/.env`.
+  All containers run as that user, whisper too, with `no-new-privileges` and no
+  capabilities. The whisper models follow the data dir unless `CONVO_DOCKER_WHISPER_MODELS`
+  says otherwise.
+- `DOCKER=sudo docker` in `server/.env`; the admin runs `deploy.sh`.
+- Tokens and keys go in a root-only file, `ATHENA_SECRETS_FILE` (default
+  `/etc/athena/secrets.env`, `root:root 0600`), which compose reads beside `.env`. Then
+  `deploy.sh` never reads a token on the host: the meeting check runs inside `sound-api`,
+  and missing-key warnings only look at setting names. `deploy.sh units` masks every
+  token, key, secret and password; `docker compose config` and `docker inspect` don't, so
+  don't paste their output anywhere.
+- `ATHENA_DB_BACKUPS=5`: before a deploy changes anything, the database is copied to
+  `<data dir>/backups/` (SQLite's online backup, as the service user, safe while Athena
+  runs) and the newest 5 are kept. The server migrates its database at start; a copy is
+  the way back after a rollback to an older commit.
+- `ATHENA_ODYSSEUS_DIR=off`, and deploy Odysseus on its own: finding it means listing
+  Odysseus' containers.
+- `ATHENA_ZOOM_SDK_DIR` set explicitly (e.g. `/opt/zoom-sdk`): `~` is the admin's home.
+- `ATHENA_NET_SUBNET` (with `ATHENA_NET_BRIDGE`, default `br-athena`) gives Athena's network
+  a fixed subnet and bridge name (`compose.network.yml`), so a host firewall can let
+  Odysseus reach `sound-mcp:8001` and nothing else. Pick a subnet no other Docker network
+  uses; the containers are recreated on the new network once.
+
+Odysseus is the only frontend that reads Athena: through `sound-mcp`. Nothing else on the
+host (Hermes included) gets Athena's ports, data dir or `.venv`.
 
 ### Switching from the native install
 
@@ -383,10 +419,8 @@ Not in the containers yet: `whisper-cli` mode (`CONVO_WHISPER_CLI`; use whisper-
 and paths outside the data dir (put a Parakeet model under `data/` and set
 `CONVO_PARAKEET_MODEL_DIR=/data/...`). pyannote needs `CONVO_DOCKER_EXTRAS=vad,diarization,pyannote`
 (`deploy.sh` refuses to build without it when `CONVO_DIARIZER=pyannote`) and runs on CPU
-unless the API has the GPU, below. A stdio MCP client (Hermes) still uses the native `.venv`; it can
-read the same data dir next to the containers. `deploy.sh` no longer installs into `.venv`,
-so update it by hand when you use it (Setup above; the editable install follows the
-checkout, only new dependencies need the install).
+unless the API has the GPU, below. `deploy.sh` doesn't install into `.venv`; that is for
+development and tests only (Setup above).
 
 ### pyannote on the GPU
 
@@ -570,21 +604,7 @@ whisper stays the default.
 
 `convo-server mcp` exposes the store to any MCP-capable frontend. The tools, their JSON fields and the relay routes are in [docs/api/mcp.md](../docs/api/mcp.md).
 
-**Hermes** (stdio; add to the profile's `config.yaml`):
-
-```yaml
-mcp_servers:
-  convo:
-    command: /home/<user>/projects/barvis-ai/server/.venv/bin/convo-server
-    args: [mcp]
-    env:
-      CONVO_INGEST_TOKEN: ${CONVO_INGEST_TOKEN}     # put the value in the profile's .env
-      CONVO_DATA_DIR: /home/<user>/projects/barvis-ai/server/data
-      CONVO_TIMEZONE: Europe/Berlin
-      CONVO_PUBLIC_URL: http://<tailscale-ip>:8000
-    timeout: 120
-    connect_timeout: 30
-```
+Odysseus is the frontend (owner decision; Hermes doesn't read Athena on the server).
 
 **Odysseus** (Docker; Streamable HTTP). Its MCP client only does OAuth, so the token goes in
 the URL:

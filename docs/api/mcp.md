@@ -1,6 +1,6 @@
 # MCP tools
 
-Moved here from [server/README.md](../../server/README.md) on 2026-10-29. How to connect Hermes or Odysseus is under "Knowledge layer (MCP)" there; the module contract is in [AGENTS.md](../../AGENTS.md#mcp-tool-contract). Settings are written `CONVO_<NAME>` here; each also works as `ATHENA_<NAME>`, which wins when both are set.
+Moved here from [server/README.md](../../server/README.md) on 2026-10-29. How to connect Odysseus is under "Knowledge layer (MCP)" there; the module contract is in [AGENTS.md](../../AGENTS.md#mcp-tool-contract). Settings are written `CONVO_<NAME>` here; each also works as `ATHENA_<NAME>`, which wins when both are set.
 
 ## Version notes
 
