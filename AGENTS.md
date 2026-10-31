@@ -23,7 +23,7 @@ server. **Nothing in the data path touches the cloud.**
   `docs/athena-rename-plan.md` step 16), the `convo-server` CLI
   (installed next to the new `athena`, both run the same code), the hub's server name `convo` (the name Odysseus registered
   our MCP server under; since MCP 0.20.1 the server reports itself as `athena`, was
-  `convo-ai`, and the hub never reads that), the Hermes profiles `convo-ai` (orchestrator) and `convo` (eval), the Zepp app's appId and vendor
+  `convo-ai`, and the hub never reads that), the Hermes eval profile `convo` (sandbox only), the Zepp app's appId and vendor
   `convo-ai` (its display name is now "Athena Rec Test"), the old repo URL `SDarioosh/barvis-sound` in existing links and clones (the repo is now
   `SDarioosh/Athena`; GitHub redirects the old URL), the old native units' names
   `barvis-sound*` (`deploy.sh` still recognises them to switch to Docker), the `BARVIS_SOUND_*`
@@ -109,8 +109,6 @@ server. **Nothing in the data path touches the cloud.**
 - `docs/api/`: the API reference (`ingest.md`, `meetings.md`, `mcp.md`); `docs/changelog/`:
   what was done, by month; `docs/decisions-log.md`: the owner's decisions;
   `docs/archive/`: past QC and bug-hunt reports, kept as records.
-- `hermes/`: Hermes profile snippet used by the orchestrator.
-- `orchestrator/`: optional build loop. Leave it alone.
 
 ## Privacy rules (non-negotiable)
 
@@ -408,9 +406,7 @@ tests.
 ## Rules for agents
 
 - Work on a feature branch (`feature/<name>`, docs: `docs/<name>`) and open a PR into
-  `main`. Small commits. Agents run by the orchestrator never push, merge or open PRs
-  (the orchestrator does). In interactive sessions, push and open PRs only when the
-  owner asks.
+  `main`. Small commits. Push and open PRs only when the owner asks.
 - Agents **never merge** and never push to `main` directly.
 - Never commit secrets, `.env`, tokens, databases, or audio files of any kind.
 - Frontend: the owner chose an Odysseus fork (`docs/frontend-decision.md`), now simply

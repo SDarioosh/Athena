@@ -1,6 +1,3 @@
-# orchestrator run logs
-orchestrator/logs/
-
 # secrets
 .env
 secrets.h
