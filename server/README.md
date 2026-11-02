@@ -660,12 +660,14 @@ small local model does better on narrow questions):
    Each item has a `kind`: `event` (meeting, appointment, call: "meeting with Jason on
    Wednesday at 12 pm"), `reminder` ("remind me at 5 to call Mom") or `task` ("get the
    proposal done on Wednesday"), plus `duration_minutes` and `location` for events if
-   said. In a voice note, code also finds appointments the model left out: a sentence
-   with an appointment word (meeting, call, lunch, appointment, dentist, …), a day and a
-   time, not in the past tense ("Meeting with the Meshtastic team Tuesday 11 a.m."),
-   becomes an event (text without the day and time) unless an item already says most of
-   its words or has its day from its line; an undated task or reminder that says it gets
-   its day and time and becomes the event. An event is named as said: when the model writes
+   said. In a voice note, a day and a time make a calendar event: a sentence with a
+   day and a time that asks for no to-do, reminder, list line or note, not in the past
+   tense and not about something that repeats ("Meeting with the Meshtastic team Tuesday
+   11 a.m.", "Kayaking with Ola, Saturday at noon"), becomes an event (text without the
+   day and time) unless an item already has its day from its line or says most of its
+   words; a task or reminder the model wrote for it (undated, or with that day and time,
+   on no list, not asked for by a command) becomes the event. "Make a to-do to remind Ola
+   about kayaking Saturday at noon" stays a to-do. An event is named as said: when the model writes
    "Meet X" for "meeting with X", code makes it "Meeting with X" ("Meet the Meshtastic
    team" reads like getting to know them). A fact that only repeats a dated event of
    the same conversation with its weekday or time ("… has a meeting with the Meshtastic

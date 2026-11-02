@@ -1,4 +1,4 @@
-"""Events: appointments a voice note names, meetings named as said, facts that only
+"""Events: what a voice note names with a day and a time, meetings named as said, facts that only
 repeat an event."""
 
 from __future__ import annotations
@@ -9,29 +9,28 @@ import re
 from ...dates import resolve_due, resolve_time
 from ...domain import NOTE_ITEM, short_title
 from ..draft import Context, DraftItem, SummaryDraft
-from .commands import _split_commands, _starts_command
+from .commands import _COMMAND_WORDS, _split_commands, _starts_command
 from .text import _SENTENCE_END, _WHEN_WORDS, _content_words, _meridiem, _overlaps
 
 log = logging.getLogger(__name__)
 
 
-# A voice note's appointment the model left out (``_events_from_lines``): a sentence
-# with an appointment word, a day and a time, not in the past tense.
-_APPOINTMENT = re.compile(
-    r"\b(?:meet(?:ing)?s?|appointments?|appt|calls?|lunch|dinner|breakfast|brunch|coffee|"
-    r"interviews?|dentist|doctor|doctor's|checkup|check-up|class|lesson|session|party|"
-    r"standup|stand-up|sync|demo|presentation|webinar|reservation)\b", re.IGNORECASE)
+# A voice note's sentence in the past tense names no event to add (``events_from_lines``),
+# nor one that repeats ("yoga every Tuesday at 7 pm": the hub files one-off events only)
 _PAST = re.compile(r"\b(?:had|was|were|met|went|did|attended|called|yesterday|ago|last)\b",
                    re.IGNORECASE)
+_REPEATS = re.compile(r"\b(?:every|each|weekly|daily|monthly|yearly|weekdays|weekends|"
+                      r"(?:mon|tues|wednes|thurs|fri|satur|sun)days)\b", re.IGNORECASE)
 
 
 def events_from_lines(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
-    """Make sure each appointment a voice note names with a day and a time is an event.
-    Small models list nothing for a fragment like "Meeting with the Meshtastic team
-    Tuesday 11 a.m." (no verb, no command word), so it reached neither the calendar nor
-    the suggestions. Only a sentence with an appointment word, a day and a time, not in
-    the past tense, that no item already covers (most of its words, or the same day
-    from the same line). An undated to-do with most of its words gets its day and time.
+    """A day and a time said in a voice note make a calendar event, unless the sentence
+    asks for a to-do, a reminder, a list line or a note ("make a to-do to remind Ola
+    about the hike Friday at 3" stays a to-do). Small models list nothing for a fragment
+    like "Meeting with the Meshtastic team Tuesday 11 a.m.", or write "Kayaking with
+    Ola, Friday at 3" as an undated to-do: the item is added, or its to-do turned into
+    the event. Sentences in the past tense or about something that repeats are left
+    alone, and so are items on a list.
     """
     draft = draft.copy()
     items, origin, today = draft.action_items, ctx.origin, ctx.today
@@ -42,7 +41,8 @@ def events_from_lines(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
                          for c in _split_commands(x.strip())
                          if not _starts_command(c)):
             sentence = sentence.strip()
-            if not _APPOINTMENT.search(sentence) or _PAST.search(sentence):
+            if (_PAST.search(sentence) or _REPEATS.search(sentence)
+                    or _COMMAND_WORDS.search(sentence)):
                 continue
             day = resolve_due(sentence, today)
             hhmm, unclear = resolve_time(sentence)
@@ -54,24 +54,40 @@ def events_from_lines(draft: SummaryDraft, ctx: Context) -> SummaryDraft:
             want = _content_words(what)
             source_at = origin + at
 
-            # the model's item for it, reworded ("Meet Jason" for "Lunch with Jason ...")
-            if any(i.due_date == day.isoformat() and i.source_at == source_at
-                   for i in items):
-                continue
+            # the model's item for it, maybe reworded ("Meet Jason" for "Lunch with
+            # Jason ..."): the same day from the same line, or most of its words
             twin = next((i for i in items if i.kind != NOTE_ITEM
-                         and _overlaps(want, i.text)), None)
-            if twin is not None:  # the model wrote it as an undated to-do: date it
-                if (twin.kind in ("task", "reminder") and not twin.due_date
-                        and not twin.due_time and not twin.list_name):
-                    log.info("dated an appointment the model left undated: %r", sentence)
-                    twin.kind, twin.due_date = "event", day.isoformat()
-                    twin.due_time, twin.time_unclear = hhmm, unclear
-                continue
-            log.info("added an event the model left out: %r", sentence)
-            items.append(DraftItem(text=what, title=short_title(None, what), kind="event",
-                                   owner=ctx.owner, due_date=day.isoformat(), due_time=hhmm,
-                                   time_unclear=unclear, source_at=source_at))
+                         and i.due_date == day.isoformat() and i.source_at == source_at),
+                        None) or next((i for i in items if i.kind != NOTE_ITEM
+                                       and _overlaps(want, i.text)
+                                       and not _said_as_command(i, ctx)), None)
+            if twin is None:
+                log.info("added an event the model left out: %r", sentence)
+                items.append(DraftItem(text=what, title=short_title(None, what),
+                                       kind="event", owner=ctx.owner,
+                                       due_date=day.isoformat(), due_time=hhmm,
+                                       time_unclear=unclear, source_at=source_at))
+            elif (twin.kind in ("task", "reminder") and not twin.list_name
+                  and twin.due_date in (None, day.isoformat())
+                  and twin.due_time in (None, hhmm)
+                  and not _COMMAND_WORDS.search(twin.text)):
+                # the model wrote it as a to-do: the day and time make it an event
+                log.info("made a dated to-do the event it names: %r", sentence)
+                twin.kind, twin.due_date = "event", day.isoformat()
+                twin.due_time, twin.time_unclear = hhmm, unclear
     return draft
+
+
+def _said_as_command(item: DraftItem, ctx: Context) -> bool:
+    """Is ``item`` what a to-do, reminder, list or note command on its line asked for?
+    ("Make a to-do to remind Ola about the hike" is not the hike itself.)"""
+    if item.source_at is None:
+        return False
+    line = ctx.by_offset.get(round(item.source_at - ctx.origin))
+    want = _content_words(item.text)
+    return line is not None and any(
+        (_starts_command(c) or _COMMAND_WORDS.search(c)) and _overlaps(want, c)
+        for x in _SENTENCE_END.split(_meridiem(line)) for c in _split_commands(x.strip()))
 
 
 # "Meet the Meshtastic team" for "Meeting with Meshtastic team ...": the meeting's name
