@@ -4,7 +4,7 @@ Athena (formerly convo-ai / barvis-ai / barvis-sound / odysseus-sound) is the fi
 [Odysseus](https://github.com/SDarioosh/odysseus-expanded), our Odysseus fork: wearables → local server
 (VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 
-_Last updated: 2026-10-31. Shortened: the Done log and each row's full status are in
+_Last updated: 2026-11-02. Shortened: the Done log and each row's full status are in
 [docs/changelog/2026-10.md](docs/changelog/2026-10.md), the decisions in [docs/decisions-log.md](docs/decisions-log.md)._
 
 ## Status
@@ -57,6 +57,11 @@ _Last updated: 2026-10-31. Shortened: the Done log and each row's full status ar
 - **Owner: text messages on the MacBook** (row 26): follow `messages-relay/README.md` on the
   2012 MacBook Pro, then the PR's Server verification (first import counts, a question about
   a text through Odysseus, an edit and an unsend arriving).
+
+- **Owner: a day and a time make a calendar event** (PR on `claude/busy-ride-ub6z2k`,
+  Server verification): a voice note with a day and a time and no to-do word ("Kayaking with
+  Ola, Saturday at noon") should land on the hub's calendar; "make a to-do to …" with a day
+  and time stays a to-do.
 
 - **Owner: capture quality** (4.3 PR, Server verification step 2): the GPU eval is done
   (2026-10-24); still one real recording with a third person joining, and the owner-hint

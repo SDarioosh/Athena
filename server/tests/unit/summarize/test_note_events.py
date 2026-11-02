@@ -1,6 +1,7 @@
-"""A voice note that names an appointment with a day and a time ("Meeting with the
-Meshtastic team Tuesday 11 a.m.") gives an event even when the model lists no item for
-it, so the hub puts it on the calendar."""
+"""A voice note that says a day and a time ("Meeting with the Meshtastic team Tuesday
+11 a.m.", "Kayaking with Ola, Saturday at noon") gives an event even when the model
+lists no item for it or writes it as a to-do, so the hub puts it on the calendar. Only a
+to-do, reminder, list or note command keeps it off the calendar."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ from tests.conftest import make_summarizer
 
 T0 = 1_760_000_000.0  # Thursday 2025-10-09, 10:53 in Berlin
 TUESDAY = "2025-10-14"
+SATURDAY = "2025-10-11"
 
 
 def summarize(said: str, model_items: list[dict], kind: str | None = "note",
@@ -73,10 +75,74 @@ def test_other_task_on_the_same_line_keeps_no_date():
         "Meeting with Bob", "event", TUESDAY, "15:00")
 
 
-def test_needs_a_day_a_time_and_an_appointment():
+def test_needs_a_day_and_a_time():
     assert items("Meeting with the team on Tuesday.", []) == []  # no time
     assert items("Meeting with the team at 3 pm.", []) == []  # no day
-    assert items("Tuesday at 11 am the parcel arrives.", []) == []  # no appointment
+
+
+def test_any_day_and_time_is_an_event_not_only_appointment_words():
+    (item,) = items("Tuesday at 11 am the parcel arrives.", [])
+    assert (item["kind"], item["text"], item["due_date"], item["due_time"]) == (
+        "event", "The parcel arrives", TUESDAY, "11:00")
+    (item,) = items("Kayaking with Ola, Saturday at noon.", [])
+    assert (item["kind"], item["text"], item["due_date"], item["due_time"]) == (
+        "event", "Kayaking with Ola", SATURDAY, "12:00")
+    assert item["explicit"] is True
+
+
+def test_undated_model_task_without_an_appointment_word_becomes_the_event():
+    (item,) = items("Kayaking with Ola, Saturday at noon.", [
+        {"text": "Kayaking with Ola", "kind": "task", "at_seconds": 0}])
+    assert (item["kind"], item["text"], item["due_date"], item["due_time"]) == (
+        "event", "Kayaking with Ola", SATURDAY, "12:00")
+    assert item["explicit"] is True
+
+
+def test_dated_model_task_becomes_the_event():
+    (item,) = items("Kayaking with Ola, Saturday at noon.", [
+        {"text": "Go kayaking with Ola", "kind": "task", "due": "Saturday",
+         "time": "noon", "at_seconds": 0}])
+    assert (item["kind"], item["due_date"], item["due_time"]) == ("event", SATURDAY, "12:00")
+
+
+def test_a_todo_command_with_a_day_and_time_stays_a_todo():
+    said = "Make a to-do to remind Ola about kayaking Saturday at noon."
+    (item,) = items(said, [{"text": "Remind Ola about kayaking", "kind": "task",
+                            "due": "Saturday", "time": "noon", "at_seconds": 0}])
+    assert (item["kind"], item["due_date"], item["due_time"]) == ("task", SATURDAY, "12:00")
+    (item,) = items(said, [])  # the model listed nothing: the command's to-do
+    assert (item["kind"], item["due_date"], item["due_time"]) == ("task", SATURDAY, "12:00")
+
+
+def test_a_reminder_command_with_a_day_and_time_stays_a_reminder():
+    (item,) = items("Remind me Saturday at noon to pack the paddles.", [
+        {"text": "Pack the paddles", "kind": "reminder", "due": "Saturday", "time": "noon",
+         "at_seconds": 0}])
+    assert (item["kind"], item["due_date"], item["due_time"]) == (
+        "reminder", SATURDAY, "12:00")
+
+
+def test_the_event_and_a_todo_about_it_stay_apart():
+    todo, event = items(
+        "Kayaking with Ola Saturday at noon. Make a to-do to remind Ola about kayaking.", [
+            {"text": "Remind Ola about kayaking", "kind": "task", "at_seconds": 0}])
+    assert (todo["kind"], todo["text"], todo["due_date"]) == (
+        "task", "Remind Ola about kayaking", None)
+    assert (event["kind"], event["text"], event["due_date"], event["due_time"]) == (
+        "event", "Kayaking with Ola", SATURDAY, "12:00")
+
+
+def test_a_list_line_with_a_day_and_time_stays_on_the_list():
+    (item,) = items("Add sunscreen to my beach list for Saturday at noon.", [
+        {"text": "Sunscreen", "kind": "task", "list_name": "beach", "at_seconds": 0}])
+    assert (item["kind"], item["list_name"]) == ("task", "beach")
+
+
+def test_something_that_repeats_is_no_event():
+    assert items("Pottery class every Thursday at 6 pm.", []) == []
+    (item,) = items("Pottery class every Thursday at 6 pm.", [
+        {"text": "Pottery class", "kind": "task", "at_seconds": 0}])
+    assert item["kind"] == "task"
 
 
 def test_past_appointments_are_left_out():

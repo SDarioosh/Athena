@@ -4491,7 +4491,24 @@
      "facts": []
     },
     "Book a table for Saturday at 8 pm at the Thai place.": {
-     "action_items": [],
+     "action_items": [
+      {
+       "due": null,
+       "due_date": "2025-10-11",
+       "due_time": "20:00",
+       "duration_minutes": null,
+       "explicit": true,
+       "kind": "event",
+       "list_name": null,
+       "location": null,
+       "note_title": null,
+       "owner": "Me",
+       "source_at": 1759741200.0,
+       "text": "Book a table at the Thai place",
+       "time_unclear": false,
+       "title": "Book a table at the Thai place"
+      }
+     ],
      "facts": []
     },
     "Call the plumber about the tap.": {
@@ -9505,7 +9522,7 @@
       "due_time": "11:00",
       "duration_minutes": null,
       "explicit": true,
-      "kind": "task",
+      "kind": "event",
       "list_name": null,
       "location": null,
       "note_title": null,
