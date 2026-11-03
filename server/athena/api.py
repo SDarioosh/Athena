@@ -21,6 +21,7 @@ Read API (used by the knowledge-layer/MCP integration and for debugging):
     POST /v1/speakers/enroll
     GET/POST/DELETE /v1/speakers/enroll/next   enroll the next recording (the hub's
                                                "Enroll my voice"; voice_enroll.py)
+    POST /v1/speakers/identify     multipart audio -> who is speaking (speaker_identify.py)
 Settings (the hub's settings page):
     GET  /v1/settings/llm, PUT /v1/settings/llm {"model": name | null}
     GET  /v1/settings/vocabulary, PUT /v1/settings/vocabulary {"words": "a, b" | [..] | null}
@@ -65,7 +66,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
 from . import audio as audio_mod
-from . import export, llm_settings, serializers, vocabulary, voice_enroll
+from . import export, llm_settings, serializers, speaker_identify, vocabulary, voice_enroll
 from .config import Settings
 from .diarize import enroll_voice, load_voices
 from .domain import UNSET
@@ -625,6 +626,15 @@ def create_app(pipeline: Pipeline, *, start_worker: bool | None = None) -> FastA
         try:
             return voice_enroll.cancel(pipeline)
         except voice_enroll.EnrollError as e:
+            raise HTTPException(e.status, e.detail) from e
+
+    # The hub's voice check of a spoken command (speaker_identify.py): nothing is kept.
+    @v1.post("/speakers/identify")
+    async def identify_speaker(audio: Annotated[bytes, File()],
+                               codec: Annotated[str, Form()] = "wav") -> dict[str, Any]:
+        try:
+            return await run_in_threadpool(speaker_identify.identify, pipeline, audio, codec)
+        except speaker_identify.IdentifyError as e:
             raise HTTPException(e.status, e.detail) from e
 
     @v1.get("/speakers")
