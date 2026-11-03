@@ -212,7 +212,9 @@ server. **Nothing in the data path touches the cloud.**
   (words whisper is nudged toward, `{"words": "a, b"}`), and (MCP 0.20.0, additive)
   `GET`/`POST`/`DELETE /speakers/enroll/next` for the hub's "Enroll my voice" (the next
   recording becomes a voiceprint, not a conversation; `{"name"?, "is_owner"?}`, contract in
-  `server/README.md`), and the meeting bot's
+  `server/README.md`), and (MCP 0.22.0, additive) `POST /speakers/identify` for the hub's
+  voice satellites (multipart `audio` → who is speaking, nothing kept; contract in
+  `docs/api/ingest.md`), and the meeting bot's
   `POST /meetings`, `GET /meetings`, `GET`/`DELETE /meetings/{id}` for the hub's "Send
   Athena to a meeting" box (same JSON and status as `/v1/meetings`, including the 409's
   `message` and `active`; ids checked before forwarding; `DELETE` waits up to 30 s for the

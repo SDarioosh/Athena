@@ -555,6 +555,12 @@ coming in, `processing`, `done` with `samples`, `speech_seconds`, `relabeled_lin
 `failed` with `error`, `cancelled`, `expired` after 30 minutes without a recording),
 `DELETE` cancels while waiting (409 while processing). `athena/voice_enroll.py`.
 
+Who is speaking in a short clip (the hub's voice satellites check whether the owner said a
+command): `POST /v1/speakers/identify` with multipart `audio` answers the best enrolled
+voice at or above `CONVO_SPEAKER_IDENTIFY_THRESHOLD` (unset: the match threshold), its
+score and the seconds of speech; the audio is never kept. Contract in
+[docs/api/ingest.md](../docs/api/ingest.md#identifying-a-speaker).
+
 ## API reference
 
 The API is described in `docs/api/`:
