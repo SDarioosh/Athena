@@ -260,6 +260,7 @@ routes next to `/mcp`, behind the same token (`Authorization: Bearer` or
 | `GET /settings/llm`, `PUT /settings/llm` | the `/v1` routes (the hub's settings page: the summary model) |
 | `GET /settings/vocabulary`, `PUT /settings/vocabulary` | the `/v1` routes (the hub's settings page: words whisper is nudged toward) |
 | `GET`, `POST`, `DELETE /speakers/enroll/next` | the `/v1` routes (the hub's "Enroll my voice": enroll the next recording; MCP 0.20.0) |
+| `POST /speakers/identify` | `POST /v1/speakers/identify` (same multipart fields and JSON answer: who is speaking in a short clip, for the hub's voice satellites; body capped at 2 MB plus form fields (413), multipart only (415), 30 s timeout; the audio is never kept; MCP 0.22.0) |
 | `POST /meetings` | `POST /v1/meetings` (same JSON `{url}` or `{meeting_id, passcode}`, `title?`; same answer: 202, 400, 409 busy with `message` and `active`, 501 meetings off, 500) |
 | `GET /meetings` | `GET /v1/meetings` (only `limit`, bounded to 1–100) |
 | `GET /meetings/{id}`, `DELETE /meetings/{id}` | the `/v1` routes (state; leave, answering once the bot exited) |

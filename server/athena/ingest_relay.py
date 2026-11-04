@@ -17,6 +17,11 @@ hub's settings page reads and sets the summary model through ``/settings/llm`` a
 whisper's vocabulary through ``/settings/vocabulary``; its "Enroll my voice" window
 starts, follows and cancels enrolling the next recording through ``/speakers/enroll/next``.
 
+The hub's voice satellites check who spoke a command the same way (MCP 0.22.0):
+
+    POST /speakers/identify          same multipart fields and answer as
+                                     /v1/speakers/identify (the audio is never kept)
+
 The hub's Share button downloads a conversation as a file the same way:
 
     GET /conversations/{id}/export   same query and file as /v1/conversations/{id}/export
@@ -58,6 +63,7 @@ import httpx
 from .api import MAX_CHUNK_BYTES
 from .config import Settings
 from .pipeline import MAX_TEXT_CHARS
+from .speaker_identify import MAX_IDENTIFY_BYTES
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +77,9 @@ MAX_JSON_BYTES = 64 * 1024
 MAX_TEXT_BODY_BYTES = MAX_TEXT_CHARS * 6 + 16 * 1024
 # Text messages: 1,000 messages of up to 4,000 characters, with their JSON.
 MAX_MESSAGES_BODY_BYTES = 16 * 1024 * 1024
+# A spoken command to identify the speaker of, with its multipart fields.
+MAX_IDENTIFY_BODY_BYTES = MAX_IDENTIFY_BYTES + 64 * 1024
+IDENTIFY_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
 
 # Meetings: a join request is a link, a passcode and a title; ids are the launcher's
 # uuid4 hex. GET and POST answer quickly; DELETE waits for the bot to exit (SIGTERM, then
@@ -260,6 +269,18 @@ def add_ingest_routes(mcp: Any, settings: Settings,
             return _json(413, "chunk too large")
         return await forward("/v1/ingest/chunk", content=body,
                              headers={**auth, "Content-Type": ctype})
+
+    @mcp.custom_route("/speakers/identify", methods=["POST"], include_in_schema=False)
+    async def identify_speaker(request: Any) -> Any:
+        # Never log the body: it is the owner's voice.
+        ctype = request.headers.get("content-type", "")
+        if not ctype.lower().startswith("multipart/form-data"):
+            return _json(415, "send multipart/form-data, like /v1/speakers/identify")
+        body = await _read_capped(request, MAX_IDENTIFY_BODY_BYTES)
+        if body is None:
+            return _json(413, "audio too large")
+        return await forward_method("POST", "/v1/speakers/identify", timeout=IDENTIFY_TIMEOUT,
+                                    content=body, headers={**auth, "Content-Type": ctype})
 
     def read_route(method: str, path: str) -> None:
         async def handler(request: Any) -> Any:
