@@ -224,7 +224,8 @@ def build_mcp(store: Store, settings: Settings, embedder: Embedder | None = None
         asked for the item (a date or time, a named list, a reminder, event or note, or a
         command such as "remind me" or "add a task"), false for one the summary only suggests.
         Each JSON row also has with: the other people in the item's conversation, those
-        the item names first."""
+        the item names first. In the text format the time at the end of a line is when
+        the item was said, not a due date."""
         fmt_, error = bad_format(format)
         if error:
             return error
