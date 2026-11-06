@@ -55,11 +55,19 @@ class _OOM(Exception):
 
 
 class _FakeTorch:
-    cuda = SimpleNamespace(OutOfMemoryError=_OOM, empty_cache=lambda: None)
+    emptied = 0
+    cuda = SimpleNamespace(OutOfMemoryError=_OOM)
+
+    @classmethod
+    def _empty(cls):
+        cls.emptied += 1
 
     @staticmethod
     def device(name):
         return name
+
+
+_FakeTorch.cuda.empty_cache = _FakeTorch._empty
 
 
 class _FakePipeline:
@@ -89,3 +97,14 @@ def test_cpu_device_runs_once_without_fallback():
     with pytest.raises(_OOM):
         run_with_cpu_fallback(_FakeTorch, pipe, "cpu", lambda: (_ for _ in ()).throw(_OOM()))
     assert pipe.moves == []
+
+
+def test_the_gpu_cache_is_given_back_after_every_recording():
+    pipe = _FakePipeline()
+    before = _FakeTorch.emptied
+    assert run_with_cpu_fallback(_FakeTorch, pipe, "cuda", lambda: "ok") == "ok"
+    assert _FakeTorch.emptied == before + 1
+    with pytest.raises(ValueError):
+        run_with_cpu_fallback(_FakeTorch, pipe, "cuda",
+                              lambda: (_ for _ in ()).throw(ValueError()))
+    assert _FakeTorch.emptied == before + 2

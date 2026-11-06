@@ -111,17 +111,24 @@ def run_with_cpu_fallback(torch: Any, pipeline: Any, device: str,
     llama-server, whisper), free PyTorch's cache and run it on the CPU instead, slower
     but done. Without this a full GPU failed the whole recording, so conversations went
     missing while voice notes (no diarization) didn't. The pipeline goes back to the GPU
-    on the next call once there is room."""
+    on the next call once there is room.
+
+    Afterwards PyTorch's cache is emptied either way: PyTorch keeps the memory a long
+    recording needed until the process ends (10 GB seen on a 12 GB card), and the
+    llama-servers sharing the GPU then can't load their models."""
     if device == "cpu":
         return run()
     try:
-        pipeline.to(torch.device(device))  # back from an earlier fallback; else a no-op
+        try:
+            pipeline.to(torch.device(device))  # back from an earlier fallback; else a no-op
+            return run()
+        except torch.cuda.OutOfMemoryError:
+            log.warning("GPU out of memory in pyannote; diarizing this recording on the CPU")
+        pipeline.to(torch.device("cpu"))
+        torch.cuda.empty_cache()
         return run()
-    except torch.cuda.OutOfMemoryError:
-        log.warning("GPU out of memory in pyannote; diarizing this recording on the CPU")
-    pipeline.to(torch.device("cpu"))
-    torch.cuda.empty_cache()
-    return run()
+    finally:
+        torch.cuda.empty_cache()
 
 
 class PyannoteEmbedder:
