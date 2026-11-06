@@ -54,6 +54,11 @@ _Last updated: 2026-11-02. Shortened: the Done log and each row's full status ar
 
 ## Next
 
+- **Owner: conversations missing, GPU full** (PR on `claude/busy-thompson-t8e2xa`, Server
+  verification): pyannote ran out of GPU memory on conversations (voice notes skip it), so
+  they failed and never showed in Records. Now pyannote finishes on the CPU when the GPU is
+  full, and `retry-failed` sends the failed recordings back to the worker.
+
 - **Owner: text messages on the MacBook** (row 26): follow `messages-relay/README.md` on the
   2012 MacBook Pro, then the PR's Server verification (first import counts, a question about
   a text through Odysseus, an edit and an unsend arriving).

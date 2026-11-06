@@ -93,14 +93,35 @@ class PyannoteSegmenter:
         self._speakers = speaker_bounds(min_speakers, max_speakers)
         if device == "auto":  # pragma: no cover - depends on the machine
             device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._device = device
         self._pipeline.to(torch.device(device))  # pragma: no cover
 
     def __call__(self, audio: np.ndarray) -> list[Turn]:  # pragma: no cover - needs model
         wav = self._torch.from_numpy(np.ascontiguousarray(audio, dtype=np.float32))[None]
-        out = self._pipeline({"waveform": wav, "sample_rate": SAMPLE_RATE}, **self._speakers)
+        out = run_with_cpu_fallback(self._torch, self._pipeline, self._device, lambda: (
+            self._pipeline({"waveform": wav, "sample_rate": SAMPLE_RATE}, **self._speakers)))
         ann = getattr(out, "exclusive_speaker_diarization", out)
         return [(float(seg.start), float(seg.end), str(label))
                 for seg, _, label in ann.itertracks(yield_label=True)]
+
+
+def run_with_cpu_fallback(torch: Any, pipeline: Any, device: str,
+                          run: Callable[[], Any]) -> Any:
+    """``run()`` on ``device``; if the GPU is out of memory (other programs share it:
+    llama-server, whisper), free PyTorch's cache and run it on the CPU instead, slower
+    but done. Without this a full GPU failed the whole recording, so conversations went
+    missing while voice notes (no diarization) didn't. The pipeline goes back to the GPU
+    on the next call once there is room."""
+    if device == "cpu":
+        return run()
+    try:
+        pipeline.to(torch.device(device))  # back from an earlier fallback; else a no-op
+        return run()
+    except torch.cuda.OutOfMemoryError:
+        log.warning("GPU out of memory in pyannote; diarizing this recording on the CPU")
+    pipeline.to(torch.device("cpu"))
+    torch.cuda.empty_cache()
+    return run()
 
 
 class PyannoteEmbedder:

@@ -167,6 +167,16 @@ class SessionsRepo:
         with self.tx() as c:
             return c.execute(sql, params).rowcount > 0
 
+    def retry_failed_sessions(self) -> list[str]:
+        """Send every failed session back to the worker (status 'ended', error cleared);
+        return their ids. A failed session kept its audio, so it is processed again."""
+        with self.tx() as c:
+            ids = [r[0] for r in c.execute(
+                "SELECT id FROM sessions WHERE status = 'failed' ORDER BY started_at")]
+            c.execute("UPDATE sessions SET status = 'ended', error = NULL"
+                      " WHERE status = 'failed'")
+        return ids
+
     def idle_sessions(self, received_before: float,
                       bot_started_after: float | None = None) -> list[str]:
         """Recording sessions with no upload since ``received_before``. With

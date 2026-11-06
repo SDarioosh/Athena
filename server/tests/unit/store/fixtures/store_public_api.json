@@ -85,6 +85,7 @@
  "rename_speaker": "(self, conv_id: 'str', label: 'str', name: 'str') -> 'tuple[int, np.ndarray | None]'",
  "replace_segments": "(self, session_id: 'str', device: 'str', segments: 'list[Segment]', ranges: 'list[tuple[float, float]]') -> 'None'",
  "requeue_interrupted": "(self) -> 'int'",
+ "retry_failed_sessions": "(self) -> 'list[str]'",
  "retire_fact": "(self, fact_id: 'int', reason: 'str' = '') -> 'str | None'",
  "rewrite_failed": "(self, conv_id: 'str') -> 'None'",
  "rewrite_pending": "(self, conv_ids: 'Iterable[str]') -> 'bool'",
