@@ -413,7 +413,8 @@ the cache, and whisper is only restarted when its image or settings change.
 
 One-off commands run in the API container, through the entrypoint so the model URLs
 are rewritten: `docker compose exec sound-api convo-entrypoint process` (or `digest`,
-`summarize-pending`).
+`summarize-pending`, or `retry-failed`: recordings that failed, e.g. with the GPU full,
+kept their audio; this sends them back to the running worker without loading any model).
 
 Not in the containers yet: `whisper-cli` mode (`CONVO_WHISPER_CLI`; use whisper-server),
 and paths outside the data dir (put a Parakeet model under `data/` and set

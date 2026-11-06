@@ -55,6 +55,11 @@ _Last updated: 2026-11-03. Shortened: the Done log and each row's full status ar
 
 ## Next
 
+- **Owner: conversations missing, GPU full** (PR on `claude/busy-thompson-t8e2xa`, Server
+  verification): pyannote ran out of GPU memory on conversations (voice notes skip it), so
+  they failed and never showed in Records. Now pyannote finishes on the CPU when the GPU is
+  full, and `retry-failed` sends the failed recordings back to the worker.
+
 - **Owner: speaker check on real speech** (row 27, Server verification): with the owner's
   enrolled voice, send a few short commands through the hub's voice satellite (owner,
   another enrolled person, an unenrolled voice) and note the scores; tune

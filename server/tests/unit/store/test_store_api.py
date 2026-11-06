@@ -23,7 +23,7 @@ EXPECTED = json.loads((Path(__file__).parent / "fixtures" / "store_public_api.js
 
 
 def test_the_list_is_whole() -> None:
-    assert len(EXPECTED) == 112
+    assert len(EXPECTED) == 113
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED))

@@ -169,6 +169,8 @@ def main(argv: list[str] | None = None) -> None:
     d = sub.add_parser("digest", help="(re)build the daily digest")
     d.add_argument("--date", help="YYYY-MM-DD, default yesterday")
     sub.add_parser("summarize-pending", help="summarize pending, retry failed now")
+    sub.add_parser("retry-failed", help="send failed recordings back to the running "
+                   "worker (their audio was kept)")
     m = sub.add_parser("mcp", help="MCP server for knowledge frontends (stdio by default)")
     m.add_argument("--http", action="store_true",
                    help="serve Streamable HTTP on CONVO_MCP_HOST:CONVO_MCP_PORT/mcp")
@@ -193,6 +195,13 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.cmd == "zoom-login":
         raise SystemExit(zoom_login(settings, status_only=args.status))
+
+    if args.cmd == "retry-failed":
+        # Only the database: loading the models here would take GPU memory from the worker.
+        ids = Store(settings.db_path).retry_failed_sessions()
+        print(f"sent {len(ids)} failed recording(s) back to the worker"
+              + (f": {', '.join(ids)}" if ids else ""))
+        return
 
     pipeline = build_pipeline(settings)
 
