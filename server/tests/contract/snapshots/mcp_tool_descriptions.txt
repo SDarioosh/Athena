@@ -1,4 +1,4 @@
-server: {"name": "athena", "version": "0.21.0"}
+server: {"name": "athena", "version": "0.22.0"}
 
 instructions:
 These tools search the user's own recorded conversations and text messages (transcripts with speaker names and timestamps, summaries, action items, facts, daily digests). Use them for any question about what someone said, decided, promised or mentioned, and before answering from memory. Questions about the user's plans, appointments and the people they know ("What is Jonas allergic to?") are answered from these recordings too: search (list_facts, search_transcripts) before saying you don't know, and search instead of offering to. Ground every claim in tool results and include the link given with it. Dates are in the user's timezone; pass dates as YYYY-MM-DD.
@@ -48,7 +48,8 @@ Action items from conversations and voice notes (default: open ones), newest
         asked for the item (a date or time, a named list, a reminder, event or note, or a
         command such as "remind me" or "add a task"), false for one the summary only suggests.
         Each JSON row also has with: the other people in the item's conversation, those
-        the item names first.
+        the item names first. In the text format the time at the end of a line is when
+        the item was said, not a due date.
 
 ## list_facts
 Durable facts learned from conversations (preferences, plans, relationships...).

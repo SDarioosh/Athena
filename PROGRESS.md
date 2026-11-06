@@ -4,8 +4,8 @@ Athena (formerly convo-ai / barvis-ai / barvis-sound / odysseus-sound) is the fi
 [Odysseus](https://github.com/SDarioosh/odysseus-expanded), our Odysseus fork: wearables → local server
 (VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 
-_Last updated: 2026-11-02. Shortened: the Done log and each row's full status are in
-[docs/changelog/2026-10.md](docs/changelog/2026-10.md), the decisions in [docs/decisions-log.md](docs/decisions-log.md)._
+_Last updated: 2026-11-03. Shortened: the Done log and each row's full status are in
+[docs/changelog/2026-11.md](docs/changelog/2026-11.md) and [2026-10.md](docs/changelog/2026-10.md), the decisions in [docs/decisions-log.md](docs/decisions-log.md)._
 
 ## Status
 
@@ -51,6 +51,7 @@ _Last updated: 2026-11-02. Shortened: the Done log and each row's full status ar
 | 10 | End-to-end with real devices | not started | — |
 | 25 | Cleanup of Athena and the hub | in progress: Phases 0 and 1 merged, Phase 2 merged (gate next) | [docs/cleanup-plan.md](docs/cleanup-plan.md) |
 | 26 | Text messages (iMessage): messages relay on the owner's MacBook, threads as conversations, people by phone and email (MCP 0.21.0, migration 18) | built, tested (server and relay, relay on Python 3.8), **owner: set up the MacBook and Server verification**; real-device steps: Full Disk Access, the first import, an edit and an unsend on the Mac | [docs/messages.md](docs/messages.md), [messages-relay/README.md](messages-relay/README.md) |
+| 27 | Speaker check for the hub's voice satellites (`POST /v1/speakers/identify`, relay route, MCP 0.22.0) | built, tested with fakes, **owner: Server verification** (a few spoken commands from the Echo: owner, another enrolled person, someone new; check the scores against the threshold) | [docs/api/ingest.md](docs/api/ingest.md#identifying-a-speaker) |
 
 ## Next
 
@@ -58,6 +59,13 @@ _Last updated: 2026-11-02. Shortened: the Done log and each row's full status ar
   verification): pyannote ran out of GPU memory on conversations (voice notes skip it), so
   they failed and never showed in Records. Now pyannote finishes on the CPU when the GPU is
   full, and `retry-failed` sends the failed recordings back to the worker.
+
+- **Owner: speaker check on real speech** (row 27, Server verification): with the owner's
+  enrolled voice, send a few short commands through the hub's voice satellite (owner,
+  another enrolled person, an unenrolled voice) and note the scores; tune
+  `CONVO_SPEAKER_IDENTIFY_THRESHOLD` if a 2-3 s command scores lower than diarization does
+  on long recordings. Open question: should this threshold be stricter than the match
+  threshold, since it gates personal answers?
 
 - **Owner: text messages on the MacBook** (row 26): follow `messages-relay/README.md` on the
   2012 MacBook Pro, then the PR's Server verification (first import counts, a question about

@@ -292,6 +292,10 @@ class Settings(BaseSettings):
     # After a speaker is named, unnamed speakers in other conversations whose voice is at
     # least this close are renamed too (stricter than the match threshold).
     speaker_relabel_threshold: float = 0.60
+    # POST /v1/speakers/identify (the hub's voice check of a spoken command): the voice
+    # is the enrolled person's when it scores at least this (cosine, scored like
+    # diarization's matching). Unset: speaker_match_threshold.
+    speaker_identify_threshold: float | None = None
     # Owner hint: the wearer is usually the loudest voice. A cluster that is at least
     # owner_hint_db louder than all others and within owner_hint_margin below the match
     # threshold of the owner's voice is labelled as the owner. 0 margin = off.

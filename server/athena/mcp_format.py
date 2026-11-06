@@ -135,6 +135,12 @@ def action_items(f: Fmt, rows: list[dict[str, Any]], status: str,
                  texts: dict[str, Any] | None = None) -> str:
     """list_action_items, text format."""
     lines = [f.header(len(rows), f"{status} action items")]
+    if rows:
+        # The time before each link is when the item was said; models read it as a
+        # due time. The hub parses the lines (not this header), so they stay as they are.
+        lines[0] = (f"{len(rows)} {status} action items. Each line ends with when the item "
+                    f"was said ({f.settings.timezone}), not when it is due: only an item "
+                    f"that says \"due ...\" has a due date. {CITE}:")
     for r in rows:
         lines.append(f"- #{r['id']} [{r['status']}] {kind_word(r)}{r['text']}"
                      + (f" (owner {r['owner']})" if r["owner"] else "")

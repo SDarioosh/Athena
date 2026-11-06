@@ -12177,6 +12177,508 @@
    "status": 502
   }
  },
+ "speakers_identify__accepted": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "id": "0123456789abcdef0123456789abcdef",
+    "state": "starting"
+   },
+   "status": 202
+  }
+ },
+ "speakers_identify__conflict": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "active": {
+     "id": "0123456789abcdef0123456789abcdef",
+     "state": "in_meeting"
+    },
+    "detail": "a bot is already in a meeting",
+    "message": "Athena is already in a meeting"
+   },
+   "status": 409
+  }
+ },
+ "speakers_identify__conflict_no_detail": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "active": {
+     "id": "0123456789abcdef0123456789abcdef"
+    },
+    "detail": "Athena is already in a meeting",
+    "message": "Athena is already in a meeting"
+   },
+   "status": 409
+  }
+ },
+ "speakers_identify__empty_error": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "Service Unavailable"
+   },
+   "status": 503
+  }
+ },
+ "speakers_identify__error_list": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "bad; worse"
+   },
+   "status": 400
+  }
+ },
+ "speakers_identify__invalid": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "body.url: field required",
+    "errors": [
+     {
+      "loc": [
+       "body",
+       "url"
+      ],
+      "msg": "field required"
+     }
+    ]
+   },
+   "status": 422
+  }
+ },
+ "speakers_identify__no_query": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": null
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "items": [
+     1,
+     2
+    ],
+    "ok": true
+   },
+   "status": 200
+  }
+ },
+ "speakers_identify__no_token": {
+  "forwarded": [],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "no_token"
+  },
+  "response": {
+   "content_type": "text/plain",
+   "status": 401,
+   "text": "unauthorized"
+  }
+ },
+ "speakers_identify__not_found": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "not found"
+   },
+   "status": 404
+  }
+ },
+ "speakers_identify__not_multipart": {
+  "forwarded": [],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "send multipart/form-data, like /v1/speakers/identify"
+   },
+   "status": 415
+  }
+ },
+ "speakers_identify__ok": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "items": [
+     1,
+     2
+    ],
+    "ok": true
+   },
+   "status": 200
+  }
+ },
+ "speakers_identify__server_error": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "upstream broke"
+   },
+   "status": 500
+  }
+ },
+ "speakers_identify__timeout": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "Athena's ingest API is not reachable at http://127.0.0.1:8000 (is `convo-server serve` running?)"
+   },
+   "status": 502
+  }
+ },
+ "speakers_identify__too_large": {
+  "forwarded": [],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "audio too large"
+   },
+   "status": 413
+  }
+ },
+ "speakers_identify__unreachable": {
+  "forwarded": [
+   {
+    "body": "--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"device\"\r\n\r\nbrowser\r\n--fictional-boundary-0123\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"c.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF0000\r\n--fictional-boundary-0123--\r\n",
+    "headers": {
+     "accept": "*/*",
+     "accept-encoding": "gzip, deflate",
+     "authorization": "Bearer <INGEST_TOKEN>",
+     "connection": "keep-alive",
+     "content-length": "242",
+     "content-type": "multipart/form-data; boundary=fictional-boundary-0123",
+     "host": "127.0.0.1:8000"
+    },
+    "method": "POST",
+    "timeout": {
+     "connect": 5.0,
+     "pool": 30.0,
+     "read": 30.0,
+     "write": 30.0
+    },
+    "url": "http://127.0.0.1:8000/v1/speakers/identify"
+   }
+  ],
+  "request": {
+   "method": "POST",
+   "path": "/speakers/identify",
+   "query": "query"
+  },
+  "response": {
+   "content_type": "application/json",
+   "json": {
+    "detail": "Athena's ingest API is not reachable at http://127.0.0.1:8000 (is `convo-server serve` running?)"
+   },
+   "status": 502
+  }
+ },
  "transcript__accepted": {
   "forwarded": [
    {

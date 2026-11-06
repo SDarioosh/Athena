@@ -171,6 +171,29 @@ signed `link`, and action items and facts a `source_url`, of the form `<CONVO_PU
 transcript page that opens in a phone browser without the bearer token and jumps to that
 moment. Rotating `CONVO_INGEST_TOKEN` revokes all links.
 
+## Identifying a speaker
+
+`POST /v1/speakers/identify` (MCP 0.22.0; `athena/speaker_identify.py`) says who is speaking
+in a short clip: the hub forwards a voice satellite's spoken command here to check whether
+the owner said it. Multipart `audio` (any format ffmpeg decodes; a satellite sends WAV
+16 kHz mono 16-bit), optional `codec` (default `wav`). At most 2 MB and 20 s (413).
+
+```json
+{"speaker": {"id": "12", "name": "Sam", "is_owner": true} | null,
+ "score": 0.71 | null, "threshold": 0.5, "speech_seconds": 2.4}
+```
+
+The clip's VAD speech is embedded with the diarizer's speaker embedder (ECAPA) and scored
+against every enrolled voice the way diarization scores a speaker (mean of the closest few
+samples). `speaker` is the best voice when its `score` reaches `threshold`
+(`CONVO_SPEAKER_IDENTIFY_THRESHOLD`, unset = `CONVO_SPEAKER_MATCH_THRESHOLD`, 0.50) and,
+with `CONVO_SPEAKER_MATCH_MARGIN`, beats the runner-up by that margin; else null. `id` is
+the person's stable id (`list_people`) as a string, null when the voice has no person.
+With less than 1 s of speech, or no enrolled voice, `speaker` and `score` are null.
+Errors: 400 empty audio, 413 too large or too long, 422 audio that can't be decoded, 503
+diarization off. The audio is only held in memory for the call: never stored, logged or
+kept, and nothing is written to the database.
+
 ## Sharing a conversation
 
 `GET /v1/conversations/{id}/export?format=md|html&include=...` answers with one file to send
