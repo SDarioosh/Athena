@@ -136,3 +136,16 @@ if(PDA_TESTS)
     set_tests_properties(pda_screenshots PROPERTIES ENVIRONMENT
         "FIXTURES=${FIX};OUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screens")
 endif()
+
+# ---- Brief, Calendar, the new-event flow ----
+target_sources(pda_core PRIVATE src/core/agenda.c src/core/event_form.c src/core/brief.c)
+if(PDA_TESTS)
+    foreach(t test_agenda test_event_form test_brief)
+        add_executable(${t} test/${t}.c)
+        target_include_directories(${t} PRIVATE ${REC}/test)
+        target_link_libraries(${t} pda_core)
+        target_compile_options(${t} PRIVATE ${PDA_WARN})
+        add_test(NAME ${t} COMMAND ${t})
+        set_tests_properties(${t} PROPERTIES ENVIRONMENT "FIXTURES=${FIX}")
+    endforeach()
+endif()
