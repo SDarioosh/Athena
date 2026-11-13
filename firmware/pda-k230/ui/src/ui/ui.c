@@ -628,6 +628,13 @@ void ui_request_sync(void)
     }
 }
 
+void ui_start_launcher(void)
+{
+    if (!U.hooks.start_launcher || U.hooks.start_launcher() != 0) {
+        ui_toast(UI_TOAST_ERROR, "Couldn't start the launcher");
+    }
+}
+
 /* ---- screen off ---- */
 
 static void off_clicked(lv_event_t *e)

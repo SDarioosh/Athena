@@ -70,6 +70,9 @@ typedef struct {
     int (*send_local)(const char *json, size_t len); /* a LOCAL message to syncd: 0 sent */
     void (*screen_power)(bool on);                   /* display on/off (fist, presence) */
     void (*brightness)(int percent);
+    /* hand the screen to LilyGO's launcher: 0 if the hand-over started (the program then
+     * exits 0 and the supervisor starts the launcher) */
+    int (*start_launcher)(void);
 } ui_hooks_t;
 
 void ui_init(lv_display_t *disp);
@@ -95,6 +98,10 @@ typedef enum {
     UI_TOAST_ERROR,
 } ui_toast_kind_t;
 void ui_toast(ui_toast_kind_t kind, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+
+/* "Start LilyGO's launcher" (for Status): the hook creates $ATHENA_PDA_RUN/start-launcher
+ * and the program exits 0 (board_start_launcher); toasts if it can't. */
+void ui_start_launcher(void);
 
 /* LOCAL sync_now; toasts when syncd isn't there. */
 void ui_request_sync(void);

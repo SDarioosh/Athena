@@ -1,9 +1,9 @@
 /* Backend selection, the SDL window (PDA_SDL) and the K230 device (PDA_DEVICE). */
-#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "board.h"
 #include "platform.h"
 #include "theme.h"
 
@@ -41,54 +41,6 @@ static lv_display_t *sdl_create(void)
 #endif
 
 #ifdef PDA_DEVICE
-/* The first backlight under /sys/class/backlight, or NULL. */
-static const char *backlight_dir(void)
-{
-    static char path[300];
-    if (path[0]) {
-        return path;
-    }
-    DIR *d = opendir("/sys/class/backlight");
-    if (!d) {
-        return NULL;
-    }
-    struct dirent *e;
-    while ((e = readdir(d)) != NULL) {
-        if (e->d_name[0] != '.') {
-            snprintf(path, sizeof(path), "/sys/class/backlight/%s", e->d_name);
-            break;
-        }
-    }
-    closedir(d);
-    return path[0] ? path : NULL;
-}
-
-static void write_attr(const char *dir, const char *attr, long v)
-{
-    char p[340];
-    snprintf(p, sizeof(p), "%s/%s", dir, attr);
-    FILE *f = fopen(p, "w");
-    if (f) {
-        fprintf(f, "%ld\n", v);
-        fclose(f);
-    }
-}
-
-static long read_attr(const char *dir, const char *attr)
-{
-    char p[340];
-    snprintf(p, sizeof(p), "%s/%s", dir, attr);
-    FILE *f = fopen(p, "r");
-    long v = -1;
-    if (f) {
-        if (fscanf(f, "%ld", &v) != 1) {
-            v = -1;
-        }
-        fclose(f);
-    }
-    return v;
-}
-
 static lv_display_t *device_create(void)
 {
     const char *card = getenv("ATHENA_PDA_DRM");
@@ -106,10 +58,19 @@ static lv_display_t *device_create(void)
     if (w != UI_W || h != UI_H) {
         LOG("DRM: the UI is laid out for %dx%d portrait; this mode is %dx%d\n", UI_W, UI_H, (int)w, (int)h);
     }
-    lv_indev_t *t = lv_evdev_create(LV_INDEV_TYPE_POINTER, touch ? touch : "/dev/input/event0");
+    /* the touch screen: $ATHENA_PDA_TOUCH, else the input device named goodix_ts */
+    char found[64] = "/dev/input/event0";
+    if (!touch) {
+        if (!board_find_touch(BOARD_INPUT_ROOT, found, sizeof(found))) {
+            LOG("evdev: no goodix_ts input device; trying %s\n", found);
+        }
+        touch = found;
+    }
+    lv_indev_t *t = lv_evdev_create(LV_INDEV_TYPE_POINTER, touch);
     if (!t) {
-        LOG("evdev: can't open %s (no touch)\n", touch ? touch : "/dev/input/event0");
+        LOG("evdev: can't open %s (no touch)\n", touch);
     } else {
+        LOG("touch: %s\n", touch);
         lv_indev_set_display(t, d);
     }
     return d;
@@ -130,12 +91,14 @@ lv_display_t *platform_create(platform_kind_t kind)
     }
 }
 
+static int s_brightness = 80; /* the level the screen comes back on at */
+
+/* Screen off is brightness 0 (what LilyGO's launcher does; BOARD.md "Screen off"). */
 void platform_screen_power(bool on)
 {
 #ifdef PDA_DEVICE
-    const char *bl = backlight_dir();
-    if (bl) {
-        write_attr(bl, "bl_power", on ? 0 : 4); /* FB_BLANK_UNBLANK / FB_BLANK_POWERDOWN */
+    if (board_set_brightness(BOARD_BACKLIGHT_ROOT, on ? s_brightness : 0) != 0) {
+        LOG("backlight: can't write %s\n", BOARD_BACKLIGHT_ROOT);
     }
 #else
     (void)on;
@@ -144,13 +107,8 @@ void platform_screen_power(bool on)
 
 void platform_brightness(int percent)
 {
+    s_brightness = percent < 1 ? 1 : percent > 100 ? 100 : percent;
 #ifdef PDA_DEVICE
-    const char *bl = backlight_dir();
-    const long max = bl ? read_attr(bl, "max_brightness") : -1;
-    if (max > 0) {
-        write_attr(bl, "brightness", (max * percent + 50) / 100);
-    }
-#else
-    (void)percent;
+    board_set_brightness(BOARD_BACKLIGHT_ROOT, s_brightness);
 #endif
 }

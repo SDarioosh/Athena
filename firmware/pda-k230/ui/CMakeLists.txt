@@ -20,6 +20,7 @@ add_compile_definitions(_DEFAULT_SOURCE _GNU_SOURCE _POSIX_C_SOURCE=200809L)
 
 option(PDA_DEVICE "the K230: DRM/KMS display and evdev touch (needs libdrm)" OFF)
 option(PDA_WERROR "warnings are errors in our code" ON)
+option(PDA_TESTS "build the host tests and the screenshot tool" ON)
 find_package(PkgConfig)
 if(PKG_CONFIG_FOUND)
     pkg_check_modules(SDL2 IMPORTED_TARGET sdl2)
@@ -77,7 +78,7 @@ add_library(pda_core STATIC
     ${REC}/main/crc32.c ${REC}/main/isotime.c
     src/core/app_state.c src/core/glance_frame.c src/core/glance_server.c src/core/local_msg.c
     src/core/vision_msg.c src/core/vision_server.c src/core/handsfree.c src/core/today_text.c
-    src/core/power.c
+    src/core/power.c src/core/board.c
 )
 target_include_directories(pda_core PUBLIC src/core ${T5} ${REC}/main)
 target_compile_options(pda_core PRIVATE ${PDA_WARN})
@@ -115,21 +116,23 @@ target_compile_options(athena-pda PRIVATE ${PDA_WARN})
 install(TARGETS athena-pda RUNTIME DESTINATION bin)
 
 # ---- tests (no display) and the screenshot tool ----
-enable_testing()
-set(FIX ${UI}/../../pda/test/fixtures)
-foreach(t test_app_state test_glance test_vision test_today_text)
-    add_executable(${t} test/${t}.c)
-    target_include_directories(${t} PRIVATE ${REC}/test)
-    target_link_libraries(${t} pda_core)
-    target_compile_options(${t} PRIVATE ${PDA_WARN})
-    add_test(NAME ${t} COMMAND ${t})
-    set_tests_properties(${t} PROPERTIES ENVIRONMENT "FIXTURES=${FIX}")
-endforeach()
+if(PDA_TESTS)
+    enable_testing()
+    set(FIX ${UI}/../../pda/test/fixtures)
+    foreach(t test_app_state test_glance test_vision test_today_text test_board)
+        add_executable(${t} test/${t}.c)
+        target_include_directories(${t} PRIVATE ${REC}/test)
+        target_link_libraries(${t} pda_core)
+        target_compile_options(${t} PRIVATE ${PDA_WARN})
+        add_test(NAME ${t} COMMAND ${t})
+        set_tests_properties(${t} PROPERTIES ENVIRONMENT "FIXTURES=${FIX}")
+    endforeach()
 
-add_executable(pda_screenshots test/pda_screenshots.c)
-target_include_directories(pda_screenshots PRIVATE ${REC}/test)
-target_link_libraries(pda_screenshots pda_ui)
-target_compile_options(pda_screenshots PRIVATE ${PDA_WARN})
-add_test(NAME pda_screenshots COMMAND pda_screenshots)
-set_tests_properties(pda_screenshots PROPERTIES ENVIRONMENT
-    "FIXTURES=${FIX};OUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screens")
+    add_executable(pda_screenshots test/pda_screenshots.c)
+    target_include_directories(pda_screenshots PRIVATE ${REC}/test)
+    target_link_libraries(pda_screenshots pda_ui)
+    target_compile_options(pda_screenshots PRIVATE ${PDA_WARN})
+    add_test(NAME pda_screenshots COMMAND pda_screenshots)
+    set_tests_properties(pda_screenshots PROPERTIES ENVIRONMENT
+        "FIXTURES=${FIX};OUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/screens")
+endif()

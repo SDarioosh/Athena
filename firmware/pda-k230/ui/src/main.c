@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "app_state.h"
+#include "board.h"
 #include "glance_server.h"
 #include "lvgl.h"
 #include "platform.h"
@@ -26,10 +27,12 @@
 #include "vision_server.h"
 
 #define LOG(...) fprintf(stderr, "athena-pda: " __VA_ARGS__)
-#define POWER_EVERY_MS 30000
+#define POWER_EVERY_MS 60000
 
 static volatile sig_atomic_t s_quit;
 static glance_server_t *s_glance;
+static const char *s_run;
+static platform_kind_t s_kind;
 
 static void on_signal(int sig)
 {
@@ -71,10 +74,26 @@ static platform_kind_t pick_backend(void)
                                                : PLATFORM_HEADLESS;
 }
 
+static int start_launcher(void)
+{
+    if (board_start_launcher(s_run) != 0) {
+        LOG("can't create %s/start-launcher\n", s_run);
+        return -1;
+    }
+    LOG("handing over to LilyGO's launcher\n");
+    s_quit = 1; /* exit 0: S92athena-pda's supervisor starts the launcher */
+    return 0;
+}
+
+/* sysfs first; the K230 image has none (BOARD.md "Battery"), so on the device the
+ * athena-board helper (the keyboard base's gauge, root only); else unknown */
 static void update_power(void)
 {
     power_info_t p;
     power_read("/sys/class/power_supply", &p);
+    if (p.battery_pct < 0 && s_kind == PLATFORM_DEVICE) {
+        board_read_battery(BOARD_HELPER, &p);
+    }
     app_set_power(p.battery_pct, p.charging, p.usb);
 }
 
@@ -84,6 +103,7 @@ int main(void)
     const char *run = getenv("ATHENA_PDA_RUN");
     dir = dir && dir[0] ? dir : APP_DIR_DEFAULT;
     run = run && run[0] ? run : APP_RUN_DEFAULT;
+    s_run = run;
 
     uint32_t seed = 0;
     if (getrandom(&seed, sizeof(seed), 0) != sizeof(seed)) {
@@ -100,6 +120,7 @@ int main(void)
 
     lv_init();
     const platform_kind_t kind = pick_backend();
+    s_kind = kind;
     lv_display_t *disp = platform_create(kind);
     if (!disp) {
         return 1;
@@ -109,6 +130,7 @@ int main(void)
         .send_local = send_local,
         .screen_power = platform_screen_power,
         .brightness = platform_brightness,
+        .start_launcher = start_launcher,
     };
     ui_set_hooks(&hooks);
     update_power();
