@@ -78,7 +78,11 @@ void app_remove_listener(app_listener_t fn, void *ctx)
 
 static void settings_defaults(app_settings_t *s)
 {
-    *s = (app_settings_t){.hands_free = false, .presence_wake = false, .brightness = 80};
+    *s = (app_settings_t){.hands_free = false,
+                          .presence_wake = false,
+                          .brightness = 80,
+                          .dim_after_s = APP_DIM_AFTER_DEFAULT,
+                          .off_after_s = APP_OFF_AFTER_DEFAULT};
 }
 
 static void load_settings(void)
@@ -112,6 +116,12 @@ static void load_settings(void)
     if (json_int(&d, json_get(&d, 0, "brightness"), &v)) {
         S.settings.brightness = v < 5 ? 5 : v > 100 ? 100 : (int)v;
     }
+    if (json_int(&d, json_get(&d, 0, "dim_after_s"), &v) && v >= 0 && v <= APP_TIMEOUT_MAX) {
+        S.settings.dim_after_s = (int)v;
+    }
+    if (json_int(&d, json_get(&d, 0, "off_after_s"), &v) && v >= 0 && v <= APP_TIMEOUT_MAX) {
+        S.settings.off_after_s = (int)v;
+    }
     if (json_int(&d, json_get(&d, 0, "tz_min"), &v) && v >= -PDA_TZ_MAX_MIN && v <= PDA_TZ_MAX_MIN) {
         S.tz_min = (int)v;
     }
@@ -126,9 +136,11 @@ static int save_settings(void)
     if (!f) {
         return -3;
     }
-    fprintf(f, "{\"v\":1,\"hands_free\":%s,\"presence_wake\":%s,\"brightness\":%d,\"tz_min\":%d}\n",
+    fprintf(f,
+            "{\"v\":1,\"hands_free\":%s,\"presence_wake\":%s,\"brightness\":%d,\"dim_after_s\":%d,"
+            "\"off_after_s\":%d,\"tz_min\":%d}\n",
             S.settings.hands_free ? "true" : "false", S.settings.presence_wake ? "true" : "false",
-            S.settings.brightness, S.tz_min);
+            S.settings.brightness, S.settings.dim_after_s, S.settings.off_after_s, S.tz_min);
     bool ok = fflush(f) == 0;
     ok &= fsync(fileno(f)) == 0;
     ok &= fclose(f) == 0;
@@ -656,6 +668,11 @@ bool app_user_active(void)
     return app_mono_ms() - S.last_touch_ms < APP_ACTIVE_MS;
 }
 
+int64_t app_last_activity_ms(void)
+{
+    return S.last_touch_ms;
+}
+
 void app_set_power(int8_t battery_pct, bool charging, bool usb)
 {
     if (battery_pct == S.battery && charging == S.charging && usb == S.usb) {
@@ -795,6 +812,8 @@ int app_set_settings(const app_settings_t *s)
 {
     S.settings = *s;
     S.settings.brightness = s->brightness < 5 ? 5 : s->brightness > 100 ? 100 : s->brightness;
+    S.settings.dim_after_s = s->dim_after_s < 0 ? 0 : s->dim_after_s > APP_TIMEOUT_MAX ? APP_TIMEOUT_MAX : s->dim_after_s;
+    S.settings.off_after_s = s->off_after_s < 0 ? 0 : s->off_after_s > APP_TIMEOUT_MAX ? APP_TIMEOUT_MAX : s->off_after_s;
     const int rc = S.dir[0] ? save_settings() : -3;
     emit(APP_EV_SETTINGS, 0);
     return rc;

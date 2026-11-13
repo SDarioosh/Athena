@@ -43,8 +43,10 @@ when SDL2 was found, else `ATHENA_PDA_BACKEND=headless`).
 | `ATHENA_PDA_DRM` | `/dev/dri/card0` | device |
 | `ATHENA_PDA_TOUCH` | the input device named `goodix_ts` | device |
 
-`ui.json`: `{"v":1,"hands_free":false,"presence_wake":false,"brightness":80,"tz_min":120}`
-(`tz_min` is the display offset of the last `TIME`).
+`ui.json`: `{"v":1,"hands_free":false,"presence_wake":false,"brightness":80,"dim_after_s":120,"off_after_s":900,"tz_min":120}`
+(`tz_min` is the display offset of the last `TIME`; `dim_after_s`: no touch or gesture this long shows
+the ambient screen, `off_after_s`: then the screen goes off; 0 = never; an older file without them
+gets these defaults).
 
 ## Layout
 
@@ -66,9 +68,14 @@ when SDL2 was found, else `ATHENA_PDA_BACKEND=headless`).
 | `src/ui/screen_brief.c`, `screen_calendar.c`, `event_new.c`, `calendar_ui.h` | Brief (the digest, `digest_refresh`), Calendar (the agenda, pending adds, the "+"), the new-event flow (When, then What; `cal_add`) |
 | `core/agenda.*`, `core/event_form.*`, `core/brief.*` | their rules: the agenda by day, the new-event form and its strict `cal_add` (T5 plan §3.5), the digest's headline and refresh (`test_agenda`, `test_event_form`, `test_brief`) |
 | `src/ui/controls.*`, `src/ui/ui_keyboard.*` | buttons, selectable tiles, the floating "+"; the on-screen keyboard and its text field (below) |
-| `src/ui/screen_stub.c`, `ui_screens.c`, `screens.h` | placeholders for Talks, Status; the tab table |
+| `src/ui/screen_talks.c`, `talk_detail.c` | Talks (the last 48 h), a conversation (summary, key points, its action items: tap done, hold dismiss, tap again undo), the transcript (cached or fetched, chat bubbles, next part) |
+| `src/ui/screen_status.c`, `status_pairing.c`, `text_entry_local.c` | Status with Settings (connection, Tailscale and its login QR code, pairing, display, hands-free with a gesture tester, device); pairing by camera scan or typed code (a small local keyboard until the shared one replaces it) |
+| `src/ui/ambient_ui.c` | the ambient screen behind `ui_screen_off()`: clock, date, the next event, sync marks; moves every minute; off after `off_after_s` |
+| `src/ui/ui_kit.*`, `icons_extra.*` | buttons, settings rows, segmented choices, the confirm sheet, hold to confirm, avatars; the extra icons (`fonts/lucide-extra.ttf`, `fonts/make_icons_extra.py`) and the ambient clock face |
+| `src/core/talks.*`, `pairing.*`, `ambient.*`, `wifi_info.*` | relative times, people, action-item states and taps, transcript refs; the pairing flow (QR text or typed -> LOCAL `pair`, `pair_result`, timeout); the ambient timing and words; Wi-Fi from `/proc/net/wireless` (read-only) |
+| `src/ui/screen_stub.c`, `ui_screens.c`, `screens.h` | the "no feed" state; the tab table |
 | `fonts/` | Inter 4.0 (SIL OFL, `LICENSE-Inter.txt`) Regular/SemiBold/Bold cut to Latin-1 + punctuation, € ™ arrows ✓ ★, with the icons merged in; Lucide icons (ISC, `LICENSE-Lucide.txt`); `make_fonts.py` remakes them |
-| `test/` | `test_app_state`, `test_glance` (real socket, the T5's byte frames), `test_vision`, `test_today_text`, `test_board`, `test_agenda`, `test_event_form`, `test_brief`, `pda_screenshots` (Brief, Calendar and the new event: `shots_brief_calendar.h`, shots 30-48) |
+| `test/` | `test_app_state`, `test_glance` (real socket, the T5's byte frames), `test_vision`, `test_today_text`, `test_board`, `test_agenda`, `test_event_form`, `test_brief`, `test_talks`, `test_pairing`, `test_ambient`, `pda_screenshots` (`shots_brief_calendar.h`: shots 30-49; `pda_screenshots_s2.h`: 50-89); `test/fixtures/`: Talks fixtures (the T5's fictional people, dated within 48 h of the demo clock) |
 
 ## Adding a screen (Brief, Calendar, Talks, Status)
 
@@ -132,12 +139,16 @@ ui_keyboard_open(f); /* also on a tap on the field */  ui_keyboard_close();  ui_
 Only with `hands_free` on (it also turns on vision's `gestures` mode): swipes = next/previous
 tab (in a sheet: right closes it; in a detail: next / back), up/down = scroll by ¾ page,
 `point` = focus ring to the tap target under the hand cursor, thumbs-up (hand shape or
-gesture) on a focused to-do = a filling ring for 1 s, then the tick (anything else aborts),
-`palm` = Today (and wakes the screen), `fist` = screen off. Presence wake (`presence_wake`):
-on/off with `presence`. The camera dot shows while vision reports `camera: on`.
+gesture) on a focused to-do = a filling ring round its tick for 1 s, then the tick (anything else
+aborts), `palm` = Today (and wakes the screen), `fist` = the ambient screen. Presence wake
+(`presence_wake`): on/off with `presence` (and no timeout while someone is there). The camera dot
+shows while vision reports `camera: on`. Status' "Practice here" keeps gestures in its tester.
 
 ## Not verified (needs the board)
 
 DRM mode and orientation on the RM69A10 (the UI assumes 568 × 1232 portrait and logs
 otherwise), evdev touch scaling/axes on the GT9895, the backlight writes, the battery helper,
-frame rate and CPU load of the software renderer at this size, real gestures.
+frame rate and CPU load of the software renderer at this size, real gestures; the ambient
+screen's dimmed backlight and wake by touch at brightness 0; `/proc/net/wireless` and wlan0's
+operstate with the 8189fs driver; the QR code from vision and the Tailscale login code read by a
+phone.
