@@ -139,7 +139,8 @@ leave (a setting, off by default).
 
 ## Storage
 
-`$ATHENA_PDA_DIR` (default `/var/lib/athena-pda`, on the SD card's data partition):
+`$ATHENA_PDA_DIR` (default `/var/lib/athena-pda`, on the root filesystem: LilyGO's image has
+no data partition):
 
 - UI: `feed.json`, `d/` (details), `ob/` (outbox), as on the T5; `ui.json` (settings).
 - syncd: `token` (the hub token and URL, mode 0600), `pda.json` (`PdaState`: last pushed

@@ -9,6 +9,8 @@ config BR2_PACKAGE_ATHENA_VISION
 	select BR2_PACKAGE_LIBMMZ
 	select BR2_PACKAGE_VVCAM # the ISP that serves the GC2093 as V4L2, libv4l2-drm
 	select BR2_PACKAGE_DISPLAY # libdisplay (pkg-config display)
+	select BR2_PACKAGE_LIBDRM
+	select BR2_PACKAGE_GSL_LITE # nncase headers
 	select BR2_PACKAGE_ZXING_CPP # QR codes (VISION_QR=zxing)
 	select BR2_PACKAGE_ATHENA_VISION_KMODELS
 	help

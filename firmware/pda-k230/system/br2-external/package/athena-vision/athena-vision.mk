@@ -15,7 +15,7 @@ ATHENA_VISION_OVERRIDE_SRCDIR_RSYNC_EXCLUSIONS = \
 ATHENA_VISION_SUPPORTS_IN_SOURCE_BUILD = NO
 ATHENA_VISION_LICENSE = PROPRIETARY
 ATHENA_VISION_DEPENDENCIES = \
-	libnncase libmmz vvcam display zxing-cpp athena-vision-kmodels
+	libnncase libmmz gsl-lite libdrm vvcam display zxing-cpp athena-vision-kmodels
 
 # VISION_DEVICE: the nncase/V4L2 program. Tests and the replay tools stay on the PC.
 # The Xuantie C908 flags come from BR2_TARGET_OPTIMIZATION already; the program
