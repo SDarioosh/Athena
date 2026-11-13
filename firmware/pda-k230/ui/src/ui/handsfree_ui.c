@@ -255,9 +255,10 @@ void hf_ui_create(void)
     lv_obj_set_style_radius(HF.ring, 22, 0);
     lv_obj_set_style_border_color(HF.ring, C(C_ACCENT), 0);
     lv_obj_set_style_border_width(HF.ring, 4, 0);
-    lv_obj_set_style_shadow_color(HF.ring, C(C_ACCENT), 0);
-    lv_obj_set_style_shadow_width(HF.ring, 24, 0);
-    lv_obj_set_style_shadow_opa(HF.ring, LV_OPA_30, 0);
+    /* a soft second ring outside the first */
+    lv_obj_set_style_outline_color(HF.ring, C(C_ACCENT), 0);
+    lv_obj_set_style_outline_width(HF.ring, 6, 0);
+    lv_obj_set_style_outline_opa(HF.ring, LV_OPA_20, 0);
     lv_obj_add_flag(HF.ring, LV_OBJ_FLAG_HIDDEN);
 
     HF.hold = lv_arc_create(top);

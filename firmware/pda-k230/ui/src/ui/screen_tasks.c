@@ -54,11 +54,11 @@ static void note_head(lv_obj_t *card, const feed_todo_t *note, int32_t today)
     lv_obj_remove_style_all(row);
     lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_style_min_height(row, UI_TOUCH_MIN, 0);
     lv_obj_set_style_pad_hor(row, UI_CARD_PAD, 0);
-    lv_obj_set_style_pad_top(row, SP_2, 0);
+    lv_obj_set_style_pad_top(row, SP_4, 0);
+    lv_obj_set_style_pad_bottom(row, SP_1, 0);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_column(row, SP_3, 0);
 
     char due[48] = "";
@@ -82,15 +82,17 @@ static void note_head(lv_obj_t *card, const feed_todo_t *note, int32_t today)
         lv_label_set_text(star, ICON_STAR);
         lv_obj_set_style_text_font(star, F.small, 0);
         lv_obj_set_style_text_color(star, C(C_ACCENT), 0);
+        lv_obj_set_style_pad_top(star, 4, 0);
         w -= 26 + SP_3;
     }
     lv_obj_t *chip = NULL;
     if (due[0]) {
         chip = ui_chip(row, NULL, due, due_color);
+        lv_obj_set_style_margin_top(chip, 2, 0);
         lv_obj_update_layout(chip);
         w -= lv_obj_get_width(chip) + SP_3;
     }
-    lv_obj_t *t = ui_text(row, F.body_b, C_TEXT, note->title ? note->title : "Untitled checklist", w, 0);
+    lv_obj_t *t = ui_text(row, F.body_b, C_TEXT, note->title ? note->title : "Untitled checklist", w, 2);
     if (chip) {
         lv_obj_move_to_index(t, note->pinned ? 1 : 0); /* the chip goes last */
     }
