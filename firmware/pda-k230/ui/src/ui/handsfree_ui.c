@@ -5,6 +5,7 @@
 
 #include "app_state.h"
 #include "handsfree.h"
+#include "screens.h"
 #include "theme.h"
 #include "ui_internal.h"
 
@@ -12,7 +13,8 @@
 #define TICKABLE LV_OBJ_FLAG_USER_2
 #define RING_OUT 6     /* the ring sits this far outside the focused object */
 #define CURSOR_D 76
-#define HOLD_D 112
+#define HOLD_D (UI_TICK + 28) /* round the tick */
+#define HOLD_W 6
 
 static struct {
     hf_state_t st;
@@ -41,6 +43,8 @@ void ui_focusable(lv_obj_t *obj, bool tick)
     }
 }
 
+static void cursor_dim(bool dim);
+
 static void focused_deleted(lv_event_t *e)
 {
     if (lv_event_get_target(e) == HF.focused) {
@@ -60,6 +64,7 @@ static void set_focus(lv_obj_t *o)
     hf_cmd_t c;
     if (hf_focus_changed(&HF.st, &c)) {
         lv_obj_add_flag(HF.hold, LV_OBJ_FLAG_HIDDEN);
+        cursor_dim(false);
     }
     if (o) {
         lv_obj_add_event_cb(o, focused_deleted, LV_EVENT_DELETE, NULL);
@@ -71,21 +76,31 @@ void hf_ui_reset_focus(void)
     set_focus(NULL);
 }
 
+/* The hold ring goes round the focused to-do's tick (its left column's first child, as
+ * widgets.c todo_row builds it), so the item's text stays readable while it fills. */
 static void place_hold(void)
 {
-    int32_t cx, cy;
-    if (!lv_obj_has_flag(HF.cursor, LV_OBJ_FLAG_HIDDEN)) {
-        cx = lv_obj_get_x(HF.cursor) + CURSOR_D / 2;
-        cy = lv_obj_get_y(HF.cursor) + CURSOR_D / 2;
-    } else if (HF.focused) {
-        lv_area_t a;
-        lv_obj_get_coords(HF.focused, &a);
-        cx = a.x1 + UI_CARD_PAD + UI_LEFT_COL / 2; /* the tick of a to-do row */
-        cy = (a.y1 + a.y2) / 2;
-    } else {
+    if (!HF.focused) {
         return;
     }
+    lv_area_t a;
+    lv_obj_t *left = lv_obj_get_child(HF.focused, 0);
+    lv_obj_t *tick = left ? lv_obj_get_child(left, 0) : NULL;
+    if (tick) {
+        lv_obj_get_coords(tick, &a);
+    } else {
+        lv_obj_get_coords(HF.focused, &a);
+        a.x1 += UI_CARD_PAD;
+        a.x2 = a.x1 + UI_TICK;
+    }
+    const int32_t cx = (a.x1 + a.x2) / 2, cy = (a.y1 + a.y2) / 2;
     lv_obj_set_pos(HF.hold, cx - HOLD_D / 2, cy - HOLD_D / 2);
+}
+
+/* the hand cursor steps back while a hold fills (it sits on the text) */
+static void cursor_dim(bool dim)
+{
+    lv_obj_set_style_opa(HF.cursor, dim ? LV_OPA_40 : LV_OPA_COVER, 0);
 }
 
 /* the ring glides to its target: a third of the way per frame (~150 ms to settle) */
@@ -101,6 +116,7 @@ static void frame(lv_timer_t *t)
     hf_cmd_t c;
     if (hf_tick(&HF.st, app_mono_ms(), &c)) {
         lv_obj_add_flag(HF.hold, LV_OBJ_FLAG_HIDDEN);
+        cursor_dim(false);
         if (HF.focused && lv_obj_has_flag(HF.focused, TICKABLE)) {
             lv_obj_send_event(HF.focused, LV_EVENT_CLICKED, NULL);
         }
@@ -205,8 +221,12 @@ static void run(const hf_cmd_t *c)
         lv_arc_set_value(HF.hold, 0);
         lv_obj_remove_flag(HF.hold, LV_OBJ_FLAG_HIDDEN);
         place_hold();
+        cursor_dim(true);
         break;
-    case HF_HOLD_CANCEL: lv_obj_add_flag(HF.hold, LV_OBJ_FLAG_HIDDEN); break;
+    case HF_HOLD_CANCEL:
+        lv_obj_add_flag(HF.hold, LV_OBJ_FLAG_HIDDEN);
+        cursor_dim(false);
+        break;
     case HF_HOLD_COMMIT: break; /* frame() commits */
     case HF_HOME:
         ui_screen_on();
@@ -220,6 +240,13 @@ static void run(const hf_cmd_t *c)
 
 void ui_vision_event(const vision_event_t *ev)
 {
+    if (enabled() && (ev->type == VIS_GESTURE || ev->type == VIS_HAND)) {
+        ambient_ui_poke(); /* a gesture is activity, like a touch */
+    }
+    /* the pairing scan's QR codes; the gesture tester (screen_status.c) */
+    if (pairing_vision_event(ev) || status_vision_event(ev)) {
+        return;
+    }
     if (!enabled()) {
         return;
     }
@@ -241,6 +268,7 @@ void hf_ui_settings_changed(void)
         lv_obj_add_flag(HF.cursor, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(HF.hold, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(HF.ring, LV_OBJ_FLAG_HIDDEN);
+        cursor_dim(false);
         set_focus(NULL);
     }
 }
@@ -268,9 +296,9 @@ void hf_ui_create(void)
     lv_arc_set_bg_angles(HF.hold, 0, 360);
     lv_arc_set_range(HF.hold, 0, 100);
     lv_arc_set_value(HF.hold, 0);
-    lv_obj_set_style_arc_width(HF.hold, 8, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(HF.hold, HOLD_W, LV_PART_MAIN);
     lv_obj_set_style_arc_color(HF.hold, C(C_SURFACE_3), LV_PART_MAIN);
-    lv_obj_set_style_arc_width(HF.hold, 8, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(HF.hold, HOLD_W, LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(HF.hold, C(C_ACCENT), LV_PART_INDICATOR);
     lv_obj_set_style_arc_rounded(HF.hold, true, LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(HF.hold, LV_OPA_TRANSP, LV_PART_KNOB);

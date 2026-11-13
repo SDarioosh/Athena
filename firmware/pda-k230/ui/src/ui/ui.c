@@ -29,8 +29,6 @@ static struct {
     /* the toast */
     lv_obj_t *toast, *toast_icon, *toast_text;
     lv_timer_t *toast_timer;
-    /* screen off */
-    lv_obj_t *off;
     unsigned dirty;
     int64_t minute;
     ui_hooks_t hooks;
@@ -635,44 +633,21 @@ void ui_start_launcher(void)
     }
 }
 
-/* ---- screen off ---- */
-
-static void off_clicked(lv_event_t *e)
-{
-    (void)e;
-    ui_screen_on();
-}
+/* ---- screen off: the ambient screen (ambient_ui.c), then fully off ---- */
 
 void ui_screen_off(void)
 {
-    if (!U.off) {
-        U.off = lv_obj_create(lv_layer_sys());
-        plain(U.off);
-        lv_obj_set_size(U.off, UI_W, UI_H);
-        lv_obj_set_style_bg_color(U.off, C(C_BG), 0);
-        lv_obj_set_style_bg_opa(U.off, LV_OPA_COVER, 0);
-        lv_obj_add_flag(U.off, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(U.off, off_clicked, LV_EVENT_CLICKED, NULL);
-    }
-    lv_obj_remove_flag(U.off, LV_OBJ_FLAG_HIDDEN);
-    if (U.hooks.screen_power) {
-        U.hooks.screen_power(false);
-    }
+    ambient_ui_enter();
 }
 
 void ui_screen_on(void)
 {
-    if (U.off && !lv_obj_has_flag(U.off, LV_OBJ_FLAG_HIDDEN)) {
-        lv_obj_add_flag(U.off, LV_OBJ_FLAG_HIDDEN);
-        if (U.hooks.screen_power) {
-            U.hooks.screen_power(true);
-        }
-    }
+    ambient_ui_wake();
 }
 
 bool ui_screen_is_off(void)
 {
-    return U.off && !lv_obj_has_flag(U.off, LV_OBJ_FLAG_HIDDEN);
+    return ambient_ui_active();
 }
 
 /* ---- init ---- */
@@ -680,6 +655,11 @@ bool ui_screen_is_off(void)
 void ui_set_hooks(const ui_hooks_t *h)
 {
     U.hooks = *h;
+}
+
+const ui_hooks_t *ui_hooks(void)
+{
+    return &U.hooks;
 }
 
 void ui_init(lv_display_t *disp)
@@ -701,6 +681,7 @@ void ui_init(lv_display_t *disp)
     chrome_create(U.scr);
     toast_create();
     hf_ui_create();
+    ambient_ui_init();
     app_add_listener(on_app, NULL);
     U.minute = app_now() / 60;
     lv_timer_create(flush_timer, 40, NULL);

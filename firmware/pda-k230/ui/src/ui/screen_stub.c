@@ -24,8 +24,6 @@ static void stub_build(lv_obj_t *page, const stub_t *s)
 
 STUB(brief, "Brief", ICON_NEWSPAPER, "The daily digest and its highlights come here.");
 STUB(calendar, "Calendar", ICON_CALENDAR_DAYS, "The week's agenda and new events come here.");
-STUB(talks, "Talks", ICON_MESSAGES_SQUARE, "Recent conversations, summaries and transcripts come here.");
-STUB(status, "Status", ICON_ACTIVITY, "Sync, pairing, Tailscale and settings come here.");
 
 lv_obj_t *ui_no_feed(lv_obj_t *parent)
 {
