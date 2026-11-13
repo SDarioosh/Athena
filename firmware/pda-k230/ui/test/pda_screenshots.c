@@ -128,6 +128,8 @@ static void set_net(app_net_state_t s, int64_t last_ok)
     app_set_net(&n);
 }
 
+#include "pda_screenshots_s2.h" /* screens 50..89: Talks, Status, pairing, ambient */
+
 int main(void)
 {
     out_dir = getenv("OUT_DIR");
@@ -153,6 +155,7 @@ int main(void)
     const ui_hooks_t hooks = {.send_local = fake_send_local};
     ui_set_hooks(&hooks);
     ui_init(disp);
+    s2_setup();
     step(100);
 
     /* ---- no feed yet ---- */
@@ -282,6 +285,8 @@ int main(void)
     step(300);
     CHECK(find_label(lv_screen_active(), "All caught up!") != NULL);
     shot("20_today_empty");
+
+    screens_s2();
 
     printf("%d screenshots in %s\n", shots, out_dir);
     return checks_done("pda_screenshots");
