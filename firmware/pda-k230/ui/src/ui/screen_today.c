@@ -61,7 +61,7 @@ static void event_row(lv_obj_t *card, const today_item_t *it)
     char hm[16], wd[24], why[TODAY_LINE_MAX];
     today_event_column(e, app_today(), app_tz_min(), hm, sizeof(hm), wd, sizeof(wd));
     lv_obj_t *t = ui_text(r->left, e->all_day ? F.caption : F.small_b, C_TEXT, hm, UI_LEFT_COL, 0);
-    lv_obj_set_style_pad_top(t, e->all_day ? 7 : 3, 0); /* on the title's first line */
+    lv_obj_set_style_margin_top(t, e->all_day ? 7 : 3, 0); /* on the title's first line */
     if (wd[0]) {
         ui_text(r->left, F.caption, C_ACCENT, wd, UI_LEFT_COL, 0);
     }

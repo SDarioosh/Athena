@@ -76,6 +76,7 @@ static void note_head(lv_obj_t *card, const feed_todo_t *note, int32_t today)
             snprintf(due, sizeof(due), "Due %s", d);
         }
     }
+    /* ★ and the title (two lines at most), the due date under it */
     int32_t w = UI_CARD_INNER_W;
     if (note->pinned) {
         lv_obj_t *star = lv_label_create(row);
@@ -85,18 +86,16 @@ static void note_head(lv_obj_t *card, const feed_todo_t *note, int32_t today)
         lv_obj_set_style_pad_top(star, 4, 0);
         w -= 26 + SP_3;
     }
-    lv_obj_t *chip = NULL;
+    lv_obj_t *col = lv_obj_create(row);
+    lv_obj_remove_style_all(col);
+    lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(col, w, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(col, SP_2, 0);
+    ui_text(col, F.body_b, C_TEXT, note->title ? note->title : "Untitled checklist", w, 2);
     if (due[0]) {
-        chip = ui_chip(row, NULL, due, due_color);
-        lv_obj_set_style_margin_top(chip, 2, 0);
-        lv_obj_update_layout(chip);
-        w -= lv_obj_get_width(chip) + SP_3;
+        ui_chip(col, ICON_CLOCK, due, due_color);
     }
-    lv_obj_t *t = ui_text(row, F.body_b, C_TEXT, note->title ? note->title : "Untitled checklist", w, 2);
-    if (chip) {
-        lv_obj_move_to_index(t, note->pinned ? 1 : 0); /* the chip goes last */
-    }
-    lv_obj_set_flex_grow(t, 1);
 }
 
 static void rebuild(void)

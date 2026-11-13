@@ -66,7 +66,7 @@ void chrome_create(lv_obj_t *scr)
     lv_obj_align(H.right, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_flex_flow(H.right, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(H.right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(H.right, SP_5, 0);
+    lv_obj_set_style_pad_column(H.right, SP_4, 0);
 
     /* the camera dot: shown whenever vision reports the camera on (plan "Decisions") */
     H.cam = lv_obj_create(H.right);
@@ -185,7 +185,7 @@ static void update_sync(void)
             if (n->last_ok > 0 && app_now() - n->last_ok >= 3600) {
                 char a[24];
                 pda_fmt_age(app_now() - n->last_ok, a, sizeof(a));
-                snprintf(age, sizeof(age), "synced %s", a);
+                snprintf(age, sizeof(age), "%s", a); /* "2 h ago" by the clock icon */
                 icon = ICON_CLOCK;
                 text = age;
             }
