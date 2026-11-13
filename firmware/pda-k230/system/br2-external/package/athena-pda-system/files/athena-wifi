@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""athena-wifi: the Wi-Fi networks the PDA joins at boot (S42athena-wifi).
+
+  athena-wifi add SSID [--open]   save a network (asks for the passphrase; reads it
+                                  from stdin when stdin isn't a terminal)
+  athena-wifi remove SSID         forget a network
+  athena-wifi list                the saved networks, first tried first
+  athena-wifi import-launcher     copy the networks LilyGO's launcher saved
+  athena-wifi status              wpa_supplicant's state and wlan0's address
+
+Run as root (adb shell or ssh). The networks are in
+/var/lib/athena-wifi/wpa_supplicant.conf (root only, mode 0600) with the passphrase
+stored as its WPA-PSK hash, never in clear. A change restarts Wi-Fi unless
+--no-restart is given. WPA3-only (SAE) networks are not supported by the PSK hash;
+use the router's WPA2/WPA3 mode.
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import hashlib
+import os
+import subprocess
+import sys
+from dataclasses import dataclass
+
+CONF_DIR = "/var/lib/athena-wifi"
+CONF = os.path.join(CONF_DIR, "wpa_supplicant.conf")
+LAUNCHER_PROFILES = "/root/app/k230_phone_ui/wifi_profiles.conf"
+INIT = "/etc/init.d/S42athena-wifi"
+HEADER = (
+    "# Written by athena-wifi; edit with athena-wifi, not by hand.\n"
+    "ctrl_interface=/var/run/wpa_supplicant\n"
+    "update_config=0\n"
+)
+
+
+@dataclass
+class Network:
+    ssid: bytes
+    psk: str | None  # 64 hex digits, or None for an open network
+
+
+def psk_hash(ssid: bytes, passphrase: str) -> str:
+    """The WPA-PSK key wpa_passphrase computes: PBKDF2-HMAC-SHA1, 4096 rounds."""
+    pw = passphrase.encode("utf-8")
+    if not 8 <= len(pw) <= 63:
+        raise ValueError("a WPA passphrase has 8 to 63 characters")
+    return hashlib.pbkdf2_hmac("sha1", pw, ssid, 4096, 32).hex()
+
+
+def render(networks: list[Network]) -> str:
+    out = [HEADER]
+    for i, n in enumerate(networks):
+        out.append("\nnetwork={\n")
+        out.append(f"\tssid={n.ssid.hex()}\n\tscan_ssid=1\n")
+        if n.psk:
+            out.append(f"\tpsk={n.psk}\n")
+        else:
+            out.append("\tkey_mgmt=NONE\n")
+        out.append(f"\tpriority={len(networks) - i}\n}}\n")
+    return "".join(out)
+
+
+def parse(text: str) -> list[Network]:
+    """Reads back what render() wrote (hex ssid, hex psk)."""
+    nets: list[Network] = []
+    cur: dict[str, str] | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line == "network={":
+            cur = {}
+        elif line == "}" and cur is not None:
+            try:
+                ssid = bytes.fromhex(cur.get("ssid", ""))
+            except ValueError:
+                ssid = b""
+            if ssid:
+                nets.append(Network(ssid, cur.get("psk")))
+            cur = None
+        elif cur is not None and "=" in line:
+            k, v = line.split("=", 1)
+            cur[k.strip()] = v.strip()
+    return nets
+
+
+def load() -> list[Network]:
+    try:
+        with open(CONF, encoding="utf-8") as f:
+            return parse(f.read())
+    except FileNotFoundError:
+        return []
+
+
+def save(networks: list[Network]) -> None:
+    os.makedirs(CONF_DIR, mode=0o700, exist_ok=True)
+    os.chmod(CONF_DIR, 0o700)
+    tmp = CONF + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(render(networks))
+    os.replace(tmp, CONF)
+
+
+def unescape_launcher(s: str) -> bytes:
+    """LilyGO's wifi_unescape_copy (ui_wifi.c): \\\\ \\t \\n \\r \\xHH."""
+    out = bytearray()
+    i = 0
+    raw = s.encode("utf-8")
+    while i < len(raw):
+        c = raw[i]
+        if c == 0x5C and i + 1 < len(raw):
+            n = raw[i + 1]
+            if n in b"xX" and i + 3 < len(raw) and _ishex(raw[i + 2:i + 4]):
+                out.append(int(raw[i + 2:i + 4], 16))
+                i += 4
+                continue
+            out.append({0x74: 9, 0x6E: 10, 0x72: 13}.get(n, n))
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return bytes(out)
+
+
+def _ishex(b: bytes) -> bool:
+    return len(b) == 2 and all(ch in b"0123456789abcdefABCDEF" for ch in b)
+
+
+def launcher_networks(path: str = LAUNCHER_PROFILES) -> list[Network]:
+    """`v1<TAB>encrypted<TAB>ssid<TAB>password` lines, newest first."""
+    nets: list[Network] = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            parts = line.rstrip("\r\n").split("\t")
+            if len(parts) < 4 or parts[0] != "v1":
+                continue
+            ssid = unescape_launcher(parts[2])
+            pw = unescape_launcher(parts[3]).decode("utf-8", errors="replace")
+            if not ssid:
+                continue
+            if parts[1].strip() not in ("", "0") and pw:
+                try:
+                    nets.append(Network(ssid, psk_hash(ssid, pw)))
+                except ValueError:
+                    print(f"skipped {ssid!r}: passphrase not 8-63 characters", file=sys.stderr)
+            else:
+                nets.append(Network(ssid, None))
+    return nets
+
+
+def put_first(networks: list[Network], new: Network) -> list[Network]:
+    return [new] + [n for n in networks if n.ssid != new.ssid]
+
+
+def restart(args: argparse.Namespace) -> None:
+    if not args.no_restart and os.access(INIT, os.X_OK):
+        subprocess.run([INIT, "restart"], check=False)
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="athena-wifi", description=__doc__.split("\n")[0])
+    ap.add_argument("--no-restart", action="store_true", help="don't restart Wi-Fi")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    a = sub.add_parser("add")
+    a.add_argument("ssid")
+    a.add_argument("--open", action="store_true", help="a network without a passphrase")
+    r = sub.add_parser("remove")
+    r.add_argument("ssid")
+    sub.add_parser("list")
+    sub.add_parser("import-launcher")
+    sub.add_parser("status")
+    args = ap.parse_args(argv)
+
+    if args.cmd == "list":
+        for n in load():
+            kind = "open" if not n.psk else "wpa-psk"
+            print(f"{n.ssid.decode('utf-8', errors='replace')}\t{kind}")
+        return 0
+    if args.cmd == "status":
+        subprocess.run(["wpa_cli", "-i", "wlan0", "status"], check=False)
+        subprocess.run(["ip", "-4", "addr", "show", "wlan0"], check=False)
+        return 0
+    if os.geteuid() != 0:
+        print("athena-wifi: run as root", file=sys.stderr)
+        return 1
+    nets = load()
+    if args.cmd == "add":
+        ssid = args.ssid.encode("utf-8")
+        if not 1 <= len(ssid) <= 32:
+            print("athena-wifi: an SSID has 1 to 32 bytes", file=sys.stderr)
+            return 2
+        if args.open:
+            new = Network(ssid, None)
+        else:
+            if sys.stdin.isatty():
+                pw = getpass.getpass(f"Passphrase for {args.ssid}: ")
+            else:
+                pw = sys.stdin.readline().rstrip("\r\n")
+            try:
+                new = Network(ssid, psk_hash(ssid, pw))
+            except ValueError as e:
+                print(f"athena-wifi: {e}", file=sys.stderr)
+                return 2
+        save(put_first(nets, new))
+        print(f"saved {args.ssid} (tried first)")
+    elif args.cmd == "remove":
+        ssid = args.ssid.encode("utf-8")
+        left = [n for n in nets if n.ssid != ssid]
+        if len(left) == len(nets):
+            print(f"athena-wifi: {args.ssid} is not saved", file=sys.stderr)
+            return 1
+        save(left)
+        print(f"removed {args.ssid}")
+    elif args.cmd == "import-launcher":
+        try:
+            found = launcher_networks()
+        except FileNotFoundError:
+            print(f"athena-wifi: no {LAUNCHER_PROFILES}", file=sys.stderr)
+            return 1
+        for n in reversed(found):
+            nets = put_first(nets, n)
+        save(nets)
+        print(f"imported {len(found)} network(s) from the launcher")
+    restart(args)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

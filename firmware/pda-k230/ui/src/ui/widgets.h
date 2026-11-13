@@ -35,6 +35,10 @@ lv_obj_t *ui_text(lv_obj_t *parent, const lv_font_t *font, uint32_t color, const
 /* Change a ui_text's text keeping its line limit. */
 void ui_text_set(lv_obj_t *label, const char *text);
 
+/* Show or hide obj; a content-sized parent is resized (LVGL doesn't do it for a hidden
+ * flag). */
+void ui_show(lv_obj_t *obj, bool on);
+
 /* A 1 px rule across a card's inner width. */
 lv_obj_t *ui_hairline(lv_obj_t *parent);
 
@@ -61,8 +65,10 @@ typedef struct {
     bool done, pending, failed, shown;
     char sub_text[200];
 } todo_row_t;
+/* left_w: the tick's column, UI_LEFT_COL beside event rows (the tick centred in it), or
+ * UI_TICK in a list of to-dos only. */
 todo_row_t *todo_row(lv_obj_t *parent, int note_idx, int item_idx, const lv_font_t *title_font,
-                     int title_lines, const char *sub);
+                     int title_lines, const char *sub, int32_t left_w);
 /* Show the item's current state (app_todo_view); animate: the tick pops, the text fades. */
 void todo_row_refresh(todo_row_t *t, bool animate);
 

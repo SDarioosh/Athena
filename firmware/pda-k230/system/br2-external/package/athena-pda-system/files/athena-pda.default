@@ -1,5 +1,6 @@
+# shellcheck shell=sh disable=SC2034
 # /etc/default/athena-pda: settings of the Athena PDA's boot scripts
-# (/etc/init.d/S42athena-wifi, S45athena-tailscaled, S92athena-pda,
+# (/etc/init.d/S42athena-wifi, S45tailscaled, S92athena-pda,
 # S93athena-pda-syncd, S94athena-vision). Shell syntax: KEY=value, no spaces.
 # After a change: reboot, or restart the script named next to the setting.
 # It lives on the root file system: reflashing the SD card puts it back to this.
@@ -18,15 +19,20 @@ ATHENA_PDA_RUN=/run/athena-pda
 # touch screen as athena-pda (see firmware/pda-k230/system/BOARD.md).
 ATHENA_PDA_USER=athena-pda
 
-# Camera AI (S94athena-vision): on or off. It runs as root by default: the camera
-# goes through Canaan's ISP and the KPU through /dev/mmz and /dev/kpu-type nodes
-# whose permissions are not known yet (BOARD.md). The camera itself stays off until
-# the UI asks for it (Settings > Hands-free).
+# The UI finds the display and the touch screen itself; set these only to force
+# a node (passed to athena-pda as they are).
+#ATHENA_PDA_DRM=/dev/dri/card0
+#ATHENA_PDA_TOUCH=/dev/input/event0
+
+# Camera AI (S94athena-vision): on or off. Runs as root by default: the camera
+# goes through Canaan's ISP (vvcam) and the KPU through /dev/mmz and Canaan's
+# driver nodes, whose permissions are not known yet (BOARD.md). The camera itself
+# stays off until the UI asks for it (Settings > Hands-free). Its own settings
+# (rotation, mirror, models): /etc/athena-pda/vision.conf.
 ATHENA_VISION=on
 ATHENA_VISION_USER=root
-ATHENA_VISION_MODELS=/usr/share/athena-vision/models
 
-# Tailscale (S45athena-tailscaled): tun (a tailscale0 interface, the default) or
+# Tailscale (S45tailscaled): tun (a tailscale0 interface, the default) or
 # userspace (no TUN device: tailscaled is an HTTP/SOCKS5 proxy on
 # ATHENA_TS_PROXY, and syncd must use it: "proxy": "http://127.0.0.1:1055" in
 # $ATHENA_PDA_DIR/config.json). `athena-tailnet mode userspace|tun` changes both.

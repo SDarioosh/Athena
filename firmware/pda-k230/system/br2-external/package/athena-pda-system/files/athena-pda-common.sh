@@ -1,4 +1,4 @@
-# shellcheck shell=sh
+# shellcheck shell=sh disable=SC2034 # the variables are for the scripts that source this
 # /usr/libexec/athena-pda/athena-pda-common.sh: sourced by the Athena PDA's boot
 # scripts and helpers. Reads /etc/default/athena-pda over the defaults below and
 # starts/stops programs under athena-supervise (restart on crash, output to syslog).
@@ -16,17 +16,18 @@ ATHENA_PDA_RUN=/run/athena-pda
 ATHENA_PDA_USER=athena-pda
 ATHENA_VISION=on
 ATHENA_VISION_USER=root
-ATHENA_VISION_MODELS=/usr/share/athena-vision/models
 ATHENA_TS_MODE=tun
 ATHENA_TS_PROXY=127.0.0.1:1055
 ATHENA_TS_HOSTNAME=athena-pda
 ATHENA_TS_STATE_DIR=/var/lib/tailscale
 
 if [ -r "$ATHENA_PDA_DEFAULTS" ]; then
-	# shellcheck source=athena-pda.default
+	# shellcheck source-path=SCRIPTDIR source=athena-pda.default
 	. "$ATHENA_PDA_DEFAULTS"
 fi
-export ATHENA_PDA_DIR ATHENA_PDA_RUN ATHENA_VISION_MODELS
+export ATHENA_PDA_DIR ATHENA_PDA_RUN
+[ -z "${ATHENA_PDA_DRM:-}" ] || export ATHENA_PDA_DRM
+[ -z "${ATHENA_PDA_TOUCH:-}" ] || export ATHENA_PDA_TOUCH
 
 # The run directory (0700, the sockets' access control) and the data directory.
 athena_dirs() {

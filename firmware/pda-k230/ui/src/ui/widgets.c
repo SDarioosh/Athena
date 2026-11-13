@@ -148,6 +148,22 @@ void ui_text_set(lv_obj_t *label, const char *text)
     lv_label_set_text(label, text ? text : "");
 }
 
+void ui_show(lv_obj_t *obj, bool on)
+{
+    if (on == !lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
+        return;
+    }
+    if (on) {
+        lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    }
+    for (lv_obj_t *p = lv_obj_get_parent(obj); p; p = lv_obj_get_parent(p)) {
+        lv_obj_refresh_self_size(p);
+        lv_obj_mark_layout_as_dirty(p);
+    }
+}
+
 lv_obj_t *ui_hairline(lv_obj_t *parent)
 {
     lv_obj_t *h = lv_obj_create(parent);
@@ -174,10 +190,11 @@ ui_row_t *ui_row(lv_obj_t *parent, lv_event_cb_t on_click, void *user_data)
     lv_obj_set_size(r->row, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_style_min_height(r->row, UI_ROW_MIN, 0);
     lv_obj_set_style_pad_hor(r->row, UI_CARD_PAD, 0);
-    lv_obj_set_style_pad_ver(r->row, SP_4, 0);
+    lv_obj_set_style_pad_ver(r->row, SP_5, 0);
     lv_obj_set_style_pad_column(r->row, SP_4, 0);
     lv_obj_set_flex_flow(r->row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(r->row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    /* the tick / time and the chevron line up with the title's first line */
+    lv_obj_set_flex_align(r->row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_add_style(r->row, &ST_PRESSED, LV_STATE_PRESSED);
     if (on_click) {
         lv_obj_add_flag(r->row, LV_OBJ_FLAG_CLICKABLE);
@@ -190,6 +207,7 @@ ui_row_t *ui_row(lv_obj_t *parent, lv_event_cb_t on_click, void *user_data)
     lv_obj_set_flex_flow(r->left, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(r->left, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_remove_flag(r->left, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(r->left, LV_OBJ_FLAG_OVERFLOW_VISIBLE); /* the tick's pop and nudge */
 
     r->mid = lv_obj_create(r->row);
     plain(r->mid);
@@ -202,6 +220,7 @@ ui_row_t *ui_row(lv_obj_t *parent, lv_event_cb_t on_click, void *user_data)
     r->right = lv_obj_create(r->row);
     plain(r->right);
     lv_obj_set_size(r->right, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_top(r->right, 6, 0);
     lv_obj_remove_flag(r->right, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(r->right, LV_OBJ_FLAG_HIDDEN);
     return r;
@@ -289,7 +308,7 @@ static void free_todo(lv_event_t *e)
 }
 
 todo_row_t *todo_row(lv_obj_t *parent, int note_idx, int item_idx, const lv_font_t *title_font,
-                     int title_lines, const char *sub)
+                     int title_lines, const char *sub, int32_t left_w)
 {
     const feed_t *f = app_feed();
     todo_row_t *t = lv_malloc_zeroed(sizeof(*t));
@@ -299,10 +318,13 @@ todo_row_t *todo_row(lv_obj_t *parent, int note_idx, int item_idx, const lv_font
     t->r = ui_row(parent, todo_clicked, t);
     lv_obj_add_event_cb(t->r->row, free_todo, LV_EVENT_DELETE, t);
     ui_focusable(t->r->row, true);
+    lv_obj_set_width(t->r->left, left_w);
+    lv_obj_set_flex_align(t->r->left, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     t->tick = ui_tick(t->r->left);
-    t->title = ui_text(t->r->mid, title_font, C_TEXT, f->todos[note_idx].items[item_idx].text, ROW_MID_W - 40,
-                       title_lines);
-    t->sub = ui_text(t->r->mid, F.small, C_TEXT_2, t->sub_text, ROW_MID_W - 40, 2);
+    lv_obj_set_style_pad_top(t->r->mid, 4, 0); /* the title's first line on the tick's middle */
+    const int32_t w = ROW_MID_W + UI_LEFT_COL - left_w - 40;
+    t->title = ui_text(t->r->mid, title_font, C_TEXT, f->todos[note_idx].items[item_idx].text, w, title_lines);
+    t->sub = ui_text(t->r->mid, F.small, C_TEXT_2, t->sub_text, w, 2);
     t->mark = lv_label_create(t->r->right);
     lv_obj_set_style_text_font(t->mark, F.icon_s, 0);
     lv_obj_set_style_text_color(t->mark, C(C_TEXT_3), 0);
@@ -333,16 +355,8 @@ void todo_row_refresh(todo_row_t *t, bool animate)
         ui_text_set(t->sub, t->sub_text);
         lv_obj_set_style_text_color(t->sub, C(v.done ? C_TEXT_3 : C_TEXT_2), 0);
     }
-    if (t->sub_text[0] || v.failed) {
-        lv_obj_remove_flag(t->sub, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(t->sub, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (v.pending) {
-        lv_obj_remove_flag(t->r->right, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(t->r->right, LV_OBJ_FLAG_HIDDEN);
-    }
+    ui_show(t->sub, t->sub_text[0] || v.failed);
+    ui_show(t->r->right, v.pending);
 }
 
 /* ---- chips and empty states ---- */

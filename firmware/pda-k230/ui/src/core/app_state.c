@@ -515,7 +515,9 @@ static int st_ack(void *ctx, uint32_t action_id, uint8_t result, bool *was_queue
                      p->info.type == PDA_ACT_CAL_ADD ? p->info.title : p->info.ref);
             action_label(action_id, f->label, sizeof(f->label));
             if (!f->label[0]) {
-                snprintf(f->label, sizeof(f->label), "%s", f->what);
+                const size_t n = strnlen(f->what, sizeof(f->label) - 1);
+                memcpy(f->label, f->what, n);
+                f->label[n] = 0;
             }
             failed_idx = S.n_failed++;
         }

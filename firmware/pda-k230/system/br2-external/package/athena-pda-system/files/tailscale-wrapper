@@ -1,0 +1,24 @@
+#!/bin/sh
+# /usr/libexec/athena-pda/bin/tailscale: `tailscale` as syncd finds it on its PATH
+# (S93athena-pda-syncd puts this directory first).
+#
+# `tailscale login` and `tailscale up` without flags reset every setting to
+# Tailscale's default (checked with tailscale 1.104.7): the operator (syncd's write
+# access to tailscaled), the host name and netfilter mode off. This adds the
+# image's flags to those two subcommands; everything else goes to the real CLI
+# unchanged.
+
+# shellcheck source-path=SCRIPTDIR source=athena-pda-common.sh
+. /usr/libexec/athena-pda/athena-pda-common.sh
+
+REAL=/usr/bin/tailscale
+
+case "${1:-}" in
+	login|up)
+		sub="$1"
+		shift
+		# shellcheck disable=SC2046 # athena_ts_flags is a list of flags
+		exec "$REAL" "$sub" $(athena_ts_flags) "$@"
+		;;
+esac
+exec "$REAL" "$@"

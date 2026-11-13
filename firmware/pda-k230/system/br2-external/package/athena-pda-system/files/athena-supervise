@@ -29,6 +29,7 @@ childfile="$sv_dir/$name.child"
 
 stop=0
 child=""
+# shellcheck disable=SC2317 # called by the trap
 on_signal() {
 	stop=1
 	if [ -n "$child" ]; then

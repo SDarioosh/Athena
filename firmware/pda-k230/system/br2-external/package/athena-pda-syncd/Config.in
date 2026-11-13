@@ -1,0 +1,15 @@
+config BR2_PACKAGE_ATHENA_PDA_SYNCD
+	bool "athena-pda-syncd"
+	depends on BR2_PACKAGE_PYTHON3
+	depends on BR2_PACKAGE_ATHENA_PDA_SYSTEM
+	select BR2_PACKAGE_PYTHON3_SSL
+	select BR2_PACKAGE_PYTHON3_ZLIB
+	help
+	  athena-pda-syncd, the PDA's relay (firmware/pda-k230/syncd):
+	  pairing with the hub, the hub client and PdaSync over
+	  glance.sock, with the BLE-free modules of the PC relay
+	  (firmware/recorder/tools/athena_relay). Standard library only.
+	  Started at boot by S93athena-pda-syncd.
+
+comment "athena-pda-syncd needs python3"
+	depends on !BR2_PACKAGE_PYTHON3

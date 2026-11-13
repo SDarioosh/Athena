@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Make the UI's font files: Inter (SIL OFL 1.1) and Lucide icons (ISC), cut down to the
-characters the PDA shows, as TrueType (glyf) files for LVGL's tiny_ttf (stb_truetype).
+characters the PDA shows, as TrueType (glyf) files for LVGL's tiny_ttf (stb_truetype). The
+Inter files also carry the icons (scaled to sit on the text like a capital), so one label can
+mix words and ICON_* glyphs; lucide.ttf alone is for icon-only labels.
 
     python3 -m venv /tmp/ft && /tmp/ft/bin/pip install fonttools
     /tmp/ft/bin/python make_fonts.py <Inter-Regular.otf dir> <lucide.ttf>
@@ -79,7 +81,36 @@ def otf_to_ttf(font: TTFont) -> None:
     font.sfntVersion = "\x00\x01\x00\x00"
 
 
-def cut(src: Path, dst: Path, unicodes, layout=("kern",)) -> None:
+# icons in the text fonts: Lucide's 1000-unit box scaled to 0.83 em of Inter's 2048 and
+# moved down so its middle is the middle of a capital (cap height 1490)
+ICON_SCALE = 1.7
+ICON_DY = 1490 / 2 - 1000 * ICON_SCALE / 2
+
+
+def add_icons(font: TTFont, icons: TTFont) -> None:
+    from fontTools.pens.transformPen import TransformPen
+
+    gs = icons.getGlyphSet()
+    glyf = font["glyf"]
+    hmtx = font["hmtx"]
+    order = list(font.getGlyphOrder())
+    for cp, name in sorted(icons.getBestCmap().items()):
+        new = f"icon{cp:04X}"
+        pen = TTGlyphPen(None)
+        gs[name].draw(TransformPen(pen, (ICON_SCALE, 0, 0, ICON_SCALE, 0, ICON_DY)))
+        g = pen.glyph()
+        g.recalcBounds(glyf)
+        glyf.glyphs[new] = g
+        order.append(new)
+        hmtx.metrics[new] = (round(1000 * ICON_SCALE), getattr(g, "xMin", 0))
+        for t in font["cmap"].tables:
+            if t.isUnicode():
+                t.cmap[cp] = new
+    glyf.glyphOrder = order
+    font.setGlyphOrder(order)
+
+
+def cut(src: Path, dst: Path, unicodes, layout=("kern",), icons: TTFont | None = None) -> None:
     opts = subset.Options()
     opts.layout_features = list(layout)
     opts.name_IDs = ["*"]
@@ -92,6 +123,9 @@ def cut(src: Path, dst: Path, unicodes, layout=("kern",)) -> None:
     sub.subset(font)
     if "CFF " in font:
         otf_to_ttf(font)
+    if icons is not None:
+        add_icons(font, icons)
+    font.recalcBBoxes = True
     font.save(str(dst))
     print(f"{dst.name}: {dst.stat().st_size} bytes, {len(font.getGlyphOrder())} glyphs")
 
@@ -103,12 +137,13 @@ def main() -> int:
     inter = Path(sys.argv[1])
     lucide = Path(sys.argv[2])
     text = [cp for a, b in TEXT_RANGES for cp in range(a, b + 1)]
-    for weight in ("Regular", "SemiBold", "Bold"):
-        cut(inter / f"Inter-{weight}.otf", HERE / f"Inter-{weight}.ttf", text)
     import json
 
     cps = json.loads((lucide.parent / "codepoints.json").read_text())
     cut(lucide, HERE / "lucide.ttf", [cps[n] for n in ICONS], layout=())
+    icons = TTFont(str(HERE / "lucide.ttf"))
+    for weight in ("Regular", "SemiBold", "Bold"):
+        cut(inter / f"Inter-{weight}.otf", HERE / f"Inter-{weight}.ttf", text, icons=icons)
     for n in ICONS:
         print(f"  {n}: U+{cps[n]:04X}")
     return 0

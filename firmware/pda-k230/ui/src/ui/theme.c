@@ -28,27 +28,24 @@ static lv_font_t *icon_font(int px)
     return ttf(font_lucide, font_lucide_len, px);
 }
 
-/* A text font whose missing glyphs (the ICON_* codepoints) come from Lucide. Lucide's
- * glyphs sit on a 1000-unit square: the same pixel size lines them up with the text. */
-static lv_font_t *text_font(const unsigned char *data, unsigned long len, int px, lv_font_t *icons)
+/* The Inter files carry the ICON_* glyphs too (fonts/make_fonts.py), so a label can mix
+ * words and icons with no fallback font. */
+static lv_font_t *text_font(const unsigned char *data, unsigned long len, int px)
 {
-    lv_font_t *f = ttf(data, len, px);
-    f->fallback = icons;
-    return f;
+    return ttf(data, len, px);
 }
 
 void theme_init(lv_display_t *disp)
 {
-    lv_font_t *i22 = icon_font(FS_CAPTION), *i26 = icon_font(FS_SMALL), *i28 = icon_font(FS_LEAD),
-              *i30 = icon_font(FS_BODY), *i44 = icon_font(FS_TITLE);
-    F.caption = text_font(font_inter_semibold, font_inter_semibold_len, FS_CAPTION, i22);
-    F.small = text_font(font_inter_regular, font_inter_regular_len, FS_SMALL, i26);
-    F.small_b = text_font(font_inter_semibold, font_inter_semibold_len, FS_SMALL, i26);
-    F.body = text_font(font_inter_regular, font_inter_regular_len, FS_BODY, i30);
-    F.body_b = text_font(font_inter_semibold, font_inter_semibold_len, FS_BODY, i30);
-    F.lead = text_font(font_inter_regular, font_inter_regular_len, FS_LEAD, i28);
-    F.title = text_font(font_inter_bold, font_inter_bold_len, FS_TITLE, i44);
-    F.display = text_font(font_inter_bold, font_inter_bold_len, FS_DISPLAY, icon_font(FS_DISPLAY));
+    F.tab = text_font(font_inter_semibold, font_inter_semibold_len, FS_TAB);
+    F.caption = text_font(font_inter_semibold, font_inter_semibold_len, FS_CAPTION);
+    F.small = text_font(font_inter_regular, font_inter_regular_len, FS_SMALL);
+    F.small_b = text_font(font_inter_semibold, font_inter_semibold_len, FS_SMALL);
+    F.body = text_font(font_inter_regular, font_inter_regular_len, FS_BODY);
+    F.body_b = text_font(font_inter_semibold, font_inter_semibold_len, FS_BODY);
+    F.lead = text_font(font_inter_regular, font_inter_regular_len, FS_LEAD);
+    F.title = text_font(font_inter_bold, font_inter_bold_len, FS_TITLE);
+    F.display = text_font(font_inter_bold, font_inter_bold_len, FS_DISPLAY);
     F.icon_s = icon_font(24);
     F.icon = icon_font(32);
     F.icon_l = icon_font(48);

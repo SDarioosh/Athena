@@ -1,0 +1,17 @@
+config BR2_PACKAGE_ATHENA_TAILSCALE_BIN
+	bool "athena-tailscale-bin"
+	depends on BR2_riscv && BR2_ARCH_IS_64
+	depends on !BR2_PACKAGE_TAILSCALE
+	depends on BR2_PACKAGE_ATHENA_PDA_SYSTEM # athena-pda-common.sh
+	help
+	  Tailscale's static riscv64 build (tailscale and tailscaled,
+	  pinned, checked against its sha256), started at boot by
+	  S45tailscaled with its state in /var/lib/tailscale.
+
+	  Buildroot's own tailscale package builds an older version
+	  from source with Go; this one installs the official binaries.
+
+	  https://pkgs.tailscale.com/stable/
+
+comment "athena-tailscale-bin conflicts with the tailscale package"
+	depends on BR2_PACKAGE_TAILSCALE

@@ -1,0 +1,23 @@
+config BR2_PACKAGE_ATHENA_VISION
+	bool "athena-vision"
+	depends on BR2_INSTALL_LIBSTDCPP
+	depends on BR2_USE_WCHAR # zxing-cpp
+	depends on BR2_TOOLCHAIN_HAS_THREADS # zxing-cpp
+	depends on !BR2_STATIC_LIBS # zxing-cpp
+	depends on BR2_PACKAGE_ATHENA_PDA_SYSTEM
+	select BR2_PACKAGE_LIBNNCASE
+	select BR2_PACKAGE_LIBMMZ
+	select BR2_PACKAGE_VVCAM # the ISP that serves the GC2093 as V4L2, libv4l2-drm
+	select BR2_PACKAGE_DISPLAY # libdisplay (pkg-config display)
+	select BR2_PACKAGE_ZXING_CPP # QR codes (VISION_QR=zxing)
+	select BR2_PACKAGE_ATHENA_VISION_KMODELS
+	help
+	  athena-vision, the PDA's camera AI (firmware/pda-k230/vision):
+	  hand detection and keypoints on the K230's KPU (nncase), hand
+	  gestures, presence and QR codes as events on vision.sock.
+	  Frames never leave the process. Started at boot by
+	  S94athena-vision; the camera stays off until the UI asks.
+
+comment "athena-vision needs a toolchain w/ C++, wchar, threads, dynamic library"
+	depends on !BR2_INSTALL_LIBSTDCPP || !BR2_USE_WCHAR || \
+		!BR2_TOOLCHAIN_HAS_THREADS || BR2_STATIC_LIBS

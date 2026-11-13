@@ -43,9 +43,9 @@ extern "C" {
 #define UI_CARD_PAD 24   /* inside a card */
 #define UI_CARD_GAP 20   /* between cards */
 #define UI_CARD_RADIUS 28
-#define UI_ROW_MIN 88    /* a list row */
+#define UI_ROW_MIN 76    /* a list row (one line of text) */
 #define UI_TOUCH_MIN 72  /* the smallest touch target */
-#define UI_LEFT_COL 64   /* a row's tick box or time column */
+#define UI_LEFT_COL 76   /* a row's tick box or time column */
 #define UI_TICK 44       /* the round tick box */
 
 #define UI_STATUS_H 64   /* the status header */
@@ -61,7 +61,8 @@ extern "C" {
 #define UI_TOAST_MS 2600
 
 /* ---- type scale (px; Inter via tiny_ttf). Body text is never under 26 px. ---- */
-#define FS_CAPTION 22  /* section labels (caps, tracked), tab labels, chips */
+#define FS_TAB 20      /* tab bar labels */
+#define FS_CAPTION 22  /* section labels (caps, tracked), chips, the header */
 #define FS_SMALL 26    /* secondary lines */
 #define FS_BODY 30     /* item titles, body */
 #define FS_LEAD 28     /* the insight headline */
@@ -70,6 +71,7 @@ extern "C" {
 #define FS_HERO 96     /* the empty state's tick */
 
 typedef struct {
+    const lv_font_t *tab;       /* 20 SemiBold */
     const lv_font_t *caption;   /* 22 SemiBold */
     const lv_font_t *small;     /* 26 Regular */
     const lv_font_t *small_b;   /* 26 SemiBold */
@@ -87,8 +89,7 @@ typedef struct {
 extern ui_fonts_t F;
 
 /* Load the fonts and set LVGL's default theme to ours. Call once after lv_init() and the
- * display. Every text font falls back to the Lucide font of its size, so a label can mix
- * text and ICON_* glyphs. */
+ * display. The text fonts carry the ICON_* glyphs too, so a label can mix words and icons. */
 void theme_init(lv_display_t *disp);
 
 /* Shared styles */

@@ -1,0 +1,91 @@
+#!/bin/sh
+# athena-tailnet: Tailscale on the PDA, from a shell (adb shell or ssh, as root).
+#
+#   athena-tailnet status           the tailnet state and the mode
+#   athena-tailnet login            start a login; prints the link to open
+#   athena-tailnet logout           log this device out of the tailnet
+#   athena-tailnet mode tun|userspace
+#                                   switch the network mode: sets ATHENA_TS_MODE in
+#                                   /etc/default/athena-pda and syncd's "proxy" in
+#                                   $ATHENA_PDA_DIR/config.json (set for userspace,
+#                                   removed for tun), then restarts tailscaled and syncd
+#
+# The PDA itself shows the login link as a QR code on Status (syncd's `tailnet`
+# message); this is the fallback and the switch.
+set -eu
+
+# shellcheck source-path=SCRIPTDIR source=athena-pda-common.sh
+. /usr/libexec/athena-pda/athena-pda-common.sh
+
+CLI=/usr/bin/tailscale
+
+usage() {
+	sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+	exit 2
+}
+
+set_proxy() {
+	# $1: the proxy URL, or "" to remove it. Keeps the other keys of config.json.
+	python3 -I - "$ATHENA_PDA_DIR/config.json" "$1" "$ATHENA_PDA_USER" <<'EOF'
+import json, os, pwd, sys
+path, proxy, user = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    if not isinstance(cfg, dict):
+        cfg = {}
+except FileNotFoundError:
+    cfg = {}
+if proxy:
+    cfg["proxy"] = proxy
+else:
+    cfg.pop("proxy", None)
+tmp = path + ".tmp"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=1)
+    f.write("\n")
+pw = pwd.getpwnam(user)
+os.chown(tmp, pw.pw_uid, pw.pw_gid)
+os.replace(tmp, path)
+EOF
+}
+
+set_mode() {
+	case "$1" in
+		tun) proxy="" ;;
+		userspace) proxy="http://$ATHENA_TS_PROXY" ;;
+		*) usage ;;
+	esac
+	if grep -q '^ATHENA_TS_MODE=' "$ATHENA_PDA_DEFAULTS"; then
+		sed -i "s/^ATHENA_TS_MODE=.*/ATHENA_TS_MODE=$1/" "$ATHENA_PDA_DEFAULTS"
+	else
+		echo "ATHENA_TS_MODE=$1" >>"$ATHENA_PDA_DEFAULTS"
+	fi
+	athena_dirs
+	set_proxy "$proxy"
+	echo "ATHENA_TS_MODE=$1; syncd proxy: ${proxy:-none}"
+	/etc/init.d/S45tailscaled restart
+	/etc/init.d/S93athena-pda-syncd restart
+}
+
+case "${1:-}" in
+	status)
+		echo "mode: $ATHENA_TS_MODE"
+		"$CLI" status || true
+		;;
+	login)
+		# shellcheck disable=SC2046 # athena_ts_flags is a list of flags
+		exec "$CLI" login $(athena_ts_flags) --timeout=300s
+		;;
+	logout)
+		exec "$CLI" logout
+		;;
+	mode)
+		[ $# -eq 2 ] || usage
+		set_mode "$2"
+		;;
+	*)
+		usage
+		;;
+esac
