@@ -139,7 +139,8 @@ endif()
 
 # ---- Brief, Calendar, the new-event flow and the on-screen keyboard ----
 target_sources(pda_core PRIVATE src/core/agenda.c src/core/event_form.c src/core/brief.c)
-target_sources(pda_ui PRIVATE src/ui/controls.c src/ui/ui_keyboard.c)
+target_sources(pda_ui PRIVATE src/ui/screen_brief.c src/ui/screen_calendar.c src/ui/event_new.c
+    src/ui/controls.c src/ui/ui_keyboard.c)
 if(PDA_TESTS)
     foreach(t test_agenda test_event_form test_brief)
         add_executable(${t} test/${t}.c)

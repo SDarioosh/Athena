@@ -60,7 +60,10 @@ static void build(lv_obj_t *s, void *argp)
     if (arg->why[0]) {
         info_row(s, ICON_SPARKLES, C_ACCENT, arg->why, C_TEXT_2);
     }
-    /* to the Calendar tab */
+    /* to the Calendar tab (not when it is already there) */
+    if (ui_current_tab() == UI_TAB_CALENDAR) {
+        return;
+    }
     lv_obj_t *b = lv_obj_create(s);
     lv_obj_remove_style_all(b);
     lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);

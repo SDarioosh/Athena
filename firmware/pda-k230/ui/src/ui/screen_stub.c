@@ -22,8 +22,6 @@ static void stub_build(lv_obj_t *page, const stub_t *s)
     static void name##_build(lv_obj_t *page) { stub_build(page, &name##_stub); }           \
     const ui_screen_t screen_##name = {.label = title_, .icon = icon_, .build = name##_build}
 
-STUB(brief, "Brief", ICON_NEWSPAPER, "The daily digest and its highlights come here.");
-STUB(calendar, "Calendar", ICON_CALENDAR_DAYS, "The week's agenda and new events come here.");
 STUB(talks, "Talks", ICON_MESSAGES_SQUARE, "Recent conversations, summaries and transcripts come here.");
 STUB(status, "Status", ICON_ACTIVITY, "Sync, pairing, Tailscale and settings come here.");
 

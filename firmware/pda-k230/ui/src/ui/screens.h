@@ -7,8 +7,8 @@
 
 extern const ui_screen_t screen_today;    /* screen_today.c */
 extern const ui_screen_t screen_tasks;    /* screen_tasks.c */
-extern const ui_screen_t screen_brief;    /* screen_stub.c until Brief is built */
-extern const ui_screen_t screen_calendar; /* screen_stub.c until Calendar is built */
+extern const ui_screen_t screen_brief;    /* screen_brief.c */
+extern const ui_screen_t screen_calendar; /* screen_calendar.c */
 extern const ui_screen_t screen_talks;    /* screen_stub.c until Talks is built */
 extern const ui_screen_t screen_status;   /* screen_stub.c until Status is built */
 

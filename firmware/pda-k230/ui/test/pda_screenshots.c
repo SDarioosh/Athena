@@ -128,6 +128,8 @@ static void set_net(app_net_state_t s, int64_t last_ok)
     app_set_net(&n);
 }
 
+#include "shots_brief_calendar.h" /* 30..49: Brief, Calendar, the new event */
+
 int main(void)
 {
     out_dir = getenv("OUT_DIR");
@@ -282,6 +284,8 @@ int main(void)
     step(300);
     CHECK(find_label(lv_screen_active(), "All caught up!") != NULL);
     shot("20_today_empty");
+
+    brief_calendar_shots();
 
     printf("%d screenshots in %s\n", shots, out_dir);
     return checks_done("pda_screenshots");

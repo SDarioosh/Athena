@@ -63,9 +63,12 @@ when SDL2 was found, else `ATHENA_PDA_BACKEND=headless`).
 | `src/ui/ui.*`, `ui_internal.h`, `chrome.c`, `handsfree_ui.c` | the frame: pages per tab, tab slides and swipes, detail push/pop, the sheet, toasts, screen off; the header and tab bar; focus ring, hand cursor, hold ring |
 | `src/ui/widgets.*` | scroller, page title, card, section head, text with a line limit, rows, the animated tick, the to-do row, chips, empty states |
 | `src/ui/screen_today.c`, `screen_tasks.c`, `sheet_event.c` | Today, Tasks, an event's sheet |
-| `src/ui/screen_stub.c`, `ui_screens.c`, `screens.h` | placeholders for Brief, Calendar, Talks, Status; the tab table |
+| `src/ui/screen_brief.c`, `screen_calendar.c`, `event_new.c`, `calendar_ui.h` | Brief (the digest, `digest_refresh`), Calendar (the agenda, pending adds, the "+"), the new-event flow (When, then What; `cal_add`) |
+| `core/agenda.*`, `core/event_form.*`, `core/brief.*` | their rules: the agenda by day, the new-event form and its strict `cal_add` (T5 plan §3.5), the digest's headline and refresh (`test_agenda`, `test_event_form`, `test_brief`) |
+| `src/ui/controls.*`, `src/ui/ui_keyboard.*` | buttons, selectable tiles, the floating "+"; the on-screen keyboard and its text field (below) |
+| `src/ui/screen_stub.c`, `ui_screens.c`, `screens.h` | placeholders for Talks, Status; the tab table |
 | `fonts/` | Inter 4.0 (SIL OFL, `LICENSE-Inter.txt`) Regular/SemiBold/Bold cut to Latin-1 + punctuation, € ™ arrows ✓ ★, with the icons merged in; Lucide icons (ISC, `LICENSE-Lucide.txt`); `make_fonts.py` remakes them |
-| `test/` | `test_app_state`, `test_glance` (real socket, the T5's byte frames), `test_vision`, `test_today_text`, `test_board`, `pda_screenshots` |
+| `test/` | `test_app_state`, `test_glance` (real socket, the T5's byte frames), `test_vision`, `test_today_text`, `test_board`, `test_agenda`, `test_event_form`, `test_brief`, `pda_screenshots` (Brief, Calendar and the new event: `shots_brief_calendar.h`, shots 30-48) |
 
 ## Adding a screen (Brief, Calendar, Talks, Status)
 
@@ -98,6 +101,31 @@ when SDL2 was found, else `ATHENA_PDA_BACKEND=headless`).
    `ui_focusable(obj, false)` on every tap target so hands-free can point at it.
 8. A state worth seeing goes into `test/pda_screenshots.c` (find labels, `headless_tap`,
    `step(ms)`); open the PNGs and look.
+
+## The on-screen keyboard (`ui_keyboard.h`)
+
+```c
+lv_obj_t *f = ui_text_field(parent, "Pairing code", 12, UI_KB_CODE); /* or UI_KB_TEXT, UI_KB_NUMBER */
+lv_obj_add_event_cb(f, on_change, LV_EVENT_VALUE_CHANGED, NULL); /* every keystroke */
+lv_obj_add_event_cb(f, on_done, LV_EVENT_READY, NULL);           /* "Done" */
+const char *text = lv_textarea_get_text(f);
+ui_keyboard_open(f); /* also on a tap on the field */  ui_keyboard_close();  ui_keyboard_is_open();
+```
+
+- The field is a themed `lv_textarea` (wraps, grows to 3 lines, `max_chars` characters, 0 = no
+  limit); the keyboard is LVGL's `lv_keyboard` with our maps and look, on the top layer at the
+  bottom of the field's layer (a tab's content area: above the tab bar; a detail page; the
+  sheet), sliding in in 220 ms.
+- While it is open, the field's nearest vertical scroller is shrunk to the space above it and
+  the field scrolled into view, so put the field in a `ui_page_scroller()` (or any vertical
+  scroller). It closes itself when the field is deleted or its page goes away (a tab change,
+  `ui_pop()`, the sheet closing).
+- Modes: `UI_KB_TEXT` (letters, the first one capital; `123` and `#+=` for digits and
+  punctuation), `UI_KB_NUMBER` (a number pad), `UI_KB_CODE` (capitals, digits and `-`). Line
+  breaks are never typed.
+- Keys are about 50 x 84 px (ten in a row on 568 px), under the 72 px rule: a held key pops
+  up above the finger and types on release. The keys aren't hands-free focus stops (the
+  field is).
 
 ## What hands-free does here
 
