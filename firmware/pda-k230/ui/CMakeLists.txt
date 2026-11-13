@@ -105,6 +105,11 @@ target_link_libraries(pda_ui PUBLIC pda_core lvgl)
 target_compile_options(pda_ui PRIVATE ${PDA_WARN})
 set_source_files_properties(${FONT_C}/inter_regular.c ${FONT_C}/inter_semibold.c ${FONT_C}/inter_bold.c
     ${FONT_C}/lucide.c PROPERTIES COMPILE_OPTIONS "-w")
+# Talks, Status (settings, pairing), the ambient screen: their core and screens, and the
+# extra icon font they use (fonts/make_icons_extra.py)
+target_sources(pda_core PRIVATE
+    src/core/talks.c src/core/pairing.c src/core/ambient.c src/core/wifi_info.c)
+
 if(ZLIB_FOUND)
     target_compile_definitions(pda_ui PRIVATE PDA_HAVE_ZLIB=1)
     target_link_libraries(pda_ui PUBLIC ZLIB::ZLIB)
@@ -120,6 +125,15 @@ if(PDA_TESTS)
     enable_testing()
     set(FIX ${UI}/../../pda/test/fixtures)
     foreach(t test_app_state test_glance test_vision test_today_text test_board)
+        add_executable(${t} test/${t}.c)
+        target_include_directories(${t} PRIVATE ${REC}/test)
+        target_link_libraries(${t} pda_core)
+        target_compile_options(${t} PRIVATE ${PDA_WARN})
+        add_test(NAME ${t} COMMAND ${t})
+        set_tests_properties(${t} PROPERTIES ENVIRONMENT "FIXTURES=${FIX}")
+    endforeach()
+    # Talks, pairing, the ambient screen and its settings
+    foreach(t test_talks test_pairing test_ambient)
         add_executable(${t} test/${t}.c)
         target_include_directories(${t} PRIVATE ${REC}/test)
         target_link_libraries(${t} pda_core)

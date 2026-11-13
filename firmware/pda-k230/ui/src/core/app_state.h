@@ -116,7 +116,13 @@ typedef struct {
     bool hands_free;    /* gestures from the camera drive the UI (plan's gesture table) */
     bool presence_wake; /* wake when someone appears, ambient after they leave */
     int brightness;     /* 5..100 % */
+    int dim_after_s;    /* no touch or gesture this long: the ambient screen; 0 never */
+    int off_after_s;    /* the ambient screen this long: the screen off; 0 never */
 } app_settings_t;
+
+#define APP_DIM_AFTER_DEFAULT 120
+#define APP_OFF_AFTER_DEFAULT 900
+#define APP_TIMEOUT_MAX (24 * 3600)
 
 /* ---- life cycle ---- */
 
@@ -199,6 +205,7 @@ void app_set_mono_override(int64_t ms);
 
 void app_touch_activity(void);
 bool app_user_active(void);
+int64_t app_last_activity_ms(void); /* app_mono_ms() of the last touch (or gesture) */
 /* Battery % (-1 unknown) and power flags, from the board when known. */
 void app_set_power(int8_t battery_pct, bool charging, bool usb);
 int8_t app_battery_pct(void);
