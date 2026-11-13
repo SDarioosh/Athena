@@ -1,0 +1,32 @@
+# Athena PDA: Buildroot options added to LilyGO's k230_canmv_t_display_rm69a10_defconfig.
+#
+# ../../build-image.sh writes LilyGO's defconfig plus these lines to
+# <sdk>/buildroot-overlay/configs/k230_canmv_t_display_athena_pda_defconfig.
+#   KEY=value     set (a later assignment wins over LilyGO's)
+#   KEY+="value"  append to LilyGO's string value (space separated)
+# $(BR2_EXTERNAL_ATHENA_PDA_PATH) is kept as written; Buildroot expands it.
+
+# Our packages (br2-external/package/).
+BR2_PACKAGE_ATHENA_PDA_SYSTEM=y
+BR2_PACKAGE_ATHENA_TAILSCALE_BIN=y
+BR2_PACKAGE_ATHENA_PDA_UI=y
+BR2_PACKAGE_ATHENA_PDA_SYNCD=y
+BR2_PACKAGE_ATHENA_VISION=y
+BR2_PACKAGE_ATHENA_VISION_KMODELS=y
+
+# syncd: CPython 3 with ssl (an https hub URL), zlib (athena_relay.drain) and the
+# time-zone database (zoneinfo for the feed's day boundaries).
+BR2_PACKAGE_PYTHON3=y
+BR2_PACKAGE_PYTHON3_SSL=y
+BR2_PACKAGE_PYTHON3_ZLIB=y
+BR2_TARGET_TZ_INFO=y
+
+# Room for Tailscale (~45 MB stripped), the kmodels and the PDA's data on the root
+# file system, which is also where the persistent data lives (LilyGO's image has
+# no data partition). LilyGO's value is 600M.
+BR2_TARGET_ROOTFS_EXT2_SIZE="1024M"
+
+# Our post-build step (moves the launcher's boot script aside, see post-build.sh)
+# and kernel options (TUN for Tailscale).
+BR2_ROOTFS_POST_BUILD_SCRIPT+="$(BR2_EXTERNAL_ATHENA_PDA_PATH)/board/post-build.sh"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES+="$(BR2_EXTERNAL_ATHENA_PDA_PATH)/board/linux-athena.fragment"
