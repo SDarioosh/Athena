@@ -11,8 +11,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(VISION_DEVICE "Build the athena-vision program for the board (nncase, vvcam)" OFF)
-option(VISION_TESTS "Build the host unit tests" ON)
-option(VISION_TOOLS "Build the replay and synth_track tools" ON)
+if(VISION_DEVICE)
+    set(vision_host_default OFF)
+else()
+    set(vision_host_default ON)
+endif()
+option(VISION_TESTS "Build the host unit tests" ${vision_host_default})
+option(VISION_TOOLS "Build the replay and synth_track tools" ${vision_host_default})
 option(VISION_SANITIZE "Build with -fsanitize=address,undefined" OFF)
 option(VISION_WERROR "Treat warnings as errors" OFF)
 option(VISION_K230_CPU_FLAGS "Add the Xuantie C908 flags Canaan's demos use (device)" ON)
@@ -54,6 +59,7 @@ target_compile_definitions(athena_vision_core PUBLIC ATHENA_VISION_VERSION="${PR
 if(VISION_TOOLS OR VISION_TESTS)
     add_library(athena_vision_synth STATIC tools/synth.cpp)
     target_link_libraries(athena_vision_synth PUBLIC athena_vision_core)
+    target_include_directories(athena_vision_synth PUBLIC tools)
     target_compile_options(athena_vision_synth PRIVATE ${VISION_WARNINGS})
 endif()
 
@@ -107,10 +113,11 @@ if(VISION_DEVICE)
         target_compile_options(athena-vision PRIVATE
             -mcpu=c908v -mabi=lp64d -mtune=c908 -mrvv-v0p10-compatible -mrvv-auto-vectorize)
     endif()
-    # nncase's runtime tarball installs its headers to <sysroot>/usr/include/nncase and
-    # gsl-lite to <sysroot>/usr/include/gsl; libmmz's header is mmz.h.
+    # nncase's runtime tarball installs its headers to <sysroot>/usr/include/nncase and its
+    # static libraries to <sysroot>/usr/lib; gsl-lite to <sysroot>/usr/include/gsl; libmmz
+    # is <sysroot>/usr/include/mmz.h and usr/lib/libmmz.a; display.h needs libdrm's headers.
     target_include_directories(athena-vision SYSTEM PRIVATE
-        ${V4L2DRM_INCLUDE_DIRS} ${DISPLAY_INCLUDE_DIRS})
+        ${V4L2DRM_INCLUDE_DIRS} ${DISPLAY_INCLUDE_DIRS} ${CMAKE_SYSROOT}/usr/include/libdrm)
     target_link_directories(athena-vision PRIVATE ${V4L2DRM_LIBRARY_DIRS} ${DISPLAY_LIBRARY_DIRS})
     target_link_libraries(athena-vision PRIVATE
         -Wl,--start-group Nncase.Runtime.Native nncase.rt_modules.k230 functional_k230

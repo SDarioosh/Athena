@@ -37,7 +37,8 @@ struct FrameResult {
 
 // The hand the engine follows in a frame, in display orientation (for logs and tests).
 struct HandView {
-    bool present = false;
+    bool present = false;           // the engine follows a hand (maybe missed this frame)
+    bool in_frame = false;          // it was detected in the last frame
     float x = 0, y = 0;             // normalised display coordinates
     Shape shape = Shape::Other;
     float conf = 0;

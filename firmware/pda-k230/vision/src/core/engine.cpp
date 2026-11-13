@@ -159,7 +159,9 @@ void Engine::on_frame(const FrameResult &f) {
                 }
                 classify(cfg_, kd, &ob.shape, &ob.conf);
             }
-            last_hand_ = {true, ob.x, ob.y, ob.shape, ob.conf};
+            last_hand_ = {true, true, ob.x, ob.y, ob.shape, ob.conf};
+        } else {
+            last_hand_.in_frame = false;
         }
         std::vector<TrackerEvent> ev;
         tracker_.update(ob, ev);

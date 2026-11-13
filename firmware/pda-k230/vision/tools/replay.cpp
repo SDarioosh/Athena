@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
         engine->on_frame(f);
         if (hands) {
             const av::HandView &h = engine->last_hand();
-            if (h.present) {
+            if (h.in_frame) {
                 std::printf("t=%.3f # hand %.3f %.3f %s %.2f\n", f.t, h.x, h.y,
                             av::shape_name(h.shape), h.conf);
             }

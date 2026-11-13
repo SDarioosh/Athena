@@ -1,0 +1,41 @@
+# athena-vision settings (installed as /etc/athena-pda/vision.conf). `key = value`;
+# command-line flags (--key=value) win. `athena-vision --list-keys` prints every key with
+# its current value; the defaults are below. Only change what you need.
+
+# --- camera orientation (not confirmed on the board yet: check with the on-board checklist)
+# rotate: how the camera image must turn (clockwise) to look upright on the portrait screen
+rotate = 90
+# mirror: a camera facing the user needs it, so moving the hand right moves right on screen
+mirror = true
+
+# --- camera and models
+# video_device = -1          # -1: the vvcam AI channel (the device after vvcam-video.0.0)
+# width = 1280
+# height = 720
+# model_dir = /usr/share/athena-vision/models
+# hand_det_model = hand_det.kmodel
+# hand_kp_model = handkp_det.kmodel
+# face_model = /root/app/face_detect/face_detection_320.kmodel
+# hand_obj_thresh = 0.3
+# hand_nms_thresh = 0.4
+# face_thresh = 0.6
+# classifier = geometry      # or canaan (Canaan's sq_handkp_class rule)
+
+# --- socket (default $ATHENA_PDA_RUN/vision.sock, else /run/athena-pda/vision.sock)
+# socket = /run/athena-pda/vision.sock
+
+# --- gestures (normalised screen units; seconds)
+# swipe_min_dist_x = 0.22
+# swipe_min_dist_y = 0.2
+# swipe_min_speed = 0.8
+# swipe_window_s = 0.6
+# swipe_refractory_s = 0.6
+# swipe_return_block_s = 1.0
+# palm_hold_s = 0.8
+# fist_hold_s = 0.5
+# thumbs_up_hold_s = 0.3
+# point_hold_s = 0.3
+
+# --- presence
+# presence_appear_s = 2
+# presence_leave_s = 20
