@@ -16,4 +16,12 @@ ATHENA_PDA_RSYNC_JUNK = \
 	--exclude=build/ --exclude=build-*/ --exclude=.venv/ \
 	--exclude=__pycache__/ --exclude=*.pyc --exclude=.pytest_cache/
 
+# LilyGO's zxing-cpp package builds a Python module (a host .so, built with the
+# riscv64 toolchain) whenever python3 and python-pybind are both on, which they are in
+# this image. Its link step crashes the Xuantie GCC 14.1.1 (internal error in
+# lto-wrapper, jobserver_info::return_token) and nothing uses the module: athena-vision
+# links the C++ library. CMake takes the last -D, so this wins over the package's own.
+# Seen when the image was first built (docs/k230-pda-plan.md, "Not verified yet").
+ZXING_CPP_CONF_OPTS += -DBUILD_PYTHON_MODULE=OFF
+
 include $(sort $(wildcard $(BR2_EXTERNAL_ATHENA_PDA_PATH)/package/*/*.mk))
