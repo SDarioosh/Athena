@@ -339,6 +339,33 @@ const app_failed_t *app_failed_item(int64_t item_id)
     return NULL;
 }
 
+/* The action's type ("t", the first key of every action pda_actions writes), for the log:
+ * the log never has an action's content (to-do text, event titles, refs). */
+static const char *action_type(const char *json, size_t len, char *out, size_t cap)
+{
+    static const char KEY[] = "{\"t\":\"";
+    const size_t k = sizeof(KEY) - 1;
+    size_t n = 0;
+    if (len > k && memcmp(json, KEY, k) == 0) {
+        while (k + n < len && n + 1 < cap) {
+            const char c = json[k + n];
+            if (!((c >= 'a' && c <= 'z') || c == '_')) {
+                break;
+            }
+            out[n++] = c;
+        }
+        if (k + n >= len || json[k + n] != '"') {
+            n = 0;
+        }
+    }
+    if (n == 0) {
+        snprintf(out, cap, "?");
+    } else {
+        out[n] = 0;
+    }
+    return out;
+}
+
 int app_queue(const char *json, size_t len)
 {
     const uint64_t now_ms = app_time_valid() ? (uint64_t)app_now() * 1000u : 0;
@@ -349,7 +376,8 @@ int app_queue(const char *json, size_t len)
         return rc;
     }
     rebuild_pending();
-    LOG("queued action %08x: %.*s\n", (unsigned)id, (int)len, json);
+    char type[24];
+    LOG("queued action %08x: %s\n", (unsigned)id, action_type(json, len, type, sizeof(type)));
     emit(APP_EV_OUTBOX, 0);
     return 0;
 }

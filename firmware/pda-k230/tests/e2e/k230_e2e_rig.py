@@ -27,9 +27,9 @@ SYNCD = K230 / "syncd"
 sys.path.insert(0, str(SYNCD / "tests"))
 
 import _syncd_path  # noqa: E402,F401 (syncd, athena_relay and the relay's fakes on the path)
-from syncd_fakes import CODE, FakeHub  # noqa: E402
+from syncd_fakes import CODE, HUB_TOKEN, FakeHub  # noqa: E402
 
-__all__ = ["CODE", "FakeHub", "NOW", "Rig", "UI_BIN", "VISION_TOOLS", "wait_for"]
+__all__ = ["CODE", "HUB_TOKEN", "FakeHub", "NOW", "Rig", "UI_BIN", "VISION_TOOLS", "wait_for"]
 
 UI_BIN = os.environ.get("ATHENA_PDA_UI_BIN", "")
 VISION_TOOLS = os.environ.get("ATHENA_VISION_TOOLS", "")

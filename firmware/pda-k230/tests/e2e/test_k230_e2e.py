@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 import pytest
-from k230_e2e_rig import CODE, UI_BIN, VISION_TOOLS, Rig, wait_for
+from k230_e2e_rig import CODE, HUB_TOKEN, UI_BIN, VISION_TOOLS, Rig, wait_for
 
 pytestmark = pytest.mark.skipif(not UI_BIN or not os.access(UI_BIN, os.X_OK),
                                 reason="ATHENA_PDA_UI_BIN (the athena-pda binary) not set")
@@ -83,8 +83,7 @@ def test_pair_sync_tick_fetch_revoke_restart(rig: Rig) -> None:
         ctl.cmd(f"tab {TAB_TASKS}")
         assert not rig.outbox()
         ctl.click("Milk")  # syncd hears the STATUS notify and syncs at once
-        wait_for(lambda: '"t":"todo_toggle","note":"n-groceries","i":0' in rig.ui_log(), 5,
-                 "the UI queued the tick")
+        wait_for(lambda: ": todo_toggle" in rig.ui_log(), 5, "the UI queued the tick")
         wait_for(lambda: rig.hub.ody.notes[0]["items"][0]["done"], 30, "Milk done in the hub")
         wait_for(lambda: ctl.state()["outbox"] == 0, 15, "the tick acked")
         assert not rig.outbox()
@@ -96,8 +95,7 @@ def test_pair_sync_tick_fetch_revoke_restart(rig: Rig) -> None:
         assert ctl.state()["detail"] == 1
         rig.shot("e2e_04_conversation")
         ctl.click("Read the transcript")
-        wait_for(lambda: '"t":"fetch","ref":"transcript:c_new' in rig.ui_log(), 5,
-                 "the UI queued the fetch")
+        wait_for(lambda: ": fetch" in rig.ui_log(), 5, "the UI queued the fetch")
         wait_for(rig.details, 30, "a detail blob in d/")
         wait_for(lambda: ctl.state()["outbox"] == 0, 15, "the fetch acked")
         ctl.cmd("wait 500")
@@ -122,6 +120,11 @@ def test_pair_sync_tick_fetch_revoke_restart(rig: Rig) -> None:
         wait_for(lambda: len(rig.hub.requests) > n, 30, "a sync after the restart")
         wait_for(lambda: ctl.has("Synced"), 30, "Status: synced after the restart")
         assert rig.syncd.poll() is None  # syncd survived the UI going away
+
+        # ---- no content in either program's log: to-do text, titles, the code, the token
+        logs = rig.ui_log() + rig.syncd_log()
+        for secret in ("Milk", "Standup", CODE, HUB_TOKEN):
+            assert secret not in logs, secret
     except BaseException:
         print(rig.dump_logs())
         raise
