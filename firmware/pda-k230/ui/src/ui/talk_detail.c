@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "app_state.h"
+#include "calendar_ui.h"
 #include "icons_extra.h"
 #include "pda_actions.h"
 #include "screens.h"
@@ -27,7 +28,7 @@
 typedef struct {
     int idx; /* f->actions */
     int64_t id;
-    lv_obj_t *row, *tick, *x, *title, *sub, *mark;
+    lv_obj_t *row, *tick, *x, *title, *sub, *mark, *cal;
     talks_item_view_t shown;
     bool have_shown;
 } item_row_t;
@@ -90,6 +91,49 @@ static void item_refresh(item_row_t *r, bool animate)
                                 0);
     ui_show(r->sub, line[0] != 0);
     ui_show(r->mark, v.pending);
+    if (r->cal) {
+        ui_show(r->cal, !closed); /* a done or dismissed item has nothing to plan */
+    }
+}
+
+/* "→ Calendar" (the T5's "→ cal"): the new event, filled in from the item */
+static void cal_clicked(lv_event_t *e)
+{
+    const item_row_t *r = lv_event_get_user_data(e);
+    const feed_t *f = app_feed();
+    if (!f || r->idx >= f->n_actions || f->actions[r->idx].id != r->id) {
+        return;
+    }
+    const feed_action_t *a = &f->actions[r->idx];
+    event_new_open_for(a->text, a->due_day, a->id);
+}
+
+/* a small pill under the item's lines; its own tap, not the row's */
+static lv_obj_t *cal_pill(lv_obj_t *parent, item_row_t *r)
+{
+    lv_obj_t *b = lv_obj_create(parent);
+    lv_obj_remove_style_all(b);
+    lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(b, LV_SIZE_CONTENT, 52);
+    lv_obj_set_ext_click_area(b, (UI_TOUCH_MIN - 52) / 2);
+    lv_obj_set_style_margin_top(b, SP_2, 0);
+    lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(b, C(C_SURFACE_2), 0);
+    lv_obj_set_style_bg_color(b, C(C_SURFACE_3), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_hor(b, SP_4, 0);
+    lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(b, SP_2, 0);
+    kit_icon(b, F.icon_s, ICON_CALENDAR_DAYS, C_ACCENT);
+    lv_obj_t *l = lv_label_create(b);
+    lv_label_set_text(l, "\xe2\x86\x92 Calendar"); /* → Calendar */
+    lv_obj_set_style_text_font(l, F.small_b, 0);
+    lv_obj_set_style_text_color(l, C(C_ACCENT), 0);
+    lv_obj_add_event_cb(b, cal_clicked, LV_EVENT_CLICKED, r);
+    ui_focusable(b, false);
+    return b;
 }
 
 static void item_tap(item_row_t *r, bool long_press)
@@ -141,6 +185,8 @@ static void item_row(lv_obj_t *card, conv_arg_t *c, int idx)
     const int32_t w = UI_CARD_W - 2 * UI_CARD_PAD - UI_TICK - SP_4 - 40;
     r->title = ui_text(row->mid, F.body, C_TEXT, f->actions[idx].text, w, 3);
     r->sub = ui_text(row->mid, F.small, C_TEXT_2, "", w, 2);
+    /* as on the T5: only an item with a due date offers the calendar */
+    r->cal = f->actions[idx].due_day != FEED_NO_DAY ? cal_pill(row->mid, r) : NULL;
     r->mark = kit_icon(row->right, F.icon_s, ICON_UPLOAD, C_TEXT_3);
     item_refresh(r, false);
 }

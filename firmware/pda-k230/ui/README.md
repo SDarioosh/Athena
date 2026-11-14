@@ -68,8 +68,8 @@ gets these defaults).
 | `src/ui/screen_brief.c`, `screen_calendar.c`, `event_new.c`, `calendar_ui.h` | Brief (the digest, `digest_refresh`), Calendar (the agenda, pending adds, the "+"), the new-event flow (When, then What; `cal_add`) |
 | `core/agenda.*`, `core/event_form.*`, `core/brief.*` | their rules: the agenda by day, the new-event form and its strict `cal_add` (T5 plan §3.5), the digest's headline and refresh (`test_agenda`, `test_event_form`, `test_brief`) |
 | `src/ui/controls.*`, `src/ui/ui_keyboard.*` | buttons, selectable tiles, the floating "+"; the on-screen keyboard and its text field (below) |
-| `src/ui/screen_talks.c`, `talk_detail.c` | Talks (the last 48 h), a conversation (summary, key points, its action items: tap done, hold dismiss, tap again undo), the transcript (cached or fetched, chat bubbles, next part) |
-| `src/ui/screen_status.c`, `status_pairing.c`, `text_entry_local.c` | Status with Settings (connection, Tailscale and its login QR code, pairing, display, hands-free with a gesture tester, device); pairing by camera scan or typed code (a small local keyboard until the shared one replaces it) |
+| `src/ui/screen_talks.c`, `talk_detail.c` | Talks (the last 48 h), a conversation (summary, key points, its action items: tap done, hold dismiss, tap again undo, "→ Calendar" on one with a due date), the transcript (cached or fetched, chat bubbles, next part) |
+| `src/ui/screen_status.c`, `status_pairing.c` | Status with Settings (connection, Tailscale and its login QR code, pairing, display, hands-free with a gesture tester, device); pairing by camera scan or typed code (the shared keyboard's code mode) |
 | `src/ui/ambient_ui.c` | the ambient screen behind `ui_screen_off()`: clock, date, the next event, sync marks; moves every minute; off after `off_after_s` |
 | `src/ui/ui_kit.*`, `icons_extra.*` | buttons, settings rows, segmented choices, the confirm sheet, hold to confirm, avatars; the extra icons (`fonts/lucide-extra.ttf`, `fonts/make_icons_extra.py`) and the ambient clock face |
 | `src/core/talks.*`, `pairing.*`, `ambient.*`, `wifi_info.*` | relative times, people, action-item states and taps, transcript refs; the pairing flow (QR text or typed -> LOCAL `pair`, `pair_result`, timeout); the ambient timing and words; Wi-Fi from `/proc/net/wireless` (read-only) |
@@ -112,7 +112,7 @@ gets these defaults).
 ## The on-screen keyboard (`ui_keyboard.h`)
 
 ```c
-lv_obj_t *f = ui_text_field(parent, "Pairing code", 12, UI_KB_CODE); /* or UI_KB_TEXT, UI_KB_NUMBER */
+lv_obj_t *f = ui_text_field(parent, "Pairing code", 100, UI_KB_CODE); /* or UI_KB_TEXT, UI_KB_NUMBER */
 lv_obj_add_event_cb(f, on_change, LV_EVENT_VALUE_CHANGED, NULL); /* every keystroke */
 lv_obj_add_event_cb(f, on_done, LV_EVENT_READY, NULL);           /* "Done" */
 const char *text = lv_textarea_get_text(f);
@@ -128,7 +128,9 @@ ui_keyboard_open(f); /* also on a tap on the field */  ui_keyboard_close();  ui_
   scroller). It closes itself when the field is deleted or its page goes away (a tab change,
   `ui_pop()`, the sheet closing).
 - Modes: `UI_KB_TEXT` (letters, the first one capital; `123` and `#+=` for digits and
-  punctuation), `UI_KB_NUMBER` (a number pad), `UI_KB_CODE` (capitals, digits and `-`). Line
+  punctuation), `UI_KB_NUMBER` (a number pad), `UI_KB_CODE` (both cases with shift and no
+  automatic capital, digits, `/ : . - _`: a pairing code or an address, where case matters; one
+  row taller, `ui_keyboard_height(mode)`). Line
   breaks are never typed.
 - Keys are about 50 x 84 px (ten in a row on 568 px), under the 72 px rule: a held key pops
   up above the finger and types on release. The keys aren't hands-free focus stops (the

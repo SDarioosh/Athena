@@ -234,6 +234,17 @@ static void screens_s2(void)
     shot("55_conv_item_undone");
     step(3000);
 
+    /* "→ Calendar" on an item with a due date: the new event, filled in from it */
+    s2_show_text("\xe2\x86\x92 Calendar");
+    shot("87_conv_items_calendar");
+    tap_text("\xe2\x86\x92 Calendar");
+    step(400);
+    CHECK(find_label(lv_screen_active(), "New event") != NULL);
+    shot("88_conv_item_new_event");
+    ui_pop();
+    step(400);
+    CHECK(find_label(lv_screen_active(), "SUGGESTED ACTION ITEMS") != NULL);
+
     /* the transcript: not cached -> fetch queued, waiting; then it arrives */
     s2_show_text("Read the transcript");
     tap_text("Read the transcript");
