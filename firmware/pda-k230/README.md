@@ -274,7 +274,11 @@ Owner, on the build PC and the board. Each step with what you should see:
     presence wake on, the screen wakes when you sit down and dims after you leave. Once the
     screen is fully off: with presence wake off the camera stops (`grep athena-vision
     /var/log/messages` says "camera off"); with it on, the camera keeps running in the dark.
-    Hands-free off: the camera stops.
+    Hands-free off: the camera stops. A thumbs-up hold stops filling (and ticks nothing)
+    when the hand leaves the frame. If the camera never comes on and `grep athena-vision
+    /var/log/messages` says "camera gives …, not the … asked for", "camera format is not
+    the planar BGR asked for" or "camera frame smaller than …", the ISP settled on another
+    format than the AI channel's planar BGR: paste the line.
 15. **Battery (keyboard base only).** `athena-board battery` prints a SoC; if it prints
     `gauge=none` on a board with the base, the kernel bus guess is wrong (BOARD.md).
 16. **Logs stay small and content-free.** After a day, `ls -l /var/log/` stays under ~400 KB;
