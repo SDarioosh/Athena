@@ -53,6 +53,11 @@ def _pair_by_scan(rig: Rig) -> None:
     ctl.cmd("wait 300")
     assert ctl.has("isn't an Odysseus pairing code")  # the UI rejects it itself, scanning goes on
     vision.send({"t": "qr", "text": rig.pair_link()})
+    # nothing is sent before the owner says yes to "Pair with <host>?"
+    wait_for(lambda: ctl.has("Pair with 127.0.0.1?"), 5, "the pairing question")
+    ctl.cmd("wait 300")
+    assert "/api/pair/redeem" not in rig.hub.paths("POST")
+    ctl.click("Pair")
     wait_for(lambda: ctl.has("Paired with"), 15, "pair_result ok on screen")
     wait_for(lambda: (vision.mode() or {}).get("qr") is False, 5, "mode qr off again")
     assert (rig.data / "token").stat().st_mode & 0o777 == 0o600
@@ -151,6 +156,9 @@ def test_pair_typed_on_the_keyboard(rig: Rig) -> None:
         ctl.cmd("clear")
         ctl.cmd(f"type {CODE}")
         rig.shot("e2e_08_pair_typed")
+        ctl.click("Pair")
+        assert ctl.has("Pair with 127.0.0.1?")  # the question first, nothing sent yet
+        assert "/api/pair/redeem" not in rig.hub.paths("POST")
         ctl.click("Pair")
         wait_for(lambda: ctl.has("Paired with"), 15, "pair_result ok on screen")
         wait_for(rig.feed, 30, "feed.json after the typed pairing")

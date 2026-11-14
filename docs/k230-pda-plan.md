@@ -33,7 +33,12 @@ M5) is the owner's. What is verified and the owner's checklist are in
   Odysseus' token routes (`/api/codex/athena/*`, calendar, todos, insight), like the
   Android relay. It is paired with the hub's existing **Pair a phone** QR code
   (`odysseus-pair:v1?url=…&code=…` → `POST /api/pair/redeem`), scanned with the K230's own
-  camera or typed on its keyboard. No server or hub change is needed for v1.
+  camera or typed on its keyboard. No server or hub change is needed for v1. Nothing is
+  sent before the owner says yes to "Pair with <host>?" (with "This replaces the current
+  pairing" when already paired), and syncd refuses a hub on this device itself
+  (loopback), link-local, unspecified, multicast or cloud metadata addresses and any
+  scheme but http(s), at pairing and at every later request
+  (`syncd/athena_pda_sync/addresses.py`; plain http stays allowed for tailnet hubs).
 - **Camera frames never leave the device** and are never stored. Vision runs on the
   K230's accelerator; only events ("swipe left", "someone is here") leave the vision
   process. The screen shows an indicator whenever the camera is on (the header's green dot,

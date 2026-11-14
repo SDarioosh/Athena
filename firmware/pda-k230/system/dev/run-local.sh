@@ -40,6 +40,10 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/athena-pda-local.XXXXXX")"
 ATHENA_PDA_DIR="$tmp/data"
 ATHENA_PDA_RUN="$tmp/run"
 export ATHENA_PDA_DIR ATHENA_PDA_RUN
+# A sandbox hub on this PC (127.0.0.1:7010): syncd refuses loopback hubs unless told
+# (syncd/athena_pda_sync/addresses.py). Development only; the image never sets it.
+ATHENA_PDA_DEV_LOOPBACK_HUB=1
+export ATHENA_PDA_DEV_LOOPBACK_HUB
 mkdir -m 0700 "$ATHENA_PDA_DIR" "$ATHENA_PDA_RUN"
 
 pids=""

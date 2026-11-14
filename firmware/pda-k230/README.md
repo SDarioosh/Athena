@@ -94,7 +94,9 @@ mode on Windows. Windows offers to format the Linux partitions: cancel.
    tailnet. Without the screen: `athena-tailnet login` prints the link. `athena-tailnet
    status` shows the state. The device only connects out: no Funnel, Serve or exit node.
 4. **Pair with the hub.** On the hub, **Pair a phone**; on the PDA, Status → Pair, then
-   scan the QR code with the K230's camera or type the code. Development without the UI:
+   scan the QR code with the K230's camera or type the code, and say yes to "Pair with
+   <host>?" (nothing is sent before that). syncd never pairs with a hub on the device itself,
+   link-local or cloud metadata addresses. Development without the UI:
    `athena-pda-syncd --pair '<link>'`.
 5. The PDA syncs; Status shows the hub, the last sync and the tailnet name.
 
@@ -231,8 +233,8 @@ Owner, on the build PC and the board. Each step with what you should see:
 10. **MagicDNS.** `nslookup <hub>.<tailnet>.ts.net` resolves; after a Wi-Fi reconnect (new
     DHCP lease) it still does (tailscaled rewrites `/etc/resolv.conf`).
 11. **Pairing and sync** over Tailscale: Status → Pair with Odysseus → Scan the QR code:
-    the camera indicator shows, the hub's Pair a phone code is read at 20-40 cm and the
-    screen says Paired. Again with Type the code: the keyboard types the mixed-case code.
+    the camera indicator shows, the hub's Pair a phone code is read at 20-40 cm, the screen
+    asks "Pair with <hub host>?" (the camera dot goes off), and after Pair it says Paired. Again with Type the code: the keyboard types the mixed-case code.
     Then Status shows the hub and "Synced …"; a to-do ticked on the PDA is done in the hub
     after the next sync; a conversation's transcript opens after "Read the transcript"; "→
     Calendar" on an action item with a due date adds the event to the hub's calendar.

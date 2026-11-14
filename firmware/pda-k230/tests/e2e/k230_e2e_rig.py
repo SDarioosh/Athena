@@ -141,6 +141,8 @@ class Rig:
     def env(self) -> dict[str, str]:
         env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
         env.update(ATHENA_PDA_DIR=str(self.data), ATHENA_PDA_RUN=str(self.run))
+        # the fake hub is on 127.0.0.1, which syncd refuses unless told (addresses.py)
+        env["ATHENA_PDA_DEV_LOOPBACK_HUB"] = "1"
         return env
 
     def _log(self, name: str):

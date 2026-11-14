@@ -75,8 +75,8 @@ def refused_ip(ip: Ip) -> str | None:
         return "a link-local address"
     if ip.is_multicast:
         return "a multicast address"
-    if isinstance(ip, ipaddress.IPv4Address) and (ip.is_reserved
-                                                  or ip == ipaddress.IPv4Address("255.255.255.255")):
+    if isinstance(ip, ipaddress.IPv4Address) and (
+            ip.is_reserved or ip == ipaddress.IPv4Address("255.255.255.255")):
         return "a reserved address"
     return None
 
