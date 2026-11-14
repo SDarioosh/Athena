@@ -259,6 +259,10 @@ jobs:
           grep -rlEZ '^#!.*\b(ba|da)?sh\b|^# shellcheck shell=' firmware/pda-k230/system > scripts.lst
           xargs -0 shellcheck -x < scripts.lst
           xargs -0 -n 1 sh -n < scripts.lst
+      - name: "the root-run scripts' behaviour (temp dirs, stand-ins for /etc/init.d)"
+        run: |
+          pip install pytest
+          python -m pytest -q firmware/pda-k230/system/tests
 
   ble-relay-tools:
     runs-on: ubuntu-latest

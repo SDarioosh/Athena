@@ -26,28 +26,52 @@ usage() {
 
 set_proxy() {
 	# $1: the proxy URL, or "" to remove it. Keeps the other keys of config.json.
-	python3 -I - "$ATHENA_PDA_DIR/config.json" "$1" "$ATHENA_PDA_USER" <<'EOF'
-import json, os, pwd, sys
-path, proxy, user = sys.argv[1], sys.argv[2], sys.argv[3]
+	# $ATHENA_PDA_DIR belongs to $ATHENA_PDA_USER, so root doesn't work in it: the
+	# Python below becomes that user before it opens anything there (what the user
+	# put in the directory, a symlink too, then reaches only the user's own files),
+	# and follows no symlink at config.json or at the temp file.
+	python3 -I - "$ATHENA_PDA_DIR" "$1" "$ATHENA_PDA_USER" <<'EOF'
+import errno, json, os, pwd, sys
+data, proxy, user = sys.argv[1], sys.argv[2], sys.argv[3]
+pw = pwd.getpwnam(user)
+if os.getuid() == 0 and pw.pw_uid != 0:
+    os.setgroups([])
+    os.setgid(pw.pw_gid)
+    os.setuid(pw.pw_uid)
+elif os.getuid() != pw.pw_uid:
+    sys.exit("athena-tailnet: run this as root")
+dfd = os.open(data, os.O_RDONLY | os.O_DIRECTORY)
 try:
-    with open(path, encoding="utf-8") as f:
+    fd = os.open("config.json", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+    with os.fdopen(fd, encoding="utf-8") as f:
         cfg = json.load(f)
     if not isinstance(cfg, dict):
         cfg = {}
 except FileNotFoundError:
     cfg = {}
+except ValueError:
+    cfg = {}
+except OSError as e:
+    if e.errno == errno.ELOOP:
+        sys.exit("athena-tailnet: config.json is a symlink; not changed")
+    raise
 if proxy:
     cfg["proxy"] = proxy
 else:
     cfg.pop("proxy", None)
-tmp = path + ".tmp"
-fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+try:
+    os.unlink("config.json.tmp", dir_fd=dfd)
+except FileNotFoundError:
+    pass
+fd = os.open("config.json.tmp", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+             0o600, dir_fd=dfd)
 with os.fdopen(fd, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=1)
     f.write("\n")
-pw = pwd.getpwnam(user)
-os.chown(tmp, pw.pw_uid, pw.pw_gid)
-os.replace(tmp, path)
+    f.flush()
+    os.fsync(f.fileno())
+os.replace("config.json.tmp", "config.json", src_dir_fd=dfd, dst_dir_fd=dfd)
+os.fsync(dfd)
 EOF
 }
 
@@ -57,13 +81,13 @@ set_mode() {
 		userspace) proxy="http://$ATHENA_TS_PROXY" ;;
 		*) usage ;;
 	esac
+	athena_dirs
+	set_proxy "$proxy"
 	if grep -q '^ATHENA_TS_MODE=' "$ATHENA_PDA_DEFAULTS"; then
 		sed -i "s/^ATHENA_TS_MODE=.*/ATHENA_TS_MODE=$1/" "$ATHENA_PDA_DEFAULTS"
 	else
 		echo "ATHENA_TS_MODE=$1" >>"$ATHENA_PDA_DEFAULTS"
 	fi
-	athena_dirs
-	set_proxy "$proxy"
 	echo "ATHENA_TS_MODE=$1; syncd proxy: ${proxy:-none}"
 	/etc/init.d/S45tailscaled restart
 	/etc/init.d/S93athena-pda-syncd restart
