@@ -114,6 +114,11 @@ bool KModel::run(std::string *err) {
             return false;
         }
         out_maps_[i] = std::move(m.unwrap());
+        // the readers index up to output_elems(i) floats: never past the mapped buffer
+        if (out_maps_[i].buffer().size_bytes() < output_elems(i) * sizeof(float)) {
+            if (err) *err = "output " + std::to_string(i) + " smaller than its shape";
+            return false;
+        }
         out_ptrs_[i] = reinterpret_cast<const float *>(out_maps_[i].buffer().data());
     }
     return true;

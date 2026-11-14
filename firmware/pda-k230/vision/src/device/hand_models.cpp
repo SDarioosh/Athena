@@ -73,6 +73,12 @@ bool HandDetector::detect(FrameTensor &frame, std::vector<HandDetection> &out, s
                     cy = (cy - lb_.off_y) / lb_.scale;
                     w /= lb_.scale;
                     h /= lb_.scale;
+                    // a model output of NaN or inf is no box (std::clamp keeps a NaN, and
+                    // the keypoint crop casts these to int)
+                    if (!std::isfinite(cx) || !std::isfinite(cy) || !std::isfinite(w) ||
+                        !std::isfinite(h)) {
+                        continue;
+                    }
                     HandDetection b;
                     b.x1 = std::clamp(cx - w / 2, 0.0f, fw);
                     b.y1 = std::clamp(cy - h / 2, 0.0f, fh);
@@ -122,11 +128,18 @@ bool HandKeypointer::run(FrameTensor &frame, HandDetection &h, std::string *err)
     int x2 = std::min(fw - 1, static_cast<int>(cx + half));
     int y2 = std::min(fh - 1, static_cast<int>(cy + half));
     int cw = x2 - x1 + 1, ch = y2 - y1 + 1;
+    if (cw <= 0 || ch <= 0) {
+        if (err) *err = "keypoint crop empty";
+        return false;
+    }
     if (!crop_resize(frame, model_.input(), x1, y1, cw, ch, err) || !model_.run(err)) return false;
     const float *p = model_.output(0);
     if (!p) {
         if (err) *err = "keypoint output missing";
         return false;
+    }
+    for (int i = 0; i < 2 * kNumKeypoints; i++) {
+        if (!std::isfinite(p[i])) return true;  // no keypoints this frame (has_keypoints false)
     }
     for (int i = 0; i < kNumKeypoints; i++) {
         h.kp[i].x = p[2 * i] * static_cast<float>(cw) + static_cast<float>(x1);

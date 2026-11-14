@@ -34,12 +34,13 @@ bool FaceDetector::run(FrameTensor &frame, bool *seen, float *best, std::string 
         const float *d = model_.output(o);
         if (!d) continue;
         size_t cells = sh[2] * sh[3];
+        if (cells == 0 || model_.output_elems(o) < 4 * cells) continue;  // never read past it
         used++;
         for (size_t c = 0; c < cells; c++) {
             for (size_t a = 0; a < 2; a++) {
                 float bg = d[(a * 2 + 0) * cells + c], fg = d[(a * 2 + 1) * cells + c];
                 float p = 1.0f / (1.0f + std::exp(bg - fg));
-                if (p > *best) *best = p;
+                if (p > *best) *best = p;  // NaN compares false: never the best
             }
         }
     }
