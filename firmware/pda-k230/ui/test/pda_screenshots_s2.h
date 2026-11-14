@@ -540,9 +540,27 @@ static void screens_s2(void)
     hand_at("Coffee beans", 0.1, "point");
     vision("{\"t\":\"gesture\",\"g\":\"point\",\"conf\":0.9}");
     step(300);
-    hand_at("Coffee beans", 0.1, "thumbs_up");
-    step(550);
+    for (int i = 0; i < 5; i++) {
+        hand_at("Coffee beans", 0.1, "thumbs_up");
+        step(110);
+    }
     shot("85_handsfree_hold_ring_tasks");
+    {
+        /* the hand stops being reported (vision froze, the hand left without a `none`):
+         * the hold is cancelled, nothing ticks */
+        const int before = app_outbox_count();
+        step(1200);
+        CHECK_EQ(app_outbox_count(), before);
+        hand_at("Coffee beans", 0.1, "thumbs_up"); /* again, then the vision link drops */
+        step(300);
+        app_vision_t gone = vv;
+        gone.connected = false;
+        app_set_vision(&gone);
+        step(1200);
+        CHECK_EQ(app_outbox_count(), before);
+        app_set_vision(&vv);
+        step(60);
+    }
     vision("{\"t\":\"hand\",\"x\":0.5,\"y\":0.3,\"shape\":\"open\"}"); /* abort: nothing changes */
     vision("{\"t\":\"hand\",\"shape\":\"none\"}");
     step(300);

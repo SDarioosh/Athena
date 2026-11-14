@@ -145,7 +145,7 @@ What the UI does with gestures (only while Hands-free is on in Settings):
 | `swipe_left` / `swipe_right` | next / previous tab; in a detail: next page / back |
 | `swipe_up` / `swipe_down` | page down / up |
 | `point` | move the focus ring to the item under the hand cursor |
-| `thumbs_up` held 1 s | tick the focused to-do (the only gesture that changes data; shown with a filling ring so it can be aborted) |
+| `thumbs_up` held 1 s | tick the focused to-do (the only gesture that changes data; shown with a filling ring so it can be aborted). It commits only while `hand` keeps reporting `thumbs_up` (the last one at most 400 ms old); the hold is cancelled when those stop, when the screen goes off or ambient, and when vision's link drops |
 | `palm` held | back to Today |
 | `fist` | screen off (ambient) |
 

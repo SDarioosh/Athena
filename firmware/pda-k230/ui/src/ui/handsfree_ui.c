@@ -44,6 +44,7 @@ void ui_focusable(lv_obj_t *obj, bool tick)
 }
 
 static void cursor_dim(bool dim);
+static void run(const hf_cmd_t *c);
 
 static void focused_deleted(lv_event_t *e)
 {
@@ -114,10 +115,20 @@ static void frame(lv_timer_t *t)
 {
     (void)t;
     hf_cmd_t c;
+    hf_cmd_t lost[HF_CMDS_MAX];
+    if (HF.st.cursor || HF.st.holding) {
+        /* the screen went off or vision went: no hold survives it, the cursor goes */
+        if (ui_screen_is_off() || !app_vision()->connected) {
+            const int n = hf_input_lost(&HF.st, lost);
+            for (int i = 0; i < n; i++) {
+                run(&lost[i]);
+            }
+        }
+    }
     if (hf_tick(&HF.st, app_mono_ms(), &c)) {
         lv_obj_add_flag(HF.hold, LV_OBJ_FLAG_HIDDEN);
         cursor_dim(false);
-        if (HF.focused && lv_obj_has_flag(HF.focused, TICKABLE)) {
+        if (c.kind == HF_HOLD_COMMIT && HF.focused && lv_obj_has_flag(HF.focused, TICKABLE)) {
             lv_obj_send_event(HF.focused, LV_EVENT_CLICKED, NULL);
         }
     }

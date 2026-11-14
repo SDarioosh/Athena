@@ -101,6 +101,9 @@ static void test_mapping(void)
     CHECK(hf_hold_progress(&s, 1500) > 0.49 && hf_hold_progress(&s, 1500) < 0.51);
     CHECK_EQ(run(&s, "{\"t\":\"hand\",\"x\":0.31,\"y\":0.4,\"shape\":\"thumbs_up\"}", true, 1100, c), 1);
     CHECK_EQ(run(&s, "{\"t\":\"gesture\",\"g\":\"thumbs_up\",\"conf\":0.9}", true, 1200, c), 0); /* already */
+    for (int64_t t = 1200; t <= 1900; t += 100) { /* vision's ~10 hands a second */
+        CHECK_EQ(run(&s, "{\"t\":\"hand\",\"x\":0.31,\"y\":0.4,\"shape\":\"thumbs_up\"}", true, t, c), 1);
+    }
     CHECK_EQ(hf_tick(&s, 1999, c), 0);
     CHECK_EQ(hf_tick(&s, 2000, c), 1);
     CHECK_EQ(c[0].kind, HF_HOLD_COMMIT);
@@ -127,6 +130,28 @@ static void test_mapping(void)
     CHECK_EQ(hf_focus_changed(&s, c), 1);
     CHECK_EQ(c[0].kind, HF_HOLD_CANCEL);
     CHECK_EQ(hf_tick(&s, 9000, c), 0);
+
+    /* the timer alone never commits: no thumbs-up hand for HF_THUMB_FRESH_MS cancels */
+    CHECK_EQ(run(&s, "{\"t\":\"hand\",\"x\":0.3,\"y\":0.4,\"shape\":\"thumbs_up\"}", true, 10000, c), 2);
+    CHECK_EQ(c[1].kind, HF_HOLD_START);
+    CHECK_EQ(hf_tick(&s, 10000 + HF_THUMB_FRESH_MS, c), 0);
+    CHECK_EQ(hf_tick(&s, 10000 + HF_THUMB_FRESH_MS + 1, c), 1);
+    CHECK_EQ(c[0].kind, HF_HOLD_CANCEL);
+    CHECK_EQ(hf_tick(&s, 11000, c), 0); /* and never commits */
+    /* a gesture-started hold counts the gesture as a sighting, then needs hands */
+    CHECK_EQ(run(&s, "{\"t\":\"hand\",\"x\":0.3,\"y\":0.4,\"shape\":\"open\"}", true, 12000, c), 1);
+    CHECK_EQ(run(&s, "{\"t\":\"gesture\",\"g\":\"thumbs_up\",\"conf\":0.9}", true, 12000, c), 1);
+    CHECK_EQ(c[0].kind, HF_HOLD_START);
+    CHECK_EQ(hf_tick(&s, 12300, c), 0);
+    CHECK_EQ(hf_tick(&s, 12000 + HF_THUMB_FRESH_MS + 1, c), 1);
+    CHECK_EQ(c[0].kind, HF_HOLD_CANCEL);
+    /* the screen going off or vision dropping: cancel and hide the cursor */
+    CHECK_EQ(run(&s, "{\"t\":\"hand\",\"x\":0.3,\"y\":0.4,\"shape\":\"thumbs_up\"}", true, 13000, c), 2);
+    CHECK_EQ(hf_input_lost(&s, c), 2);
+    CHECK_EQ(c[0].kind, HF_HOLD_CANCEL);
+    CHECK_EQ(c[1].kind, HF_CURSOR_HIDE);
+    CHECK_EQ(hf_tick(&s, 14500, c), 0);
+    CHECK_EQ(hf_input_lost(&s, c), 0);
 }
 
 /* ---- the server ---- */

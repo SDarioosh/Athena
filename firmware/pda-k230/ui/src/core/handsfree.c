@@ -27,6 +27,9 @@ static int start(hf_state_t *s, bool focused_todo, int64_t now_ms, hf_cmd_t *out
     }
     s->holding = true;
     s->hold_start_ms = now_ms;
+    if (s->thumb_ms < now_ms) {
+        s->thumb_ms = now_ms; /* a thumbs_up gesture is a sighting too */
+    }
     *out = (hf_cmd_t){.kind = HF_HOLD_START, .x = s->x, .y = s->y, .shape = s->shape};
     return 1;
 }
@@ -52,6 +55,7 @@ int hf_on_event(hf_state_t *s, const vision_event_t *ev, bool focused_todo, int6
         s->shape = ev->shape;
         out[n++] = (hf_cmd_t){.kind = HF_CURSOR, .x = ev->x, .y = ev->y, .shape = ev->shape};
         if (ev->shape == VIS_SHAPE_THUMBS_UP) {
+            s->thumb_ms = now_ms;
             if (was != VIS_SHAPE_THUMBS_UP) {
                 n += start(s, focused_todo, now_ms, &out[n]);
             }
@@ -86,7 +90,13 @@ int hf_on_event(hf_state_t *s, const vision_event_t *ev, bool focused_todo, int6
 
 int hf_tick(hf_state_t *s, int64_t now_ms, hf_cmd_t *out)
 {
-    if (!s->holding || now_ms - s->hold_start_ms < HF_HOLD_MS) {
+    if (!s->holding) {
+        return 0;
+    }
+    if (now_ms - s->thumb_ms > HF_THUMB_FRESH_MS) {
+        return cancel(s, out); /* no thumbs-up hand lately: never commit on the timer alone */
+    }
+    if (now_ms - s->hold_start_ms < HF_HOLD_MS) {
         return 0;
     }
     s->holding = false;
@@ -97,6 +107,17 @@ int hf_tick(hf_state_t *s, int64_t now_ms, hf_cmd_t *out)
 int hf_focus_changed(hf_state_t *s, hf_cmd_t *out)
 {
     return cancel(s, out);
+}
+
+int hf_input_lost(hf_state_t *s, hf_cmd_t out[HF_CMDS_MAX])
+{
+    int n = cancel(s, &out[0]);
+    if (s->cursor) {
+        s->cursor = false;
+        s->shape = VIS_SHAPE_NONE;
+        out[n++] = (hf_cmd_t){.kind = HF_CURSOR_HIDE};
+    }
+    return n;
 }
 
 double hf_hold_progress(const hf_state_t *s, int64_t now_ms)

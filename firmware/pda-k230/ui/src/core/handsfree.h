@@ -15,8 +15,11 @@
  * The hold (the only gesture that changes data) starts on a `thumbs_up` gesture or on a
  * hand whose shape becomes thumbs_up, and only while a to-do is focused. It is aborted
  * (HF_HOLD_CANCEL) by a hand of any other shape, the hand going, another gesture, the
- * focus moving, or Hands-free going off; it commits once it has lasted HF_HOLD_MS.
- * Gestures under HF_MIN_CONF are ignored. */
+ * focus moving, Hands-free going off, the screen going off or the vision link dropping
+ * (hf_input_lost), and when no hand of shape thumbs_up has been seen for HF_THUMB_FRESH_MS
+ * (vision sends `hand` up to 10 times a second while it sees one: a hand that stopped
+ * being reported can't commit). It commits once it has lasted HF_HOLD_MS and a thumbs_up
+ * hand was seen within HF_THUMB_FRESH_MS. Gestures under HF_MIN_CONF are ignored. */
 #pragma once
 
 #include <stdbool.h>
@@ -29,6 +32,7 @@ extern "C" {
 #endif
 
 #define HF_HOLD_MS 1000
+#define HF_THUMB_FRESH_MS 400 /* the last thumbs_up hand may be this old: ~3 missed frames */
 #define HF_MIN_CONF 0.5
 
 typedef enum {
@@ -59,6 +63,7 @@ typedef struct {
     vision_shape_t shape;
     bool holding;
     int64_t hold_start_ms;
+    int64_t thumb_ms; /* the last thumbs-up seen: a `hand` of that shape (or the gesture) */
 } hf_state_t;
 
 #define HF_CMDS_MAX 3
@@ -70,11 +75,16 @@ void hf_reset(hf_state_t *s);
 int hf_on_event(hf_state_t *s, const vision_event_t *ev, bool focused_todo, int64_t now_ms,
                 hf_cmd_t out[HF_CMDS_MAX]);
 
-/* Time passing: HF_HOLD_COMMIT once the hold has lasted HF_HOLD_MS (1 command or 0). */
+/* Time passing: HF_HOLD_COMMIT once the hold has lasted HF_HOLD_MS, HF_HOLD_CANCEL when
+ * the thumbs-up went stale (1 command or 0). */
 int hf_tick(hf_state_t *s, int64_t now_ms, hf_cmd_t *out);
 
 /* The focus moved or went: a running hold is cancelled (1 command or 0). */
 int hf_focus_changed(hf_state_t *s, hf_cmd_t *out);
+
+/* The screen went off (ambient) or the vision link dropped: a running hold is cancelled
+ * and the cursor hidden (up to 2 commands). */
+int hf_input_lost(hf_state_t *s, hf_cmd_t out[HF_CMDS_MAX]);
 
 /* 0..1 of the hold ring, 0 when not holding. */
 double hf_hold_progress(const hf_state_t *s, int64_t now_ms);

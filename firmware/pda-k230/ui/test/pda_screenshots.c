@@ -243,10 +243,17 @@ int main(void)
     vision("{\"t\":\"gesture\",\"g\":\"point\",\"conf\":0.9}");
     step(400);
     shot("13_handsfree_focus_cursor");
-    hand_at("Send the Q4 budget", 0.08, "thumbs_up");
-    step(600);
+    /* vision reports the hand up to 10 times a second while it sees it; the hold needs a
+     * fresh thumbs-up hand to commit */
+    for (int i = 0; i < 6; i++) {
+        hand_at("Send the Q4 budget", 0.08, "thumbs_up");
+        step(100);
+    }
     shot("14_handsfree_thumbs_up_hold");
-    step(500); /* the hold commits: the focused to-do ticks */
+    for (int i = 0; i < 5; i++) { /* the hold commits: the focused to-do ticks */
+        hand_at("Send the Q4 budget", 0.08, "thumbs_up");
+        step(100);
+    }
     step(300);
     CHECK_EQ(app_outbox_count(), 2);
     vision("{\"t\":\"hand\",\"shape\":\"none\"}");
