@@ -85,6 +85,10 @@ server. **Nothing in the data path touches the cloud.**
 - `firmware/pda/`: ESP-IDF firmware for the LilyGO T5 E-Paper Pro PDA (its own project):
   shows the briefing, conversations, action items and calendar, and queues taps as actions;
   BLE only, through the phone or PC relay. See `firmware/pda/README.md`.
+- `firmware/pda-k230/`: the second PDA, on the LilyGO T-Display K230 (Linux): `ui/` (C, LVGL
+  9: the screens and the T5's feed, outbox and glance protocol), `syncd/` (Python: its own
+  relay to the hub over Tailscale), `vision/` (C++: hand gestures on the KPU), `system/` (the
+  Buildroot image), `tests/e2e/`. See `firmware/pda-k230/README.md`.
 - `android-relay/`: Android relay app (Kotlin): drains the T-Watch over BLE and uploads to
   the server. Protocol: `docs/twatch-ble-protocol.md`. See `android-relay/README.md`.
 - `meeting-bot/`: Zoom meeting bot: C++ bot on the Zoom Meeting SDK, core upload library,
@@ -101,6 +105,7 @@ server. **Nothing in the data path touches the cloud.**
   Milestone 1 of the T-Watch Ultra is implemented in `firmware/recorder/`, and so is the BLE
   upload path; `twatch-ble-protocol.md`: the watch ↔ relay protocol;
   `t5-pda-plan.md`: a T5 E-Paper Pro PDA synced over BLE through the phone, planned;
+  `k230-pda-plan.md`: the T-Display K230 PDA (its contracts), built, not on the board yet;
   `zoom-meeting-bot-plan.md`: a Zoom bot that joins meetings as "Athena", planned in lanes
   for subagents;
   `athena-rename-plan.md`: the work order for renaming the old names, planned;
@@ -380,6 +385,11 @@ server. **Nothing in the data path touches the cloud.**
   build-t4 -DBOARD=t4_s3 -DSDKCONFIG=build-t4/sdkconfig
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.t4_s3" build`
 - PC BLE relay (no Bluetooth needed): `python -m pytest -q firmware/recorder/tools`
+- K230 PDA: `cmake -S firmware/pda-k230/ui -B build-k230-ui && cmake --build build-k230-ui &&
+  ctest --test-dir build-k230-ui`; vision the same in `firmware/pda-k230/vision` (also with
+  `-DVISION_SANITIZE=ON`); `python -m pytest -q firmware/recorder/tools firmware/pda-k230`
+  (the end-to-end tests run with `ATHENA_PDA_UI_BIN=build-k230-ui/athena-pda`) and `ruff check
+  --config server/pyproject.toml firmware/pda-k230`; `shellcheck -x` on `firmware/pda-k230/system`
 - Messages relay (no Mac needed; Python 3.8+): `python -m pytest -q messages-relay` and
   `ruff check messages-relay`
 - Android relay: `cd android-relay && ./gradlew assembleDebug test lint` (JDK 17+,
@@ -389,8 +399,8 @@ server. **Nothing in the data path touches the cloud.**
 
 Skip a check only if its project doesn't exist yet. CI (`.github/workflows/ci.yml`)
 runs the server checks on Python 3.11, the firmware host tests and `idf.py build`, the PC
-relay tests, the messages relay tests on Python 3.8 and 3.12, and the Android build and
-tests.
+relay tests, the messages relay tests on Python 3.8 and 3.12, the K230 PDA's checks (syncd
+on Python 3.10 and 3.12), and the Android build and tests.
 
 ## Conventions
 

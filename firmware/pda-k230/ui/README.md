@@ -29,8 +29,9 @@ when SDL2 was found, else `ATHENA_PDA_BACKEND=headless`).
   We build LVGL's `src/*.c` ourselves with `lv_conf.h` (only what differs from LVGL's defaults).
 - **Cross-compiling:** `-DCMAKE_TOOLCHAIN_FILE=firmware/pda-k230/ui/cmake/riscv64-linux-gnu.cmake`
   (Ubuntu's `gcc-riscv64-linux-gnu`, or `-DCROSS=<prefix>`). Checked: everything but the
-  device backend builds warning-clean, and the tests and the screenshot run pass under
-  `qemu-riscv64` (`QEMU_LD_PREFIX=/usr/riscv64-linux-gnu`).
+  device backend builds warning-clean, and ctest runs the tests and the screenshot run
+  under `qemu-riscv64` when it is installed (the toolchain file sets it as the emulator;
+  `QEMU_LD_PREFIX=/usr/riscv64-linux-gnu ctest`).
 - **Fonts** are embedded in the binary (`cmake/embed_file.cmake`): nothing to install.
 
 ## Environment
@@ -42,6 +43,7 @@ when SDL2 was found, else `ATHENA_PDA_BACKEND=headless`).
 | `ATHENA_PDA_BACKEND` | the best compiled in | `headless`, `sdl`, `device` |
 | `ATHENA_PDA_DRM` | `/dev/dri/card0` | device |
 | `ATHENA_PDA_TOUCH` | the input device named `goodix_ts` | device |
+| `ATHENA_PDA_TEST_CTL` | unset | headless only: the end-to-end tests' control socket (`src/platform/headless_ctl.h`); the device and SDL backends ignore it |
 
 `ui.json`: `{"v":1,"hands_free":false,"presence_wake":false,"brightness":80,"dim_after_s":120,"off_after_s":900,"tz_min":120}`
 (`tz_min` is the display offset of the last `TIME`; `dim_after_s`: no touch or gesture this long shows
@@ -75,6 +77,7 @@ gets these defaults).
 | `src/core/talks.*`, `pairing.*`, `ambient.*`, `wifi_info.*` | relative times, people, action-item states and taps, transcript refs; the pairing flow (QR text or typed -> LOCAL `pair`, `pair_result`, timeout); the ambient timing and words; Wi-Fi from `/proc/net/wireless` (read-only) |
 | `src/ui/screen_stub.c`, `ui_screens.c`, `screens.h` | the "no feed" state; the tab table |
 | `fonts/` | Inter 4.0 (SIL OFL, `LICENSE-Inter.txt`) Regular/SemiBold/Bold cut to Latin-1 + punctuation, € ™ arrows ✓ ★, with the icons merged in; Lucide icons (ISC, `LICENSE-Lucide.txt`); `make_fonts.py` remakes them |
+| `src/platform/headless_ctl.*` | the end-to-end tests' control socket (`ATHENA_PDA_TEST_CTL`, headless backend only): taps and label clicks through LVGL's input, `has`, `type`, `state`, `png` |
 | `test/` | `test_app_state`, `test_glance` (real socket, the T5's byte frames), `test_vision`, `test_today_text`, `test_board`, `test_agenda`, `test_event_form`, `test_brief`, `test_talks`, `test_pairing`, `test_ambient`, `pda_screenshots` (`shots_brief_calendar.h`: shots 30-49; `pda_screenshots_s2.h`: 50-89); `test/fixtures/`: Talks fixtures (the T5's fictional people, dated within 48 h of the demo clock) |
 
 ## Adding a screen (Brief, Calendar, Talks, Status)
@@ -147,6 +150,9 @@ aborts), `palm` = Today (and wakes the screen), `fist` = the ambient screen. Pre
 shows while vision reports `camera: on`. Status' "Practice here" keeps gestures in its tester.
 
 ## Not verified (needs the board)
+
+The owner's steps for these are in [../README.md](../README.md) "Not verified yet" (4, 6, 7,
+11, 14, 17).
 
 DRM mode and orientation on the RM69A10 (the UI assumes 568 × 1232 portrait and logs
 otherwise), evdev touch scaling/axes on the GT9895, the backlight writes, the battery helper,

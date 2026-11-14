@@ -20,9 +20,10 @@ in between.
 
 | Directory | What |
 |---|---|
-| `ui/` | `athena-pda` (C11, LVGL 9 on DRM + evdev, SDL or headless on a PC): the screens, the feed store, the detail cache and the outbox on disk (the T5's pure modules, compiled from `../pda/main`), the server end of `glance.sock` and `vision.sock` |
-| `syncd/` | `athena-pda-syncd` (Python 3, standard library): pairing, the hub client, `PdaSync` over `glance.sock` with the BLE-free modules of `../recorder/tools/athena_relay`; reports the tailnet state and starts the Tailscale login |
+| `ui/` | `athena-pda` (C11, LVGL 9 on DRM + evdev, SDL or headless on a PC): the screens, the feed store, the detail cache and the outbox on disk (the T5's pure modules, compiled from `../pda/main`), the server end of `glance.sock` and `vision.sock`. See `ui/README.md` |
+| `syncd/` | `athena-pda-syncd` (Python 3, standard library): pairing, the hub client, `PdaSync` over `glance.sock` with the BLE-free modules of `../recorder/tools/athena_relay`; reports the tailnet state and starts the Tailscale login. Usage and settings in its module docstrings (`__main__.py`, `config.py`, `daemon.py`); tests in `syncd/tests/` |
 | `vision/` | `athena-vision` (C++17, nncase on the KPU, V4L2): hand gestures, presence and QR codes as `vision.sock` events; `athena-vision-replay` plays recorded keypoint tracks on a PC. See `vision/README.md` |
+| `tests/e2e/` | the programs together on a PC: the real UI (headless, driven through its test control socket `ATHENA_PDA_TEST_CTL`, `ui/src/platform/headless_ctl.h`) and the real syncd against syncd's fake hub, a scripted vision client; skipped unless `ATHENA_PDA_UI_BIN` is set |
 | `system/` | the image: a Buildroot br2-external tree on LilyGO's build, boot scripts, Tailscale, Wi-Fi and board helpers |
 | `system/BOARD.md` | the board's nodes (display, touch, backlight, camera, battery) and boot facts, each with its source in LilyGO's tree, confirmed or guessed |
 
@@ -115,17 +116,54 @@ Logs: `/var/log/messages` (tags `athena-pda`, `athena-pda-syncd`,
 
 ## On a PC
 
+Quick start, as run in the sandbox (build directories anywhere outside the repo; `$B` here):
+
 ```bash
-firmware/pda-k230/system/dev/run-local.sh [--headless] [--track FILE] [--pair LINK]
+# the UI: host tests and the screenshots of every screen (into $B/ui/screens)
+cmake -S firmware/pda-k230/ui -B $B/ui && cmake --build $B/ui -j && ctest --test-dir $B/ui
+# vision: the core's tests, also under ASan + UBSan
+cmake -S firmware/pda-k230/vision -B $B/vision -DVISION_WERROR=ON && cmake --build $B/vision -j \
+  && ctest --test-dir $B/vision
+cmake -S firmware/pda-k230/vision -B $B/vision-asan -DVISION_SANITIZE=ON -DVISION_WERROR=ON \
+  -DCMAKE_BUILD_TYPE=Debug && cmake --build $B/vision-asan -j && ctest --test-dir $B/vision-asan
+# syncd and the relay modules it uses (pytest; ruff with the server's config)
+python -m pytest -q firmware/recorder/tools firmware/pda-k230
+ruff check --config server/pyproject.toml firmware/pda-k230
+# end to end: the real UI and syncd against the fake hub (+ the vision replay tools)
+ATHENA_PDA_UI_BIN=$B/ui/athena-pda ATHENA_VISION_TOOLS=$B/vision \
+  python -m pytest -q firmware/pda-k230/tests/e2e
+# riscv64 (Ubuntu's gcc-riscv64-linux-gnu; tests under qemu-riscv64 when installed)
+cmake -S firmware/pda-k230/ui -B $B/ui-rv \
+  -DCMAKE_TOOLCHAIN_FILE=$PWD/firmware/pda-k230/ui/cmake/riscv64-linux-gnu.cmake \
+  && cmake --build $B/ui-rv -j && QEMU_LD_PREFIX=/usr/riscv64-linux-gnu ctest --test-dir $B/ui-rv
+# the image's scripts
+grep -rlE '^#!.*\b(ba|da)?sh\b|^# shellcheck shell=' firmware/pda-k230/system | xargs shellcheck -x
 ```
 
-Builds the UI (SDL window if SDL2 is installed), starts it and syncd with temp directories,
-and with `--track` replays a keypoint track through the vision core. The device-only parts
-(DRM, KPU, camera, Tailscale) aren't there.
+To try it by hand: `firmware/pda-k230/system/dev/run-local.sh [--headless] [--track FILE]
+[--pair LINK]` builds the UI (an SDL window if SDL2 is installed), starts it and syncd with
+temp directories, and with `--track` replays a keypoint track through the vision core. The
+device-only parts (DRM, KPU, camera, Tailscale) aren't there. CI runs all of the above
+(`.github/workflows/ci.yml`, jobs `firmware-k230-*`).
 
 ## Verified
 
-Nothing on the board. In the sandbox (2026-11-13):
+Nothing on the board. In the sandbox (2026-11-13/14), with the commands of "On a PC":
+
+- The UI on the host: warning-clean (`-Wall -Wextra -Werror`), 12 ctest entries pass (11
+  test programs and the screenshot run, 79 PNGs, looked at); cross-compiled for riscv64
+  with Ubuntu's `gcc-riscv64-linux-gnu`, warning-clean, the same 12 pass under
+  `qemu-riscv64` (all but the DRM backend, which needs libdrm in a sysroot).
+- vision: 11 ctest entries pass, also under ASan + UBSan.
+- syncd: its tests and the PC relay's (`python -m pytest -q firmware/recorder/tools
+  firmware/pda-k230`) pass on Python 3.10 and 3.13; ruff is clean.
+- End to end (`tests/e2e`, 5 tests): the real UI (headless) and the real syncd with the fake
+  hub: pairing by a QR code sent on `vision.sock` and by typing on the keyboard, the first
+  sync writes `feed.json`, a to-do tick reaches the hub and is acked, a transcript `fetch`
+  lands in `d/`, a revoked token shows "Pairing lost" (`auth_failed`), syncd reconnects and
+  syncs after the UI restarts; Contract 1's sockets (0600, INFO, a 16-byte STATUS, a second
+  client refused); gestures on `vision.sock` (swipe, palm, fist) and a swipe made by
+  `synth_track | athena-vision-replay` move the UI.
 
 - Buildroot 2025.02.1 (the SDK's version), with the SDK's and LilyGO's overlays applied as
   their scripts do: `make k230_canmv_t_display_athena_pda_defconfig` with this
@@ -161,14 +199,22 @@ Owner, on the build PC and the board. Each step with what you should see:
    `ls -l /run/athena-pda` shows `glance.sock` and `vision.sock` (`srw-------`).
 4. **Display and touch as non-root.** Taps work. If the screen stays black or taps do
    nothing, `grep athena-pda /var/log/messages` and `athena-board nodes`; then try
-   `ATHENA_PDA_USER=root` and reboot, and report which worked.
+   `ATHENA_PDA_USER=root` and reboot, and report which worked. The picture fills the panel
+   upright (the UI assumes 568 × 1232 portrait; the log line `DRM: WxH` names the mode), and
+   a tap lands where the finger is, also in the corners (the GT9895's axes and scaling).
+   Scrolling a long list and a tab change look smooth: report the frame rate and the UI's
+   CPU load from `top` while scrolling (LVGL renders in software at this size).
 5. **Restart on crash.** `kill $(pidof athena-pda)`: the screen comes back within ~2 s;
    the log says "ended (…) after … s; starting again in 1 s".
 6. **Brightness and blank.** `athena-board brightness 40` dims, `athena-board blank on`
    turns the panel dark, `blank off` restores it; and the same from the PDA's Settings.
+   With no touch for `dim_after_s` (Settings, default 2 min) the ambient screen (clock, next
+   event) shows dimmed, then the panel goes off after `off_after_s`; a touch wakes it, also
+   from brightness 0.
 7. **Wi-Fi at boot.** After `athena-wifi add`, reboot: `athena-wifi status` shows
    `wpa_state=COMPLETED` and an address without touching anything; `date` is right within
-   a minute (ntp).
+   a minute (ntp). Status' Wi-Fi row shows the network's signal (read from
+   `/proc/net/wireless` with the 8189fs driver; "No Wi-Fi device" means it reads nothing).
 8. **TUN.** `lsmod | grep tun` (or `ls -l /dev/net/tun`), `ip addr show tailscale0` after
    login with a 100.x address; `grep tailscaled /var/log/messages` has the line "set: operator
    athena-pda, hostname athena-pda, netfilter off".
@@ -178,18 +224,28 @@ Owner, on the build PC and the board. Each step with what you should see:
    "athena-pda"` and `"NetfilterMode": 0` after the login.
 10. **MagicDNS.** `nslookup <hub>.<tailnet>.ts.net` resolves; after a Wi-Fi reconnect (new
     DHCP lease) it still does (tailscaled rewrites `/etc/resolv.conf`).
-11. **Pairing and sync** over Tailscale: Status shows the hub and "synced HH:MM"; a to-do
-    ticked on the PDA is done in the hub after the next sync.
+11. **Pairing and sync** over Tailscale: Status → Pair with Odysseus → Scan the QR code:
+    the camera indicator shows, the hub's Pair a phone code is read at 20-40 cm and the
+    screen says Paired. Again with Type the code: the keyboard types the mixed-case code.
+    Then Status shows the hub and "Synced …"; a to-do ticked on the PDA is done in the hub
+    after the next sync; a conversation's transcript opens after "Read the transcript"; "→
+    Calendar" on an action item with a due date adds the event to the hub's calendar.
+    Revoke the token in the hub: Status says "Pairing lost" after the next sync.
 12. **Userspace fallback.** `athena-tailnet mode userspace`, reboot: no `tailscale0`, sync
     still works (syncd through `127.0.0.1:1055`); `athena-tailnet mode tun` back.
 13. **Launcher switch.** `athena-boot-ui launcher`, reboot: LilyGO's launcher, and
     `ps` shows no athena-pda-syncd or athena-vision; `athena-boot-ui athena-pda`, reboot:
     the PDA. From the PDA's Status "Start launcher": the launcher appears without a reboot.
-14. **Camera.** Hands-free on: the camera indicator shows and `vision.sock` events arrive
-    (vision's own checklist in `vision/README.md`). Off: the camera stops.
+14. **Camera and gestures.** First vision's own checklist (`vision/README.md` "On-board
+    checklist", with its fake UI). Then with the PDA: Hands-free on (Status): the camera
+    indicator shows and the hand cursor follows the hand; swipes change tabs, `point` moves
+    the focus ring, a thumbs-up held on a focused to-do fills the ring and ticks it, palm
+    goes to Today, fist to the ambient screen. With presence wake on, the screen wakes when
+    you sit down and dims after you leave. Hands-free off: the camera stops.
 15. **Battery (keyboard base only).** `athena-board battery` prints a SoC; if it prints
     `gauge=none` on a board with the base, the kernel bus guess is wrong (BOARD.md).
 16. **Logs stay small and content-free.** After a day, `ls -l /var/log/` stays under ~400 KB;
     `grep -i -E 'token|transcript' /var/log/messages` finds nothing.
 17. **Power:** current with the screen on, dimmed and off; battery hours with Wi-Fi and
-    Tailscale up.
+    Tailscale up. On the bare board (no keyboard base) there is no fuel gauge: the header
+    shows no battery, which is expected.

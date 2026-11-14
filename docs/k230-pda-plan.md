@@ -1,7 +1,10 @@
 # Plan: LilyGO T-Display K230 as an Athena PDA
 
-Status: **in development** (started 2026-11-13) in `firmware/pda-k230/`. Nothing has run on
-the board yet; the sandbox has no K230. What is built and what is verified is in
+Status: **built, not on the board** (2026-11-14) in `firmware/pda-k230/`. M1-M3 are done in
+the sandbox: every screen, syncd and the vision core, each with its tests, and the UI and
+syncd run together against a fake hub (`firmware/pda-k230/tests/e2e`, in CI). M4's
+Buildroot tree resolves in the sandbox; building the image and everything on the board (M4,
+M5) is the owner's. What is verified and the owner's checklist are in
 `firmware/pda-k230/README.md`.
 
 ## Why
@@ -68,7 +71,9 @@ Reused unchanged (compiled or imported from where they are, never copied):
   `pda_todos`, `pda_insight`, `pda_calendar`, `pda_protocol`.
 
 If one of them needs a change to work here, the change is made there in a way that keeps
-the T5 and the PC relay working (their tests still pass), and is listed in the PR.
+the T5 and the PC relay working (their tests still pass), and is listed in the PR. So far
+one: `pda_sync` reports a 401/403 from `health()` as `auth_failed` (the hub's health route
+needs the token; the PC relay's `/health` doesn't, so nothing changes for it).
 
 ## Contract 1: `glance.sock` (UI ↔ syncd)
 
@@ -93,7 +98,9 @@ Frame: `type:u8` `len:u16 LE` `payload` (`len` ≤ 512).
   unchanged. Pairing, bonding and the pairing window don't exist here: the socket's file
   mode is the access control.
 - Status flags: bit1/bit2 (charging, USB power) from the board when known; bit3 (pairing
-  window) is always 0; bit4 (user active) as on the T5.
+  window) is always 0; bit4 (user active) as on the T5. The bare board has no fuel gauge
+  (only the keyboard base has one, read by `athena-board battery`), so there the battery is
+  unknown.
 - `BYE` ends a sync, not the connection: syncd stays connected and syncs again later.
 - `TIME` still sets the display offset; the system clock is NTP's, so the UI doesn't set
   it (it only refuses an out-of-range time as §3.6 says).
@@ -103,7 +110,7 @@ LOCAL messages (`"t"` names the type; unknown types and keys are ignored):
 | `t` | Direction | Fields | Meaning |
 |---|---|---|---|
 | `sync_now` | UI → syncd | | sync as soon as possible (pull to refresh, a new outbox entry is already signalled by STATUS) |
-| `pair` | UI → syncd | `url`, `code` | redeem a pairing code at the hub |
+| `pair` | UI → syncd | `url`, `code` | redeem a pairing code at the hub; a scanned QR code goes as its raw text in `url` with an empty `code` (syncd parses `odysseus-pair:v1?…` itself) |
 | `unpair` | UI → syncd | | forget the token |
 | `net` | syncd → UI | `state` (`unpaired`, `offline`, `syncing`, `ok`, `auth_failed`), `hub` (host shown on Status, or null), `last_ok` (epoch s, 0 never), `msg` (one short line for Status, or "") | sent on connect and on every change |
 | `pair_result` | syncd → UI | `ok`, `msg` | answer to `pair` |
@@ -165,9 +172,14 @@ carry over; what is new:
 
 - animation between screens and on ticks, pull down to sync, momentum scrolling in place
   of pages;
-- an on-screen keyboard: add an event with a typed title, type the pairing code;
+- an on-screen keyboard (keys about 50 × 84 px, ten in a row; a held key pops up above the
+  finger): add an event with a typed title (letters, `123`, `#+=`), type the pairing code
+  and the hub's address (a code mode: both cases, digits, `/ : . - _`, no automatic capital,
+  one row taller);
 - an ambient screen (clock, next event) in place of the T5's Asleep screen;
-- Settings in Status: brightness, Hands-free, presence, pairing, Tailscale login;
+- Settings in Status: brightness, Hands-free, presence, pairing, Tailscale login. Wi-Fi is
+  not set up in the UI: `athena-wifi` over adb (the image's first-boot step); Status only
+  shows the link;
 - the camera indicator and the hand cursor.
 
 Adding a to-do item by keyboard needs a hub write the relay doesn't have yet; it is not
@@ -177,10 +189,10 @@ in v1.
 
 | | What | Verified where |
 |---|---|---|
-| M1 | UI on a PC: every screen from the fictional fixtures, rendered to PNG; the store and `glance.sock` with the T5's protocol tests | sandbox, CI |
-| M2 | syncd: `PdaSync` over the socket against the UI, a fake hub, pairing | sandbox, CI |
-| M3 | vision: gesture logic from recorded fictional keypoint tracks; the nncase/V4L2 pipeline compiled for riscv64 | logic in the sandbox; the pipeline only on the board |
-| M4 | image: Buildroot external tree, Tailscale, autostart | the owner's build machine and board |
+| M1 | UI on a PC: every screen from the fictional fixtures, rendered to PNG; the store and `glance.sock` with the T5's protocol tests | sandbox, CI: **done** |
+| M2 | syncd: `PdaSync` over the socket against the UI, a fake hub, pairing | sandbox, CI: **done**, also end to end with the real UI |
+| M3 | vision: gesture logic from recorded fictional keypoint tracks; the nncase/V4L2 pipeline compiled for riscv64 | logic in the sandbox: **done**; the pipeline only on the board |
+| M4 | image: Buildroot external tree, Tailscale, autostart | tree written, defconfig resolves in the sandbox; the image on the owner's build machine |
 | M5 | on the board: touch, sync over Tailscale, gestures, frame rate, power | the owner |
 
 ## Not in v1
