@@ -29,6 +29,8 @@ sys.path.insert(0, str(SYNCD / "tests"))
 import _syncd_path  # noqa: E402,F401 (syncd, athena_relay and the relay's fakes on the path)
 from syncd_fakes import CODE, FakeHub  # noqa: E402
 
+__all__ = ["CODE", "FakeHub", "NOW", "Rig", "UI_BIN", "VISION_TOOLS", "wait_for"]
+
 UI_BIN = os.environ.get("ATHENA_PDA_UI_BIN", "")
 VISION_TOOLS = os.environ.get("ATHENA_VISION_TOOLS", "")
 NOW = 1_792_486_800  # 2026-10-20T09:00:00Z, the fakes' demo clock

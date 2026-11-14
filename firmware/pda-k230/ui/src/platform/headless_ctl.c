@@ -137,6 +137,29 @@ static lv_obj_t *find_any(const char *s, int anywhere, const lv_obj_class_t *cls
     return r ? r : find(lv_screen_active(), s, anywhere, cls);
 }
 
+/* the n-th (from 0) visible text field under root, depth first */
+static lv_obj_t *nth_textarea_r(lv_obj_t *root, int *n)
+{
+    if (lv_obj_has_flag(root, LV_OBJ_FLAG_HIDDEN)) {
+        return NULL;
+    }
+    if (lv_obj_check_type(root, &lv_textarea_class) && (*n)-- == 0) {
+        return root;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++) {
+        lv_obj_t *r = nth_textarea_r(lv_obj_get_child(root, (int32_t)i), n);
+        if (r) {
+            return r;
+        }
+    }
+    return NULL;
+}
+
+static lv_obj_t *nth_textarea(lv_obj_t *root, int n)
+{
+    return n < 0 ? NULL : nth_textarea_r(root, &n);
+}
+
 static void reply(headless_ctl_t *c, const char *fmt, const char *arg)
 {
     char out[512];
@@ -180,14 +203,27 @@ static void command(headless_ctl_t *c, char *line)
         tap(c, (a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2, 0);
     } else if (strcmp(line, "has") == 0) {
         reply(c, find_any(arg, 1, NULL) ? "ok yes\n" : "ok no\n", NULL);
-    } else if (strcmp(line, "type") == 0) {
+    } else if (strcmp(line, "field") == 0) {
+        lv_obj_t *ta = nth_textarea(lv_screen_active(), atoi(arg));
+        if (!ta) {
+            reply(c, "err no text field %s\n", arg);
+            return;
+        }
+        lv_area_t a;
+        lv_obj_get_coords(ta, &a);
+        tap(c, (a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2, 250); /* the keyboard slides in */
+    } else if (strcmp(line, "type") == 0 || strcmp(line, "clear") == 0) {
         lv_obj_t *kb = find_any("", 0, &lv_keyboard_class);
         lv_obj_t *ta = kb ? lv_keyboard_get_textarea(kb) : NULL;
         if (!ta) {
             reply(c, "err no keyboard open\n", NULL);
             return;
         }
-        lv_textarea_add_text(ta, arg);
+        if (strcmp(line, "clear") == 0) {
+            lv_textarea_set_text(ta, "");
+        } else {
+            lv_textarea_add_text(ta, arg);
+        }
         later(c, 50, "ok\n");
     } else if (strcmp(line, "tab") == 0) {
         const int t = atoi(arg);

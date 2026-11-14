@@ -11,7 +11,9 @@
  *   click TEXT         a tap on the centre of the first visible label that is TEXT (else
  *                      the first that starts with it)
  *   has TEXT           "ok yes" / "ok no": a visible label contains TEXT
- *   type TEXT          TEXT into the focused text field (as the keyboard would)
+ *   field N            a tap on the N-th (from 0) visible text field: opens the keyboard
+ *   type TEXT          TEXT into the keyboard's text field (as its keys would)
+ *   clear              empty the keyboard's text field
  *   tab N              show tab N (0 Today .. 5 Status)
  *   clock EPOCH_S      a fixed clock (0: the real one), then a refresh
  *   state              "ok tab=N detail=0|1 sheet=0|1 off=0|1 outbox=N"

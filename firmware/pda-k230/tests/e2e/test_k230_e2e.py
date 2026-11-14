@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 import pytest
-from k230_e2e_rig import UI_BIN, VISION_TOOLS, Rig, wait_for
+from k230_e2e_rig import CODE, UI_BIN, VISION_TOOLS, Rig, wait_for
 
 pytestmark = pytest.mark.skipif(not UI_BIN or not os.access(UI_BIN, os.X_OK),
                                 reason="ATHENA_PDA_UI_BIN (the athena-pda binary) not set")
@@ -122,6 +122,35 @@ def test_pair_sync_tick_fetch_revoke_restart(rig: Rig) -> None:
         wait_for(lambda: len(rig.hub.requests) > n, 30, "a sync after the restart")
         wait_for(lambda: ctl.has("Synced"), 30, "Status: synced after the restart")
         assert rig.syncd.poll() is None  # syncd survived the UI going away
+    except BaseException:
+        print(rig.dump_logs())
+        raise
+
+
+def test_pair_typed_on_the_keyboard(rig: Rig) -> None:
+    """Pairing by the typed address and code (the shared keyboard's code mode), then a sync."""
+    rig.start_ui()
+    rig.start_syncd()
+    ctl = rig.ctl
+    try:
+        ctl.cmd(f"tab {TAB_STATUS}")
+        wait_for(lambda: ctl.has("Not paired"), 15, "Status to say Not paired")
+        ctl.click("Pair with Odysseus")
+        ctl.click("Type the code")
+        ctl.cmd("type Fict1on")  # the keyboard opens on the code
+        ctl.cmd("field 0")  # the address: "https://" when no hub is known yet
+        ctl.cmd("clear")
+        ctl.cmd(f"type {rig.hub.url}")
+        ctl.click("Pair")
+        assert ctl.has("8 to 100")  # the short code is caught on the device, nothing sent
+        assert "/api/pair/redeem" not in rig.hub.paths("POST")
+        ctl.cmd("field 1")
+        ctl.cmd("clear")
+        ctl.cmd(f"type {CODE}")
+        rig.shot("e2e_08_pair_typed")
+        ctl.click("Pair")
+        wait_for(lambda: ctl.has("Paired with"), 15, "pair_result ok on screen")
+        wait_for(rig.feed, 30, "feed.json after the typed pairing")
     except BaseException:
         print(rig.dump_logs())
         raise
