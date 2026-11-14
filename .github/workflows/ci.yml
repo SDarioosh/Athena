@@ -149,6 +149,117 @@ jobs:
           path: firmware/pda
           command: idf.py build
 
+  firmware-k230-ui:
+    # the K230 PDA's UI (firmware/pda-k230/ui): host build, tests, the screenshot run; it
+    # compiles the T5's pure modules from firmware/pda/main, so the T5 changes run it too
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: LVGL commit
+        id: lvgl
+        run: echo "commit=$(sed -n 's/^set(LVGL_COMMIT \([0-9a-f]*\))$/\1/p' firmware/pda-k230/ui/CMakeLists.txt)" >> "$GITHUB_OUTPUT"
+      - name: "LVGL source (fetched by commit, cached)"
+        uses: actions/cache@v4
+        with:
+          path: ~/lvgl
+          key: lvgl-${{ steps.lvgl.outputs.commit }}
+      - name: "Build and test (-Wall -Wextra -Werror), the screenshots"
+        run: |
+          cmake -DREPO=https://github.com/lvgl/lvgl.git -DCOMMIT=${{ steps.lvgl.outputs.commit }} \
+            -DDIR="$HOME/lvgl" -P firmware/pda-k230/ui/cmake/fetch_commit.cmake
+          cmake -S firmware/pda-k230/ui -B build-k230-ui -DFETCHCONTENT_SOURCE_DIR_LVGL="$HOME/lvgl"
+          cmake --build build-k230-ui -j
+          ctest --test-dir build-k230-ui --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k230-pda-screenshots
+          path: build-k230-ui/screens/*.png
+          if-no-files-found: warn
+
+  firmware-k230-vision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Vision core: host build and tests (no camera, no models)"
+        working-directory: firmware/pda-k230/vision
+        run: |
+          cmake -S . -B build -DVISION_WERROR=ON
+          cmake --build build -j
+          ctest --test-dir build --output-on-failure
+      - name: "Vision core: the same under AddressSanitizer and UBSan"
+        working-directory: firmware/pda-k230/vision
+        run: |
+          cmake -S . -B build-asan -DVISION_SANITIZE=ON -DVISION_WERROR=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-asan -j
+          ctest --test-dir build-asan --output-on-failure
+
+  firmware-k230-syncd:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: "syncd (with the relay's athena_relay modules): lint and tests"
+        run: |
+          pip install pytest ruff
+          ruff check --config server/pyproject.toml firmware/pda-k230
+          python -m pytest -q firmware/pda-k230/syncd
+
+  firmware-k230-e2e:
+    # the real UI (headless) and the real syncd against the fake hub; vision lines from the
+    # replay tool (firmware/pda-k230/tests/e2e)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: LVGL commit
+        id: lvgl
+        run: echo "commit=$(sed -n 's/^set(LVGL_COMMIT \([0-9a-f]*\))$/\1/p' firmware/pda-k230/ui/CMakeLists.txt)" >> "$GITHUB_OUTPUT"
+      - name: "LVGL source (fetched by commit, cached)"
+        uses: actions/cache@v4
+        with:
+          path: ~/lvgl
+          key: lvgl-${{ steps.lvgl.outputs.commit }}
+      - name: "Build the UI and the vision tools"
+        run: |
+          cmake -DREPO=https://github.com/lvgl/lvgl.git -DCOMMIT=${{ steps.lvgl.outputs.commit }} \
+            -DDIR="$HOME/lvgl" -P firmware/pda-k230/ui/cmake/fetch_commit.cmake
+          cmake -S firmware/pda-k230/ui -B build-k230-ui -DPDA_TESTS=OFF -DFETCHCONTENT_SOURCE_DIR_LVGL="$HOME/lvgl"
+          cmake --build build-k230-ui -j --target athena-pda
+          cmake -S firmware/pda-k230/vision -B build-k230-vision -DVISION_TESTS=OFF -DVISION_TOOLS=ON
+          cmake --build build-k230-vision -j --target athena-vision-replay synth_track
+      - name: "End to end (fictional data only)"
+        env:
+          ATHENA_PDA_UI_BIN: ${{ github.workspace }}/build-k230-ui/athena-pda
+          ATHENA_VISION_TOOLS: ${{ github.workspace }}/build-k230-vision
+          E2E_OUT_DIR: ${{ github.workspace }}/e2e-screens
+        run: |
+          pip install pytest
+          python -m pytest -q firmware/pda-k230/tests/e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k230-pda-e2e-screenshots
+          path: e2e-screens/*.png
+          if-no-files-found: warn
+
+  firmware-k230-system:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "shellcheck and sh -n on the image's scripts"
+        run: |
+          grep -rlEZ '^#!.*\b(ba|da)?sh\b|^# shellcheck shell=' firmware/pda-k230/system > scripts.lst
+          xargs -0 shellcheck -x < scripts.lst
+          xargs -0 -n 1 sh -n < scripts.lst
+
   ble-relay-tools:
     runs-on: ubuntu-latest
     steps:
