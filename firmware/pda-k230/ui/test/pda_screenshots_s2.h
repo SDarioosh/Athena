@@ -381,6 +381,11 @@ static void screens_s2(void)
     CHECK(!q); /* the camera goes off once the code is read */
     vv.camera = APP_CAMERA_OFF;
     app_set_vision(&vv);
+    step(400);
+    /* nothing is sent before the owner says yes */
+    CHECK(find_label(lv_screen_active(), "Pair with hub.example.ts.net?") != NULL);
+    shot("74_pairing_confirm");
+    s2_tap_exact("Pair");
     step(300);
     shot("74_pairing_waiting");
     app_set_pair_result(true, "Paired with hub.example.ts.net.");
@@ -416,6 +421,13 @@ static void screens_s2(void)
     if (code) {
         lv_textarea_set_text(code, "Fict1onalPairCode_k230");
     }
+    s2_tap_exact("Pair");
+    step(400);
+    /* already paired (another hub): the question says it replaces that pairing */
+    s2_status_net(APP_NET_OK, DEMO_NOW - 300, "old-hub.example.ts.net", NULL);
+    step(400);
+    CHECK(find_label(lv_screen_active(), "This replaces the current pairing with old-hub.example.ts.net.") != NULL);
+    shot("77_pairing_confirm_replaces");
     s2_tap_exact("Pair");
     step(300);
     app_set_pair_result(false, "That pairing code was already used. In Odysseus open Settings \xe2\x86\x92 "

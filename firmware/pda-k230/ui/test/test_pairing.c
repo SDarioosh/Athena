@@ -9,6 +9,13 @@
 
 #define LINK "odysseus-pair:v1?url=https%3A%2F%2Fhub.example.ts.net&code=Fict1onalPairCode_k230"
 
+/* a QR code read while scanning, then yes to "Pair with …?" */
+static void read_and_confirm(pair_flow_t *p, char *out, size_t cap, size_t *n)
+{
+    CHECK_EQ(pair_on_qr(p, LINK, out, cap, n), PAIR_ASK);
+    CHECK_EQ(pair_confirm(p, out, cap, n), PAIR_SEND);
+}
+
 static void test_scan(void)
 {
     pair_flow_t p;
@@ -32,8 +39,22 @@ static void test_scan(void)
     CHECK(p.hint && strstr(p.msg, "isn't an Odysseus pairing code") != NULL);
     CHECK(pair_wants_camera(&p));
 
-    /* the hub's code, with white space around it: sent as is, trimmed, in `url` */
-    CHECK_EQ(pair_on_qr(&p, "  " LINK "\n", out, sizeof(out), &n), PAIR_SEND);
+    /* the hub's code, with white space around it: first the question, nothing sent */
+    CHECK_EQ(pair_on_qr(&p, "  " LINK "\n", out, sizeof(out), &n), PAIR_ASK);
+    CHECK_EQ(n, 0);
+    CHECK_EQ(p.stage, PAIR_CONFIRM);
+    CHECK(strcmp(p.host, "hub.example.ts.net") == 0);
+    CHECK(!pair_wants_camera(&p)); /* the camera goes off while the owner decides */
+    CHECK_EQ(pair_on_qr(&p, LINK, out, sizeof(out), &n), PAIR_IGNORED);
+    /* Cancel: back to scanning, still nothing sent */
+    CHECK(pair_back(&p));
+    CHECK_EQ(p.stage, PAIR_SCANNING);
+    CHECK(pair_wants_camera(&p));
+    CHECK_EQ(pair_confirm(&p, out, sizeof(out), &n), PAIR_IGNORED);
+    CHECK_EQ(n, 0);
+    /* again, and yes: sent as is, trimmed, in `url` */
+    CHECK_EQ(pair_on_qr(&p, "  " LINK "\n", out, sizeof(out), &n), PAIR_ASK);
+    CHECK_EQ(pair_confirm(&p, out, sizeof(out), &n), PAIR_SEND);
     CHECK_EQ(n, strlen(out));
     CHECK(strcmp(out, "{\"t\":\"pair\",\"url\":\"" LINK "\",\"code\":\"\"}") == 0);
     local_in_t dummy;
@@ -60,20 +81,20 @@ static void test_scan(void)
 
     /* a refusal keeps syncd's words; an empty msg gets ours */
     pair_start_scan(&p);
-    CHECK_EQ(pair_on_qr(&p, LINK, out, sizeof(out), &n), PAIR_SEND);
+    read_and_confirm(&p, out, sizeof(out), &n);
     pair_sent(&p, true, 5000);
     CHECK(pair_on_result(&p, false, "The pairing code was already used."));
     CHECK_EQ(p.stage, PAIR_FAILED);
     CHECK(strcmp(p.msg, "The pairing code was already used.") == 0);
     pair_start_scan(&p);
-    pair_on_qr(&p, LINK, out, sizeof(out), &n);
+    read_and_confirm(&p, out, sizeof(out), &n);
     pair_sent(&p, true, 5000);
     CHECK(pair_on_result(&p, false, ""));
     CHECK(strstr(p.msg, "Pair a phone") != NULL);
 
     /* no answer */
     pair_start_scan(&p);
-    pair_on_qr(&p, LINK, out, sizeof(out), &n);
+    read_and_confirm(&p, out, sizeof(out), &n);
     pair_sent(&p, true, 5000);
     CHECK(!pair_tick(&p, 5000 + PAIR_WAIT_MS - 1));
     CHECK(pair_tick(&p, 5000 + PAIR_WAIT_MS));
@@ -83,10 +104,32 @@ static void test_scan(void)
 
     /* syncd isn't connected: the send fails */
     pair_start_scan(&p);
-    pair_on_qr(&p, LINK, out, sizeof(out), &n);
+    read_and_confirm(&p, out, sizeof(out), &n);
     pair_sent(&p, false, 5000);
     CHECK_EQ(p.stage, PAIR_FAILED);
     CHECK(strstr(p.msg, "sync service isn't running") != NULL);
+
+    /* an Odysseus code that is damaged or names no http(s) host: not even asked */
+    static const char *const BAD[] = {
+        "odysseus-pair:v2?url=https%3A%2F%2Fhub.example.ts.net&code=Fict1onalPairCode_k230",
+        "odysseus-pair:v1?code=Fict1onalPairCode_k230",
+        "odysseus-pair:v1?url=https%3A%2F%2Fhub.example.ts.net%2&code=Fict1onalPairCode_k230",
+        "odysseus-pair:v1?url=https%3A%2F%2Fhub%00.example&code=Fict1onalPairCode_k230",
+        "odysseus-pair:v1?url=ftp%3A%2F%2Fhub.example.ts.net&code=Fict1onalPairCode_k230",
+        "odysseus-pair:v1?url=https%3A%2F%2Fu%40hub.example.ts.net&code=Fict1onalPairCode_k230",
+    };
+    for (size_t i = 0; i < sizeof(BAD) / sizeof(BAD[0]); i++) {
+        pair_start_scan(&p);
+        CHECK_EQ(pair_on_qr(&p, BAD[i], out, sizeof(out), &n), PAIR_REJECTED);
+        CHECK_EQ(p.stage, PAIR_SCANNING);
+        CHECK(p.hint);
+    }
+    /* the first url= is the one asked about (syncd takes the first too) */
+    pair_start_scan(&p);
+    CHECK_EQ(pair_on_qr(&p, "odysseus-pair:v1?url=http%3A%2F%2F%5Bfd7a%3A%3A1%5D%3A7000&url=https%3A%2F%2Fevil"
+                            "&code=Fict1onalPairCode_k230", out, sizeof(out), &n), PAIR_ASK);
+    CHECK(strcmp(p.host, "fd7a::1") == 0);
+    pair_back(&p);
 
     /* a QR text too long for a LOCAL frame: not sent */
     static char big[PAIR_LOCAL_MAX];
@@ -118,9 +161,16 @@ static void test_typed(void)
     CHECK_EQ(pair_submit(&p, "https://hub.example.ts.net", "bad code here", out, sizeof(out), &n), PAIR_REJECTED);
     CHECK_EQ(pair_submit(&p, "https://", "Fict1onalPairCode_k230", out, sizeof(out), &n), PAIR_REJECTED);
 
-    /* fine: trimmed, the trailing slash gone */
+    /* fine: trimmed, the trailing slash gone; first the question */
     CHECK_EQ(pair_submit(&p, " https://hub.example.ts.net:7000/ ", " Fict1onalPairCode_k230 ", out, sizeof(out), &n),
-             PAIR_SEND);
+             PAIR_ASK);
+    CHECK_EQ(n, 0);
+    CHECK(strcmp(p.host, "hub.example.ts.net") == 0);
+    CHECK(pair_back(&p)); /* Cancel goes back to the fields */
+    CHECK_EQ(p.stage, PAIR_TYPING);
+    CHECK_EQ(pair_submit(&p, " https://hub.example.ts.net:7000/ ", " Fict1onalPairCode_k230 ", out, sizeof(out), &n),
+             PAIR_ASK);
+    CHECK_EQ(pair_confirm(&p, out, sizeof(out), &n), PAIR_SEND);
     CHECK(strcmp(out, "{\"t\":\"pair\",\"url\":\"https://hub.example.ts.net:7000\",\"code\":\"Fict1onalPairCode_k230\"}") == 0);
     pair_sent(&p, true, 10);
     CHECK_EQ(p.stage, PAIR_WAITING);
@@ -134,6 +184,16 @@ static void test_typed(void)
     CHECK(pair_check_code("Fict1onal-Pair_Code") == NULL);
     CHECK(pair_check_code("Fict1onal.Pair") != NULL);
     CHECK(pair_check_code("") != NULL);
+
+    char host[16];
+    CHECK(pair_url_host("https://[fd7a:115c::1]:7000/x", host, sizeof(host)));
+    CHECK(strcmp(host, "fd7a:115c::1") == 0);
+    CHECK(pair_url_host("http://h\x01st/", host, sizeof(host)));
+    CHECK(strcmp(host, "h?st") == 0);
+    CHECK(pair_url_host("http://a-very-long-host-name.example", host, sizeof(host)));
+    CHECK_EQ(strlen(host), sizeof(host) - 1);
+    CHECK(!pair_url_host("http:///x", host, sizeof(host)));
+    CHECK(!pair_url_host("hub.example", host, sizeof(host)));
 
     /* back from typing */
     pair_reset(&p);

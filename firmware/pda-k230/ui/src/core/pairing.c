@@ -42,6 +42,12 @@ bool pair_back(pair_flow_t *p)
     if (p->stage == PAIR_WAITING) {
         return false;
     }
+    if (p->stage == PAIR_CONFIRM) {
+        const pair_stage_t from = p->from;
+        pair_reset(p);
+        p->stage = from == PAIR_TYPING ? PAIR_TYPING : PAIR_SCANNING;
+        return true;
+    }
     pair_reset(p);
     return true;
 }
@@ -71,9 +77,104 @@ static const char *trimmed(const char *s, char *buf, size_t cap)
     return buf;
 }
 
+bool pair_url_host(const char *url, char *host, size_t cap)
+{
+    const char *s = strstr(url, "://");
+    if (!s || cap == 0) {
+        return false;
+    }
+    s += 3;
+    size_t n;
+    if (*s == '[') {
+        s++;
+        const char *e = strchr(s, ']');
+        if (!e) {
+            return false;
+        }
+        n = (size_t)(e - s);
+    } else {
+        n = strcspn(s, "/:?#");
+    }
+    if (n == 0) {
+        return false;
+    }
+    if (n >= cap) {
+        n = cap - 1;
+    }
+    for (size_t i = 0; i < n; i++) {
+        const unsigned char c = (unsigned char)s[i];
+        host[i] = c < 0x20 || c == 0x7f ? '?' : (char)c;
+    }
+    host[n] = 0;
+    return true;
+}
+
+static int hexval(char c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+/* The `url` field of odysseus-pair:v1?…, percent-decoded (as syncd's unquote_plus). */
+static bool link_url(const char *link, char *url, size_t cap)
+{
+    static const char V1[] = PAIR_PREFIX "v1?";
+    if (strncmp(link, V1, sizeof(V1) - 1) != 0) {
+        return false;
+    }
+    for (const char *f = link + sizeof(V1) - 1; *f;) {
+        const size_t len = strcspn(f, "&");
+        if (len > 4 && strncmp(f, "url=", 4) == 0) {
+            size_t w = 0;
+            for (size_t i = 4; i < len; i++) {
+                char c = f[i];
+                if (c == '+') {
+                    c = ' ';
+                } else if (c == '%') {
+                    const int h = i + 2 < len ? hexval(f[i + 1]) : -1, l = h >= 0 ? hexval(f[i + 2]) : -1;
+                    if (h < 0 || l < 0) {
+                        return false;
+                    }
+                    c = (char)(h * 16 + l);
+                    i += 2;
+                }
+                if (c == 0 || w + 1 >= cap) {
+                    return false;
+                }
+                url[w++] = c;
+            }
+            url[w] = 0;
+            return true; /* the first url= wins, as in syncd */
+        }
+        f += len;
+        if (*f == '&') {
+            f++;
+        }
+    }
+    return false;
+}
+
+static pair_step_t ask(pair_flow_t *p, const char *url, const char *json, size_t n)
+{
+    const pair_stage_t from = p->stage;
+    if (!pair_url_host(url, p->host, sizeof(p->host))) {
+        set_msg(p, true, "The pairing link is damaged. " MAKE_NEW);
+        return PAIR_REJECTED;
+    }
+    memcpy(p->pending, json, n);
+    p->pending[n] = 0;
+    p->pending_len = n;
+    p->from = from;
+    p->stage = PAIR_CONFIRM;
+    set_msg(p, false, "");
+    return PAIR_ASK;
+}
+
 pair_step_t pair_on_qr(pair_flow_t *p, const char *text, char *out, size_t cap, size_t *out_len)
 {
     *out_len = 0;
+    if (cap) {
+        out[0] = 0;
+    }
     if (p->stage != PAIR_SCANNING) {
         return PAIR_IGNORED;
     }
@@ -83,12 +184,33 @@ pair_step_t pair_on_qr(pair_flow_t *p, const char *text, char *out, size_t cap, 
         set_msg(p, true, "That QR code isn't an Odysseus pairing code. " MAKE_NEW);
         return PAIR_REJECTED;
     }
-    const size_t n = local_pair(out, cap, t, "");
+    char url[320];
+    if (!link_url(t, url, sizeof(url))) {
+        set_msg(p, true, "The pairing link is damaged. " MAKE_NEW);
+        return PAIR_REJECTED;
+    }
+    const char *e = pair_check_url(url);
+    if (e) {
+        set_msg(p, true, e);
+        return PAIR_REJECTED;
+    }
+    char json[PAIR_LOCAL_MAX];
+    const size_t n = local_pair(json, sizeof(json), t, "");
     if (n == 0) {
         set_msg(p, true, "That pairing code is too long to send.");
         return PAIR_REJECTED;
     }
-    *out_len = n;
+    return ask(p, url, json, n);
+}
+
+pair_step_t pair_confirm(pair_flow_t *p, char *out, size_t cap, size_t *out_len)
+{
+    *out_len = 0;
+    if (p->stage != PAIR_CONFIRM || p->pending_len == 0 || p->pending_len >= cap) {
+        return PAIR_IGNORED;
+    }
+    memcpy(out, p->pending, p->pending_len + 1);
+    *out_len = p->pending_len;
     return PAIR_SEND;
 }
 
@@ -141,6 +263,9 @@ pair_step_t pair_submit(pair_flow_t *p, const char *url, const char *code, char 
                         size_t *out_len)
 {
     *out_len = 0;
+    if (cap) {
+        out[0] = 0;
+    }
     if (p->stage != PAIR_TYPING) {
         return PAIR_IGNORED;
     }
@@ -159,13 +284,13 @@ pair_step_t pair_submit(pair_flow_t *p, const char *url, const char *code, char 
     while (un > 0 && u[un - 1] == '/') {
         u[--un] = 0;
     }
-    const size_t n = local_pair(out, cap, u, c);
+    char json[PAIR_LOCAL_MAX];
+    const size_t n = local_pair(json, sizeof(json), u, c);
     if (n == 0) {
         set_msg(p, true, "The address is too long to send.");
         return PAIR_REJECTED;
     }
-    *out_len = n;
-    return PAIR_SEND;
+    return ask(p, u, json, n);
 }
 
 void pair_sent(pair_flow_t *p, bool ok, int64_t now_ms)

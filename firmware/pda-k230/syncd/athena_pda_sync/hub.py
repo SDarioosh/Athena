@@ -12,7 +12,9 @@ The PC relay's classes are reused as they are, with two changes made here by sub
 - every client (`HubApi`, `HubCalendar`, `HubTodos`, `HubInsight`) uses an opener with the
   configured HTTP proxy (Tailscale's userspace mode: `http://127.0.0.1:1055`), or no proxy
   at all (proxy variables in the environment are ignored, so a request never goes
-  somewhere the owner didn't set). Redirects are never followed, as in `Uploader`.
+  somewhere the owner didn't set). Redirects are never followed, as in `Uploader`. Every
+  request's URL is checked against `addresses` first (and, without a proxy, the addresses
+  its host resolves to): never this device, link-local or cloud metadata.
 
 The token goes only in the `Authorization` header (`Uploader._request`); it's never logged
 and never in a URL or a repr.
@@ -21,6 +23,8 @@ and never in a URL or a repr.
 from __future__ import annotations
 
 import logging
+import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
@@ -30,6 +34,8 @@ from athena_relay.pda_feed import HttpApi
 from athena_relay.pda_insight import OdysseusInsight
 from athena_relay.pda_todos import OdysseusTodos
 from athena_relay.uploader import UploadError
+
+from . import addresses
 
 log = logging.getLogger("athena_pda_sync.hub")
 
@@ -43,10 +49,33 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # urllib raises HTTPError with the 3xx status
 
 
+class AddressCheck(urllib.request.BaseHandler):
+    """Refuses a request to an address of `addresses` before anything is sent (URLError)."""
+
+    handler_order = 100  # before every other handler's preprocessing
+
+    def __init__(self, resolve: bool) -> None:
+        self.resolve = resolve
+
+    def _check(self, req: urllib.request.Request) -> urllib.request.Request:
+        parts = urllib.parse.urlsplit(req.full_url)
+        try:
+            addresses.check_url(req.full_url)
+            if self.resolve and parts.hostname:
+                addresses.check_resolved(parts.hostname, parts.port)
+        except (addresses.RefusedAddress, ValueError) as e:
+            raise urllib.error.URLError(str(e)) from None
+        return req
+
+    http_request = https_request = _check
+
+
 def make_opener(proxy: str | None) -> urllib.request.OpenerDirector:
-    """No redirects; the given proxy for http and https, or none (never the environment's)."""
+    """No redirects; the given proxy for http and https, or none (never the environment's);
+    no request to this device, link-local or cloud metadata (AddressCheck)."""
     proxies = {"http": proxy, "https": proxy} if proxy else {}
-    return urllib.request.build_opener(NoRedirect, urllib.request.ProxyHandler(proxies))
+    return urllib.request.build_opener(AddressCheck(resolve=not proxy), NoRedirect,
+                                       urllib.request.ProxyHandler(proxies))
 
 
 def _proves_route(status: int | None) -> bool:
@@ -141,7 +170,8 @@ class Hub:
     @classmethod
     def make(cls, url: str, token: str, *, calendar_href: str | None = None,
              proxy: str | None = None, timeout: float = 25.0) -> Hub:
-        """Raises ValueError for a bad URL or token."""
+        """Raises ValueError for a bad URL or token (also a refused address)."""
+        addresses.check_url(url)
         return cls(HubApi(url, token, proxy=proxy, timeout=timeout),
                    HubCalendar(url, token, calendar_href=calendar_href, proxy=proxy,
                                timeout=timeout),

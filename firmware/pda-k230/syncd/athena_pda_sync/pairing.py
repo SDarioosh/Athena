@@ -6,7 +6,10 @@ The code is single use and valid for 10 minutes; `redeem` trades it at
 "Phone relay <date>"; revoking it in the hub's Settings unpairs the device).
 
 - `parse_link` reads the raw QR text (what the vision process hands over), `check_url` and
-  `check_code` the pieces the UI sends when the code is typed.
+  `check_code` the pieces the UI sends when the code is typed. `check_url` also refuses
+  the addresses of `addresses` (this device, link-local, cloud metadata), and so does the
+  opener of every request (`hub.make_opener`), the stored URL's too. The UI asks the owner
+  "Pair with <host>?" before it sends anything.
 - `TokenStore` keeps `{"url", "token", "name"}` in `$ATHENA_PDA_DIR/token`, mode 0600,
   written atomically (a temporary file, fsync, rename). The token is never logged.
 
@@ -27,6 +30,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import addresses
 from .hub import make_opener
 
 log = logging.getLogger("athena_pda_sync.pairing")
@@ -73,6 +77,10 @@ def check_url(raw: str) -> str:
         raise PairError("The Odysseus address is too long.")
     if any(c.isspace() for c in text):
         raise PairError("The Odysseus address can't contain spaces.")
+    try:
+        addresses.check_url(text)  # not this device, link-local or cloud metadata
+    except addresses.RefusedAddress as e:
+        raise PairError(str(e)) from None
     return text
 
 

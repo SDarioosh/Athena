@@ -90,10 +90,18 @@ static void submit(void)
     size_t n;
     const pair_step_t s = pair_submit(&P->flow, lv_textarea_get_text(P->addr), lv_textarea_get_text(P->code), out,
                                       sizeof(out), &n);
-    if (s == PAIR_SEND) {
+    if (s == PAIR_ASK || s == PAIR_REJECTED) {
+        rebuild(); /* the question, or the hint under the fields */
+    }
+}
+
+static void confirm_clicked(lv_event_t *e)
+{
+    (void)e;
+    char out[PAIR_LOCAL_MAX];
+    size_t n;
+    if (P && pair_confirm(&P->flow, out, sizeof(out), &n) == PAIR_SEND) {
         send(out, n);
-    } else if (s == PAIR_REJECTED) {
-        rebuild(); /* the hint under the fields */
     }
 }
 
@@ -126,8 +134,9 @@ bool pairing_vision_event(const vision_event_t *ev)
     char out[PAIR_LOCAL_MAX];
     size_t n;
     const pair_step_t s = pair_on_qr(&P->flow, ev->text, out, sizeof(out), &n);
-    if (s == PAIR_SEND) {
-        send(out, n);
+    if (s == PAIR_ASK) {
+        camera_follow(); /* the code is read: the camera goes off while the owner decides */
+        rebuild();
     } else if (s == PAIR_REJECTED) {
         rebuild();
     }
@@ -149,6 +158,8 @@ static void on_app(void *ctx, app_ev_t ev, int32_t arg)
         }
     } else if (ev == APP_EV_VISION && P->flow.stage == PAIR_SCANNING && P->cam_text) {
         rebuild(); /* the camera indicator */
+    } else if ((ev == APP_EV_NET || ev == APP_EV_LINK) && P->flow.stage == PAIR_CONFIRM) {
+        rebuild(); /* "This replaces the current pairing" follows syncd's state */
     }
 }
 
@@ -417,6 +428,37 @@ static void build_typing(lv_obj_t *s)
     ui_keyboard_open(P->code);
 }
 
+/* "Pair with <host>?": nothing is sent before Pair is tapped */
+static void build_confirm(lv_obj_t *s)
+{
+    lv_obj_t *col = kit_col(s, SP_4);
+    lv_obj_set_width(col, LV_PCT(100));
+    lv_obj_set_style_pad_top(col, SP_12 * 2, 0);
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t *r = ring(col, 168, C_ACCENT, fx()->icon_xl, ICONX_LINK);
+    lv_obj_set_style_margin_bottom(r, SP_4, 0);
+    char q[PAIR_HOST_MAX + 32];
+    snprintf(q, sizeof(q), "Pair with %s?", P->flow.host);
+    lv_obj_t *t = centered(col, F.title, C_TEXT, q, 4);
+    lv_obj_set_style_text_line_space(t, 0, 0);
+    centered(col, F.body, C_TEXT_2,
+             "This PDA will sync your briefing, calendar, to-dos and conversations with that "
+             "server. Pair only if it is your Odysseus.",
+             5);
+    const app_net_t *n = app_net();
+    if (n->state != APP_NET_UNPAIRED && n->state != APP_NET_UNKNOWN) {
+        char line[200];
+        snprintf(line, sizeof(line), "This replaces the current pairing with %s.",
+                 n->hub[0] ? n->hub : "Odysseus");
+        hint_box(col, line, C_DANGER);
+    }
+    lv_obj_t *bc = kit_col(col, SP_3);
+    lv_obj_set_width(bc, LV_PCT(100));
+    lv_obj_set_style_margin_top(bc, SP_6, 0);
+    kit_button(bc, KIT_PRIMARY, fx()->icon_s, ICONX_LINK, "Pair", confirm_clicked, NULL);
+    kit_button(bc, KIT_QUIET, NULL, NULL, "Cancel", back_clicked, NULL);
+}
+
 static void spin(void *var, int32_t v)
 {
     lv_obj_set_style_transform_rotation(var, v, 0);
@@ -494,6 +536,7 @@ static void do_rebuild(void *unused)
     case PAIR_CHOOSE: build_choose(P->scroll); break;
     case PAIR_SCANNING: build_scanning(P->scroll); break;
     case PAIR_TYPING: build_typing(P->scroll); break;
+    case PAIR_CONFIRM: build_confirm(P->scroll); break;
     case PAIR_WAITING:
     case PAIR_OK:
     case PAIR_FAILED: build_result(P->scroll); break;
