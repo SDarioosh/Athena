@@ -246,8 +246,11 @@ Owner, on the build PC and the board. Each step with what you should see:
     checklist", with its fake UI). Then with the PDA: Hands-free on (Status): the camera
     indicator shows and the hand cursor follows the hand; swipes change tabs, `point` moves
     the focus ring, a thumbs-up held on a focused to-do fills the ring and ticks it, palm
-    goes to Today, fist to the ambient screen. With presence wake on, the screen wakes when
-    you sit down and dims after you leave. Hands-free off: the camera stops.
+    goes to Today, fist to the ambient screen (the green camera dot shows there too). With
+    presence wake on, the screen wakes when you sit down and dims after you leave. Once the
+    screen is fully off: with presence wake off the camera stops (`grep athena-vision
+    /var/log/messages` says "camera off"); with it on, the camera keeps running in the dark.
+    Hands-free off: the camera stops.
 15. **Battery (keyboard base only).** `athena-board battery` prints a SoC; if it prints
     `gauge=none` on a board with the base, the kernel bus guess is wrong (BOARD.md).
 16. **Logs stay small and content-free.** After a day, `ls -l /var/log/` stays under ~400 KB;

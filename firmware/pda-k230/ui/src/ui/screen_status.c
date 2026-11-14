@@ -631,7 +631,8 @@ static void handsfree_card(void)
                              0, 0);
     kit_rule(card);
     kit_switch_row(card, "Wake when someone is near",
-                   "The camera notices a person: the screen wakes, and dims to the clock when they leave.",
+                   "The screen wakes for a person and dims when they leave. The camera stays on, "
+                   "also with the screen off.",
                    s->presence_wake, set_presence, NULL);
     kit_rule(card);
     char cam[128];

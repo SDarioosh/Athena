@@ -4,7 +4,11 @@
  * marks; the picture moves a little every minute against burn-in. The backlight goes down
  * while it shows and to 0 once it turns fully off. Timing: core/ambient.c, the timeouts from
  * ui.json (dim_after_s, off_after_s). Woken by a touch, `palm` and presence (ui.c, the
- * hands-free and presence paths call ui_screen_on()). */
+ * hands-free and presence paths call ui_screen_on()).
+ *
+ * The camera: its green dot shows at the top right here too whenever vision reports the
+ * camera on (the header is covered). Fully off, the camera stops unless presence wake is
+ * on, which needs it in the dark (app_set_screen_off, app_vision_mode). */
 #include <stdio.h>
 #include <string.h>
 
@@ -21,7 +25,7 @@
 
 static struct {
     amb_t st;
-    lv_obj_t *layer, *group, *clock, *date, *next_cap, *next_title, *next_when, *foot;
+    lv_obj_t *layer, *group, *clock, *date, *next_cap, *next_title, *next_when, *foot, *cam;
     int64_t last_gesture_ms, minute;
 } A;
 
@@ -100,7 +104,26 @@ static void create(void)
     /* the marks at the foot */
     A.foot = centered_label(A.layer, F.small, C_TEXT_3);
     lv_obj_set_width(A.foot, UI_W - 2 * UI_MARGIN);
+
+    /* the camera dot, where the header has it (plan "Decisions": shown whenever the camera
+     * is on); not moved by the burn-in walk, so it is always in the same place */
+    A.cam = lv_obj_create(A.layer);
+    plain(A.cam);
+    lv_obj_set_size(A.cam, 14, 14);
+    lv_obj_set_style_radius(A.cam, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(A.cam, C(C_CAMERA), 0);
+    lv_obj_set_style_bg_opa(A.cam, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_color(A.cam, C(C_CAMERA), 0);
+    lv_obj_set_style_shadow_width(A.cam, 16, 0);
+    lv_obj_set_style_shadow_opa(A.cam, LV_OPA_60, 0);
+    lv_obj_align(A.cam, LV_ALIGN_TOP_RIGHT, -(UI_MARGIN + SP_2), (UI_STATUS_H - 14) / 2);
+    lv_obj_add_flag(A.cam, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(A.layer, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void camera_dot(void)
+{
+    ui_show(A.cam, app_vision()->connected && app_vision()->camera == APP_CAMERA_ON);
 }
 
 static void refresh(void)
@@ -179,6 +202,8 @@ static void refresh(void)
 
 static void apply(void)
 {
+    app_set_screen_off(A.st.stage == AMB_OFF);
+    camera_dot();
     switch (A.st.stage) {
     case AMB_AWAKE:
         lv_obj_add_flag(A.layer, LV_OBJ_FLAG_HIDDEN);
@@ -221,6 +246,7 @@ static void tick(lv_timer_t *t)
         apply();
         return;
     }
+    camera_dot();
     if (A.st.stage == AMB_AMBIENT && app_now() / 60 != A.minute) {
         A.minute = app_now() / 60;
         refresh();

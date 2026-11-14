@@ -130,6 +130,22 @@ static void test_feed_and_taps(const char *dir)
     app_set_qr_scan(true);
     app_vision_mode(&g, &pr, &q);
     CHECK(q);
+    /* the screen fully off: without presence wake the camera stops ... */
+    app_set_screen_off(true);
+    app_vision_mode(&g, &pr, &q);
+    CHECK(!g && !pr && !q);
+    /* ... with presence wake it keeps running in the dark (presence, palm to wake) */
+    set = *app_settings();
+    set.presence_wake = true;
+    CHECK_EQ(app_set_settings(&set), 0);
+    app_vision_mode(&g, &pr, &q);
+    CHECK(g && pr && !q);
+    app_set_screen_off(false);
+    app_vision_mode(&g, &pr, &q);
+    CHECK(g && pr && q);
+    set.presence_wake = false;
+    CHECK_EQ(app_set_settings(&set), 0);
+    app_set_qr_scan(false);
 
     /* user activity: status bit4 for a minute */
     const int64_t t0 = app_mono_ms() + 10 * APP_ACTIVE_MS;

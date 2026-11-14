@@ -464,6 +464,16 @@ static void screens_s2(void)
     app_set_clock_override(DEMO_NOW + 7 * 60); /* seven minutes later: moved a little */
     step(1200);
     shot("83_ambient_later");
+    {
+        /* the camera on (presence wake): its dot shows on the ambient screen too */
+        const app_vision_t was = *app_vision();
+        app_vision_t cam = {.connected = true, .camera = APP_CAMERA_ON, .fps = 15};
+        app_set_vision(&cam);
+        step(600);
+        shot("83_ambient_camera_on");
+        app_set_vision(&was);
+        step(600);
+    }
     headless_tap(284, 600); /* a touch wakes it */
     step(300);
     CHECK(!ui_screen_is_off());
@@ -472,6 +482,12 @@ static void screens_s2(void)
     CHECK(ui_screen_is_off());
     step(5500);
     shot("84_ambient_off");
+    {
+        /* fully off without presence wake: the camera is told to stop */
+        bool g, p, q;
+        app_vision_mode(&g, &p, &q);
+        CHECK(!g && !p && !q);
+    }
     headless_tap(284, 600);
     step(300);
     CHECK(!ui_screen_is_off());

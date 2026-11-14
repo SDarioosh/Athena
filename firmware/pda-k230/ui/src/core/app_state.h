@@ -232,8 +232,12 @@ const app_vision_t *app_vision(void);
 void app_set_vision(const app_vision_t *v);
 
 /* What vision should run (the `mode` message): gestures while Hands-free is on, presence
- * while presence wake is on, qr while app_set_qr_scan(true) (the pairing screen). */
+ * while presence wake is on, qr while app_set_qr_scan(true) (the pairing screen). While the
+ * screen is fully off (app_set_screen_off(true), the ambient screen's last stage) only
+ * presence wake keeps the camera on: then presence, and gestures if Hands-free is on too;
+ * without presence wake all three are false and the camera stops. */
 void app_set_qr_scan(bool on);
+void app_set_screen_off(bool off);
 void app_vision_mode(bool *gestures, bool *presence, bool *qr);
 
 /* ---- settings (ui.json) ---- */

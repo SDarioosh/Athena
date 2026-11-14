@@ -37,6 +37,7 @@ static struct {
     char pair_msg[128];
     app_vision_t vision;
     bool qr_scan;
+    bool screen_off; /* the ambient screen's fully-off stage (backlight 0) */
     app_settings_t settings;
     struct {
         app_listener_t fn;
@@ -258,6 +259,7 @@ void app_deinit(void)
     memset(&S.tailnet, 0, sizeof(S.tailnet));
     memset(&S.vision, 0, sizeof(S.vision));
     S.qr_scan = false;
+    S.screen_off = false;
     S.last_touch_ms = app_mono_ms() - APP_ACTIVE_MS;
 }
 
@@ -822,11 +824,25 @@ void app_set_qr_scan(bool on)
     }
 }
 
+void app_set_screen_off(bool off)
+{
+    if (off != S.screen_off) {
+        S.screen_off = off;
+        emit(APP_EV_SETTINGS, 0); /* the vision mode follows */
+    }
+}
+
 void app_vision_mode(bool *gestures, bool *presence, bool *qr)
 {
     *gestures = S.settings.hands_free;
     *presence = S.settings.presence_wake;
     *qr = S.qr_scan;
+    if (S.screen_off) {
+        /* the panel is dark: the camera runs only for presence wake (and, with Hands-free,
+         * palm to wake); without presence wake it stops */
+        *gestures = *gestures && *presence;
+        *qr = false;
+    }
 }
 
 /* ---- settings ---- */

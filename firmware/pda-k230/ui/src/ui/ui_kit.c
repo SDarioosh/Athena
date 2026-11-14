@@ -195,7 +195,7 @@ lv_obj_t *kit_switch_row(lv_obj_t *card, const char *title, const char *sub, boo
     lv_obj_set_width(col, tw);
     ui_text(col, F.body, C_TEXT, title, tw, 2);
     if (sub && sub[0]) {
-        ui_text(col, F.small, C_TEXT_2, sub, tw, 3);
+        ui_text(col, F.small, C_TEXT_2, sub, tw, 4);
     }
     lv_obj_t *sw = lv_switch_create(r);
     lv_obj_remove_flag(sw, LV_OBJ_FLAG_CLICKABLE); /* the row toggles it */

@@ -36,8 +36,11 @@ M5) is the owner's. What is verified and the owner's checklist are in
   camera or typed on its keyboard. No server or hub change is needed for v1.
 - **Camera frames never leave the device** and are never stored. Vision runs on the
   K230's accelerator; only events ("swipe left", "someone is here") leave the vision
-  process. The screen shows an indicator whenever the camera is on. Vision is off until
-  the owner turns it on.
+  process. The screen shows an indicator whenever the camera is on (the header's green dot,
+  also on the ambient screen). Vision is off until the owner turns it on. When the screen
+  turns fully off the camera stops, unless presence wake is on: that needs the camera, so
+  with presence wake on **the camera keeps running while the screen is dark** (nothing on
+  the panel shows it then); the Hands-free settings say so.
 - **The MCP contract doesn't change.**
 
 ## Architecture
@@ -142,7 +145,9 @@ What the UI does with gestures (only while Hands-free is on in Settings):
 | `fist` | screen off (ambient) |
 
 Presence: the screen wakes when someone appears and dims to the ambient screen after they
-leave (a setting, off by default).
+leave (a setting, off by default). With the screen fully off the UI sends `mode` with
+`presence` (and `gestures` with Hands-free, for `palm`) only while presence wake is on, and
+all false otherwise, so the camera stops.
 
 ## Storage
 
