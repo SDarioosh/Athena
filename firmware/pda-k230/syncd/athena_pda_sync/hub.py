@@ -62,6 +62,8 @@ class HubApi(HttpApi):
         super().__init__(server, token, timeout=timeout)
         self._opener = make_opener(proxy)
         self.old_routes: bool | None = None  # None: not known yet
+        # the last health() failure, for the wording of "Hub not reachable" / "Hub answered
+        # HTTP 502" on Status (PdaSync reports a refused token itself: AUTH_FAILED)
         self.last_health_error: UploadError | None = None
 
     def __repr__(self) -> str:

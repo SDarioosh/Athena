@@ -28,7 +28,6 @@ from typing import Any
 from athena_relay import pda_protocol as q
 from athena_relay import pda_sync as s
 from athena_relay.drain import LinkLost
-from athena_relay.uploader import AUTH
 
 from . import pairing as pr
 from .config import ConfigFile, Paths
@@ -273,9 +272,7 @@ class Daemon:
     async def _after(self, t: SocketTransport, hub: Hub, report: s.Report) -> None:
         now = self.monotonic()
         outcome = report.outcome
-        health = hub.api.last_health_error
-        if outcome == s.SERVER_RETRY and health is not None and health.kind == AUTH:
-            outcome = s.AUTH_FAILED  # PdaSync reads any health failure as "not reachable"
+        health = hub.api.last_health_error  # for the wording of a SERVER_RETRY only
         if outcome == s.DONE:
             self.last_ok = int(self.clock())
             self.policy.succeeded(now, len(report.waiting))

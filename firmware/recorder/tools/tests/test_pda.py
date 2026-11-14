@@ -366,6 +366,19 @@ def test_server_down_leaves_everything(api_server) -> None:
     assert t5.opcodes() == [q.OP_TIME, q.OP_BYE] and t5.outbox and t5.feed is None
 
 
+def test_health_refusing_the_token_is_auth_failed(api_server) -> None:
+    # A health route behind the token (the hub's /api/codex/athena/health) answering 401 or
+    # 403 means the token is refused, not that the server is down; nothing else changes.
+    for status in (401, 403):
+        api_server.health_status = status
+        t5 = FakeT5()
+        t5.queue_action({"t": "item_status", "id": 1, "status": "done"})
+        rep = run(sync_for(api_server), t5)
+        assert rep.outcome == s.AUTH_FAILED, status
+        assert "refused the token" in rep.message
+        assert t5.opcodes() == [q.OP_TIME, q.OP_BYE] and t5.outbox and t5.feed is None
+
+
 def test_temporary_failure_is_not_acked_and_retries(api_server) -> None:
     t5 = FakeT5()
     first = t5.queue_action({"t": "item_status", "id": 2, "status": "done"})
