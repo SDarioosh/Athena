@@ -138,8 +138,9 @@ class SocketTransport:
             raise LinkLost(f"socket error: {e}") from None
 
     async def send_local(self, message: dict[str, Any]) -> None:
-        """Send one LOCAL message. Raises LinkLost, or FrameError if it is over 512 B."""
-        await self._send(fr.encode_local(message))
+        """Send one LOCAL message, its strings cut to fit (frames.fit_local). Raises
+        LinkLost, or FrameError when even that can't fit (no such message is sent)."""
+        await self._send(fr.encode_local(fr.fit_local(message)))
 
     async def _request(self, kind: int, waiters: list[asyncio.Future[bytes]],
                        timeout: float | None = None) -> bytes:

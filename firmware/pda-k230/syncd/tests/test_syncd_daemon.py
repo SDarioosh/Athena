@@ -436,3 +436,32 @@ def test_module_down_behind_the_hub() -> None:
                                 msg="Hub answered HTTP 502; retrying in 1 min.")
 
     run(t)
+
+
+# ----------------------------------------------------------------- long LOCAL messages
+
+
+def test_a_long_non_ascii_hub_host_fits_the_local_frames() -> None:
+    """250 CJK characters are 750 B of UTF-8: `net` and `pair_result` would be over the
+    512 B LOCAL limit, which ended the pairing task (and the loop) with a FrameError."""
+    host = "汉" * 250 + ".example"
+
+    async def t(rig: Rig) -> None:
+        rig.pair(f"http://{host}:7000")
+        await rig.start()
+        net = await rig.ui.wait_local("net")
+        assert net["hub"].startswith("汉") and net["hub"].endswith("…")
+        assert len(net["hub"].encode()) <= 127
+        # what the UI can send (its pair frame is at most 512 B too): 140 of them, 420 B;
+        # syncd's answer names the host
+        short = "\u6c49" * 140 + ".example"
+        await rig.ui.send_local({"t": "pair", "url": f"http://{short}:7000", "code": CODE})
+        res = await rig.ui.wait_local("pair_result", timeout=30)
+        assert res["ok"] is False and len(res["msg"].encode()) <= 127
+        assert not rig.task.done()  # the daemon is still running
+        await rig.ui.send_local({"t": "pair", "url": rig.hub.url, "code": CODE})
+        res = await rig.ui.wait_local("pair_result", 2, timeout=30)
+        assert res["ok"] is True
+        await rig.ui.wait_local("net", state="ok")
+
+    run(t)

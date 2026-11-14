@@ -192,6 +192,10 @@ static void test_typed(void)
     CHECK(strcmp(host, "h?st") == 0);
     CHECK(pair_url_host("http://a-very-long-host-name.example", host, sizeof(host)));
     CHECK_EQ(strlen(host), sizeof(host) - 1);
+    /* "汉" is 3 bytes: after "a", 15 bytes of room hold 4 of them, never a part of one */
+    CHECK(pair_url_host("http://a\xe6\xb1\x89\xe6\xb1\x89\xe6\xb1\x89\xe6\xb1\x89\xe6\xb1\x89\xe6\xb1\x89.x/", host,
+                        sizeof(host)));
+    CHECK_EQ(strlen(host), 13);
     CHECK(!pair_url_host("http:///x", host, sizeof(host)));
     CHECK(!pair_url_host("hub.example", host, sizeof(host)));
 

@@ -100,6 +100,9 @@ bool pair_url_host(const char *url, char *host, size_t cap)
     }
     if (n >= cap) {
         n = cap - 1;
+        while (n > 0 && ((unsigned char)s[n] & 0xC0) == 0x80) {
+            n--; /* cut before a character, not inside one */
+        }
     }
     for (size_t i = 0; i < n; i++) {
         const unsigned char c = (unsigned char)s[i];

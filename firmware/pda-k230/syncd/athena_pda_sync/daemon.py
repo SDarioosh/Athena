@@ -29,6 +29,7 @@ from athena_relay import pda_protocol as q
 from athena_relay import pda_sync as s
 from athena_relay.drain import LinkLost
 
+from . import frames as fr
 from . import pairing as pr
 from .config import ConfigFile, Paths
 from .hub import Hub
@@ -139,12 +140,16 @@ class Daemon:
         t = self.t
         if t is None:
             return
-        with contextlib.suppress(LinkLost):
+        try:
             await t.send_local(message)
+        except LinkLost:
+            pass
+        except fr.FrameError as e:  # never ends the caller (a pairing, the loop)
+            log.error("LOCAL %s not sent: %s", message.get("t"), e)
 
     async def set_net(self, state: str | None = None, msg: str | None = None) -> None:
         net = Net(state or self.net.state, self.paired.host if self.paired else None,
-                  self.last_ok, self.net.msg if msg is None else msg[:120])
+                  self.last_ok, self.net.msg if msg is None else fr.cut_utf8(msg, 120))
         self.net = net
         if net != self._sent_net and self.t is not None:
             self._sent_net = net
@@ -207,7 +212,7 @@ class Daemon:
             await asyncio.to_thread(self.tokens.save, paired)
         except pr.PairError as e:
             log.warning("pairing failed: %s", e)
-            await self._send({"t": "pair_result", "ok": False, "msg": str(e)[:200]})
+            await self._send({"t": "pair_result", "ok": False, "msg": str(e)})
             return
         except OSError as e:
             log.error("can't save the token: %s", e.strerror or e)

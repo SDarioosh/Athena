@@ -113,7 +113,10 @@ Frame: `type:u8` `len:u16 LE` `payload` (`len` ≤ 512).
 - `TIME` still sets the display offset; the system clock is NTP's, so the UI doesn't set
   it (it only refuses an out-of-range time as §3.6 says).
 
-LOCAL messages (`"t"` names the type; unknown types and keys are ignored):
+LOCAL messages (`"t"` names the type; unknown types and keys are ignored). A LOCAL frame
+is at most 512 B: syncd cuts `hub`, `msg` and `name` to the UI's 127 bytes of UTF-8 at a
+character (with "…"), sends a `url` that doesn't fit in 255 bytes as null, and cuts further
+if the JSON is still too long (`frames.fit_local`):
 
 | `t` | Direction | Fields | Meaning |
 |---|---|---|---|

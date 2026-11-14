@@ -9,6 +9,7 @@ import subprocess
 import _syncd_path  # noqa: F401 (the import path)
 import pytest
 from athena_pda_sync import config as c
+from athena_pda_sync import frames as fr
 from athena_pda_sync import hub as h
 from athena_pda_sync import tailnet as tn
 from athena_pda_sync.schedule import SyncPolicy
@@ -234,3 +235,32 @@ def test_paths() -> None:
     p = c.Paths.from_env({"ATHENA_PDA_DIR": "/d", "ATHENA_PDA_RUN": "/r"})
     assert (str(p.state), str(p.config), str(p.socket)) == (
         "/d/pda.json", "/d/config.json", "/r/glance.sock")
+
+
+# ----------------------------------------------------------------- LOCAL sizes
+
+
+def test_fit_local_cuts_by_utf8_bytes() -> None:
+    cjk = "\u6c49" * 250
+    net = fr.fit_local({"t": "net", "state": "ok", "hub": cjk, "last_ok": 1, "msg": cjk})
+    for k in ("hub", "msg"):
+        raw = net[k].encode()
+        assert len(raw) <= fr.FIELD_BYTES[k] and net[k].endswith("\u2026")
+        raw.decode("utf-8")  # cut at a character
+    assert len(fr.encode_local(net)) <= fr.HEADER + fr.MAX_PAYLOAD
+    # a short message is untouched
+    small = {"t": "net", "state": "ok", "hub": "hub.example.ts.net", "last_ok": 1, "msg": ""}
+    assert fr.fit_local(small) == small
+    # a login link is never cut: too long, it goes as null
+    long_url = "https://login.tailscale.com/a/" + "x" * 300
+    tail = fr.fit_local({"t": "tailnet", "state": "needs_login", "url": long_url, "name": cjk})
+    assert tail["url"] is None and len(tail["name"].encode()) <= 127
+    ok_url = "https://login.tailscale.com/a/f1"
+    assert fr.fit_local({"t": "tailnet", "state": "needs_login", "url": ok_url,
+                         "name": None})["url"] == ok_url
+    # JSON escapes (6 B per control character) and unknown fields still fit
+    odd = fr.fit_local({"t": "pair_result", "ok": False, "msg": "\x01" * 120,
+                        "extra": "\x02" * 400})
+    assert len(fr.encode_local(odd)) <= fr.HEADER + fr.MAX_PAYLOAD
+    with pytest.raises(fr.FrameError):
+        fr.encode_local({"t": "net", "hub": cjk})  # unfitted, as before
