@@ -8,6 +8,7 @@ Listens on the socket, prints every line athena-vision sends (with the time), an
     python3 fake_ui.py [--socket /run/athena-pda/vision.sock] [--count-hands]
 """
 import argparse
+import contextlib
 import json
 import os
 import select
@@ -31,10 +32,8 @@ def main():
     ap.add_argument("--count-hands", action="store_true", help="print hand lines per second")
     a = ap.parse_args()
     os.makedirs(os.path.dirname(a.socket) or ".", exist_ok=True)
-    try:
+    with contextlib.suppress(FileNotFoundError):
         os.unlink(a.socket)
-    except FileNotFoundError:
-        pass
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(a.socket)
     os.chmod(a.socket, 0o600)
@@ -82,10 +81,8 @@ def main():
         if conn:
             conn.close()
         srv.close()
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(a.socket)
-        except FileNotFoundError:
-            pass
 
 
 if __name__ == "__main__":
