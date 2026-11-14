@@ -161,6 +161,9 @@ int app_queue(const char *json, size_t len);
 /* Undo a queued action syncd hasn't listed yet: 0, -1 already listed (or gone). */
 int app_cancel(uint32_t action_id);
 int app_outbox_count(void);
+/* Directory fsyncs done so far (after each rename or unlink in ui.json's, the outbox's or
+ * the details' directory); for the tests. */
+unsigned app_dir_syncs(void);
 const outbox_t *app_outbox(void);
 
 /* A cached detail by ref; free with detail_free() + free(). NULL if not cached. */

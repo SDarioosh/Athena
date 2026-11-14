@@ -1,6 +1,7 @@
 #include "app_state.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -129,6 +130,40 @@ static void load_settings(void)
     }
 }
 
+static unsigned dir_syncs;
+
+/* After a rename (or an unlink) in dir: fsync the directory itself, so the new name is on
+ * the card after a power cut, not only the file's data. The T5's outbox.c and
+ * feed_store.c (reused as they are) don't, so the K230 does it after each of their calls
+ * here. 0 or -1 (logged; the file is in place either way). */
+static int sync_dir(const char *dir)
+{
+    const int fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) {
+        LOG("fsync %s: %s\n", dir, strerror(errno));
+        return -1;
+    }
+    const int rc = fsync(fd);
+    if (rc != 0) {
+        LOG("fsync %s: %s\n", dir, strerror(errno));
+    }
+    close(fd);
+    dir_syncs += rc == 0;
+    return rc == 0 ? 0 : -1;
+}
+
+unsigned app_dir_syncs(void)
+{
+    return dir_syncs;
+}
+
+static void sync_details(void)
+{
+    char d[APP_DIR_MAX + 4];
+    snprintf(d, sizeof(d), "%s/d", S.dir);
+    sync_dir(d);
+}
+
 static int save_settings(void)
 {
     char path[APP_DIR_MAX + 16], tmp[APP_DIR_MAX + 16];
@@ -150,6 +185,7 @@ static int save_settings(void)
         remove(tmp);
         return -3;
     }
+    sync_dir(S.dir);
     return 0;
 }
 
@@ -378,6 +414,7 @@ int app_queue(const char *json, size_t len)
         LOG("queue action failed: %d\n", rc);
         return rc;
     }
+    sync_dir(S.outbox->dir);
     rebuild_pending();
     char type[24];
     LOG("queued action %08x: %s\n", (unsigned)id, action_type(json, len, type, sizeof(type)));
@@ -393,6 +430,7 @@ int app_cancel(uint32_t action_id)
     }
     bool was;
     const int rc = outbox_remove(S.outbox, action_id, &was) == 0 ? 0 : -3;
+    sync_dir(S.outbox->dir);
     rebuild_pending();
     if (rc == 0) {
         LOG("action %08x cancelled\n", (unsigned)action_id);
@@ -450,6 +488,7 @@ int app_commit_blob(uint8_t kind, uint32_t blob_id, const uint8_t *data, size_t 
             free(nf);
             return PDA_E_IO;
         }
+        sync_dir(S.dir);
         if (S.feed) {
             feed_free(S.feed);
             free(S.feed);
@@ -469,6 +508,7 @@ int app_commit_blob(uint8_t kind, uint32_t blob_id, const uint8_t *data, size_t 
     if (feed_store_put_detail(S.dir, ref, data, len) != 0) {
         return PDA_E_IO;
     }
+    sync_details();
     LOG("detail %s stored (%u bytes)\n", ref, (unsigned)len);
     emit(APP_EV_DETAIL, (int32_t)crc32_update(0, ref, strlen(ref)));
     return 0;
@@ -478,6 +518,9 @@ int app_wipe(void)
 {
     int rc = feed_store_wipe(S.dir);
     rc |= outbox_clear(S.outbox);
+    sync_dir(S.outbox->dir);
+    sync_details();
+    sync_dir(S.dir);
     if (S.feed) {
         feed_free(S.feed);
         free(S.feed);
@@ -566,6 +609,7 @@ static int st_ack(void *ctx, uint32_t action_id, uint8_t result, bool *was_queue
         }
     }
     const int rc = outbox_remove(S.outbox, action_id, was_queued);
+    sync_dir(S.outbox->dir);
     rebuild_pending();
     if (rc != 0) {
         return PDA_E_IO;

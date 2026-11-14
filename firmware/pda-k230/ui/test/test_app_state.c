@@ -22,7 +22,9 @@ static void put_feed(const char *name)
 {
     size_t len;
     char *json = read_fixture(name, &len);
+    const unsigned syncs = app_dir_syncs();
     CHECK_EQ(app_commit_blob(PDA_KIND_FEED, 7, (const uint8_t *)json, len), 0);
+    CHECK(app_dir_syncs() > syncs); /* feed.json's rename */
     free(json);
 }
 
@@ -57,8 +59,10 @@ static void test_feed_and_taps(const char *dir)
     app_todo_view(work, 0, &v);
     CHECK(!v.done && !v.pending && !v.failed);
 
-    /* tap: queued, shown done at once */
+    /* tap: queued, shown done at once; the outbox directory is fsynced after the rename */
+    unsigned syncs = app_dir_syncs();
     CHECK_EQ(app_todo_tap(work, 0), APP_TODO_QUEUED);
+    CHECK(app_dir_syncs() > syncs);
     CHECK_EQ(app_outbox_count(), 1);
     app_todo_view(work, 0, &v);
     CHECK(v.done && v.pending);
@@ -92,7 +96,9 @@ static void test_feed_and_taps(const char *dir)
     /* the server refuses the first for good: "couldn't sync" with the item's text */
     bool was = false;
     const int failed_before = ev_count[APP_EV_FAILED];
+    syncs = app_dir_syncs();
     CHECK_EQ(s->ob_ack(NULL, e[0].action_id, 1, &was), 0);
+    CHECK(app_dir_syncs() > syncs); /* the ack's unlink too */
     CHECK(was);
     CHECK_EQ(ev_count[APP_EV_FAILED], failed_before + 1);
     const app_failed_t *fl;
@@ -121,7 +127,9 @@ static void test_feed_and_taps(const char *dir)
     CHECK_EQ(set.brightness, 80);
     set.hands_free = true;
     set.brightness = 250; /* clamped */
+    syncs = app_dir_syncs();
     CHECK_EQ(app_set_settings(&set), 0);
+    CHECK(app_dir_syncs() > syncs); /* ui.json's rename */
     CHECK(app_settings()->hands_free);
     CHECK_EQ(app_settings()->brightness, 100);
     bool g, pr, q;
