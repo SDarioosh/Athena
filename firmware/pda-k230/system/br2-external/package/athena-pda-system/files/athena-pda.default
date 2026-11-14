@@ -1,0 +1,42 @@
+# shellcheck shell=sh disable=SC2034
+# /etc/default/athena-pda: settings of the Athena PDA's boot scripts
+# (/etc/init.d/S42athena-wifi, S45tailscaled, S92athena-pda,
+# S93athena-pda-syncd, S94athena-vision). Shell syntax: KEY=value, no spaces.
+# After a change: reboot, or restart the script named next to the setting.
+# It lives on the root file system: reflashing the SD card puts it back to this.
+
+# What starts at boot (S92athena-pda): athena-pda (the PDA) or launcher (LilyGO's
+# k230_phone_ui; syncd and vision then stay off). `athena-boot-ui launcher` sets it.
+ATHENA_PDA_BOOT_UI=athena-pda
+
+# The PDA's files (feed, details, outbox, token, settings) and its sockets
+# (glance.sock, vision.sock; the directory is mode 0700).
+ATHENA_PDA_DIR=/var/lib/athena-pda
+ATHENA_PDA_RUN=/run/athena-pda
+
+# The user the UI and syncd run as. Both must be the same user: the sockets are
+# 0600 in a 0700 directory. Set root here if the UI can't open the display or the
+# touch screen as athena-pda (see firmware/pda-k230/system/BOARD.md).
+ATHENA_PDA_USER=athena-pda
+
+# The UI finds the display and the touch screen itself; set these only to force
+# a node (passed to athena-pda as they are).
+#ATHENA_PDA_DRM=/dev/dri/card0
+#ATHENA_PDA_TOUCH=/dev/input/event0
+
+# Camera AI (S94athena-vision): on or off. Runs as root by default: the camera
+# goes through Canaan's ISP (vvcam, /dev/video*) and the KPU through /dev/k230-gnne,
+# /dev/k230-ai2d and /dev/mmz, root:root on this image (BOARD.md). The camera itself
+# stays off until the UI asks for it (Settings > Hands-free). Its own settings
+# (rotation, mirror, models): /etc/athena-pda/vision.conf.
+ATHENA_VISION=on
+ATHENA_VISION_USER=root
+
+# Tailscale (S45tailscaled): tun (a tailscale0 interface, the default) or
+# userspace (no TUN device: tailscaled is an HTTP/SOCKS5 proxy on
+# ATHENA_TS_PROXY, and syncd must use it: "proxy": "http://127.0.0.1:1055" in
+# $ATHENA_PDA_DIR/config.json). `athena-tailnet mode userspace|tun` changes both.
+ATHENA_TS_MODE=tun
+ATHENA_TS_PROXY=127.0.0.1:1055
+ATHENA_TS_HOSTNAME=athena-pda
+ATHENA_TS_STATE_DIR=/var/lib/tailscale

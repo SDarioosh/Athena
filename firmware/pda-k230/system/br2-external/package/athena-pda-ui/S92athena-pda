@@ -1,0 +1,108 @@
+#!/bin/sh
+# S92athena-pda: the PDA's screen (athena-pda, firmware/pda-k230/ui), or LilyGO's
+# launcher when /etc/default/athena-pda says ATHENA_PDA_BOOT_UI=launcher.
+#
+# The UI is the server end of glance.sock and vision.sock, so it starts before
+# syncd (S93) and vision (S94). It owns the display (DRM) and the touch screen.
+#
+# Start the launcher from the PDA: the UI creates $ATHENA_PDA_RUN/start-launcher
+# and exits 0; the supervisor then runs "S92athena-pda switch-launcher" (syncd
+# and vision stop, the launcher starts). Back to the PDA: reboot.
+
+# shellcheck source-path=SCRIPTDIR source=../athena-pda-system/files/athena-pda-common.sh
+. /usr/libexec/athena-pda/athena-pda-common.sh
+
+DAEMON="athena-pda"
+PROG="/usr/bin/$DAEMON"
+
+# A non-root UI needs the display, the touch screen and the backlight. mdev and
+# devtmpfs leave them root:root (the SDK's mdev.conf names only video nodes).
+grant_devices() {
+	[ "$ATHENA_PDA_USER" != "root" ] || return 0
+	for node in /dev/dri/card* /dev/dri/renderD*; do
+		[ -e "$node" ] || continue
+		chgrp video "$node" && chmod g+rw "$node"
+	done
+	for node in /dev/input/event*; do
+		[ -e "$node" ] || continue
+		chgrp input "$node" && chmod g+rw "$node"
+	done
+	for attr in /sys/class/backlight/*/brightness /sys/class/backlight/*/bl_power; do
+		[ -e "$attr" ] || continue
+		chgrp video "$attr" && chmod g+w "$attr"
+	done
+}
+
+wait_for_drm() {
+	_i=0
+	while [ ! -e /dev/dri/card0 ] && [ "$_i" -lt 10 ]; do
+		sleep 1
+		_i=$((_i + 1))
+	done
+	[ -e /dev/dri/card0 ]
+}
+
+start_launcher() {
+	if [ -x "$ATHENA_PDA_LAUNCHER_INIT" ]; then
+		"$ATHENA_PDA_LAUNCHER_INIT" start
+	else
+		echo "athena-pda: LilyGO's launcher is not installed ($ATHENA_PDA_LAUNCHER_INIT)"
+		return 1
+	fi
+}
+
+start() {
+	if ! athena_pda_boots; then
+		start_launcher
+		return $?
+	fi
+	if [ ! -x "$PROG" ]; then
+		echo "athena-pda: $PROG missing"
+		return 0
+	fi
+	athena_dirs
+	rm -f "$ATHENA_PDA_RUN/start-launcher"
+	if ! wait_for_drm; then
+		echo "athena-pda: no /dev/dri/card0 after 10 s; starting anyway"
+	fi
+	grant_devices
+	HOME="$ATHENA_PDA_DIR"
+	ATHENA_SUPERVISE_STOP_FILE="$ATHENA_PDA_RUN/start-launcher"
+	ATHENA_SUPERVISE_STOP_CMD="/etc/init.d/S92athena-pda switch-launcher"
+	export HOME ATHENA_SUPERVISE_STOP_FILE ATHENA_SUPERVISE_STOP_CMD
+	athena_start "$DAEMON" "$ATHENA_PDA_USER" "$PROG"
+}
+
+stop() {
+	athena_stop "$DAEMON"
+	if ! athena_pda_boots && [ -x "$ATHENA_PDA_LAUNCHER_INIT" ]; then
+		"$ATHENA_PDA_LAUNCHER_INIT" stop
+	fi
+}
+
+switch_launcher() {
+	/etc/init.d/S94athena-vision stop
+	/etc/init.d/S93athena-pda-syncd stop
+	athena_stop "$DAEMON"
+	start_launcher
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		stop
+		;;
+	restart|reload)
+		stop
+		start
+		;;
+	switch-launcher)
+		switch_launcher
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart|switch-launcher}"
+		exit 1
+		;;
+esac

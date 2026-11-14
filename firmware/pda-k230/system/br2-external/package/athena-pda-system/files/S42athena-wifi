@@ -1,0 +1,80 @@
+#!/bin/sh
+# S42athena-wifi: join the Wi-Fi saved with `athena-wifi` at boot.
+#
+# LilyGO's image joins Wi-Fi only from its launcher's Wi-Fi app, and the SDK's
+# /etc/network/interfaces reads the network from U-Boot variables (wlanssid,
+# wlanpass) that this image doesn't set up. The PDA boots in place of the launcher,
+# so this script does it: wpa_supplicant with /var/lib/athena-wifi/wpa_supplicant.conf
+# (root only), then udhcpc, which stays running to renew the lease.
+#
+# Runs after the Wi-Fi driver is loaded (S40<defconfig>, written by the SDK's
+# post-build.sh: modprobe 8189fs) and before sntp/ntpd (S48/S49).
+
+DAEMON="athena-wifi"
+CONF=/var/lib/$DAEMON/wpa_supplicant.conf
+IFACE=wlan0
+WPA_PID=/run/wpa_supplicant.$IFACE.pid
+DHCP_PID=/run/udhcpc.$IFACE.pid
+
+stop_daemons() {
+	for pidfile in "$DHCP_PID" "$WPA_PID"; do
+		if [ -s "$pidfile" ]; then
+			kill "$(cat "$pidfile")" 2>/dev/null
+		fi
+		rm -f "$pidfile"
+	done
+	# The SDK's ifup and the launcher's Wi-Fi app start their own copies.
+	killall -q wpa_supplicant 2>/dev/null
+	rm -f "/var/run/wpa_supplicant/$IFACE"
+}
+
+start() {
+	printf 'Starting Wi-Fi: '
+	if [ ! -s "$CONF" ]; then
+		echo "none saved (athena-wifi add <ssid>)"
+		return 0
+	fi
+	_i=0
+	while [ ! -e "/sys/class/net/$IFACE" ] && [ "$_i" -lt 15 ]; do
+		sleep 1
+		_i=$((_i + 1))
+	done
+	if [ ! -e "/sys/class/net/$IFACE" ]; then
+		echo "no $IFACE"
+		return 0
+	fi
+	stop_daemons
+	mkdir -p /var/run/wpa_supplicant
+	ifconfig "$IFACE" up
+	if ! wpa_supplicant -B -i "$IFACE" -D nl80211,wext -c "$CONF" -P "$WPA_PID"; then
+		echo "FAIL (wpa_supplicant)"
+		return 1
+	fi
+	# -b: go to the background if there is no lease yet; it keeps trying.
+	udhcpc -b -i "$IFACE" -p "$DHCP_PID" >/dev/null 2>&1
+	echo "OK"
+}
+
+stop() {
+	printf 'Stopping Wi-Fi: '
+	stop_daemons
+	ifconfig "$IFACE" down 2>/dev/null
+	echo "OK"
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		stop
+		;;
+	restart|reload)
+		stop
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac

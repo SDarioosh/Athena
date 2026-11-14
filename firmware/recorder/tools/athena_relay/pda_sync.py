@@ -228,7 +228,10 @@ class PdaSync:
         try:
             await asyncio.to_thread(self.api.health)
         except UploadError as e:  # §3.4 step 3: leave the feed as it is ("offline")
-            report.outcome, report.message = SERVER_RETRY, f"server not reachable: {e}"
+            if e.kind == AUTH:  # a health route that needs the token refused it (401/403)
+                report.outcome, report.message = AUTH_FAILED, f"server refused the token: {e}"
+            else:
+                report.outcome, report.message = SERVER_RETRY, f"server not reachable: {e}"
             await self._bye(t)
             return
 

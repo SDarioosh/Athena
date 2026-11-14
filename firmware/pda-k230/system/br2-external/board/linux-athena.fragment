@@ -1,0 +1,17 @@
+# Athena PDA kernel options, appended after LilyGO's fragments
+# (BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES, see defconfig.fragment).
+#
+# Tailscale with a real interface (ATHENA_TS_MODE=tun, the default): the TUN device.
+# Without it, tailscaled runs with --tun=userspace-networking (ATHENA_TS_MODE=userspace).
+CONFIG_TUN=m
+# tailscaled routes the tailnet through its own routing table (ip rule) when policy
+# routing is there; the K230 defconfig has IP_ADVANCED_ROUTER but not these.
+CONFIG_IP_MULTIPLE_TABLES=y
+CONFIG_IPV6_MULTIPLE_TABLES=y
+# Unix sockets (glance.sock, vision.sock, tailscaled's socket); on in practice, made
+# explicit because the K230 defconfig doesn't name it.
+CONFIG_UNIX=y
+#
+# Not needed: netfilter. tailscaled runs with --netfilter-mode=off (the image has no
+# iptables or nft and the device only connects out). To use netfilter-mode=on later,
+# add CONFIG_NF_TABLES, CONFIG_NFT_* and the iptables package.

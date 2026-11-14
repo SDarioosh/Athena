@@ -1,0 +1,31 @@
+#!/bin/sh
+# athena-boot-ui: what starts at boot, the PDA or LilyGO's launcher.
+#
+#   athena-boot-ui                  print the current choice
+#   athena-boot-ui athena-pda       the PDA (the default)
+#   athena-boot-ui launcher         LilyGO's k230_phone_ui (syncd and vision stay off)
+#
+# It changes one line of /etc/default/athena-pda (ATHENA_PDA_BOOT_UI=...); the
+# choice applies at the next boot. Editing that line by hand does the same.
+set -eu
+
+# shellcheck source-path=SCRIPTDIR source=athena-pda-common.sh
+. /usr/libexec/athena-pda/athena-pda-common.sh
+
+case "${1:-}" in
+	"")
+		echo "$ATHENA_PDA_BOOT_UI"
+		;;
+	athena-pda|launcher)
+		if grep -q '^ATHENA_PDA_BOOT_UI=' "$ATHENA_PDA_DEFAULTS"; then
+			sed -i "s/^ATHENA_PDA_BOOT_UI=.*/ATHENA_PDA_BOOT_UI=$1/" "$ATHENA_PDA_DEFAULTS"
+		else
+			echo "ATHENA_PDA_BOOT_UI=$1" >>"$ATHENA_PDA_DEFAULTS"
+		fi
+		echo "ATHENA_PDA_BOOT_UI=$1 (from the next boot)"
+		;;
+	*)
+		sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'
+		exit 2
+		;;
+esac

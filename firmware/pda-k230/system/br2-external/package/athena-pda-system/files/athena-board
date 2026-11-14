@@ -1,0 +1,145 @@
+#!/bin/sh
+# athena-board: the T-Display K230's board nodes, for bring-up from a shell.
+# Every path and where it was found: firmware/pda-k230/system/BOARD.md.
+#
+#   athena-board nodes              the display, touch, backlight, camera nodes found
+#   athena-board brightness [0-255] read or set the AMOLED brightness
+#   athena-board blank on|off       screen off (brightness 0) / back to the last level
+#   athena-board battery            gauge and charger (only with LilyGO's keyboard
+#                                   base; experimental, needs root and i2cget)
+set -u
+
+RUN_DIR=/run/athena-pda-board
+
+usage() {
+	sed -n '5,10p' "$0" | sed 's/^# \{0,1\}//'
+	exit 2
+}
+
+backlight() {
+	# The RM69A10 panel registers "rm69a10" (LilyGO patch 0049); take the first
+	# backlight if the name differs.
+	if [ -e /sys/class/backlight/rm69a10/brightness ]; then
+		echo /sys/class/backlight/rm69a10
+		return 0
+	fi
+	for d in /sys/class/backlight/*; do
+		[ -e "$d/brightness" ] && { echo "$d"; return 0; }
+	done
+	return 1
+}
+
+touch_node() {
+	# The GT9895 driver names its input device "goodix_ts" (LilyGO patch 0034).
+	for ev in /sys/class/input/event*; do
+		[ -e "$ev/device/name" ] || continue
+		case "$(cat "$ev/device/name")" in
+			*goodix*|*Goodix*|*gt9895*|*GT9895*) echo "/dev/input/${ev##*/}"; return 0 ;;
+		esac
+	done
+	return 1
+}
+
+nodes() {
+	if bl="$(backlight)"; then
+		echo "backlight=$bl max=$(cat "$bl/max_brightness") now=$(cat "$bl/brightness")"
+	else
+		echo "backlight=none"
+	fi
+	for c in /dev/dri/card*; do
+		[ -e "$c" ] && echo "drm=$c"
+	done
+	if t="$(touch_node)"; then
+		echo "touch=$t"
+	else
+		echo "touch=none"
+	fi
+	for ev in /sys/class/input/event*; do
+		[ -e "$ev/device/name" ] && echo "input=/dev/input/${ev##*/} name=$(cat "$ev/device/name")"
+	done
+	for v in /sys/class/video4linux/video*; do
+		[ -e "$v/name" ] && echo "video=/dev/${v##*/} name=$(cat "$v/name")"
+	done
+	for l in /dev/video_*; do
+		[ -L "$l" ] && echo "video_link=$l -> $(readlink "$l")"
+	done
+	for n in /dev/mmz /dev/k230-gnne /dev/k230-ai2d; do
+		# shellcheck disable=SC2012 # BusyBox stat has no -c here
+		[ -e "$n" ] && echo "accel=$n $(ls -l "$n" | awk '{print $1, $3":"$4}')"
+	done
+	for p in /sys/class/power_supply/*; do
+		[ -e "$p/type" ] && echo "power_supply=${p##*/} type=$(cat "$p/type")"
+	done
+	return 0
+}
+
+brightness() {
+	bl="$(backlight)" || { echo "no backlight" >&2; exit 1; }
+	if [ $# -eq 0 ]; then
+		cat "$bl/brightness"
+		return 0
+	fi
+	case "$1" in
+		''|*[!0-9]*) usage ;;
+	esac
+	max="$(cat "$bl/max_brightness")"
+	v="$1"
+	[ "$v" -le "$max" ] || v="$max"
+	echo "$v" >"$bl/brightness"
+}
+
+blank() {
+	bl="$(backlight)" || { echo "no backlight" >&2; exit 1; }
+	mkdir -p "$RUN_DIR"
+	case "${1:-}" in
+		on)
+			now="$(cat "$bl/brightness")"
+			[ "$now" -gt 0 ] && echo "$now" >"$RUN_DIR/brightness"
+			echo 0 >"$bl/brightness"
+			;;
+		off)
+			last=128
+			[ -s "$RUN_DIR/brightness" ] && last="$(cat "$RUN_DIR/brightness")"
+			echo "$last" >"$bl/brightness"
+			;;
+		*) usage ;;
+	esac
+}
+
+word() {
+	# i2cget's word read, 0xHHHH -> decimal (little-endian, as the BQ27220 sends it).
+	v="$(i2cget -y "$1" "$2" "$3" w 2>/dev/null)" || return 1
+	printf '%d\n' "$v"
+}
+
+battery() {
+	# GUESS (BOARD.md): the keyboard base's BQ27220 (0x55) and BQ25896 (0x6B) on
+	# /dev/i2c-0, which LilyGO's I2C scan labels "physical I2C4" (GPIO46/47). The
+	# launcher itself bit-bangs those pins; if this finds nothing, that is why.
+	bus="${ATHENA_BOARD_I2C_BUS:-0}"
+	command -v i2cget >/dev/null || { echo "no i2cget" >&2; exit 1; }
+	if soc="$(word "$bus" 0x55 0x2c)"; then
+		echo "gauge=bq27220 bus=$bus soc=$soc% voltage=$(word "$bus" 0x55 0x08)mV"
+	else
+		echo "gauge=none bus=$bus"
+	fi
+	if st="$(i2cget -y "$bus" 0x6b 0x0b 2>/dev/null)"; then
+		st=$((st))
+		chrg=$(((st >> 3) & 3))
+		pg=$(((st >> 2) & 1))
+		case "$chrg" in
+			0) c=no ;; 1) c=pre ;; 2) c=fast ;; *) c="done" ;;
+		esac
+		echo "charger=bq25896 power_good=$pg charging=$c"
+	else
+		echo "charger=none bus=$bus"
+	fi
+}
+
+case "${1:-}" in
+	nodes) nodes ;;
+	brightness) shift; brightness "$@" ;;
+	blank) shift; blank "$@" ;;
+	battery) battery ;;
+	*) usage ;;
+esac

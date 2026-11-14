@@ -1,0 +1,107 @@
+#!/bin/sh
+# athena-supervise NAME USER PROGRAM [ARGS...]
+#
+# Runs PROGRAM as USER (root runs it directly; another user through
+# start-stop-daemon -c, which also sets its supplementary groups) and starts it
+# again when it ends: after 1 s, doubling up to 60 s while it keeps ending within
+# 30 s of its start. Its stdout and stderr go to syslog with the tag NAME
+# (BusyBox syslogd: /var/log/messages on tmpfs, 200 KB plus one rotated file, so
+# the log is size-capped and gone at power-off; the programs log no content).
+#
+# Started in the background by athena_start (athena-pda-common.sh), as root. TERM,
+# INT or HUP stop it: the signal is passed on to PROGRAM and the loop ends.
+#
+# ATHENA_SUPERVISE_STOP_FILE / ATHENA_SUPERVISE_STOP_CMD (optional): when PROGRAM
+# ends and the stop file exists, the supervisor removes it, runs the command in
+# the background and ends instead of restarting (the UI's "start the launcher").
+set -u
+
+name="${1:?usage: athena-supervise NAME USER PROGRAM [ARGS...]}"
+user="${2:?usage: athena-supervise NAME USER PROGRAM [ARGS...]}"
+shift 2
+[ $# -gt 0 ] || { echo "athena-supervise: no program" >&2; exit 2; }
+
+sv_dir="${ATHENA_PDA_SV_DIR:-/run/athena-pda-sv}"
+stop_file="${ATHENA_SUPERVISE_STOP_FILE:-}"
+stop_cmd="${ATHENA_SUPERVISE_STOP_CMD:-}"
+fifo="$sv_dir/$name.log"
+childfile="$sv_dir/$name.child"
+
+stop=0
+child=""
+# shellcheck disable=SC2317 # called by the trap
+on_signal() {
+	stop=1
+	if [ -n "$child" ]; then
+		kill -TERM "$child" 2>/dev/null
+	fi
+}
+trap on_signal TERM INT HUP
+
+note() {
+	logger -t athena-supervise -p daemon.notice "$name: $*"
+}
+
+mkdir -p "$sv_dir"
+delay=1
+while [ "$stop" -eq 0 ]; do
+	rm -f "$fifo"
+	if ! mkfifo -m 0600 "$fifo"; then
+		note "can't make $fifo"
+		exit 1
+	fi
+	logger -t "$name" -p daemon.info <"$fifo" &
+	logpid=$!
+
+	started=$(date +%s)
+	if [ "$user" = "root" ]; then
+		"$@" >"$fifo" 2>&1 </dev/null &
+	else
+		_prog="$1"
+		shift
+		start-stop-daemon -S -p /nonexistent.pid -c "$user" -x "$_prog" -- "$@" \
+			>"$fifo" 2>&1 </dev/null &
+		set -- "$_prog" "$@"
+	fi
+	child=$!
+	echo "$child" >"$childfile"
+
+	# wait returns early when a trapped signal arrives: wait again until the
+	# program has really ended.
+	rc=0
+	wait "$child" || rc=$?
+	while kill -0 "$child" 2>/dev/null; do
+		rc=0
+		wait "$child" || rc=$?
+	done
+	child=""
+	rm -f "$childfile"
+	wait "$logpid" 2>/dev/null
+	rm -f "$fifo"
+
+	[ "$stop" -eq 0 ] || break
+
+	if [ -n "$stop_file" ] && [ -e "$stop_file" ]; then
+		rm -f "$stop_file"
+		note "ended ($rc) with $stop_file: not restarting${stop_cmd:+, running $stop_cmd}"
+		if [ -n "$stop_cmd" ]; then
+			# shellcheck disable=SC2086 # the command and its arguments, split
+			(sleep 1; exec $stop_cmd) </dev/null >/dev/null 2>&1 &
+		fi
+		exit 0
+	fi
+
+	ran=$(( $(date +%s) - started ))
+	if [ "$ran" -ge 30 ]; then
+		delay=1
+	fi
+	note "ended ($rc) after ${ran} s; starting again in ${delay} s"
+	sleep "$delay" &
+	wait $! 2>/dev/null
+	if [ "$ran" -lt 30 ]; then
+		delay=$((delay * 2))
+		[ "$delay" -le 60 ] || delay=60
+	fi
+done
+note "stopped"
+exit 0
