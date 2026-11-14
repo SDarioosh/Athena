@@ -198,6 +198,17 @@ Nothing on the board. In the sandbox (2026-11-13/14), with the commands of "On a
   offset, so until the day of the change they read an hour off, as on the T5; an event
   created on the DST day itself before the switch (00:00-03:00) gets the noon offset.
 
+- **The UI and syncd are one user** (`athena-pda`), sharing `/var/lib/athena-pda` (the
+  feed and outbox beside syncd's token and config.json) and the 0700 run directory with
+  the 0600 sockets. A flaw in the UI (which parses the feed and vision's lines) could so
+  read the hub token. Separate users would need a shared group and 0660 sockets, a second
+  data directory for the token and config.json (which `athena-tailnet` writes as that
+  user), and new checks on the board for all of it; for a single-owner device that only
+  talks to its own hub this is left as is. The user's groups are what the UI needs:
+  `video` for DRM and the backlight (`S92athena-pda` gives those to `video`) and `input`
+  for touch. `video` doesn't give the camera: `/dev/video*` stay root:root (the SDK's
+  mdev rules), and vision runs as root.
+
 ## Not verified yet
 
 Owner, on the build PC and the board. Each step with what you should see:
