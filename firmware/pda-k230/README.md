@@ -21,7 +21,7 @@ in between.
 | Directory | What |
 |---|---|
 | `ui/` | `athena-pda` (C11, LVGL 9 on DRM + evdev, SDL or headless on a PC): the screens, the feed store, the detail cache and the outbox on disk (the T5's pure modules, compiled from `../pda/main`), the server end of `glance.sock` and `vision.sock`. See `ui/README.md` |
-| `syncd/` | `athena-pda-syncd` (Python 3, standard library): pairing, the hub client, `PdaSync` over `glance.sock` with the BLE-free modules of `../recorder/tools/athena_relay`; reports the tailnet state and starts the Tailscale login. Usage and settings in its module docstrings (`__main__.py`, `config.py`, `daemon.py`); tests in `syncd/tests/` |
+| `syncd/` | `athena-pda-syncd` (Python 3, standard library): pairing, the hub client, `PdaSync` over `glance.sock` with the BLE-free modules of `../recorder/tools/athena_relay`; reports the tailnet state (it only reads `tailscale status --json`; it is no Tailscale operator). Usage and settings in its module docstrings (`__main__.py`, `config.py`, `daemon.py`); tests in `syncd/tests/` |
 | `vision/` | `athena-vision` (C++17, nncase on the KPU, V4L2): hand gestures, presence and QR codes as `vision.sock` events; `athena-vision-replay` plays recorded keypoint tracks on a PC. See `vision/README.md` |
 | `tests/e2e/` | the programs together on a PC: the real UI (headless, driven through its test control socket `ATHENA_PDA_TEST_CTL`, `ui/src/platform/headless_ctl.h`) and the real syncd against syncd's fake hub, a scripted vision client; skipped unless `ATHENA_PDA_UI_BIN` is set |
 | `system/` | the image: a Buildroot br2-external tree on LilyGO's build, boot scripts, Tailscale, Wi-Fi and board helpers |
@@ -34,7 +34,7 @@ in between.
 | `build-image.sh` | the one build command (below) |
 | `gen-defconfig.sh` | LilyGO's defconfig + `br2-external/board/defconfig.fragment` -> our defconfig |
 | `br2-external/` | `external.desc`, `external.mk`, `Config.in`; `board/`: the defconfig fragment, the kernel fragment (`CONFIG_TUN=m`, policy routing), `post-build.sh` (moves the launcher's boot script aside) |
-| `br2-external/package/athena-pda-system` | the `athena-pda` user, `/etc/default/athena-pda`, the supervisor (restart on crash, output to syslog), `S42athena-wifi` + `athena-wifi`, `athena-board`, `athena-tailnet`, `athena-boot-ui`, the `tailscale` wrapper syncd uses |
+| `br2-external/package/athena-pda-system` | the `athena-pda` user, `/etc/default/athena-pda`, the supervisor (restart on crash, output to syslog), `S42athena-wifi` + `athena-wifi`, `athena-board`, `athena-tailnet` (also `athena-tailnet watch`, root's Tailscale login starter), `athena-boot-ui` |
 | `br2-external/package/athena-tailscale-bin` | Tailscale's static riscv64 build, pinned with its sha256; `S45tailscaled` |
 | `br2-external/package/athena-pda-ui`, `athena-pda-lvgl-src` | the UI (`S92athena-pda`) and the LVGL source it builds offline |
 | `br2-external/package/athena-pda-syncd` | syncd and the relay modules in `/usr/lib/athena-pda/python` (`S93athena-pda-syncd`) |
@@ -89,8 +89,8 @@ mode on Windows. Windows offers to format the Linux partitions: cancel.
 2. **Wi-Fi.** `athena-wifi add "<your SSID>"` and type the passphrase (stored as its WPA
    hash, root only); it joins at once and at every boot. `athena-wifi status` shows the
    address. If LilyGO's launcher already has the network: `athena-wifi import-launcher`.
-3. **Tailscale.** The Status screen shows a login QR code (syncd starts `tailscale login`
-   when the device needs one); scan it with the phone and approve the device in the
+3. **Tailscale.** The Status screen shows a login QR code (root's `athena-tailnet watch`
+   starts `tailscale login` when the device needs one; syncd reads the link); scan it with the phone and approve the device in the
    tailnet. Without the screen: `athena-tailnet login` prints the link. `athena-tailnet
    status` shows the state. The device only connects out: no Funnel, Serve or exit node.
 4. **Pair with the hub.** On the hub, **Pair a phone**; on the PDA, Status → Pair, then
@@ -172,10 +172,14 @@ Nothing on the board. In the sandbox (2026-11-13/14), with the commands of "On a
 - Tailscale 1.104.7 riscv64: the tarball's sha256 matches Tailscale's `.sha256` file and
   Buildroot's hash check; both binaries are static and print their version under
   `qemu-riscv64`. tailscaled in userspace mode under qemu: `tailscale set
-  --operator --hostname --netfilter-mode=off` works before login, `status --json` reports
+  --operator= --hostname --netfilter-mode=off` works before login (`--operator=` clears an
+  operator), `status --json` reports
   `NeedsLogin` and the `AuthURL` once a login starts, and `--no-logs-no-support` stops the
   connection to Tailscale's log server. A `tailscale login` without flags resets the
-  operator, host name and netfilter mode, which is why syncd's `tailscale` is a wrapper.
+  operator, host name and netfilter mode, which is why `athena-tailnet` always passes them.
+  A user who is no operator gets "Access denied" from `set` and `login` but reads `status
+  --json`, `AuthURL` included (as `nobody`); `athena-tailnet watch` against that tailscaled
+  set the prefs and started the login whose link `nobody` then read.
 - `athena-supervise` (dash and BusyBox ash): restart with back-off, the user change with
   supplementary groups, stop by TERM, the stop file. `athena-wifi`: the PSK hash against
   the IEEE 802.11i test vector, the launcher's profile format. The syncd install layout runs
@@ -216,12 +220,14 @@ Owner, on the build PC and the board. Each step with what you should see:
    a minute (ntp). Status' Wi-Fi row shows the network's signal (read from
    `/proc/net/wireless` with the 8189fs driver; "No Wi-Fi device" means it reads nothing).
 8. **TUN.** `lsmod | grep tun` (or `ls -l /dev/net/tun`), `ip addr show tailscale0` after
-   login with a 100.x address; `grep tailscaled /var/log/messages` has the line "set: operator
-   athena-pda, hostname athena-pda, netfilter off".
+   login with a 100.x address; `grep tailscaled /var/log/messages` has the line "set: no
+   operator, hostname athena-pda, netfilter off".
 9. **Login QR.** Before login, Status shows a QR code; scanning it opens
    `login.tailscale.com`; after approval Status shows the tailnet name
-   (`athena-pda.<tailnet>.ts.net`). `tailscale debug prefs` still has `"OperatorUser":
-   "athena-pda"` and `"NetfilterMode": 0` after the login.
+   (`athena-pda.<tailnet>.ts.net`). `tailscale debug prefs` has no `"OperatorUser"` and
+   `"NetfilterMode": 0` after the login; `ps` shows `athena-tailnet watch` (root) under an
+   `athena-supervise`. As the PDA user, `su -s /bin/sh athena-pda -c 'tailscale status
+   --json'` works and `... -c 'tailscale set --hostname=x'` says "Access denied".
 10. **MagicDNS.** `nslookup <hub>.<tailnet>.ts.net` resolves; after a Wi-Fi reconnect (new
     DHCP lease) it still does (tailscaled rewrites `/etc/resolv.conf`).
 11. **Pairing and sync** over Tailscale: Status → Pair with Odysseus → Scan the QR code:

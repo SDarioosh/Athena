@@ -114,7 +114,7 @@ LOCAL messages (`"t"` names the type; unknown types and keys are ignored):
 | `unpair` | UI → syncd | | forget the token |
 | `net` | syncd → UI | `state` (`unpaired`, `offline`, `syncing`, `ok`, `auth_failed`), `hub` (host shown on Status, or null), `last_ok` (epoch s, 0 never), `msg` (one short line for Status, or "") | sent on connect and on every change |
 | `pair_result` | syncd → UI | `ok`, `msg` | answer to `pair` |
-| `tailnet` | syncd → UI | `state` (`unknown`, `stopped`, `needs_login`, `running`), `url` (the login link while `needs_login`, else null), `name` (this device's tailnet name, or null) | from `tailscale status --json`; the UI shows the login link as a QR code |
+| `tailnet` | syncd → UI | `state` (`unknown`, `stopped`, `needs_login`, `running`), `url` (the login link while `needs_login`, else null), `name` (this device's tailnet name, or null) | from `tailscale status --json` (read only); the UI shows the login link as a QR code |
 
 ## Contract 2: `vision.sock` (UI ↔ vision)
 
@@ -160,8 +160,13 @@ no data partition):
   `/var/lib/tailscale`. Default: a normal tailnet interface (`CONFIG_TUN=m` added to the
   kernel fragment). Fallback without TUN: `--tun=userspace-networking` and syncd's
   `proxy` setting (`http://127.0.0.1:1055`).
-- First login: `tailscale up` prints a login link; syncd passes it to the UI (`tailnet`
-  message) and the Status screen shows it as a QR code to scan with the phone.
+- First login: root's `athena-tailnet watch` (run beside tailscaled) starts `tailscale
+  login` whenever Tailscale needs one; syncd reads the link from `tailscale status --json`
+  and passes it to the UI (`tailnet` message), and the Status screen shows it as a QR code
+  to scan with the phone.
+- The PDA user (UI and syncd) is **no Tailscale operator**: it can read `status` but not
+  change tailscaled (no serve, funnel, exit node, ssh, login flags). Nothing it sends or
+  writes reaches a `tailscale` command line.
 - No Funnel or other public exposure, ever.
 
 ## Screens

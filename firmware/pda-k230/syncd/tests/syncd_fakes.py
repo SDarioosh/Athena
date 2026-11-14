@@ -271,7 +271,6 @@ class FakeTailnet:
         from athena_pda_sync.tailnet import TailnetState
 
         self.state = state or TailnetState("running", None, "athena-pda.tail0000.ts.net")
-        self.login = True
         self.polls = 0
 
     def poll(self):

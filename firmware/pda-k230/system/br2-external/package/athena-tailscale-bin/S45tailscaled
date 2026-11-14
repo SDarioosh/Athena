@@ -8,21 +8,20 @@
 #   ATHENA_TS_MODE=userspace: no TUN; tailscaled is an HTTP and SOCKS5 proxy on
 #   $ATHENA_TS_PROXY and syncd needs "proxy": "http://<that>" in its config.json
 #   (`athena-tailnet mode userspace` sets both).
-# - Once tailscaled answers, `tailscale set` makes $ATHENA_PDA_USER the operator
-#   (syncd may then start `tailscale login` and read the link), sets the host name
-#   and netfilter mode off (the image has no iptables or nft).
+# - `athena-tailnet watch` runs beside it (root, supervised as tailscale-login): once
+#   tailscaled answers it sets the host name, netfilter mode off (the image has no
+#   iptables or nft) and no operator, then starts `tailscale login` whenever
+#   Tailscale needs one. The PDA user is no operator: it can't change tailscaled
+#   (no serve, funnel, exit node or ssh); syncd only reads `tailscale status --json`
+#   and shows the login link from it as a QR code on Status.
 # - No Funnel, Serve or exit node is set up, ever.
-#
-# The login itself: syncd runs `tailscale login` when Tailscale needs one and shows
-# the link as a QR code on Status; or `athena-tailnet login` over adb/ssh.
 
 # shellcheck source-path=SCRIPTDIR source=../athena-pda-system/files/athena-pda-common.sh
 . /usr/libexec/athena-pda/athena-pda-common.sh
 
 DAEMON="tailscaled"
 PROG="/usr/sbin/$DAEMON"
-CLI=/usr/bin/tailscale
-SOCKET=/run/tailscale/tailscaled.sock
+SOCKET="$ATHENA_TS_SOCKET"
 
 ensure_tun() {
 	modprobe tun 2>/dev/null
@@ -33,30 +32,12 @@ ensure_tun() {
 	[ -c /dev/net/tun ]
 }
 
-configure() {
-	# tailscaled takes a few seconds to answer on its socket: try for a minute.
-	_i=0
-	while [ "$_i" -lt 30 ]; do
-		# shellcheck disable=SC2046 # athena_ts_flags is a list of flags
-		if [ -S "$SOCKET" ] &&
-			"$CLI" --socket="$SOCKET" set $(athena_ts_flags) >/dev/null 2>&1; then
-			logger -t "$DAEMON" -p daemon.notice \
-				"set: operator $ATHENA_PDA_USER, hostname $ATHENA_TS_HOSTNAME, netfilter off"
-			return 0
-		fi
-		sleep 2
-		_i=$((_i + 1))
-	done
-	logger -t "$DAEMON" -p daemon.warning "tailscale set failed; syncd may not be able to start a login"
-	return 1
-}
-
 start() {
 	if [ ! -x "$PROG" ]; then
 		echo "tailscaled: $PROG missing"
 		return 0
 	fi
-	mkdir -p "$ATHENA_TS_STATE_DIR" /run/tailscale
+	mkdir -p "$ATHENA_TS_STATE_DIR" "$(dirname "$SOCKET")"
 	chmod 0700 "$ATHENA_TS_STATE_DIR"
 	case "$ATHENA_TS_MODE" in
 		userspace)
@@ -77,10 +58,11 @@ start() {
 	athena_start "$DAEMON" root "$PROG" \
 		--statedir="$ATHENA_TS_STATE_DIR" --socket="$SOCKET" --port=41641 \
 		--no-logs-no-support "$@" || return 1
-	configure </dev/null >/dev/null 2>&1 &
+	athena_start tailscale-login root /usr/bin/athena-tailnet watch
 }
 
 stop() {
+	athena_stop tailscale-login
 	athena_stop "$DAEMON"
 	# Removes the routes and the tailscale0 interface a killed tailscaled can leave.
 	"$PROG" --cleanup >/dev/null 2>&1

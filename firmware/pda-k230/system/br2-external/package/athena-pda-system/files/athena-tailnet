@@ -9,9 +9,14 @@
 #                                   /etc/default/athena-pda and syncd's "proxy" in
 #                                   $ATHENA_PDA_DIR/config.json (set for userspace,
 #                                   removed for tun), then restarts tailscaled and syncd
+#   athena-tailnet watch            (S45tailscaled runs it, as root, supervised) sets
+#                                   the host name, netfilter off and no operator, then
+#                                   starts `tailscale login` whenever Tailscale needs one
 #
-# The PDA itself shows the login link as a QR code on Status (syncd's `tailnet`
-# message); this is the fallback and the switch.
+# Only root changes Tailscale: the PDA user (UI and syncd) is no operator and only
+# reads `tailscale status --json`, where syncd finds the login link that `watch`'s
+# login made and the UI shows it as a QR code on Status. Nothing the PDA user sends
+# or writes reaches a `tailscale` command line here.
 set -eu
 
 # shellcheck source-path=SCRIPTDIR source=athena-pda-common.sh
@@ -20,7 +25,7 @@ set -eu
 CLI=/usr/bin/tailscale
 
 usage() {
-	sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'
 	exit 2
 }
 
@@ -75,6 +80,55 @@ os.fsync(dfd)
 EOF
 }
 
+# The BackendState of `tailscale status --json` ("" when tailscaled doesn't answer).
+backend_state() {
+	"$CLI" --socket="$ATHENA_TS_SOCKET" status --json 2>/dev/null |
+		python3 -I -c 'import json, sys
+try:
+    s = json.load(sys.stdin).get("BackendState", "")
+except Exception:
+    s = ""
+print(s if isinstance(s, str) and s.isalnum() else "")' 2>/dev/null || true
+}
+
+watch() {
+	# The settings first (tailscaled takes a few seconds to answer on its socket).
+	_n=0
+	# shellcheck disable=SC2046 # athena_ts_flags is a list of flags
+	until "$CLI" --socket="$ATHENA_TS_SOCKET" set $(athena_ts_flags) >/dev/null 2>&1; do
+		_n=$((_n + 1))
+		[ "$_n" -ne 30 ] || logger -t tailscaled -p daemon.warning "tailscale set keeps failing"
+		sleep 2
+	done
+	logger -t tailscaled -p daemon.notice \
+		"set: no operator, hostname $ATHENA_TS_HOSTNAME, netfilter off"
+	_login=""
+	_last=""
+	# shellcheck disable=SC2317 # called by the trap
+	trap '[ -z "$_login" ] || kill "$_login" 2>/dev/null; exit 0' TERM INT HUP
+	while :; do
+		_state="$(backend_state)"
+		if [ "$_state" = "NeedsLogin" ]; then
+			_now=$(date +%s)
+			if { [ -z "$_login" ] || ! kill -0 "$_login" 2>/dev/null; } &&
+				{ [ -z "$_last" ] || [ $((_now - _last)) -ge "$ATHENA_TS_LOGIN_RETRY" ]; }; then
+				_last=$_now
+				# shellcheck disable=SC2046 # athena_ts_flags is a list of flags
+				"$CLI" --socket="$ATHENA_TS_SOCKET" login $(athena_ts_flags) \
+					--timeout="${ATHENA_TS_LOGIN_TIMEOUT}s" </dev/null >/dev/null 2>&1 &
+				_login=$!
+				logger -t tailscaled -p daemon.notice "needs a login: started tailscale login"
+			fi
+			_pause=$ATHENA_TS_WATCH_LOGIN_POLL
+		else
+			_pause=$ATHENA_TS_WATCH_POLL
+		fi
+		# in the background, so TERM (athena_stop) isn't held up by the sleep
+		sleep "$_pause" &
+		wait $! || true
+	done
+}
+
 set_mode() {
 	case "$1" in
 		tun) proxy="" ;;
@@ -96,14 +150,17 @@ set_mode() {
 case "${1:-}" in
 	status)
 		echo "mode: $ATHENA_TS_MODE"
-		"$CLI" status || true
+		"$CLI" --socket="$ATHENA_TS_SOCKET" status || true
 		;;
 	login)
 		# shellcheck disable=SC2046 # athena_ts_flags is a list of flags
-		exec "$CLI" login $(athena_ts_flags) --timeout=300s
+		exec "$CLI" --socket="$ATHENA_TS_SOCKET" login $(athena_ts_flags) --timeout=300s
+		;;
+	watch)
+		watch
 		;;
 	logout)
-		exec "$CLI" logout
+		exec "$CLI" --socket="$ATHENA_TS_SOCKET" logout
 		;;
 	mode)
 		[ $# -eq 2 ] || usage

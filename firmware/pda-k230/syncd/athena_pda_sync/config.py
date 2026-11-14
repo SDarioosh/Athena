@@ -10,7 +10,7 @@
 ```json
 {"tz": "Europe/Berlin", "calendar_href": "<the CalDAV calendar's id>",
  "templates": ["Call", "Meeting", "Reminder"], "proxy": "http://127.0.0.1:1055",
- "tailscale": true, "tailscale_login": true}
+ "tailscale": true}
 ```
 
 - `tz`: IANA zone for TIME and the feed (default UTC);
@@ -19,9 +19,9 @@
 - `templates`: up to 12 event titles for the "+" picker (a list, or "Call,Meeting");
 - `proxy`: an `http://host:port` proxy for every hub request (Tailscale's userspace mode);
   none by default (the environment's proxy variables are not used);
-- `tailscale`: report the tailnet state to the UI (default true);
-- `tailscale_login`: start `tailscale login` when Tailscale needs a login and has no link
-  yet, so the UI can show it (default true).
+- `tailscale`: report the tailnet state to the UI (default true). syncd only reads it;
+  the login is started by root on the image (`athena-tailnet watch`). An old
+  `tailscale_login` key is ignored.
 
 The file is read again before a sync when it changed.
 """
@@ -82,7 +82,6 @@ class Config:
     templates: list[str] = field(default_factory=list)
     proxy: str | None = None
     tailscale: bool = True
-    tailscale_login: bool = True
 
 
 def check_proxy(value: Any) -> str | None:
@@ -130,7 +129,7 @@ def parse(raw: Any) -> Config:
         out["proxy"] = check_proxy(raw.get("proxy"))
     except ValueError as e:
         log.warning("config.json proxy: %s; no proxy", e)
-    for key in ("tailscale", "tailscale_login"):
+    for key in ("tailscale",):
         if key in raw:
             if isinstance(raw[key], bool):
                 out[key] = raw[key]

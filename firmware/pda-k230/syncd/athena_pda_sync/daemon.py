@@ -86,8 +86,7 @@ class Daemon:
         self.config_file = ConfigFile(paths.config)
         self.tokens = pr.TokenStore(paths.token)
         self.state = s.PdaState(paths.state)
-        self.tailnet = tailnet if tailnet is not None else Tailnet(
-            login=self.config_file.config.tailscale_login)
+        self.tailnet = tailnet if tailnet is not None else Tailnet()
         self.hub_factory = hub_factory
         self.policy = policy or SyncPolicy()
         self._redeem = redeem
@@ -357,7 +356,6 @@ class Daemon:
     async def _tailnet_loop(self, t: SocketTransport) -> None:
         while not t.closed.is_set():
             if self.config_file.config.tailscale:
-                self.tailnet.login = self.config_file.config.tailscale_login
                 state = await asyncio.to_thread(self.tailnet.poll)
             else:
                 state = TailnetState()

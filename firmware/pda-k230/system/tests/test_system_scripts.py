@@ -17,6 +17,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -139,3 +140,88 @@ def test_mode_does_not_read_through_a_config_symlink(box: Path) -> None:
     assert "symlink" in r.stderr
     assert json.loads(secret.read_text()) == {"secret": "x"}
     assert (box / "data" / "config.json").is_symlink()
+
+
+# ---- athena-tailnet watch: root starts the login, the PDA user is no operator (finding 2) ----
+
+FAKE_TAILSCALE = """#!/bin/sh
+echo "$*" >>"{box}/ts.log"
+for a in "$@"; do
+	case "$a" in
+		status) cat "{box}/status.json"; exit 0 ;;
+		login) echo $$ >"{box}/login.pid"; exec sleep 30 ;;
+		set) exit 0 ;;
+	esac
+done
+"""
+
+FAST = ("ATHENA_TS_WATCH_LOGIN_POLL=0.2\nATHENA_TS_WATCH_POLL=0.2\n"
+        "ATHENA_TS_LOGIN_RETRY=0\nATHENA_TS_LOGIN_TIMEOUT=7\n")
+
+
+def _watch(box: Path, backend: str, seconds: float = 1.5) -> list[str]:
+    fake = box / "bin" / "fake-tailscale"
+    script = install(box, SYSTEM / "athena-tailnet", defaults=FAST)
+    script.write_text(script.read_text().replace("/usr/bin/tailscale", str(fake)))
+    fake.write_text(FAKE_TAILSCALE.format(box=box))
+    fake.chmod(0o755)
+    (box / "status.json").write_text(json.dumps({"BackendState": backend, "AuthURL": ""}))
+    e = {"PATH": os.environ["PATH"], "ATHENA_PDA_DEFAULTS": str(box / "default")}
+    p = subprocess.Popen(["/bin/sh", str(script), "watch"], env=e,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        time.sleep(seconds)
+    finally:
+        p.terminate()
+        p.wait(timeout=10)
+    assert p.returncode == 0, p.stderr.read() if p.stderr else ""
+    return (box / "ts.log").read_text().splitlines()
+
+
+def _sock(line: str) -> str:
+    return line.split(" ", 1)[1] if line.startswith("--socket=") else line
+
+
+def test_watch_sets_no_operator_then_logs_in_once(box: Path) -> None:
+    calls = [_sock(c) for c in _watch(box, "NeedsLogin")]
+    flags = "--operator= --hostname=athena-pda --netfilter-mode=off"
+    assert calls[0] == f"set {flags}"
+    logins = [c for c in calls if c.startswith("login")]
+    # one login while the first is still running (no retry storm), with the fixed flags
+    assert logins == [f"login {flags} --timeout=7s"]
+    assert any(c == "status --json" for c in calls)
+    assert not any(f"--operator={PDA_USER}" in c for c in calls)
+    # TERM ended the watch and also the login it started
+    pid = int((box / "login.pid").read_text())
+    for _ in range(50):
+        if not _alive(pid):
+            break
+        time.sleep(0.1)
+    assert not _alive(pid)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (FileNotFoundError, IndexError):
+        return False
+    return state != "Z"
+
+
+@pytest.mark.parametrize("backend", ["Running", "NeedsMachineAuth", "Stopped", "Starting"])
+def test_watch_starts_no_login_unless_needed(box: Path, backend: str) -> None:
+    calls = [_sock(c) for c in _watch(box, backend, 1.0)]
+    assert calls[0].startswith("set ")
+    assert "status --json" in calls
+    assert not [c for c in calls if c.startswith("login")]
+
+
+def test_no_user_reaches_tailscale_flags() -> None:
+    """The PATH wrapper that let syncd run `tailscale login <flags>` is gone, and the boot
+    scripts give no user the operator."""
+    assert not (SYSTEM / "tailscale-wrapper").exists()
+    for f in [*SYSTEM.iterdir(), *(FILES / "athena-tailscale-bin").iterdir(),
+              *(FILES / "athena-pda-syncd").iterdir()]:
+        if f.is_file():
+            assert "--operator=$" not in f.read_text(), f
+            assert "libexec/athena-pda/bin" not in f.read_text(), f

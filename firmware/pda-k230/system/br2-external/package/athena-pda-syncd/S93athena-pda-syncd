@@ -3,8 +3,8 @@
 # pairing, the hub client, PdaSync over glance.sock. Runs as $ATHENA_PDA_USER.
 # Off while LilyGO's launcher is what boots (ATHENA_PDA_BOOT_UI=launcher).
 #
-# PATH starts with /usr/libexec/athena-pda/bin, whose `tailscale` adds this
-# image's flags to `tailscale login` (see athena_ts_flags).
+# syncd only reads `tailscale status --json` (any user may); it is no Tailscale
+# operator, and the login is started by root (`athena-tailnet watch`, S45tailscaled).
 
 # shellcheck source-path=SCRIPTDIR source=../athena-pda-system/files/athena-pda-common.sh
 . /usr/libexec/athena-pda/athena-pda-common.sh
@@ -20,7 +20,7 @@ start() {
 	fi
 	athena_dirs
 	HOME="$ATHENA_PDA_DIR"
-	PATH="$ATHENA_PDA_LIBEXEC/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+	PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 	ATHENA_RELAY_PATH=/usr/lib/athena-pda/python
 	export HOME PATH ATHENA_RELAY_PATH
 	athena_start "$DAEMON" "$ATHENA_PDA_USER" "$PROG"

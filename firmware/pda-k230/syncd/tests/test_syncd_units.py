@@ -131,17 +131,6 @@ def test_parse_status() -> None:
     assert msg == {"t": "tailnet", "state": "needs_login", "url": "https://l/x", "name": None}
 
 
-class FakeLogin:
-    def __init__(self) -> None:
-        self.alive, self.printed = True, None
-
-    def running(self) -> bool:
-        return self.alive
-
-    def link(self):
-        return self.printed
-
-
 def test_tailnet_missing_timeout() -> None:
     def missing(argv, timeout):
         raise FileNotFoundError(argv[0])
@@ -153,45 +142,23 @@ def test_tailnet_missing_timeout() -> None:
     assert tn.Tailnet(run=slow).poll() == tn.TailnetState("unknown")
 
 
-def test_tailnet_login_link() -> None:
+def test_tailnet_only_reads_status() -> None:
+    """syncd is no Tailscale operator: it never starts a login or changes a setting, even
+    when Tailscale needs a login and has no link yet (root's athena-tailnet watch does)."""
     out = {"v": _status("NeedsLogin")}
-    started: list[list[str]] = []
-    login = FakeLogin()
-    now = [0.0]
+    ran: list[list[str]] = []
 
-    def start(argv):
-        started.append(argv)
-        return login
+    def run(argv, timeout):
+        ran.append(argv)
+        return 0, out["v"]
 
-    t = tn.Tailnet(binary="/usr/bin/tailscale", run=lambda argv, timeout: (0, out["v"]),
-                   start_login=start, clock=lambda: now[0])
-    assert t.poll().url is None
-    assert started == [["/usr/bin/tailscale", "login"]]
-    assert t.poll().url is None and len(started) == 1  # still running, not started again
-    login.printed = "https://login.tailscale.com/a/printed"
-    assert t.poll().url == "https://login.tailscale.com/a/printed"
+    t = tn.Tailnet(binary="/usr/bin/tailscale", run=run)
+    assert t.poll() == tn.TailnetState("needs_login", None, "athena-pda.tail0000.ts.net")
     out["v"] = _status("NeedsLogin", auth="https://login.tailscale.com/a/status")
-    assert t.poll().url == "https://login.tailscale.com/a/status"  # status wins
-    # it ended without a link: started again, but not more than once a minute
-    out["v"] = _status("NeedsLogin")
-    login.alive, login.printed = False, None
-    t.poll()
-    assert len(started) == 1
-    now[0] = 61.0
-    t.poll()
-    assert len(started) == 2
+    assert t.poll().url == "https://login.tailscale.com/a/status"
     out["v"] = _status("Running")
     assert t.poll().state == "running"
-
-
-def test_tailnet_login_off() -> None:
-    started = []
-    t = tn.Tailnet(run=lambda argv, timeout: (0, _status("NeedsLogin")),
-                   start_login=lambda argv: started.append(argv), login=False)
-    assert t.poll().state == "needs_login" and started == []
-    t2 = tn.Tailnet(run=lambda argv, timeout: (0, _status("NeedsMachineAuth")),
-                    start_login=lambda argv: started.append(argv))
-    assert t2.poll().state == "needs_login" and started == []
+    assert ran == [["/usr/bin/tailscale", "status", "--json"]] * 3
 
 
 # ----------------------------------------------------------------- policy
@@ -242,9 +209,9 @@ def test_config(tmp_path) -> None:
     assert c.parse({}) == c.Config()
     cfg = c.parse({"tz": "Europe/Berlin", "calendar_href": " cal-1 ",
                    "templates": "Call, Meeting,,", "proxy": "http://127.0.0.1:1055/",
-                   "tailscale_login": False, "unknown": 1})
+                   "tailscale": False, "tailscale_login": True, "unknown": 1})
     assert cfg == c.Config("Europe/Berlin", "cal-1", ["Call", "Meeting"],
-                           "http://127.0.0.1:1055", True, False)
+                           "http://127.0.0.1:1055", False)
     bad = c.parse({"tz": "Mars/Base", "proxy": "socks5://x:1", "templates": 3,
                    "tailscale": "yes", "calendar_href": 5})
     assert bad == c.Config()

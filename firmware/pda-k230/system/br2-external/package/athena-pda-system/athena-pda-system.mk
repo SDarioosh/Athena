@@ -27,8 +27,6 @@ define ATHENA_PDA_SYSTEM_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/libexec/athena-pda/athena-pda-common.sh
 	$(INSTALL) -D -m 0755 $(@D)/athena-supervise \
 		$(TARGET_DIR)/usr/libexec/athena-pda/athena-supervise
-	$(INSTALL) -D -m 0755 $(@D)/tailscale-wrapper \
-		$(TARGET_DIR)/usr/libexec/athena-pda/bin/tailscale
 	$(foreach f,$(ATHENA_PDA_SYSTEM_BINS),\
 		$(INSTALL) -D -m 0755 $(@D)/$(f) $(TARGET_DIR)/usr/bin/$(f)$(sep))
 endef

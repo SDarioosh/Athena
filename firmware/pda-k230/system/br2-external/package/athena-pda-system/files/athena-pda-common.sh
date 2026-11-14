@@ -20,6 +20,14 @@ ATHENA_TS_MODE=tun
 ATHENA_TS_PROXY=127.0.0.1:1055
 ATHENA_TS_HOSTNAME=athena-pda
 ATHENA_TS_STATE_DIR=/var/lib/tailscale
+ATHENA_TS_SOCKET=/run/tailscale/tailscaled.sock
+# athena-tailnet watch: seconds between status checks while a login is needed /
+# otherwise, and between two `tailscale login` runs (each waits for up to
+# ATHENA_TS_LOGIN_TIMEOUT for the owner to approve, then a new link is made)
+ATHENA_TS_WATCH_LOGIN_POLL=5
+ATHENA_TS_WATCH_POLL=30
+ATHENA_TS_LOGIN_RETRY=60
+ATHENA_TS_LOGIN_TIMEOUT=600
 
 if [ -r "$ATHENA_PDA_DEFAULTS" ]; then
 	# shellcheck source-path=SCRIPTDIR source=athena-pda.default
@@ -98,9 +106,12 @@ athena_pda_boots() {
 	[ "$ATHENA_PDA_BOOT_UI" != "launcher" ]
 }
 
-# The flags `tailscale up`/`login` need on this image. Without them a login resets
-# them to Tailscale's defaults: the operator (syncd's write access to tailscaled)
-# is lost and netfilter mode goes back to on (no iptables/nft here).
+# The flags `tailscale set`/`login` get on this image (a login without them resets
+# them to Tailscale's defaults): the host name and netfilter mode off (no iptables
+# or nft here), and no operator: no user but root may change tailscaled's settings
+# (anyone may read `tailscale status`, which is all syncd does). Only root runs
+# `tailscale login`: `athena-tailnet watch` (started by S45tailscaled) or
+# `athena-tailnet login` from a root shell.
 athena_ts_flags() {
-	echo "--operator=$ATHENA_PDA_USER --hostname=$ATHENA_TS_HOSTNAME --netfilter-mode=off"
+	echo "--operator= --hostname=$ATHENA_TS_HOSTNAME --netfilter-mode=off"
 }
