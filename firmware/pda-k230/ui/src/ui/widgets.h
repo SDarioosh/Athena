@@ -57,11 +57,12 @@ void ui_tick_set(lv_obj_t *tick, bool done, bool animate);
 /* A checklist item row, shared by Today and Tasks: the tick, the text (up to title_lines,
  * struck through when done), a second line (sub, may be NULL), a mark on the right while a
  * change waits for syncd, and "Couldn't sync" when the server refused it. A tap calls
- * app_todo_tap() and toasts its result. */
+ * app_todo_tap_ref() (the item by note id, `i` and text, never by its position) and toasts
+ * its result. */
 typedef struct {
     ui_row_t *r;
     lv_obj_t *tick, *title, *sub, *mark;
-    int note, item;
+    app_todo_ref_t ref; /* the item, found again in the current feed at each tap / refresh */
     bool done, pending, failed, shown;
     char sub_text[200];
 } todo_row_t;

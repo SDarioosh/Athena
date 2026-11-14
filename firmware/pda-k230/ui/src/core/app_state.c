@@ -675,6 +675,46 @@ app_todo_result_t app_todo_tap(int note_idx, int item_idx)
     return reverse ? APP_TODO_REVERSE : APP_TODO_QUEUED;
 }
 
+bool app_todo_ref(int note_idx, int item_idx, app_todo_ref_t *out)
+{
+    const feed_t *f = S.feed;
+    if (!f || note_idx < 0 || note_idx >= f->n_todos || item_idx < 0 ||
+        item_idx >= f->todos[note_idx].n_items) {
+        return false;
+    }
+    const feed_todo_t *n = &f->todos[note_idx];
+    const feed_todo_item_t *it = &n->items[item_idx];
+    out->note = crc32_update(0, n->id, strlen(n->id));
+    out->i = it->i;
+    out->text = crc32_update(0, it->text, strlen(it->text));
+    return true;
+}
+
+bool app_todo_find(const app_todo_ref_t *ref, int *note_idx, int *item_idx)
+{
+    const feed_t *f = S.feed;
+    for (int n = 0; f && n < f->n_todos; n++) {
+        if (crc32_update(0, f->todos[n].id, strlen(f->todos[n].id)) != ref->note) {
+            continue;
+        }
+        for (int k = 0; k < f->todos[n].n_items; k++) {
+            const feed_todo_item_t *it = &f->todos[n].items[k];
+            if (it->i == ref->i && crc32_update(0, it->text, strlen(it->text)) == ref->text) {
+                *note_idx = n;
+                *item_idx = k;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+app_todo_result_t app_todo_tap_ref(const app_todo_ref_t *ref)
+{
+    int n, k;
+    return app_todo_find(ref, &n, &k) ? app_todo_tap(n, k) : APP_TODO_GONE;
+}
+
 /* ---- clock ---- */
 
 int64_t app_now(void)

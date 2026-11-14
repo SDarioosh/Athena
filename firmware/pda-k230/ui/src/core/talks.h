@@ -60,10 +60,16 @@ typedef enum {
     TALKS_TAP_REOPEN,  /* syncd had it: "open" queued */
     TALKS_TAP_FULL,    /* outbox full */
     TALKS_TAP_ERROR,
+    TALKS_TAP_GONE,    /* talks_item_tap_id: no such action item in the current feed */
 } talks_tap_t;
 
 /* A tap (long_press: dismiss) on f->actions[idx] of the current feed. */
 talks_tap_t talks_item_tap(int idx, bool long_press);
+/* The same for the action item with that id (what a row keeps: an index could name
+ * another item after a new feed); TALKS_TAP_GONE if it isn't there. */
+talks_tap_t talks_item_tap_id(int64_t id, bool long_press);
+/* Its index in the current feed, or -1. */
+int talks_action_index(int64_t id);
 
 /* The second line of an action item row: the change waiting ("Done · waiting to sync, tap
  * to undo", "Dismissed · sent"), "Couldn't sync", or due date and owner ("Due Fri 23 Oct ·

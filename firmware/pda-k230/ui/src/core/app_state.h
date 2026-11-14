@@ -193,11 +193,27 @@ typedef enum {
     APP_TODO_REVERSE, /* syncd had it already: the reverse toggle is queued */
     APP_TODO_FULL,    /* outbox full */
     APP_TODO_ERROR,   /* couldn't save, or no such item */
+    APP_TODO_GONE,    /* app_todo_tap_ref: the item isn't in the current feed (any more) */
 } app_todo_result_t;
 
 /* A tap on a checklist item: toggle it at once; a second tap undoes the pending toggle,
  * or, once syncd has it, queues the reverse (T5 ui_pda.c on_todo). */
 app_todo_result_t app_todo_tap(int note_idx, int item_idx);
+
+/* A checklist item by what it is, not where it is in the feed: a row keeps this, so a tap
+ * in the moment between a new feed and the row's rebuild never hits another item. */
+typedef struct {
+    uint32_t note;  /* crc32 of the note id */
+    int32_t i;      /* the hub's index of the item */
+    uint32_t text;  /* crc32 of the item text */
+} app_todo_ref_t;
+
+/* The ref of f->todos[note_idx].items[item_idx]; false if there is none. */
+bool app_todo_ref(int note_idx, int item_idx, app_todo_ref_t *out);
+/* Where that item is in the current feed; false if it isn't (removed, renamed, ...). */
+bool app_todo_find(const app_todo_ref_t *ref, int *note_idx, int *item_idx);
+/* app_todo_tap on the item ref names, APP_TODO_GONE if it isn't in the feed. */
+app_todo_result_t app_todo_tap_ref(const app_todo_ref_t *ref);
 
 /* ---- clock ---- */
 

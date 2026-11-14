@@ -173,6 +173,14 @@ static void test_items(const char *dir)
     talks_item_line(&x, &open, app_today(), line, sizeof(line));
     CHECK(strcmp(line, "Due Fri 23 Oct") == 0);
 
+    /* by id: what a row keeps */
+    CHECK_EQ(talks_action_index(17), a);
+    CHECK_EQ(talks_action_index(123456), -1);
+    CHECK_EQ(talks_item_tap_id(123456, false), TALKS_TAP_GONE);
+    const int n_ob = app_outbox_count();
+    CHECK_EQ(talks_item_tap_id(17, false), TALKS_TAP_QUEUED);
+    CHECK_EQ(app_outbox_count(), n_ob + 1);
+    CHECK_EQ(talks_item_tap_id(17, false), TALKS_TAP_UNDONE);
     CHECK_EQ(talks_item_tap(-1, false), TALKS_TAP_ERROR);
     CHECK_EQ(talks_item_tap(f->n_actions, false), TALKS_TAP_ERROR);
     app_deinit();

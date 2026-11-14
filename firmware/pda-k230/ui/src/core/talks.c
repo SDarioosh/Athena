@@ -169,6 +169,23 @@ talks_tap_t talks_item_tap(int idx, bool long_press)
     return queue_status(id, long_press ? "dismissed" : "done", TALKS_TAP_QUEUED);
 }
 
+int talks_action_index(int64_t id)
+{
+    const feed_t *f = app_feed();
+    for (int i = 0; f && i < f->n_actions; i++) {
+        if (f->actions[i].id == id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+talks_tap_t talks_item_tap_id(int64_t id, bool long_press)
+{
+    const int i = talks_action_index(id);
+    return i < 0 ? TALKS_TAP_GONE : talks_item_tap(i, long_press);
+}
+
 void talks_item_line(const feed_action_t *a, const talks_item_view_t *v, int32_t today, char *out,
                      size_t cap)
 {

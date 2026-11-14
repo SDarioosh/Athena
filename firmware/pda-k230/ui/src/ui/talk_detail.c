@@ -26,7 +26,6 @@
 /* ==================== the conversation ==================== */
 
 typedef struct {
-    int idx; /* f->actions */
     int64_t id;
     lv_obj_t *row, *tick, *x, *title, *sub, *mark, *cal;
     talks_item_view_t shown;
@@ -56,10 +55,11 @@ static const feed_conv_t *find_conv(const char *id)
 static void item_refresh(item_row_t *r, bool animate)
 {
     const feed_t *f = app_feed();
-    if (!f || r->idx >= f->n_actions) {
+    const int i = talks_action_index(r->id); /* by id: the feed may be newer than the row */
+    if (!f || i < 0) {
         return;
     }
-    const feed_action_t *a = &f->actions[r->idx];
+    const feed_action_t *a = &f->actions[i];
     talks_item_view_t v;
     talks_item_view(a, &v);
     if (r->have_shown && memcmp(&v, &r->shown, sizeof(v)) == 0) {
@@ -101,10 +101,11 @@ static void cal_clicked(lv_event_t *e)
 {
     const item_row_t *r = lv_event_get_user_data(e);
     const feed_t *f = app_feed();
-    if (!f || r->idx >= f->n_actions || f->actions[r->idx].id != r->id) {
+    const int i = talks_action_index(r->id);
+    if (!f || i < 0) {
         return;
     }
-    const feed_action_t *a = &f->actions[r->idx];
+    const feed_action_t *a = &f->actions[i];
     event_new_open_for(a->text, a->due_day, a->id);
 }
 
@@ -138,12 +139,13 @@ static lv_obj_t *cal_pill(lv_obj_t *parent, item_row_t *r)
 
 static void item_tap(item_row_t *r, bool long_press)
 {
-    switch (talks_item_tap(r->idx, long_press)) {
+    switch (talks_item_tap_id(r->id, long_press)) {
     case TALKS_TAP_QUEUED: break; /* the tick says it */
     case TALKS_TAP_UNDONE: ui_toast(UI_TOAST_INFO, "Undone"); break;
     case TALKS_TAP_REOPEN: ui_toast(UI_TOAST_INFO, "Reopening it with the next sync"); break;
     case TALKS_TAP_FULL: ui_toast(UI_TOAST_ERROR, "Outbox full: sync first"); break;
     case TALKS_TAP_ERROR: ui_toast(UI_TOAST_ERROR, "Couldn't save the change"); break;
+    case TALKS_TAP_GONE: ui_toast(UI_TOAST_INFO, "That item just changed: try again"); break;
     }
 }
 
@@ -166,7 +168,6 @@ static void item_row(lv_obj_t *card, conv_arg_t *c, int idx)
     }
     item_row_t *r = &c->items[c->n_items++];
     memset(r, 0, sizeof(*r));
-    r->idx = idx;
     r->id = f->actions[idx].id;
     ui_row_t *row = ui_row(card, NULL, NULL);
     r->row = row->row;

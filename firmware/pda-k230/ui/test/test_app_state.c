@@ -205,6 +205,30 @@ static void test_reload(const char *dir)
     }
     CHECK(app_load_detail("conv:nope") == NULL);
 
+    /* a row keeps its item by note id, `i` and text: after a new feed the same index
+     * names another item (or none), the ref finds it again or says it's gone */
+    {
+        put_feed("feed_insight_demo.json");
+        const feed_t *f = app_feed();
+        app_todo_ref_t work0, untitled0;
+        CHECK(app_todo_ref(note_index(f, "note_demo_work"), 0, &work0));
+        const int u_old = note_index(f, "note_demo_untitled");
+        CHECK(app_todo_ref(u_old, 0, &untitled0));
+        CHECK(app_todo_ref(u_old, 0, &untitled0));
+        const int before = app_outbox_count();
+        put_feed("feed_demo.json"); /* no work note; the notes in another order */
+        int n, k;
+        CHECK(!app_todo_find(&work0, &n, &k));
+        CHECK_EQ(app_todo_tap_ref(&work0), APP_TODO_GONE);
+        CHECK_EQ(app_outbox_count(), before); /* nothing queued for another item */
+        CHECK(app_todo_find(&untitled0, &n, &k));
+        CHECK(n != u_old && k == 0);
+        CHECK(strcmp(app_feed()->todos[n].id, "note_demo_untitled") == 0);
+        app_todo_ref_t renamed = untitled0;
+        renamed.text ^= 1; /* the same i with another text: not the same item */
+        CHECK(!app_todo_find(&renamed, &n, &k));
+    }
+
     /* wipe */
     CHECK_EQ(app_wipe(), 0);
     CHECK(app_feed() == NULL);

@@ -292,13 +292,14 @@ void ui_tick_set(lv_obj_t *tick, bool done, bool animate)
 static void todo_clicked(lv_event_t *e)
 {
     todo_row_t *t = lv_event_get_user_data(e);
-    const app_todo_result_t r = app_todo_tap(t->note, t->item);
+    const app_todo_result_t r = app_todo_tap_ref(&t->ref);
     switch (r) {
     case APP_TODO_QUEUED: break; /* the tick says it */
     case APP_TODO_UNDONE: ui_toast(UI_TOAST_INFO, "Undone"); break;
     case APP_TODO_REVERSE: ui_toast(UI_TOAST_INFO, "Changing it back with the next sync"); break;
     case APP_TODO_FULL: ui_toast(UI_TOAST_ERROR, "Outbox full: sync first"); break;
     case APP_TODO_ERROR: ui_toast(UI_TOAST_ERROR, "Couldn't save the change"); break;
+    case APP_TODO_GONE: ui_toast(UI_TOAST_INFO, "That list just changed: try again"); break;
     }
 }
 
@@ -312,8 +313,7 @@ todo_row_t *todo_row(lv_obj_t *parent, int note_idx, int item_idx, const lv_font
 {
     const feed_t *f = app_feed();
     todo_row_t *t = lv_malloc_zeroed(sizeof(*t));
-    t->note = note_idx;
-    t->item = item_idx;
+    app_todo_ref(note_idx, item_idx, &t->ref);
     snprintf(t->sub_text, sizeof(t->sub_text), "%s", sub ? sub : "");
     t->r = ui_row(parent, todo_clicked, t);
     lv_obj_add_event_cb(t->r->row, free_todo, LV_EVENT_DELETE, t);
@@ -336,7 +336,11 @@ todo_row_t *todo_row(lv_obj_t *parent, int note_idx, int item_idx, const lv_font
 void todo_row_refresh(todo_row_t *t, bool animate)
 {
     app_todo_view_t v;
-    app_todo_view(t->note, t->item, &v);
+    int n, k;
+    if (!app_todo_find(&t->ref, &n, &k)) {
+        return; /* gone from the feed: the screen is about to be rebuilt */
+    }
+    app_todo_view(n, k, &v);
     if (t->shown && v.done == t->done && v.pending == t->pending && v.failed == t->failed) {
         return;
     }
