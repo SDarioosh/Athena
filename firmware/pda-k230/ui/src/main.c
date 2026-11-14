@@ -5,7 +5,9 @@
  *   ATHENA_PDA_DIR      state (feed.json, d/, ob/, ui.json), default /var/lib/athena-pda
  *   ATHENA_PDA_RUN      sockets (glance.sock, vision.sock), default /run/athena-pda
  *   ATHENA_PDA_BACKEND  headless | sdl | device (default: the best compiled in)
- *   ATHENA_PDA_DRM, ATHENA_PDA_TOUCH  the device's DRM card and evdev touch node */
+ *   ATHENA_PDA_DRM, ATHENA_PDA_TOUCH  the device's DRM card and evdev touch node
+ *   ATHENA_PDA_TEST_CTL a control socket for the end-to-end tests (headless backend only;
+ *                       ignored by the others: headless_ctl.h) */
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>
@@ -19,6 +21,7 @@
 #include "app_state.h"
 #include "board.h"
 #include "glance_server.h"
+#include "headless_ctl.h"
 #include "lvgl.h"
 #include "platform.h"
 #include "power.h"
@@ -148,6 +151,14 @@ int main(void)
     if (!s_glance || !vision) {
         return 1;
     }
+    headless_ctl_t *ctl = NULL;
+    const char *ctl_path = getenv("ATHENA_PDA_TEST_CTL");
+    if (ctl_path && ctl_path[0] && kind == PLATFORM_HEADLESS) {
+        ctl = headless_ctl_open(ctl_path);
+        if (!ctl) {
+            return 1;
+        }
+    }
     LOG("started (%s, state in %s, sockets in %s)\n",
         kind == PLATFORM_DEVICE ? "device" : kind == PLATFORM_SDL ? "sdl" : "headless", dir, run);
 
@@ -162,15 +173,17 @@ int main(void)
         if (wait > 33) {
             wait = 33;
         }
-        struct pollfd pfd[4];
+        struct pollfd pfd[5];
         const int ng = glance_server_pollfds(s_glance, pfd, 2);
         const int nv = vision_server_pollfds(vision, pfd + ng, 2);
-        if (poll(pfd, (nfds_t)(ng + nv), (int)wait) < 0 && errno != EINTR) {
+        const int nc = headless_ctl_pollfds(ctl, pfd + ng + nv, 1);
+        if (poll(pfd, (nfds_t)(ng + nv + nc), (int)wait) < 0 && errno != EINTR) {
             LOG("poll: %s\n", strerror(errno));
             break;
         }
         glance_server_process(s_glance, pfd, ng);
         vision_server_process(vision, pfd + ng, nv);
+        headless_ctl_process(ctl, pfd + ng + nv, nc);
         if (app_mono_ms() >= next_power) {
             next_power = app_mono_ms() + POWER_EVERY_MS;
             update_power();
@@ -179,6 +192,7 @@ int main(void)
     LOG("stopping\n");
     glance_server_close(s_glance);
     vision_server_close(vision);
+    headless_ctl_close(ctl);
     app_deinit();
     return 0;
 }

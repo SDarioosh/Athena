@@ -98,6 +98,7 @@ add_library(pda_ui STATIC
     src/ui/ui_screens.c src/ui/screen_today.c src/ui/screen_tasks.c src/ui/screen_stub.c
     src/ui/sheet_event.c
     src/platform/platform.c src/platform/platform_headless.c src/platform/png_write.c
+    src/platform/headless_ctl.c
     ${FONT_C}/inter_regular.c ${FONT_C}/inter_semibold.c ${FONT_C}/inter_bold.c ${FONT_C}/lucide.c
 )
 target_include_directories(pda_ui PUBLIC src/ui src/platform)
