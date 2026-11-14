@@ -32,8 +32,8 @@ static struct {
 /* ---- events ---- */
 
 typedef struct {
-    int event;
-    const char *why;
+    app_event_ref_t ev; /* found again at the tap: the feed may be newer than the row */
+    char why[200];      /* a copy: the row's feed is freed when a new one comes */
 } event_tap_t;
 
 static void free_ud(lv_event_t *e)
@@ -44,7 +44,7 @@ static void free_ud(lv_event_t *e)
 static void event_clicked(lv_event_t *e)
 {
     const event_tap_t *t = lv_event_get_user_data(e);
-    sheet_event_open(t->event, t->why);
+    sheet_event_open(app_event_find(&t->ev), t->why); /* -1: "no longer in the feed" */
 }
 
 static void event_row(lv_obj_t *card, const today_item_t *it)
@@ -52,8 +52,8 @@ static void event_row(lv_obj_t *card, const today_item_t *it)
     const feed_t *f = app_feed();
     const feed_event_t *e = &f->events[it->ref.event];
     event_tap_t *tap = lv_malloc_zeroed(sizeof(*tap));
-    tap->event = it->ref.event;
-    tap->why = it->ref.why;
+    app_event_ref(it->ref.event, &tap->ev);
+    snprintf(tap->why, sizeof(tap->why), "%s", it->ref.why ? it->ref.why : "");
     ui_row_t *r = ui_row(card, event_clicked, tap);
     lv_obj_add_event_cb(r->row, free_ud, LV_EVENT_DELETE, tap);
     ui_focusable(r->row, false);

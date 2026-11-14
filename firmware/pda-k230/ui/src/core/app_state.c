@@ -715,6 +715,34 @@ app_todo_result_t app_todo_tap_ref(const app_todo_ref_t *ref)
     return app_todo_find(ref, &n, &k) ? app_todo_tap(n, k) : APP_TODO_GONE;
 }
 
+static uint32_t event_key(const feed_event_t *e)
+{
+    uint32_t c = crc32_update(0, e->id ? e->id : "", e->id ? strlen(e->id) : 0);
+    return crc32_update(c, e->title ? e->title : "", e->title ? strlen(e->title) : 0);
+}
+
+bool app_event_ref(int event_idx, app_event_ref_t *out)
+{
+    const feed_t *f = S.feed;
+    if (!f || event_idx < 0 || event_idx >= f->n_events) {
+        return false;
+    }
+    out->key = event_key(&f->events[event_idx]);
+    out->start = f->events[event_idx].start;
+    return true;
+}
+
+int app_event_find(const app_event_ref_t *ref)
+{
+    const feed_t *f = S.feed;
+    for (int i = 0; f && i < f->n_events; i++) {
+        if (f->events[i].start == ref->start && event_key(&f->events[i]) == ref->key) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 /* ---- clock ---- */
 
 int64_t app_now(void)

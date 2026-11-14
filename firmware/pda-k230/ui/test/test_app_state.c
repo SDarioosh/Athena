@@ -210,6 +210,10 @@ static void test_reload(const char *dir)
     {
         put_feed("feed_insight_demo.json");
         const feed_t *f = app_feed();
+        app_event_ref_t ev_last;
+        CHECK(app_event_ref(f->n_events - 1, &ev_last));
+        CHECK(app_event_ref(f->n_events - 1, &ev_last));
+        CHECK_EQ(app_event_find(&ev_last), f->n_events - 1);
         app_todo_ref_t work0, untitled0;
         CHECK(app_todo_ref(note_index(f, "note_demo_work"), 0, &work0));
         const int u_old = note_index(f, "note_demo_untitled");
@@ -224,6 +228,11 @@ static void test_reload(const char *dir)
         CHECK(app_todo_find(&untitled0, &n, &k));
         CHECK(n != u_old && k == 0);
         CHECK(strcmp(app_feed()->todos[n].id, "note_demo_untitled") == 0);
+        const int e_now = app_event_find(&ev_last); /* the new feed: elsewhere, or gone */
+        CHECK(e_now < 0 || (app_feed()->events[e_now].start == ev_last.start));
+        app_event_ref_t other = ev_last;
+        other.start += 60;
+        CHECK_EQ(app_event_find(&other), -1);
         app_todo_ref_t renamed = untitled0;
         renamed.text ^= 1; /* the same i with another text: not the same item */
         CHECK(!app_todo_find(&renamed, &n, &k));

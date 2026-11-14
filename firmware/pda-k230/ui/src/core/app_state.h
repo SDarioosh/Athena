@@ -215,6 +215,16 @@ bool app_todo_find(const app_todo_ref_t *ref, int *note_idx, int *item_idx);
 /* app_todo_tap on the item ref names, APP_TODO_GONE if it isn't in the feed. */
 app_todo_result_t app_todo_tap_ref(const app_todo_ref_t *ref);
 
+/* An event by what it is (crc32 of its id and title, its start), for the same reason. */
+typedef struct {
+    uint32_t key;
+    int64_t start;
+} app_event_ref_t;
+
+bool app_event_ref(int event_idx, app_event_ref_t *out);
+/* Its index in the current feed's events, or -1. */
+int app_event_find(const app_event_ref_t *ref);
+
 /* ---- clock ---- */
 
 int64_t app_now(void);       /* epoch s: the system clock (NTP), or the override */

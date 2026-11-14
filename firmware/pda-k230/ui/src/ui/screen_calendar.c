@@ -54,7 +54,13 @@ static uint32_t outbox_sig(void)
 
 static void event_clicked(lv_event_t *e)
 {
-    sheet_event_open((int)(intptr_t)lv_event_get_user_data(e), NULL);
+    const app_event_ref_t *ref = lv_event_get_user_data(e);
+    sheet_event_open(app_event_find(ref), NULL); /* by what it is: the feed may be newer */
+}
+
+static void free_ref(lv_event_t *e)
+{
+    lv_free(lv_event_get_user_data(e));
 }
 
 static void inset_rule(lv_obj_t *card)
@@ -96,7 +102,14 @@ static void time_column(lv_obj_t *left, const agenda_row_t *a, uint32_t color)
 static void event_row(lv_obj_t *card, const agenda_row_t *a)
 {
     const feed_event_t *e = &app_feed()->events[a->idx];
-    ui_row_t *r = ui_row(card, event_clicked, (void *)(intptr_t)a->idx);
+    app_event_ref_t *ref = lv_malloc_zeroed(sizeof(*ref));
+    if (ref) {
+        app_event_ref(a->idx, ref);
+    }
+    ui_row_t *r = ui_row(card, ref ? event_clicked : NULL, ref);
+    if (ref) {
+        lv_obj_add_event_cb(r->row, free_ref, LV_EVENT_DELETE, ref);
+    }
     ui_focusable(r->row, false);
     time_column(r->left, a, C_TEXT);
     ui_text(r->mid, F.body_b, C_TEXT, e->title, ROW_W, 2);
