@@ -42,6 +42,7 @@ add_library(athena_vision_core STATIC
     src/core/canaan_gesture.cpp
     src/core/config.cpp
     src/core/engine.cpp
+    src/core/frame_check.cpp
     src/core/gesture_tracker.cpp
     src/core/hand_shape.cpp
     src/core/json.cpp
@@ -77,7 +78,7 @@ if(VISION_TESTS)
     enable_testing()
     set(VISION_TEST_NAMES
         test_hand_shape test_tracker test_presence test_json test_protocol
-        test_mode test_config test_engine test_track test_line_client)
+        test_mode test_config test_engine test_track test_line_client test_frame_check)
     foreach(t ${VISION_TEST_NAMES})
         add_executable(${t} tests/${t}.cpp)
         target_link_libraries(${t} PRIVATE athena_vision_synth)

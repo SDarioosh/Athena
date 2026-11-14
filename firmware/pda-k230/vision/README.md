@@ -30,6 +30,7 @@ the real nncase runtime but has **not run on the board** (the sandbox has no K23
 | `src/core/engine.*` | the core put together: lines in, detector results in, lines out |
 | `src/core/track.*` | keypoint track lines (record on the board, replay on a PC) |
 | `src/core/config.*` | all settings; `key = value` file and `--key=value` flags |
+| `src/core/frame_check.*` | the camera's negotiated format and each buffer's length checked before a frame is read |
 | `src/net/line_client.*` | non-blocking Unix socket line client (host-tested) |
 | `src/device/` | board only (`-DVISION_DEVICE=ON`): camera, KPU models, QR, `main.cpp` |
 | `tools/replay.cpp` | `athena-vision-replay`: a track through the core, prints the events |

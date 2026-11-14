@@ -6,6 +6,9 @@
 #include <poll.h>
 
 #include <mmz.h>
+#include <sys/ioctl.h>
+
+#include "frame_check.h"
 
 namespace av::dev {
 
@@ -26,6 +29,22 @@ bool Camera::start(int device, int width, int height, std::string *err) {
     if (v4l2_drm_setup(&ctx_, 1, nullptr) != 0) {
         // v4l2_drm_setup() cleans up after itself on failure (its `close:` path)
         if (err) *err = "camera setup failed on /dev/video" + std::to_string(device_);
+        return false;
+    }
+    // The driver may have settled on another size or format than S_FMT asked for (the
+    // helper doesn't look): every frame is read as width x height x 3, so check first.
+    v4l2_format fmt{};
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    std::string why;
+    if (::ioctl(ctx_.video_fd, VIDIOC_G_FMT, &fmt) != 0) {
+        why = std::string("camera format unknown: ") + std::strerror(errno);
+    } else {
+        why = av::check_format(fmt.fmt.pix.pixelformat, ctx_.video_format, fmt.fmt.pix.width,
+                               fmt.fmt.pix.height, ctx_.width, ctx_.height, fmt.fmt.pix.sizeimage);
+    }
+    if (!why.empty()) {
+        if (err) *err = why;
+        v4l2_drm_stop(&ctx_);
         return false;
     }
     if (v4l2_drm_start(&ctx_) != 0) {
@@ -76,10 +95,18 @@ Camera::Grab Camera::grab(CameraFrame *f, int timeout_ms, std::string *err) {
         if (err) *err = "camera gave a bad buffer";
         return Grab::Error;
     }
+    const int w = static_cast<int>(ctx_.width), h = static_cast<int>(ctx_.height);
+    // DQBUF reports the mapped buffer's length (and what the driver filled): never read past
+    // it, whatever the format said
+    if (!av::frame_fits(ctx_.vbuffer.length, ctx_.vbuffer.bytesused, w, h)) {
+        release();
+        if (err) *err = "camera frame smaller than " + std::to_string(w) + "x" + std::to_string(h) + "x3";
+        return Grab::Error;
+    }
     f->data = static_cast<const uint8_t *>(ctx_.buffers[idx].mmap);
-    f->width = static_cast<int>(ctx_.width);
-    f->height = static_cast<int>(ctx_.height);
-    f->bytes = static_cast<size_t>(f->width) * static_cast<size_t>(f->height) * 3;
+    f->width = w;
+    f->height = h;
+    f->bytes = av::planar3_bytes(w, h);
     return Grab::Frame;
 }
 
