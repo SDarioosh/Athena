@@ -225,3 +225,37 @@ def test_no_user_reaches_tailscale_flags() -> None:
         if f.is_file():
             assert "--operator=$" not in f.read_text(), f
             assert "libexec/athena-pda/bin" not in f.read_text(), f
+
+
+# ----------------------------------------------------------------- the image build
+
+SYSTEM_DIR = Path(__file__).resolve().parents[1]
+
+
+def test_gen_defconfig_applies_the_fragment(tmp_path: Path) -> None:
+    base = tmp_path / "base_defconfig"
+    base.write_text('BR2_A=y\n# BR2_B is not set\nBR2_LIST="one"\nBR2_KEEP=1\n')
+    # a backslash in the fragment's path: awk -v would have read it as an escape
+    frag_dir = tmp_path / "frag\\nment"
+    frag_dir.mkdir()
+    frag = frag_dir / "defconfig.fragment"
+    frag.write_text('# a comment\nBR2_A=n\nBR2_B=y\nBR2_LIST+="two"\nBR2_NEW="x"\n')
+    out = subprocess.run(["sh", str(SYSTEM_DIR / "gen-defconfig.sh"), str(base), str(frag)],
+                         capture_output=True, text=True, check=True).stdout
+    lines = out.splitlines()
+    assert lines[:4] == ["BR2_A=n", "BR2_B=y", 'BR2_LIST="one two"', "BR2_KEEP=1"]
+    assert 'BR2_NEW="x"' in lines
+
+
+@pytest.mark.parametrize("conf", ["../../etc/x", "a/b", ".hidden", "x y"])
+def test_build_image_refuses_a_conf_that_is_a_path(tmp_path: Path, conf: str) -> None:
+    lilygo = tmp_path / "lilygo"
+    for f in ("scripts/apply_to_sdk.sh", "k230_bsp/scripts/export_images.sh"):
+        p = lilygo / f
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("#!/bin/sh\nexit 0\n")
+        p.chmod(0o755)
+    env = {**os.environ, "CONF": conf}
+    r = subprocess.run(["bash", str(SYSTEM_DIR / "build-image.sh"), str(lilygo)], env=env,
+                       capture_output=True, text=True, check=False)
+    assert r.returncode == 2 and "plain defconfig name" in r.stderr

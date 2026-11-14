@@ -14,7 +14,9 @@ frag="${2:?usage: gen-defconfig.sh BASE_DEFCONFIG FRAGMENT}"
 [ -r "$base" ] || { echo "gen-defconfig.sh: can't read $base" >&2; exit 1; }
 [ -r "$frag" ] || { echo "gen-defconfig.sh: can't read $frag" >&2; exit 1; }
 
-awk -v fragfile="$frag" '
+# The fragment's path goes through the environment: awk -v would turn backslashes in it
+# into escapes.
+ATHENA_FRAG="$frag" awk '
 function keyof(line,    m) {
 	if (line ~ /^BR2_[A-Za-z0-9_]+(\+)?=/) {
 		m = line
@@ -36,6 +38,7 @@ function unquote(v) {
 }
 BEGIN {
 	n = 0
+	fragfile = ENVIRON["ATHENA_FRAG"]
 }
 {
 	lines[++n] = $0

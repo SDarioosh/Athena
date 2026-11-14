@@ -35,6 +35,11 @@ LILYGO_DIR="$(cd "$1" && pwd)"
 SDK_DIR="${SDK_DIR:-$LILYGO_DIR/k230_linux_sdk}"
 CONF="${CONF:-k230_canmv_t_display_athena_pda_defconfig}"
 EXPORT_DIR="${EXPORT_DIR:-$LILYGO_DIR/k230_bsp/images-athena-pda}"
+# CONF names a file in the SDK's configs directory and Buildroot's output directory: a
+# plain name, never a path
+case "$CONF" in
+	''|.*|*[!A-Za-z0-9_.-]*) echo "CONF must be a plain defconfig name, not '$CONF'" >&2; exit 2 ;;
+esac
 
 for f in "$LILYGO_DIR/scripts/apply_to_sdk.sh" "$LILYGO_DIR/k230_bsp/scripts/export_images.sh"; do
 	[ -x "$f" ] || { echo "not LilyGO's T-Display-K230 tree: no $f" >&2; exit 1; }
