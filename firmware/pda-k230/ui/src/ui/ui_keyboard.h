@@ -37,6 +37,9 @@ lv_obj_t *ui_text_field(lv_obj_t *parent, const char *placeholder, uint32_t max_
 void ui_keyboard_open(lv_obj_t *field);
 /* Close it (animated). */
 void ui_keyboard_close(void);
+/* Close it if its field is root or inside it: from now on no key reaches that field (a
+ * page that is leaving: ui_pop, ui_sheet_close). */
+void ui_keyboard_close_within(lv_obj_t *root);
 bool ui_keyboard_is_open(void);
 /* Its height when open in that mode (for layouts that plan for it). */
 int32_t ui_keyboard_height(ui_kb_mode_t mode);

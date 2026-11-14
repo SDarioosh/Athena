@@ -462,6 +462,16 @@ void ui_keyboard_open(lv_obj_t *field)
     K.watch = lv_timer_create(watch, 50, NULL);
 }
 
+void ui_keyboard_close_within(lv_obj_t *root)
+{
+    for (lv_obj_t *o = K.field; o && root; o = lv_obj_get_parent(o)) {
+        if (o == root) {
+            ui_keyboard_close(); /* the field is detached now: no key reaches it */
+            return;
+        }
+    }
+}
+
 void ui_keyboard_close(void)
 {
     if (K.watch) {

@@ -8,6 +8,7 @@
 #include "local_msg.h"
 #include "theme.h"
 #include "ui_internal.h"
+#include "ui_keyboard.h"
 
 #define DETAIL_DEPTH 4
 
@@ -344,6 +345,32 @@ static void detail_gone(lv_anim_t *a)
     lv_obj_delete(a->var);
 }
 
+static void untouchable(lv_obj_t *o)
+{
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+    const uint32_t n = lv_obj_get_child_count(o);
+    for (uint32_t i = 0; i < n; i++) {
+        untouchable(lv_obj_get_child(o, (int32_t)i));
+    }
+}
+
+/* A page that is leaving (its destroy() has run, its state may be freed) slides out for a
+ * while: from now on nothing in it gets a touch, a key or a held press. Every object of it
+ * stops being clickable (a touch goes to the page under it), the keyboard lets go of its
+ * field, and a finger that is down now is ignored until it lifts (an object it pressed
+ * gets LV_EVENT_INDEV_RESET, never CLICKED). */
+static void ui_leaving(lv_obj_t *layer)
+{
+    untouchable(layer);
+    ui_keyboard_close_within(layer);
+    for (lv_indev_t *i = lv_indev_get_next(NULL); i; i = lv_indev_get_next(i)) {
+        if (lv_indev_get_type(i) == LV_INDEV_TYPE_POINTER && lv_indev_get_state(i) == LV_INDEV_STATE_PRESSED) {
+            lv_indev_reset(i, NULL);
+            lv_indev_wait_release(i);
+        }
+    }
+}
+
 void ui_pop(void)
 {
     if (U.depth == 0) {
@@ -351,10 +378,10 @@ void ui_pop(void)
     }
     U.depth--;
     lv_obj_t *layer = U.detail[U.depth].layer;
+    ui_leaving(layer); /* before destroy(): no callback of the page runs after it */
     if (U.detail[U.depth].d->destroy) {
         U.detail[U.depth].d->destroy(U.detail[U.depth].arg);
     }
-    lv_obj_remove_flag(layer, LV_OBJ_FLAG_CLICKABLE);
     lv_anim_delete(layer, slide_x);
     lv_anim_t a;
     lv_anim_init(&a);
@@ -497,13 +524,15 @@ void ui_sheet_close(void)
         return;
     }
     lv_obj_t *scrim = U.scrim;
-    if (U.sheet_destroy) {
-        U.sheet_destroy(U.sheet_arg);
-    }
+    void (*destroy)(void *) = U.sheet_destroy;
+    void *arg = U.sheet_arg;
     U.scrim = U.sheet = NULL;
     U.sheet_destroy = NULL;
     U.sheet_arg = NULL;
-    lv_obj_remove_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
+    ui_leaving(scrim); /* as a detail page: nothing of the sheet runs after destroy */
+    if (destroy) {
+        destroy(arg);
+    }
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, scrim);

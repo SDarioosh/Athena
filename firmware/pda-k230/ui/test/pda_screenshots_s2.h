@@ -362,6 +362,30 @@ static void screens_s2(void)
     step(400);
     CHECK(ui_in_detail());
     shot("71_pairing_choose");
+    {
+        /* a page that leaves takes no touch: its state is freed when it starts to slide
+         * out (P is NULL); a finger already down and a tap during the slide-out both
+         * miss it (before ui_leaving, either one ran scan_clicked on the freed page) */
+        int32_t sx, sy;
+        CHECK(center_of("Scan the QR code", &sx, &sy));
+        headless_touch(sx, sy, true);
+        step(40);
+        ui_pop(); /* the back key while the finger is down */
+        step(20);
+        headless_touch(sx, sy, false);
+        step(20);
+        headless_tap(sx, sy); /* still sliding out: the tap goes to the page under it */
+        step(400);
+        CHECK(!ui_in_detail());
+        ui_show_tab(UI_TAB_STATUS, false);
+        step(60);
+        lv_obj_scroll_to_y(lv_obj_get_child(ui_tab_page(UI_TAB_STATUS), 0), 0, LV_ANIM_OFF);
+        step(60);
+        s2_show_exact("Pair with Odysseus");
+        s2_tap_exact("Pair with Odysseus");
+        step(400);
+        CHECK(ui_in_detail());
+    }
     tap_text("Scan the QR code");
     step(300);
     bool g, p, q;

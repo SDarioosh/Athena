@@ -420,8 +420,8 @@ static void hold_event(lv_event_t *e)
         lv_anim_set_path_cb(&a, lv_anim_path_linear);
         lv_anim_set_completed_cb(&a, hold_complete);
         lv_anim_start(&a);
-    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        if (!h->done) {
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST || code == LV_EVENT_INDEV_RESET) {
+        if (!h->done && code != LV_EVENT_INDEV_RESET) {
             ui_toast(UI_TOAST_INFO, "Keep holding to wipe the cache");
         }
         lv_anim_set_values(&a, lv_obj_get_width(h->fill), 0);
@@ -458,6 +458,7 @@ lv_obj_t *kit_hold_button(lv_obj_t *parent, const lv_font_t *icon_font, const ch
     lv_obj_add_event_cb(b, hold_event, LV_EVENT_PRESSED, h);
     lv_obj_add_event_cb(b, hold_event, LV_EVENT_RELEASED, h);
     lv_obj_add_event_cb(b, hold_event, LV_EVENT_PRESS_LOST, h);
+    lv_obj_add_event_cb(b, hold_event, LV_EVENT_INDEV_RESET, h); /* its page left (ui_leaving) */
     lv_obj_add_event_cb(b, hold_event, LV_EVENT_DELETE, h);
     return b;
 }
