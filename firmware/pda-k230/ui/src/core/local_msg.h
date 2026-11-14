@@ -17,12 +17,14 @@ typedef enum {
     LOCAL_NET,
     LOCAL_PAIR_RESULT,
     LOCAL_TAILNET,
+    LOCAL_TZ,
 } local_type_t;
 
 typedef struct {
     local_type_t type;
     app_net_t net;         /* LOCAL_NET */
     app_tailnet_t tailnet; /* LOCAL_TAILNET */
+    app_day_offsets_t tz;  /* LOCAL_TZ: day, then up to 14 offsets in -720..840 minutes */
     bool ok;               /* LOCAL_PAIR_RESULT */
     char msg[128];         /* LOCAL_PAIR_RESULT */
 } local_in_t;

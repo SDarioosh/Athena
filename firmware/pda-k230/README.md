@@ -189,6 +189,15 @@ Nothing on the board. In the sandbox (2026-11-13/14), with the commands of "On a
   the UI builds and runs, syncd connects to it.
 - `shellcheck` and `sh -n` on every script.
 
+## Known limits
+
+- **Daylight saving time.** TIME carries one display offset, today's (as on the T5). A new
+  event on a day after a DST change still gets that day's own offset: syncd sends the
+  offsets of the next 14 days (LOCAL `tz`, the one at local noon of each day). The times
+  the Calendar and Today screens *show* for events after the change still use today's
+  offset, so until the day of the change they read an hour off, as on the T5; an event
+  created on the DST day itself before the switch (00:00-03:00) gets the noon offset.
+
 ## Not verified yet
 
 Owner, on the build PC and the board. Each step with what you should see:
@@ -234,7 +243,8 @@ Owner, on the build PC and the board. Each step with what you should see:
     DHCP lease) it still does (tailscaled rewrites `/etc/resolv.conf`).
 11. **Pairing and sync** over Tailscale: Status → Pair with Odysseus → Scan the QR code:
     the camera indicator shows, the hub's Pair a phone code is read at 20-40 cm, the screen
-    asks "Pair with <hub host>?" (the camera dot goes off), and after Pair it says Paired. Again with Type the code: the keyboard types the mixed-case code.
+    asks "Pair with <hub host>?" (the camera dot goes off), and after Pair it says Paired.
+    Again with Type the code: the keyboard types the mixed-case code.
     Then Status shows the hub and "Synced …"; a to-do ticked on the PDA is done in the hub
     after the next sync; a conversation's transcript opens after "Read the transcript"; "→
     Calendar" on an action item with a due date adds the event to the hub's calendar.

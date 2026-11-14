@@ -307,7 +307,8 @@ static void add_clicked(lv_event_t *e)
         return;
     }
     char json[PDA_ACTION_BUF];
-    const size_t n = event_form_cal_add(&N.form, app_today(), app_tz_min(), json);
+    /* the chosen day's offset: after a DST change it differs from today's */
+    const size_t n = event_form_cal_add(&N.form, app_today(), app_tz_min_on(N.form.day), json);
     const int rc = n ? app_queue(json, n) : -2;
     if (rc != 0) {
         ui_toast(UI_TOAST_ERROR, rc == -1 ? "Outbox full: sync first" : "Couldn't save the event");

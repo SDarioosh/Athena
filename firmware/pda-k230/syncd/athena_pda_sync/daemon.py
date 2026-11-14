@@ -2,13 +2,14 @@
 
 - Connect to the UI's `glance.sock`; when it isn't there or the UI drops the link (a UI
   restart), try again every `reconnect` seconds. One connection at a time.
-- On connect: send `net` and `tailnet`, then sync (`schedule.SyncPolicy` says when next).
+- On connect: send `net`, `tz` and `tailnet`, then sync (`schedule.SyncPolicy` says when next).
 - A sync is one `PdaSync.run` (stay=False): INFO, STATUS, TIME, hub health, outbox first,
   feed, details, `BYE`. `BYE` ends the sync, not the connection.
 - Between syncs, read STATUS every 30 s (the user-active bit, and a keep-alive), and react
   to unasked STATUS frames (a new outbox entry) and LOCAL messages (`sync_now`, `pair`,
   `unpair`).
-- `net` is sent whenever its content changes, `tailnet` likewise (polled every 30 s, every
+- `net` is sent whenever its content changes, `tz` likewise (checked in every turn of the
+  loop, at least every 30 s: a new day changes it), `tailnet` likewise (polled every 30 s, every
   5 s while it needs a login).
 
 Privacy: no content is logged at INFO (only states, counts and ids of nothing personal);
@@ -28,9 +29,11 @@ from typing import Any
 from athena_relay import pda_protocol as q
 from athena_relay import pda_sync as s
 from athena_relay.drain import LinkLost
+from athena_relay.pda_feed import resolve_tz
 
 from . import frames as fr
 from . import pairing as pr
+from . import tzdays
 from .config import ConfigFile, Paths
 from .hub import Hub
 from .schedule import SyncPolicy
@@ -110,6 +113,7 @@ class Daemon:
         self.net = Net(UNPAIRED if self.paired is None else OFFLINE,
                        self.paired.host if self.paired else None, 0, "")
         self._sent_net: Net | None = None
+        self._sent_tz: dict[str, Any] | None = None
         self.tailnet_state = TailnetState()
         self._sent_tailnet: TailnetState | None = None
         self.reports: list[s.Report] = []  # for tests and --once
@@ -162,6 +166,16 @@ class Daemon:
             self._sent_tailnet = state
             log.info("tailnet: %s", state.state)
             await self._send(state.message())
+
+    async def set_tz(self) -> None:
+        """Send `tz` (tzdays) when it differs from what this connection was last sent."""
+        try:
+            msg = tzdays.message(resolve_tz(self.config_file.config.tz), self.clock())
+        except ValueError:  # config.py already fell back to UTC for an unknown zone
+            return
+        if msg != self._sent_tz and self.t is not None:
+            self._sent_tz = msg
+            await self._send(msg)
 
     # ------------------------------------------------------------ LOCAL from the UI
 
@@ -319,13 +333,15 @@ class Daemon:
     async def session(self, t: SocketTransport) -> None:
         """Serve one UI connection until it drops."""
         self.t = t
-        self._sent_net = self._sent_tailnet = None
+        self._sent_net = self._sent_tailnet = self._sent_tz = None
         self.policy.connected()
         tail: asyncio.Task[None] | None = None
         try:
             await self.set_net()
+            await self.set_tz()
             tail = asyncio.create_task(self._tailnet_loop(t))  # polls, then sends tailnet
             while not t.closed.is_set():
+                await self.set_tz()  # a new day (or tz): the next 14 days' offsets
                 if self.paired is not None:
                     wait = self.policy.wait(self.monotonic(), self.user_active)
                     if wait <= 0:

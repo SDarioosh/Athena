@@ -33,6 +33,7 @@ static struct {
     int64_t last_link_s;
     app_net_t net;
     app_tailnet_t tailnet;
+    app_day_offsets_t day_offsets;
     bool pair_ok;
     char pair_msg[128];
     app_vision_t vision;
@@ -780,6 +781,23 @@ void app_set_net(const app_net_t *n)
 const app_tailnet_t *app_tailnet(void)
 {
     return &S.tailnet;
+}
+
+void app_set_day_offsets(const app_day_offsets_t *o)
+{
+    S.day_offsets = *o;
+    if (S.day_offsets.n < 0 || S.day_offsets.n > APP_TZ_DAYS) {
+        S.day_offsets.n = 0;
+    }
+}
+
+int app_tz_min_on(int32_t day)
+{
+    const app_day_offsets_t *o = &S.day_offsets;
+    if (o->n > 0 && day >= o->day && day - o->day < o->n) {
+        return o->min[day - o->day];
+    }
+    return S.tz_min;
 }
 
 void app_set_tailnet(const app_tailnet_t *t)

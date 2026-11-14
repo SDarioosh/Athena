@@ -125,6 +125,7 @@ if the JSON is still too long (`frames.fit_local`):
 | `unpair` | UI → syncd | | forget the token |
 | `net` | syncd → UI | `state` (`unpaired`, `offline`, `syncing`, `ok`, `auth_failed`), `hub` (host shown on Status, or null), `last_ok` (epoch s, 0 never), `msg` (one short line for Status, or "") | sent on connect and on every change |
 | `pair_result` | syncd → UI | `ok`, `msg` | answer to `pair` |
+| `tz` | syncd → UI | `day` (the local day number of the first entry: days since 1970-01-01 of the local date), `offsets` (UTC offset in minutes at local noon of each of the next 14 local days, in `tz` of config.json) | sent on connect and when it changes (the day turns); the new-event form gives an event that day's offset, so one after a DST change isn't an hour off. Neither `athena_relay` nor the T5 sends or reads it |
 | `tailnet` | syncd → UI | `state` (`unknown`, `stopped`, `needs_login`, `running`), `url` (the login link while `needs_login`, else null), `name` (this device's tailnet name, or null) | from `tailscale status --json` (read only); the UI shows the login link as a QR code |
 
 ## Contract 2: `vision.sock` (UI ↔ vision)

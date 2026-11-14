@@ -264,3 +264,23 @@ def test_fit_local_cuts_by_utf8_bytes() -> None:
     assert len(fr.encode_local(odd)) <= fr.HEADER + fr.MAX_PAYLOAD
     with pytest.raises(fr.FrameError):
         fr.encode_local({"t": "net", "hub": cjk})  # unfitted, as before
+
+
+# ----------------------------------------------------------------- tz
+
+
+def test_tz_offsets_follow_dst() -> None:
+    from athena_pda_sync import tzdays
+    from athena_relay.pda_feed import resolve_tz
+
+    # 2026-10-20 07:05 UTC (Tuesday) in Berlin: summer time (+120) until Sunday 25 Oct
+    now = 1792479900.0
+    msg = tzdays.message(resolve_tz("Europe/Berlin"), now)
+    assert msg["t"] == "tz" and msg["day"] == 20746  # 2026-10-20
+    assert msg["offsets"] == [120] * 5 + [60] * 9  # 20..24 Oct summer, 25 Oct on winter
+    assert len(fr.encode_local(fr.fit_local(msg))) < 200
+    assert tzdays.message(resolve_tz("UTC"), now)["offsets"] == [0] * 14
+    # just before local midnight the first day is still that day
+    late = tzdays.message(resolve_tz("Europe/Berlin"), 1792533599.0)  # 23:59:59 local
+    assert late["day"] == 20746
+    assert tzdays.message(resolve_tz("Europe/Berlin"), 1792533600.0)["day"] == 20747

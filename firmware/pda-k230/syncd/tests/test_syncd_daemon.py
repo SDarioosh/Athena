@@ -465,3 +465,20 @@ def test_a_long_non_ascii_hub_host_fits_the_local_frames() -> None:
         await rig.ui.wait_local("net", state="ok")
 
     run(t)
+
+
+def test_tz_on_connect_and_when_the_day_turns() -> None:
+    now = [1792479900.0]  # 2026-10-20 07:05 UTC, Berlin on summer time until the 25th
+
+    async def t(rig: Rig) -> None:
+        rig.config(tz="Europe/Berlin")
+        await rig.start(clock=lambda: now[0])
+        first = await rig.ui.wait_local("tz")
+        assert first == {"t": "tz", "day": 20746, "offsets": [120] * 5 + [60] * 9}
+        await asyncio.sleep(0.3)
+        assert len(rig.ui.of("tz")) == 1  # unchanged: not sent again
+        now[0] += 86400
+        nxt = await rig.ui.wait_local("tz", 2)
+        assert nxt["day"] == 20747 and nxt["offsets"][:4] == [120] * 4
+
+    run(t)

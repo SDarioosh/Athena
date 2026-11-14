@@ -57,6 +57,22 @@ bool local_parse(const char *json, size_t len, local_in_t *out)
         }
         str_or_empty(&d, 0, "url", out->tailnet.url, sizeof(out->tailnet.url));
         str_or_empty(&d, 0, "name", out->tailnet.name, sizeof(out->tailnet.name));
+    } else if (json_str_eq(&d, tt, "tz")) {
+        out->type = LOCAL_TZ;
+        int64_t day = 0;
+        const int arr = json_get(&d, 0, "offsets");
+        if (json_int(&d, json_get(&d, 0, "day"), &day) && day > 0 && day < 1000000 && arr >= 0 &&
+            t[arr].type == JSON_ARR) {
+            out->tz.day = (int32_t)day;
+            for (int i = json_first(&d, arr); i >= 0 && out->tz.n < APP_TZ_DAYS; i = json_next(&d, arr, i)) {
+                int64_t m;
+                if (!json_int(&d, i, &m) || m < -720 || m > 840) {
+                    out->tz.n = 0; /* all or nothing */
+                    break;
+                }
+                out->tz.min[out->tz.n++] = (int16_t)m;
+            }
+        }
     } else if (json_str_eq(&d, tt, "pair_result")) {
         out->type = LOCAL_PAIR_RESULT;
         json_bool(&d, json_get(&d, 0, "ok"), &out->ok);
@@ -73,6 +89,7 @@ void local_apply(const local_in_t *m)
     case LOCAL_NET: app_set_net(&m->net); break;
     case LOCAL_TAILNET: app_set_tailnet(&m->tailnet); break;
     case LOCAL_PAIR_RESULT: app_set_pair_result(m->ok, m->msg); break;
+    case LOCAL_TZ: app_set_day_offsets(&m->tz); break;
     case LOCAL_UNKNOWN: break;
     }
 }

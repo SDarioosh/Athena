@@ -13,6 +13,7 @@
 #include "app_state.h"
 #include "check.h"
 #include "crc32.h"
+#include "event_form.h"
 #include "glance_frame.h"
 #include "glance_server.h"
 #include "local_msg.h"
@@ -362,6 +363,43 @@ static void test_framing(void)
     CHECK_EQ(m.type, LOCAL_NET);
     CHECK_EQ(m.net.state, APP_NET_AUTH_FAILED);
     CHECK_EQ(m.net.hub[0], 0);
+    /* LOCAL tz: the offsets of the next days; the new-event form uses the chosen day's */
+    CHECK_EQ(app_tz_min_on(20750), app_tz_min()); /* none known: today's display offset */
+    const char *tz = "{\"t\":\"tz\",\"day\":20746,\"offsets\":[120,120,120,120,120,60,60,60,60,60,60,60,60,60]}";
+    CHECK(local_parse(tz, strlen(tz), &m));
+    CHECK_EQ(m.type, LOCAL_TZ);
+    CHECK_EQ(m.tz.n, 14);
+    local_apply(&m);
+    CHECK_EQ(app_tz_min_on(20746), 120);
+    CHECK_EQ(app_tz_min_on(20751), 60); /* Sunday 25 Oct: winter time */
+    CHECK_EQ(app_tz_min_on(20759), 60);
+    CHECK_EQ(app_tz_min_on(20760), app_tz_min()); /* past the 14 days */
+    CHECK_EQ(app_tz_min_on(20745), app_tz_min());
+    {
+        event_form_t f;
+        event_form_init(&f, 20746, DEMO_NOW, 120);
+        CHECK(event_form_set_day(&f, 20752, 20746)); /* Mon 26 Oct */
+        event_form_set_hour(&f, 9);
+        event_form_set_title(&f, "Fictional dentist");
+        char act[PDA_ACTION_BUF];
+        CHECK(event_form_cal_add(&f, 20746, app_tz_min_on(f.day), act) > 0);
+        CHECK(strstr(act, "\"start\":\"2026-10-26T09:00:00+01:00\"") != NULL);
+    }
+    /* a bad offset or day: nothing taken */
+    const char *bad[] = {
+        "{\"t\":\"tz\",\"day\":20746,\"offsets\":[120,9999]}",
+        "{\"t\":\"tz\",\"day\":20746,\"offsets\":[120,60.5]}",
+        "{\"t\":\"tz\",\"day\":-1,\"offsets\":[120]}",
+        "{\"t\":\"tz\",\"offsets\":[120]}",
+        "{\"t\":\"tz\",\"day\":20746,\"offsets\":120}",
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        CHECK(local_parse(bad[i], strlen(bad[i]), &m));
+        CHECK_EQ(m.type, LOCAL_TZ);
+        CHECK_EQ(m.tz.n, 0);
+    }
+    local_apply(&m); /* forgets the offsets */
+    CHECK_EQ(app_tz_min_on(20751), app_tz_min());
     CHECK(!local_parse("[1]", 3, &m));
     CHECK(!local_parse("{\"x\":1}", 7, &m));
     char lb[32];

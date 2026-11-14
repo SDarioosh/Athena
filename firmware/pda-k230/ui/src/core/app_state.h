@@ -96,6 +96,15 @@ typedef struct {
     char name[128]; /* this device's tailnet name, or "" */
 } app_tailnet_t;
 
+/* LOCAL `tz`: syncd's UTC offset (minutes, at local noon) for each of the next days of
+ * its time zone, so an event on a day after a DST change gets that day's offset */
+#define APP_TZ_DAYS 14
+typedef struct {
+    int32_t day;                /* the local day number of min[0] */
+    int n;                      /* 0: none known */
+    int16_t min[APP_TZ_DAYS];
+} app_day_offsets_t;
+
 /* vision.sock `state` and `presence` (Contract 2) */
 typedef enum {
     APP_CAMERA_OFF = 0,
@@ -193,6 +202,10 @@ int64_t app_now(void);       /* epoch s: the system clock (NTP), or the override
 bool app_time_valid(void);   /* the clock is past 2024-01-01 */
 int app_tz_min(void);        /* the display offset of the last TIME (kept in ui.json) */
 int32_t app_today(void);     /* pda_local_day(app_now(), app_tz_min()) */
+/* The offset of a local day: syncd's (LOCAL `tz`) when it sent one for that day, else
+ * app_tz_min() (the display offset of today, as on the T5). */
+int app_tz_min_on(int32_t day);
+void app_set_day_offsets(const app_day_offsets_t *o);
 /* TIME: the display offset only (the system clock is NTP's, plan Contract 1). */
 int app_set_time(int64_t epoch_ms, int16_t tz_min);
 /* Tests and the screenshot tool: a fixed clock (epoch s), 0 = the real one. */
