@@ -113,7 +113,7 @@ target_sources(pda_core PRIVATE
 embed_file(font_lucide_extra ${UI}/fonts/lucide-extra.ttf ${FONT_C}/lucide_extra.c)
 target_sources(pda_ui PRIVATE
     src/ui/icons_extra.c src/ui/ui_kit.c src/ui/screen_talks.c src/ui/talk_detail.c
-    src/ui/screen_status.c src/ui/status_pairing.c src/ui/text_entry_local.c src/ui/ambient_ui.c
+    src/ui/screen_status.c src/ui/status_pairing.c src/ui/ambient_ui.c
     ${FONT_C}/lucide_extra.c)
 set_source_files_properties(${FONT_C}/lucide_extra.c PROPERTIES COMPILE_OPTIONS "-w")
 

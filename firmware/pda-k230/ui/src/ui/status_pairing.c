@@ -10,8 +10,8 @@
 #include "icons_extra.h"
 #include "pairing.h"
 #include "screens.h"
-#include "text_entry_local.h"
 #include "theme.h"
+#include "ui_keyboard.h"
 #include "ui_kit.h"
 #include "widgets.h"
 
@@ -19,7 +19,7 @@
 
 typedef struct {
     pair_flow_t flow;
-    lv_obj_t *page, *scroll, *kb, *addr, *code, *cam_dot, *cam_text, *scanline;
+    lv_obj_t *page, *scroll, *addr, *code, *cam_dot, *cam_text, *scanline;
     lv_timer_t *timer;
     pair_stage_t built; /* the stage on screen */
     char addr_text[320], code_text[128]; /* what was typed, kept across rebuilds */
@@ -80,15 +80,16 @@ static void done_clicked(lv_event_t *e)
     ui_pop();
 }
 
-static void submit(void *ud)
+static void submit(void)
 {
-    (void)ud;
     if (!P || P->flow.stage != PAIR_TYPING) {
         return;
     }
+    ui_keyboard_close();
     char out[PAIR_LOCAL_MAX];
     size_t n;
-    const pair_step_t s = pair_submit(&P->flow, te_text(P->addr), te_text(P->code), out, sizeof(out), &n);
+    const pair_step_t s = pair_submit(&P->flow, lv_textarea_get_text(P->addr), lv_textarea_get_text(P->code), out,
+                                      sizeof(out), &n);
     if (s == PAIR_SEND) {
         send(out, n);
     } else if (s == PAIR_REJECTED) {
@@ -99,7 +100,22 @@ static void submit(void *ud)
 static void submit_clicked(lv_event_t *e)
 {
     (void)e;
-    submit(NULL);
+    submit();
+}
+
+/* the keyboard's Done: from the address on to the code, from the code: pair */
+static void addr_done(lv_event_t *e)
+{
+    (void)e;
+    if (P && P->code) {
+        ui_keyboard_open(P->code);
+    }
+}
+
+static void code_done(lv_event_t *e)
+{
+    (void)e;
+    submit();
 }
 
 bool pairing_vision_event(const vision_event_t *ev)
@@ -235,17 +251,29 @@ static void scan_line_y(void *var, int32_t v)
     lv_obj_set_y(var, v);
 }
 
-static void corner(lv_obj_t *f, lv_align_t al, lv_border_side_t sides)
+/* The finder's corner brackets: an L of two round-capped strokes per corner, inset from the
+ * finder's rounded edge (a border on two sides of a rounded box tapers and gets clipped by
+ * the finder's corner: blobby). Points are within a BRACKET x BRACKET box, 4 px in for the
+ * caps. */
+#define BRACKET 68
+#define BRACKET_INSET 22
+static const lv_point_precise_t BR_TL[] = {{4, BRACKET - 4}, {4, 4}, {BRACKET - 4, 4}};
+static const lv_point_precise_t BR_TR[] = {{4, 4}, {BRACKET - 4, 4}, {BRACKET - 4, BRACKET - 4}};
+static const lv_point_precise_t BR_BL[] = {{4, 4}, {4, BRACKET - 4}, {BRACKET - 4, BRACKET - 4}};
+static const lv_point_precise_t BR_BR[] = {{4, BRACKET - 4}, {BRACKET - 4, BRACKET - 4}, {BRACKET - 4, 4}};
+
+static void corner(lv_obj_t *f, lv_align_t al, const lv_point_precise_t *pts)
 {
-    lv_obj_t *c = lv_obj_create(f);
-    lv_obj_remove_style_all(c);
-    lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(c, 72, 72);
-    lv_obj_set_style_border_color(c, C(C_ACCENT), 0);
-    lv_obj_set_style_border_width(c, 6, 0);
-    lv_obj_set_style_border_side(c, sides, 0);
-    lv_obj_set_style_radius(c, 28, 0);
-    lv_obj_align(c, al, 0, 0);
+    lv_obj_t *l = lv_line_create(f);
+    lv_obj_remove_flag(l, LV_OBJ_FLAG_CLICKABLE);
+    lv_line_set_points(l, pts, 3);
+    lv_obj_set_size(l, BRACKET, BRACKET);
+    lv_obj_set_style_line_color(l, C(C_ACCENT), 0);
+    lv_obj_set_style_line_width(l, 6, 0);
+    lv_obj_set_style_line_rounded(l, true, 0);
+    const int32_t dx = al == LV_ALIGN_TOP_LEFT || al == LV_ALIGN_BOTTOM_LEFT ? BRACKET_INSET : -BRACKET_INSET;
+    const int32_t dy = al == LV_ALIGN_TOP_LEFT || al == LV_ALIGN_TOP_RIGHT ? BRACKET_INSET : -BRACKET_INSET;
+    lv_obj_align(l, al, dx, dy);
 }
 
 static void build_scanning(lv_obj_t *s)
@@ -306,10 +334,10 @@ static void build_scanning(lv_obj_t *s)
     lv_obj_set_style_transform_pivot_x(q, lv_obj_get_width(q) / 2, 0);
     lv_obj_set_style_transform_pivot_y(q, lv_obj_get_height(q) / 2, 0);
     lv_obj_center(q);
-    corner(f, LV_ALIGN_TOP_LEFT, LV_BORDER_SIDE_TOP | LV_BORDER_SIDE_LEFT);
-    corner(f, LV_ALIGN_TOP_RIGHT, LV_BORDER_SIDE_TOP | LV_BORDER_SIDE_RIGHT);
-    corner(f, LV_ALIGN_BOTTOM_LEFT, LV_BORDER_SIDE_BOTTOM | LV_BORDER_SIDE_LEFT);
-    corner(f, LV_ALIGN_BOTTOM_RIGHT, LV_BORDER_SIDE_BOTTOM | LV_BORDER_SIDE_RIGHT);
+    corner(f, LV_ALIGN_TOP_LEFT, BR_TL);
+    corner(f, LV_ALIGN_TOP_RIGHT, BR_TR);
+    corner(f, LV_ALIGN_BOTTOM_LEFT, BR_BL);
+    corner(f, LV_ALIGN_BOTTOM_RIGHT, BR_BR);
     if (on) {
         P->scanline = lv_obj_create(f);
         lv_obj_remove_style_all(P->scanline);
@@ -345,6 +373,21 @@ static void build_scanning(lv_obj_t *s)
     kit_button(bc, KIT_QUIET, NULL, NULL, "Cancel", back_clicked, NULL);
 }
 
+/* a caption over a ui_text_field (the shared keyboard's code mode: both cases, / : . - _) */
+static lv_obj_t *field(lv_obj_t *parent, const char *caption, const char *placeholder, const char *text,
+                       uint32_t max, lv_event_cb_t on_done)
+{
+    lv_obj_t *col = kit_col(parent, SP_2);
+    lv_obj_set_width(col, LV_PCT(100));
+    lv_obj_t *c = ui_text(col, F.caption, C_TEXT_2, caption, UI_CARD_W, 1);
+    lv_obj_set_style_text_letter_space(c, 2, 0);
+    lv_obj_set_style_pad_left(c, SP_1, 0);
+    lv_obj_t *ta = ui_text_field(col, placeholder, max, UI_KB_CODE);
+    lv_textarea_set_text(ta, text ? text : "");
+    lv_obj_add_event_cb(ta, on_done, LV_EVENT_READY, NULL);
+    return ta;
+}
+
 static void build_typing(lv_obj_t *s)
 {
     lv_obj_t *head = kit_col(s, SP_2);
@@ -356,9 +399,8 @@ static void build_typing(lv_obj_t *s)
     if (n->hub[0]) {
         snprintf(initial, sizeof(initial), "https://%s", n->hub);
     }
-    P->addr = te_field(s, "ODYSSEUS ADDRESS", "https://\xe2\x80\xa6", P->typed ? P->addr_text : initial, 300);
-    P->code = te_field(s, "PAIRING CODE", "8 to 100 letters and digits", P->typed ? P->code_text : "", 100);
-    te_focus(P->code);
+    P->addr = field(s, "ODYSSEUS ADDRESS", "https://\xe2\x80\xa6", P->typed ? P->addr_text : initial, 300, addr_done);
+    P->code = field(s, "PAIRING CODE", "8 to 100 letters and digits", P->typed ? P->code_text : "", 100, code_done);
     if (P->flow.hint && P->flow.msg[0]) {
         hint_box(s, P->flow.msg, C_DANGER);
     }
@@ -369,7 +411,10 @@ static void build_typing(lv_obj_t *s)
     lv_obj_t *p = kit_button(bc, KIT_PRIMARY, fx()->icon_s, ICONX_LINK, "Pair", submit_clicked, NULL);
     lv_obj_set_flex_grow(p, 1);
     lv_obj_set_width(p, 1);
-    P->kb = te_keyboard(P->page, submit, NULL);
+    /* the code is what is typed first (the address is filled in from the last hub), also
+     * after a refused try */
+    lv_obj_update_layout(s);
+    ui_keyboard_open(P->code);
 }
 
 static void spin(void *var, int32_t v)
@@ -438,17 +483,13 @@ static void do_rebuild(void *unused)
     const pair_stage_t st = P->flow.stage;
     const bool same = P->built_once && st == P->built;
     if (P->addr && P->code) {
-        snprintf(P->addr_text, sizeof(P->addr_text), "%s", te_text(P->addr));
-        snprintf(P->code_text, sizeof(P->code_text), "%s", te_text(P->code));
+        snprintf(P->addr_text, sizeof(P->addr_text), "%s", lv_textarea_get_text(P->addr));
+        snprintf(P->code_text, sizeof(P->code_text), "%s", lv_textarea_get_text(P->code));
         P->typed = true;
-    }
-    if (P->kb) {
-        lv_obj_delete(P->kb);
-        P->kb = NULL;
     }
     lv_obj_clean(P->scroll);
     P->addr = P->code = P->cam_dot = P->cam_text = P->scanline = NULL;
-    lv_obj_set_style_pad_bottom(P->scroll, st == PAIR_TYPING ? 440 + SP_6 : SP_10, 0);
+    lv_obj_set_style_pad_bottom(P->scroll, SP_10, 0); /* the keyboard shrinks the scroller itself */
     switch (st) {
     case PAIR_CHOOSE: build_choose(P->scroll); break;
     case PAIR_SCANNING: build_scanning(P->scroll); break;

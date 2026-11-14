@@ -10,7 +10,6 @@
 #define KB_ROW_H 84
 #define KB_PAD 8
 #define KB_GAP 8
-#define KB_H (4 * KB_ROW_H + 3 * KB_GAP + 2 * KB_PAD + SP_2)
 #define FIELD_LINES 3
 
 /* key labels that do something else than type themselves */
@@ -68,16 +67,34 @@ static const lv_buttonmatrix_ctrl_t CTRL_NUMBER[] = {
     1, 1, 1,
     CK | 1, 1, CK | LV_BUTTONMATRIX_CTRL_CLICK_TRIG | 1};
 
-static const char *const MAP_CODE[] = {
+/* codes and addresses: case matters, so no automatic capital; digits on top and the
+ * characters of a URL or a pairing code at the bottom (one row more than the others) */
+static const char *const MAP_CODE_LOWER[] = {
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "\n",
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l", "\n",
+    K_SHIFT, "z", "x", "c", "v", "b", "n", "m", K_BACK, "\n",
+    "/", ":", ".", "-", "_", K_DONE, ""};
+static const char *const MAP_CODE_UPPER[] = {
     "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "\n",
     "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "\n",
-    "A", "S", "D", "F", "G", "H", "J", "K", "L", K_BACK, "\n",
-    "Z", "X", "C", "V", "B", "N", "M", "-", K_DONE, ""};
+    "A", "S", "D", "F", "G", "H", "J", "K", "L", "\n",
+    K_SHIFT, "Z", "X", "C", "V", "B", "N", "M", K_BACK, "\n",
+    "/", ":", ".", "-", "_", K_DONE, ""};
 static const lv_buttonmatrix_ctrl_t CTRL_CODE[] = {
     LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4),
     LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4),
-    LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), CK | 6,
-    LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), CK | LV_BUTTONMATRIX_CTRL_CLICK_TRIG | 10};
+    LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4),
+    CK | 6, LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), LK(4), CK | 6,
+    LK(4), LK(4), LK(4), LK(4), LK(4), CK | LV_BUTTONMATRIX_CTRL_CLICK_TRIG | 10};
+#define CODE_LOWER LV_KEYBOARD_MODE_USER_2
+#define CODE_UPPER LV_KEYBOARD_MODE_USER_3
+
+static int32_t kb_height(ui_kb_mode_t mode)
+{
+    const int32_t rows = mode == UI_KB_CODE ? 5 : 4;
+    return rows * KB_ROW_H + (rows - 1) * KB_GAP + 2 * KB_PAD + SP_2;
+}
 
 static struct {
     lv_obj_t *kb, *field, *scroller;
@@ -164,9 +181,15 @@ static void set_mode(lv_keyboard_mode_t m)
     lv_keyboard_set_mode(K.kb, m);
 }
 
-/* the first letter of an empty text field is a capital */
+/* the first letter of an empty text field is a capital; a one-time shift ends after a
+ * letter (codes: no automatic capital, only the shift) */
 static void auto_shift(void)
 {
+    if (K.mode == UI_KB_CODE && K.shift_once && lv_keyboard_get_mode(K.kb) == CODE_UPPER) {
+        set_mode(CODE_LOWER);
+        K.shift_once = false;
+        return;
+    }
     if (K.mode != UI_KB_TEXT || !K.field) {
         return;
     }
@@ -193,7 +216,10 @@ static void key(lv_event_t *e)
         return;
     }
     const lv_keyboard_mode_t m = lv_keyboard_get_mode(kb);
-    if (strcmp(txt, K_SHIFT) == 0) {
+    if (strcmp(txt, K_SHIFT) == 0 && K.mode == UI_KB_CODE) {
+        K.shift_once = m == CODE_LOWER; /* one capital, then back */
+        set_mode(m == CODE_LOWER ? CODE_UPPER : CODE_LOWER);
+    } else if (strcmp(txt, K_SHIFT) == 0) {
         K.shift_once = m == LV_KEYBOARD_MODE_TEXT_LOWER;
         set_mode(m == LV_KEYBOARD_MODE_TEXT_LOWER ? LV_KEYBOARD_MODE_TEXT_UPPER : LV_KEYBOARD_MODE_TEXT_LOWER);
     } else if (strcmp(txt, K_123) == 0) {
@@ -210,7 +236,9 @@ static void key(lv_event_t *e)
         lv_obj_send_event(f, LV_EVENT_READY, NULL);
     } else if (strcmp(txt, K_BACK) == 0) {
         lv_textarea_delete_char(K.field);
-        auto_shift();
+        if (K.mode == UI_KB_TEXT) {
+            auto_shift();
+        }
     } else {
         lv_textarea_add_text(K.field, strcmp(txt, K_SPACE) == 0 ? " " : txt);
         auto_shift();
@@ -332,7 +360,7 @@ static void watch(lv_timer_t *t)
 static void style_kb(lv_obj_t *kb)
 {
     lv_obj_remove_style_all(kb);
-    lv_obj_set_size(kb, UI_W, KB_H);
+    lv_obj_set_size(kb, UI_W, kb_height(K.mode));
     lv_obj_set_style_bg_color(kb, C(C_SURFACE), 0);
     lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, 0);
     lv_obj_set_style_border_side(kb, LV_BORDER_SIDE_TOP, 0);
@@ -378,7 +406,7 @@ void ui_keyboard_open(lv_obj_t *field)
     lv_obj_t *layer = field_layer(field);
     lv_area_t la;
     lv_obj_get_coords(layer, &la);
-    const int32_t top = la.y2 + 1 - KB_H;
+    const int32_t top = la.y2 + 1 - kb_height(K.mode);
 
     lv_obj_t *kb = lv_keyboard_create(lv_layer_top());
     K.kb = kb;
@@ -394,9 +422,10 @@ void ui_keyboard_open(lv_obj_t *field)
     lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_SPECIAL, MAP_SPECIAL, CTRL_SPECIAL);
     lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_USER_1, MAP_SYMBOLS, CTRL_SPECIAL);
     lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_NUMBER, MAP_NUMBER, CTRL_NUMBER);
-    lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_USER_2, MAP_CODE, CTRL_CODE);
+    lv_keyboard_set_map(kb, CODE_LOWER, MAP_CODE_LOWER, CTRL_CODE);
+    lv_keyboard_set_map(kb, CODE_UPPER, MAP_CODE_UPPER, CTRL_CODE);
     lv_keyboard_set_mode(kb, K.mode == UI_KB_NUMBER ? LV_KEYBOARD_MODE_NUMBER
-                             : K.mode == UI_KB_CODE ? LV_KEYBOARD_MODE_USER_2
+                             : K.mode == UI_KB_CODE ? CODE_LOWER
                                                     : LV_KEYBOARD_MODE_TEXT_LOWER);
     lv_keyboard_set_textarea(kb, field);
     lv_textarea_set_cursor_pos(field, LV_TEXTAREA_CURSOR_LAST);
@@ -456,7 +485,7 @@ void ui_keyboard_close(void)
     lv_anim_init(&a);
     lv_anim_set_var(&a, kb);
     lv_anim_set_exec_cb(&a, slide_y);
-    lv_anim_set_values(&a, lv_obj_get_y(kb), lv_obj_get_y(kb) + KB_H);
+    lv_anim_set_values(&a, lv_obj_get_y(kb), lv_obj_get_y(kb) + lv_obj_get_height(kb));
     lv_anim_set_duration(&a, UI_ANIM_FAST + 50);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
     lv_anim_set_completed_cb(&a, slid_out);
@@ -468,7 +497,7 @@ bool ui_keyboard_is_open(void)
     return K.kb != NULL;
 }
 
-int32_t ui_keyboard_height(void)
+int32_t ui_keyboard_height(ui_kb_mode_t mode)
 {
-    return KB_H;
+    return kb_height(mode);
 }

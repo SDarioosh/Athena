@@ -25,7 +25,8 @@ extern "C" {
 typedef enum {
     UI_KB_TEXT,   /* letters (the first one capital), then 123 for digits and punctuation */
     UI_KB_NUMBER, /* a number pad */
-    UI_KB_CODE,   /* capitals and digits, no auto-capital (codes, host names) */
+    UI_KB_CODE,   /* both cases (shift, no automatic capital), digits and / : . - _: a
+                   * pairing code or an address, where case matters; one row taller */
 } ui_kb_mode_t;
 
 /* A themed, full-width text field of up to max_chars characters (0: no limit) that wraps
@@ -37,8 +38,8 @@ void ui_keyboard_open(lv_obj_t *field);
 /* Close it (animated). */
 void ui_keyboard_close(void);
 bool ui_keyboard_is_open(void);
-/* Its height when open (for layouts that plan for it). */
-int32_t ui_keyboard_height(void);
+/* Its height when open in that mode (for layouts that plan for it). */
+int32_t ui_keyboard_height(ui_kb_mode_t mode);
 
 #ifdef __cplusplus
 }
