@@ -97,7 +97,8 @@ mode on Windows. Windows offers to format the Linux partitions: cancel.
    scan the QR code with the K230's camera or type the code, and say yes to "Pair with
    <host>?" (nothing is sent before that). syncd never pairs with a hub on the device itself,
    link-local or cloud metadata addresses. Development without the UI:
-   `athena-pda-syncd --pair '<link>'`.
+   `athena-pda-syncd --pair`, then paste the link (read from stdin, never in a command
+   line).
 5. The PDA syncs; Status shows the hub, the last sync and the tailnet name.
 
 Switches (all in `/etc/default/athena-pda`, one line each, applied at the next boot or by
@@ -143,7 +144,7 @@ grep -rlE '^#!.*\b(ba|da)?sh\b|^# shellcheck shell=' firmware/pda-k230/system | 
 ```
 
 To try it by hand: `firmware/pda-k230/system/dev/run-local.sh [--headless] [--track FILE]
-[--pair LINK]` builds the UI (an SDL window if SDL2 is installed), starts it and syncd with
+[--pair]` builds the UI (an SDL window if SDL2 is installed), starts it and syncd with
 temp directories, and with `--track` replays a keypoint track through the vision core. The
 device-only parts (DRM, KPU, camera, Tailscale) aren't there. CI runs all of the above
 (`.github/workflows/ci.yml`, jobs `firmware-k230-*`).

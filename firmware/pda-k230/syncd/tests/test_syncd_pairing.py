@@ -159,3 +159,25 @@ def test_token_file_damaged_or_open(tmp_path, caplog) -> None:
     assert pr.TokenStore(path).load().token == HUB_TOKEN
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert HUB_TOKEN not in caplog.text
+
+
+# ----------------------------------------------------------------- --pair
+
+
+def test_cli_pair_reads_the_link_from_stdin(hub: FakeHub, tmp_path, monkeypatch) -> None:
+    """The code never goes in a command line (`ps` shows every user's): --pair takes no
+    value and reads the link from stdin."""
+    import io
+
+    from athena_pda_sync.__main__ import main
+
+    monkeypatch.setenv("ATHENA_PDA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("ATHENA_PDA_RUN", str(tmp_path / "r"))
+    quoted = hub.url.replace(":", "%3A").replace("/", "%2F")
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"odysseus-pair:v1?url={quoted}&code={CODE}\n"))
+    assert main(["--pair"]) == 0
+    assert json.loads((tmp_path / "d" / "token").read_text())["token"] == HUB_TOKEN
+    with pytest.raises(SystemExit):
+        main(["--pair", f"odysseus-pair:v1?url={quoted}&code={CODE}"])  # no value taken
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    assert main(["--pair"]) == 3  # nothing on stdin: not a pairing link

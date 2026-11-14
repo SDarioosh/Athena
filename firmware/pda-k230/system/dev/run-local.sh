@@ -3,13 +3,13 @@
 # directories (nothing of the board is needed and nothing outside the temp dir and
 # the build dir is written).
 #
-#   firmware/pda-k230/system/dev/run-local.sh [--headless] [--track FILE] [--pair LINK]
+#   firmware/pda-k230/system/dev/run-local.sh [--headless] [--track FILE] [--pair]
 #
 #   athena-pda       built from ui/ (an SDL2 window when SDL2 is installed, else
 #                    headless; --headless forces headless)
 #   athena-pda-syncd from syncd/, connected to the UI's glance.sock; unpaired unless
-#                    --pair is given a hub's "Pair a phone" link (a sandbox hub, with
-#                    fictional data only). No tailscale on the PC: the Status screen
+#                    --pair: it asks for a hub's "Pair a phone" link (a sandbox hub,
+#                    fictional data only), read from stdin, never in a command line. No tailscale on the PC: the Status screen
 #                    shows the tailnet as unknown.
 #   athena-vision    can't run on a PC (KPU, ISP); with --track, the replay tool
 #                    plays a keypoint track through the vision core and prints the
@@ -29,7 +29,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		--headless) headless=1 ;;
 		--track) track="${2:?--track FILE}"; shift ;;
-		--pair) pair="${2:?--pair LINK}"; shift ;;
+		--pair) pair=1 ;;
 		-h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 		*) echo "run-local.sh: unknown argument $1" >&2; exit 2 ;;
 	esac
@@ -77,8 +77,8 @@ done
 [ -S "$ATHENA_PDA_RUN/glance.sock" ] || echo "warning: no glance.sock after 10 s" >&2
 
 if [ -n "$pair" ]; then
-	echo "== pairing"
-	PYTHONPATH="$K230/syncd" python3 -m athena_pda_sync --pair "$pair"
+	echo "== pairing: paste the hub's Pair a phone link, then Enter"
+	PYTHONPATH="$K230/syncd" python3 -m athena_pda_sync --pair
 fi
 echo "== athena-pda-syncd"
 PYTHONPATH="$K230/syncd" python3 -m athena_pda_sync &

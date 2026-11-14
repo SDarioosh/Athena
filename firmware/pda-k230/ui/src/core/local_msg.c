@@ -6,6 +6,7 @@
 #include "json.h"
 
 #define TOKS 64
+#define LOCAL_EPOCH_MAX 10000000000LL /* the year 2286 */
 
 static void str_or_empty(const json_doc_t *d, int obj, const char *key, char *out, size_t cap)
 {
@@ -41,9 +42,9 @@ bool local_parse(const char *json, size_t len, local_in_t *out)
         }
         str_or_empty(&d, 0, "hub", out->net.hub, sizeof(out->net.hub));
         str_or_empty(&d, 0, "msg", out->net.msg, sizeof(out->net.msg));
-        double last = 0;
-        if (json_num(&d, json_get(&d, 0, "last_ok"), &last) && last > 0) {
-            out->net.last_ok = (int64_t)last;
+        int64_t last = 0; /* integral epoch seconds; anything else (1e300, -1, 1.5) is "never" */
+        if (json_int(&d, json_get(&d, 0, "last_ok"), &last) && last > 0 && last < LOCAL_EPOCH_MAX) {
+            out->net.last_ok = last;
         }
     } else if (json_str_eq(&d, tt, "tailnet")) {
         out->type = LOCAL_TAILNET;

@@ -46,7 +46,9 @@ bool vision_parse_line(const char *line, size_t len, vision_event_t *out)
         } else {
             return false;
         }
-        json_num(&d, json_get(&d, 0, "fps"), &out->fps);
+        if (json_num(&d, json_get(&d, 0, "fps"), &out->fps) && !(out->fps >= 0 && out->fps <= 1000)) {
+            out->fps = 0; /* the screens round it to an int: keep it in range */
+        }
         const int m = json_get(&d, 0, "msg");
         if (m >= 0) {
             json_str(&d, m, out->msg, sizeof(out->msg));

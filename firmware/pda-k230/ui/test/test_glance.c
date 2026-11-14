@@ -400,6 +400,17 @@ static void test_framing(void)
     }
     local_apply(&m); /* forgets the offsets */
     CHECK_EQ(app_tz_min_on(20751), app_tz_min());
+    /* last_ok: integral epoch seconds only (a huge or odd number is "never", no UB cast) */
+    static const char *const LAST[] = {"1e300", "-5", "1.5", "99999999999999999999", "\"x\""};
+    for (size_t i = 0; i < sizeof(LAST) / sizeof(LAST[0]); i++) {
+        char js[128];
+        snprintf(js, sizeof(js), "{\"t\":\"net\",\"state\":\"ok\",\"last_ok\":%s}", LAST[i]);
+        CHECK(local_parse(js, strlen(js), &m));
+        CHECK_EQ(m.net.last_ok, 0);
+    }
+    const char *okl = "{\"t\":\"net\",\"state\":\"ok\",\"last_ok\":1792479600}";
+    CHECK(local_parse(okl, strlen(okl), &m));
+    CHECK_EQ(m.net.last_ok, 1792479600);
     CHECK(!local_parse("[1]", 3, &m));
     CHECK(!local_parse("{\"x\":1}", 7, &m));
     char lb[32];

@@ -27,6 +27,10 @@ static void test_parse(void)
     CHECK_EQ(e.type, VIS_STATE);
     CHECK_EQ(e.camera, VIS_CAM_ON);
     CHECK(e.fps > 14.4 && e.fps < 14.6);
+    e = parse("{\"t\":\"state\",\"camera\":\"on\",\"fps\":1e300,\"msg\":\"\"}");
+    CHECK(e.fps == 0); /* out of range: 0, the screens cast it to int */
+    e = parse("{\"t\":\"state\",\"camera\":\"on\",\"fps\":-3,\"msg\":\"\"}");
+    CHECK(e.fps == 0);
     e = parse("{\"t\":\"gesture\",\"g\":\"swipe_left\",\"conf\":0.93}");
     CHECK_EQ(e.type, VIS_GESTURE);
     CHECK_EQ(e.g, VIS_G_SWIPE_LEFT);

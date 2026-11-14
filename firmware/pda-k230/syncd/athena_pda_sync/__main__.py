@@ -4,7 +4,9 @@ Environment: `ATHENA_PDA_DIR` (token, pda.json, config.json; default /var/lib/at
 `ATHENA_PDA_RUN` (glance.sock; default /run/athena-pda), `ATHENA_RELAY_PATH` (where the
 `athena_relay` package is, if not importable; see relay_path.py).
 
-Pair a device without the UI (development): `--pair 'odysseus-pair:v1?url=…&code=…'`.
+Pair a device without the UI (development): `--pair`, with the link
+(`odysseus-pair:v1?url=…&code=…`) on stdin, so the code is never in a command line (`ps`
+shows every user's).
 Logs go to stderr; no tokens, and no content at INFO.
 """
 
@@ -33,8 +35,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--once", action="store_true",
                     help="connect to the UI, sync once and exit (0 ok, 1 changes waiting, "
                          "2 retry later, 3 unpaired or token refused)")
-    ap.add_argument("--pair", metavar="LINK",
-                    help="redeem a pairing link (the hub's QR text) and exit")
+    ap.add_argument("--pair", action="store_true",
+                    help="read a pairing link (the hub's QR text) from stdin, redeem it and "
+                         "exit")
     ap.add_argument("--debug", action="store_true", help="log everything (names items)")
     ap.add_argument("--version", action="version", version=__version__)
     args = ap.parse_args(argv)
@@ -42,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     paths = Paths.from_env()
     if args.pair:
         try:
-            url, code = pr.parse_link(args.pair)
+            url, code = pr.parse_link(sys.stdin.readline(4096).strip())
             paired = pr.redeem(url, code, proxy=ConfigFile(paths.config).config.proxy)
             pr.TokenStore(paths.token).save(paired)
         except (pr.PairError, OSError) as e:
