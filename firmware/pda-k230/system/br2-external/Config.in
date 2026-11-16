@@ -1,0 +1,11 @@
+menu "Athena PDA (T-Display K230)"
+
+source "$BR2_EXTERNAL_ATHENA_PDA_PATH/package/athena-pda-system/Config.in"
+source "$BR2_EXTERNAL_ATHENA_PDA_PATH/package/athena-tailscale-bin/Config.in"
+source "$BR2_EXTERNAL_ATHENA_PDA_PATH/package/athena-pda-lvgl-src/Config.in"
+source "$BR2_EXTERNAL_ATHENA_PDA_PATH/package/athena-pda-ui/Config.in"
+source "$BR2_EXTERNAL_ATHENA_PDA_PATH/package/athena-pda-syncd/Config.in"
+source "$BR2_EXTERNAL_ATHENA_PDA_PATH/package/athena-vision/Config.in"
+source "$BR2_EXTERNAL_ATHENA_PDA_PATH/package/athena-vision-kmodels/Config.in"
+
+endmenu

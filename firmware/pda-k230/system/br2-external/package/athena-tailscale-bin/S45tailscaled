@@ -1,0 +1,86 @@
+#!/bin/sh
+# S45tailscaled: tailscaled at boot (docs/k230-pda-plan.md "Tailscale").
+#
+# - State in $ATHENA_TS_STATE_DIR (/var/lib/tailscale, 0700, root file system): the
+#   login survives a reboot.
+# - --no-logs-no-support: no log upload to Tailscale (no telemetry).
+# - ATHENA_TS_MODE=tun: a tailscale0 interface (the tun module, CONFIG_TUN=m).
+#   ATHENA_TS_MODE=userspace: no TUN; tailscaled is an HTTP and SOCKS5 proxy on
+#   $ATHENA_TS_PROXY and syncd needs "proxy": "http://<that>" in its config.json
+#   (`athena-tailnet mode userspace` sets both).
+# - `athena-tailnet watch` runs beside it (root, supervised as tailscale-login): once
+#   tailscaled answers it sets the host name, netfilter mode off (the image has no
+#   iptables or nft) and no operator, then starts `tailscale login` whenever
+#   Tailscale needs one. The PDA user is no operator: it can't change tailscaled
+#   (no serve, funnel, exit node or ssh); syncd only reads `tailscale status --json`
+#   and shows the login link from it as a QR code on Status.
+# - No Funnel, Serve or exit node is set up, ever.
+
+# shellcheck source-path=SCRIPTDIR source=../athena-pda-system/files/athena-pda-common.sh
+. /usr/libexec/athena-pda/athena-pda-common.sh
+
+DAEMON="tailscaled"
+PROG="/usr/sbin/$DAEMON"
+SOCKET="$ATHENA_TS_SOCKET"
+
+ensure_tun() {
+	modprobe tun 2>/dev/null
+	if [ ! -c /dev/net/tun ] && [ -e /sys/class/misc/tun/dev ]; then
+		mkdir -p /dev/net
+		mknod /dev/net/tun c 10 200
+	fi
+	[ -c /dev/net/tun ]
+}
+
+start() {
+	if [ ! -x "$PROG" ]; then
+		echo "tailscaled: $PROG missing"
+		return 0
+	fi
+	mkdir -p "$ATHENA_TS_STATE_DIR" "$(dirname "$SOCKET")"
+	chmod 0700 "$ATHENA_TS_STATE_DIR"
+	case "$ATHENA_TS_MODE" in
+		userspace)
+			set -- --tun=userspace-networking \
+				--socks5-server="$ATHENA_TS_PROXY" \
+				--outbound-http-proxy-listen="$ATHENA_TS_PROXY"
+			;;
+		*)
+			if ! ensure_tun; then
+				echo "tailscaled: no /dev/net/tun (kernel without CONFIG_TUN?);" \
+					"set ATHENA_TS_MODE=userspace (athena-tailnet mode userspace)"
+				logger -t "$DAEMON" -p daemon.err "no /dev/net/tun; ATHENA_TS_MODE=userspace is the fallback"
+				return 1
+			fi
+			set -- --tun=tailscale0
+			;;
+	esac
+	athena_start "$DAEMON" root "$PROG" \
+		--statedir="$ATHENA_TS_STATE_DIR" --socket="$SOCKET" --port=41641 \
+		--no-logs-no-support "$@" || return 1
+	athena_start tailscale-login root /usr/bin/athena-tailnet watch
+}
+
+stop() {
+	athena_stop tailscale-login
+	athena_stop "$DAEMON"
+	# Removes the routes and the tailscale0 interface a killed tailscaled can leave.
+	"$PROG" --cleanup >/dev/null 2>&1
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		stop
+		;;
+	restart|reload)
+		stop
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac

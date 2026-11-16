@@ -1,0 +1,6 @@
+config BR2_PACKAGE_ATHENA_PDA_LVGL_SRC
+	bool
+	help
+	  The LVGL source tree (pinned commit) the athena-pda UI builds
+	  with its own lv_conf.h. Only downloaded and extracted; nothing
+	  is installed. Selected by athena-pda-ui.

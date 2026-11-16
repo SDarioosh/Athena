@@ -1,0 +1,15 @@
+config BR2_PACKAGE_ATHENA_PDA_UI
+	bool "athena-pda-ui"
+	depends on BR2_TOOLCHAIN_HAS_THREADS # libdrm
+	depends on BR2_PACKAGE_ATHENA_PDA_SYSTEM
+	select BR2_PACKAGE_ATHENA_PDA_LVGL_SRC
+	select BR2_PACKAGE_LIBDRM
+	select BR2_PACKAGE_LIBEVDEV
+	help
+	  athena-pda, the PDA's screens (firmware/pda-k230/ui): LVGL 9
+	  on DRM and evdev, the feed store and the outbox, the server
+	  end of glance.sock and vision.sock. Started at boot by
+	  S92athena-pda in place of LilyGO's launcher.
+
+comment "athena-pda-ui needs a toolchain w/ threads"
+	depends on !BR2_TOOLCHAIN_HAS_THREADS

@@ -4,7 +4,7 @@ Athena (formerly convo-ai / barvis-ai / barvis-sound / odysseus-sound) is the fi
 [Odysseus](https://github.com/SDarioosh/odysseus-expanded), our Odysseus fork: wearables → local server
 (VAD, whisper.cpp, diarization, llama-server, SQLite) → MCP server → Odysseus. See MISSION.md and AGENTS.md.
 
-_Last updated: 2026-11-03. Shortened: the Done log and each row's full status are in
+_Last updated: 2026-11-14. Shortened: the Done log and each row's full status are in
 [docs/changelog/2026-11.md](docs/changelog/2026-11.md) and [2026-10.md](docs/changelog/2026-10.md), the decisions in [docs/decisions-log.md](docs/decisions-log.md)._
 
 ## Status
@@ -51,9 +51,17 @@ _Last updated: 2026-11-03. Shortened: the Done log and each row's full status ar
 | 10 | End-to-end with real devices | not started | — |
 | 25 | Cleanup of Athena and the hub | in progress: Phases 0 and 1 merged, Phase 2 merged (gate next) | [docs/cleanup-plan.md](docs/cleanup-plan.md) |
 | 26 | Text messages (iMessage): messages relay on the owner's MacBook, threads as conversations, people by phone and email (MCP 0.21.0, migration 18) | built, tested (server and relay, relay on Python 3.8), **owner: set up the MacBook and Server verification**; real-device steps: Full Disk Access, the first import, an edit and an unsend on the Mac | [docs/messages.md](docs/messages.md), [messages-relay/README.md](messages-relay/README.md) |
+| 28 | T-Display K230 PDA (Linux, Tailscale, its own relay; touch UI, keyboard, hand gestures) | built and tested in the sandbox (UI, syncd, vision core, end to end, riscv64 under qemu), **not on the board; owner: build the image and the checklist** | [firmware/pda-k230/README.md](firmware/pda-k230/README.md), [plan](docs/k230-pda-plan.md) |
 | 27 | Speaker check for the hub's voice satellites (`POST /v1/speakers/identify`, relay route, MCP 0.22.0) | built, tested with fakes, **owner: Server verification** (a few spoken commands from the Echo: owner, another enrolled person, someone new; check the scores against the threshold) | [docs/api/ingest.md](docs/api/ingest.md#identifying-a-speaker) |
 
 ## Next
+
+- **Owner: the K230 PDA on the board** (row 28): build the image on the Ubuntu PC
+  (`firmware/pda-k230/system/build-image.sh ~/t-display-k230`, hours, ~50 GB), flash it, then
+  `firmware/pda-k230/README.md` "Not verified yet" 1-17 (boot, display and touch, Wi-Fi with
+  `athena-wifi`, Tailscale login QR, pairing and sync, gestures with vision's own checklist,
+  power). Paste what each step showed; the vision recordings (`--record-keypoints`) tune
+  the gesture thresholds.
 
 - **Owner: conversations missing, GPU full** (PR on `claude/busy-thompson-t8e2xa`, Server
   verification): pyannote ran out of GPU memory on conversations (voice notes skip it), so
@@ -171,6 +179,9 @@ Still open:
   and drain time are fine. (Pairing: answered, a 6-digit passkey on the watch screen.)
 - T-Watch Ultra: everything under "Needs the real watch" above. Also: does the battery
   take a 4.2 V charge target (set conservatively; LilyGoLib asks the chip for 4.288 V)?
+- K230 PDA: the three questions in `docs/k230-pda-plan.md` (does the camera face you; is
+  building the image yourself OK; may the PDA start in place of LilyGO's launcher). Also:
+  Canaan's hand kmodels carry no licence statement we found; confirm before sharing an image.
 - T5 PDA: the questions in `docs/t5-pda-plan.md` §11 (firmware layout, feed window,
   Wi-Fi at home, transcript QR, auto-blank, languages). New: should the phone send a POSIX
   time zone (`tz_posix`) in the feed, so times after a DST change are right? And how does

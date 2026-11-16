@@ -1,0 +1,3 @@
+# Same file and hash as the K230 SDK's package/ai_demo/common/common.hash
+# (k230_linux_sdk fc6cc21). Not downloaded in the sandbox: the host was unreachable.
+sha256  ec97b61b7a7482af0373ab87ac73d7b5bbdf7540c2571fee0d3c9d54d1f4e40a  kmodel_v2.10.0.tgz

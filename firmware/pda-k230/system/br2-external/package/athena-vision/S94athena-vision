@@ -1,0 +1,47 @@
+#!/bin/sh
+# S94athena-vision: camera AI (athena-vision, firmware/pda-k230/vision): hand
+# gestures, presence and QR codes as events on vision.sock. Frames never leave the
+# process and are never stored. The camera stays off until the UI sends a `mode`
+# with something on (docs/k230-pda-plan.md, contract 2).
+#
+# Off while LilyGO's launcher is what boots, or with ATHENA_VISION=off. Runs as
+# $ATHENA_VISION_USER (root by default, see /etc/default/athena-pda).
+
+# shellcheck source-path=SCRIPTDIR source=../athena-pda-system/files/athena-pda-common.sh
+. /usr/libexec/athena-pda/athena-pda-common.sh
+
+DAEMON="athena-vision"
+PROG="/usr/bin/$DAEMON"
+
+start() {
+	athena_pda_boots || return 0
+	if [ "$ATHENA_VISION" != "on" ]; then
+		echo "athena-vision: off (ATHENA_VISION=$ATHENA_VISION)"
+		return 0
+	fi
+	if [ ! -x "$PROG" ]; then
+		echo "athena-vision: $PROG missing"
+		return 0
+	fi
+	athena_dirs
+	HOME=/
+	export HOME
+	athena_start "$DAEMON" "$ATHENA_VISION_USER" "$PROG"
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		athena_stop "$DAEMON"
+		;;
+	restart|reload)
+		athena_stop "$DAEMON"
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac

@@ -1,0 +1,8 @@
+config BR2_PACKAGE_ATHENA_VISION_KMODELS
+	bool "athena-vision-kmodels"
+	help
+	  The two kmodels athena-vision runs on the KPU: hand_det.kmodel
+	  (palm detection) and handkp_det.kmodel (21 hand keypoints),
+	  taken from Canaan's ai_demo model archive (the K230 SDK's
+	  package/ai_demo/common) and installed to
+	  /usr/share/athena-vision/models.

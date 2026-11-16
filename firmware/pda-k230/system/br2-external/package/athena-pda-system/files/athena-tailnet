@@ -1,0 +1,172 @@
+#!/bin/sh
+# athena-tailnet: Tailscale on the PDA, from a shell (adb shell or ssh, as root).
+#
+#   athena-tailnet status           the tailnet state and the mode
+#   athena-tailnet login            start a login; prints the link to open
+#   athena-tailnet logout           log this device out of the tailnet
+#   athena-tailnet mode tun|userspace
+#                                   switch the network mode: sets ATHENA_TS_MODE in
+#                                   /etc/default/athena-pda and syncd's "proxy" in
+#                                   $ATHENA_PDA_DIR/config.json (set for userspace,
+#                                   removed for tun), then restarts tailscaled and syncd
+#   athena-tailnet watch            (S45tailscaled runs it, as root, supervised) sets
+#                                   the host name, netfilter off and no operator, then
+#                                   starts `tailscale login` whenever Tailscale needs one
+#
+# Only root changes Tailscale: the PDA user (UI and syncd) is no operator and only
+# reads `tailscale status --json`, where syncd finds the login link that `watch`'s
+# login made and the UI shows it as a QR code on Status. Nothing the PDA user sends
+# or writes reaches a `tailscale` command line here.
+set -eu
+
+# shellcheck source-path=SCRIPTDIR source=athena-pda-common.sh
+. /usr/libexec/athena-pda/athena-pda-common.sh
+
+CLI=/usr/bin/tailscale
+
+usage() {
+	sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'
+	exit 2
+}
+
+set_proxy() {
+	# $1: the proxy URL, or "" to remove it. Keeps the other keys of config.json.
+	# $ATHENA_PDA_DIR belongs to $ATHENA_PDA_USER, so root doesn't work in it: the
+	# Python below becomes that user before it opens anything there (what the user
+	# put in the directory, a symlink too, then reaches only the user's own files),
+	# and follows no symlink at config.json or at the temp file.
+	python3 -I - "$ATHENA_PDA_DIR" "$1" "$ATHENA_PDA_USER" <<'EOF'
+import errno, json, os, pwd, sys
+data, proxy, user = sys.argv[1], sys.argv[2], sys.argv[3]
+pw = pwd.getpwnam(user)
+if os.getuid() == 0 and pw.pw_uid != 0:
+    os.setgroups([])
+    os.setgid(pw.pw_gid)
+    os.setuid(pw.pw_uid)
+elif os.getuid() != pw.pw_uid:
+    sys.exit("athena-tailnet: run this as root")
+dfd = os.open(data, os.O_RDONLY | os.O_DIRECTORY)
+try:
+    fd = os.open("config.json", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+    with os.fdopen(fd, encoding="utf-8") as f:
+        cfg = json.load(f)
+    if not isinstance(cfg, dict):
+        cfg = {}
+except FileNotFoundError:
+    cfg = {}
+except ValueError:
+    cfg = {}
+except OSError as e:
+    if e.errno == errno.ELOOP:
+        sys.exit("athena-tailnet: config.json is a symlink; not changed")
+    raise
+if proxy:
+    cfg["proxy"] = proxy
+else:
+    cfg.pop("proxy", None)
+try:
+    os.unlink("config.json.tmp", dir_fd=dfd)
+except FileNotFoundError:
+    pass
+fd = os.open("config.json.tmp", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+             0o600, dir_fd=dfd)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=1)
+    f.write("\n")
+    f.flush()
+    os.fsync(f.fileno())
+os.replace("config.json.tmp", "config.json", src_dir_fd=dfd, dst_dir_fd=dfd)
+os.fsync(dfd)
+EOF
+}
+
+# The BackendState of `tailscale status --json` ("" when tailscaled doesn't answer).
+backend_state() {
+	"$CLI" --socket="$ATHENA_TS_SOCKET" status --json 2>/dev/null |
+		python3 -I -c 'import json, sys
+try:
+    s = json.load(sys.stdin).get("BackendState", "")
+except Exception:
+    s = ""
+print(s if isinstance(s, str) and s.isalnum() else "")' 2>/dev/null || true
+}
+
+watch() {
+	# The settings first (tailscaled takes a few seconds to answer on its socket).
+	_n=0
+	# shellcheck disable=SC2046 # athena_ts_flags is a list of flags
+	until "$CLI" --socket="$ATHENA_TS_SOCKET" set $(athena_ts_flags) >/dev/null 2>&1; do
+		_n=$((_n + 1))
+		[ "$_n" -ne 30 ] || logger -t tailscaled -p daemon.warning "tailscale set keeps failing"
+		sleep 2
+	done
+	logger -t tailscaled -p daemon.notice \
+		"set: no operator, hostname $ATHENA_TS_HOSTNAME, netfilter off"
+	_login=""
+	_last=""
+	# shellcheck disable=SC2317 # called by the trap
+	trap '[ -z "$_login" ] || kill "$_login" 2>/dev/null; exit 0' TERM INT HUP
+	while :; do
+		_state="$(backend_state)"
+		if [ "$_state" = "NeedsLogin" ]; then
+			_now=$(date +%s)
+			if { [ -z "$_login" ] || ! kill -0 "$_login" 2>/dev/null; } &&
+				{ [ -z "$_last" ] || [ $((_now - _last)) -ge "$ATHENA_TS_LOGIN_RETRY" ]; }; then
+				_last=$_now
+				# shellcheck disable=SC2046 # athena_ts_flags is a list of flags
+				"$CLI" --socket="$ATHENA_TS_SOCKET" login $(athena_ts_flags) \
+					--timeout="${ATHENA_TS_LOGIN_TIMEOUT}s" </dev/null >/dev/null 2>&1 &
+				_login=$!
+				logger -t tailscaled -p daemon.notice "needs a login: started tailscale login"
+			fi
+			_pause=$ATHENA_TS_WATCH_LOGIN_POLL
+		else
+			_pause=$ATHENA_TS_WATCH_POLL
+		fi
+		# in the background, so TERM (athena_stop) isn't held up by the sleep
+		sleep "$_pause" &
+		wait $! || true
+	done
+}
+
+set_mode() {
+	case "$1" in
+		tun) proxy="" ;;
+		userspace) proxy="http://$ATHENA_TS_PROXY" ;;
+		*) usage ;;
+	esac
+	athena_dirs
+	set_proxy "$proxy"
+	if grep -q '^ATHENA_TS_MODE=' "$ATHENA_PDA_DEFAULTS"; then
+		sed -i "s/^ATHENA_TS_MODE=.*/ATHENA_TS_MODE=$1/" "$ATHENA_PDA_DEFAULTS"
+	else
+		echo "ATHENA_TS_MODE=$1" >>"$ATHENA_PDA_DEFAULTS"
+	fi
+	echo "ATHENA_TS_MODE=$1; syncd proxy: ${proxy:-none}"
+	/etc/init.d/S45tailscaled restart
+	/etc/init.d/S93athena-pda-syncd restart
+}
+
+case "${1:-}" in
+	status)
+		echo "mode: $ATHENA_TS_MODE"
+		"$CLI" --socket="$ATHENA_TS_SOCKET" status || true
+		;;
+	login)
+		# shellcheck disable=SC2046 # athena_ts_flags is a list of flags
+		exec "$CLI" --socket="$ATHENA_TS_SOCKET" login $(athena_ts_flags) --timeout=300s
+		;;
+	watch)
+		watch
+		;;
+	logout)
+		exec "$CLI" --socket="$ATHENA_TS_SOCKET" logout
+		;;
+	mode)
+		[ $# -eq 2 ] || usage
+		set_mode "$2"
+		;;
+	*)
+		usage
+		;;
+esac

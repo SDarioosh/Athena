@@ -1,0 +1,44 @@
+#!/bin/sh
+# S93athena-pda-syncd: the PDA's relay (athena-pda-syncd, firmware/pda-k230/syncd):
+# pairing, the hub client, PdaSync over glance.sock. Runs as $ATHENA_PDA_USER.
+# Off while LilyGO's launcher is what boots (ATHENA_PDA_BOOT_UI=launcher).
+#
+# syncd only reads `tailscale status --json` (any user may); it is no Tailscale
+# operator, and the login is started by root (`athena-tailnet watch`, S45tailscaled).
+
+# shellcheck source-path=SCRIPTDIR source=../athena-pda-system/files/athena-pda-common.sh
+. /usr/libexec/athena-pda/athena-pda-common.sh
+
+DAEMON="athena-pda-syncd"
+PROG="/usr/bin/$DAEMON"
+
+start() {
+	athena_pda_boots || return 0
+	if [ ! -x "$PROG" ]; then
+		echo "athena-pda-syncd: $PROG missing"
+		return 0
+	fi
+	athena_dirs
+	HOME="$ATHENA_PDA_DIR"
+	PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+	ATHENA_RELAY_PATH=/usr/lib/athena-pda/python
+	export HOME PATH ATHENA_RELAY_PATH
+	athena_start "$DAEMON" "$ATHENA_PDA_USER" "$PROG"
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		athena_stop "$DAEMON"
+		;;
+	restart|reload)
+		athena_stop "$DAEMON"
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac

@@ -1,0 +1,6 @@
+#!/bin/sh
+# athena-pda-syncd: the K230 PDA's sync daemon (docs/k230-pda-plan.md).
+# Runs the athena_pda_sync package beside this script; athena_relay comes from
+# ATHENA_RELAY_PATH, an installed package, or the repository (athena_pda_sync/relay_path.py).
+here=$(dirname "$(readlink -f "$0")")
+PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m athena_pda_sync "$@"

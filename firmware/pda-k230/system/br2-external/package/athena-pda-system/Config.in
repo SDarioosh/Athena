@@ -1,0 +1,14 @@
+config BR2_PACKAGE_ATHENA_PDA_SYSTEM
+	bool "athena-pda-system"
+	depends on BR2_PACKAGE_BUSYBOX # start-stop-daemon, logger, udhcpc
+	depends on BR2_PACKAGE_PYTHON3 # athena-wifi, athena-tailnet
+	select BR2_PACKAGE_WPA_SUPPLICANT
+	help
+	  The Athena PDA's system pieces: the athena-pda user, the
+	  settings file /etc/default/athena-pda, the supervisor that
+	  restarts the PDA's programs, Wi-Fi at boot (S42athena-wifi,
+	  athena-wifi) and the athena-board, athena-tailnet and
+	  athena-boot-ui helpers.
+
+comment "athena-pda-system needs busybox and python3"
+	depends on !BR2_PACKAGE_BUSYBOX || !BR2_PACKAGE_PYTHON3
