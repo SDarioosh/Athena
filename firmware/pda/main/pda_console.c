@@ -48,6 +48,10 @@ static int cmd_chg(int argc, char **argv)
 
 static int cmd_gauge(int argc, char **argv)
 {
+    if (argc >= 3 && strcmp(argv[1], "dm") == 0) {
+        t5_gauge_dm_dump((uint16_t)strtoul(argv[2], NULL, 16), argc >= 4 ? atoi(argv[3]) : 2);
+        return 0;
+    }
     t5_gauge_cmd(argc >= 2 && strcmp(argv[1], "ocv") == 0);
     return 0;
 }

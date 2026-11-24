@@ -148,7 +148,7 @@ cmd "<command>"` runs one from a script.
 | `wakelog [clear]` | the sleep/wake log: every boot (reset reason, wake cause) and deep sleep (why, sync result, timer), with the battery; kept in flash, so it survives a power cut; flags a sync wake that never went back to sleep |
 | `rotate [90\|270]` | portrait orientation |
 | `wipe` | delete feed, details and outbox |
-| `i2c`, `batt`, `chg` (charger registers decoded, gauge capacity), `gauge [ocv]` (gauge state; `ocv` re-derives the charge level from the resting voltage, also done at boot when the charger is done but the gauge says < 85 %), `rtc [set <t>]`, `touch [trace <s>]`, `epd [bench\|clean]` | board bring-up and timing |
+| `i2c`, `batt`, `chg` (charger registers decoded, gauge capacity), `gauge [ocv|dm <hex addr> [n]]` (gauge state, data memory bytes; `ocv` re-derives the charge level from the resting voltage, also done at boot when the charger is done but the gauge says < 85 %), `rtc [set <t>]`, `touch [trace <s>]`, `epd [bench\|clean]` | board bring-up and timing |
 | `power` | light sleep on/off, CPU clock range, what keeps the T5 awake (PM locks) |
 | `reboot` | restart |
 

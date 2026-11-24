@@ -51,6 +51,7 @@ void t5_board_log_i2c(void);
 void t5_charger_dump(void);
 /* console `gauge [ocv]`: gauge state; `ocv` re-derives the charge level from the resting cell voltage. */
 void t5_gauge_cmd(bool ocv);
+void t5_gauge_dm_dump(uint16_t addr, int n);
 
 /* Power management (set up by t5_board_init): DFS 240/40 MHz with automatic light sleep,
  * held off while the front light is lit or USB power is in. Console: the config and locks. */
