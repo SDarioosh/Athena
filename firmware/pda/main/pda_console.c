@@ -38,6 +38,14 @@ static int cmd_batt(int argc, char **argv)
     return 0;
 }
 
+static int cmd_chg(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    t5_charger_dump();
+    return 0;
+}
+
 static int cmd_rtc(int argc, char **argv)
 {
     if (argc >= 3 && strcmp(argv[1], "set") == 0) {
@@ -179,6 +187,7 @@ void pda_console_start(void)
     esp_console_register_help_command();
     pda_console_register("i2c", "Probe the board's I2C chips", cmd_i2c);
     pda_console_register("batt", "Battery gauge and charger", cmd_batt);
+    pda_console_register("chg", "Charger registers and gauge capacity (why not charging?)", cmd_chg);
     pda_console_register("rtc", "rtc [set <epoch|ISO>]: read or set the RTC", cmd_rtc);
     pda_console_register("epd", "epd [bench|clean]: refresh stats, timing test, clean refresh",
                          cmd_epd);

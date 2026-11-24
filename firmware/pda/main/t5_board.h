@@ -47,6 +47,8 @@ esp_err_t t5_board_start_buttons(t5_button_cb_t cb, void *ctx);
 
 /* Which chips answer, for the console. */
 void t5_board_log_i2c(void);
+/* Print the BQ25896 charger registers decoded and the BQ27220 capacity (console `chg`). */
+void t5_charger_dump(void);
 
 /* Power management (set up by t5_board_init): DFS 240/40 MHz with automatic light sleep,
  * held off while the front light is lit or USB power is in. Console: the config and locks. */

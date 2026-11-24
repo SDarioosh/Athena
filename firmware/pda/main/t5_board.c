@@ -355,6 +355,53 @@ esp_err_t t5_battery_read(t5_battery_t *out)
     return err == ESP_OK ? cerr : err;
 }
 
+/* Read-only diagnostics for "not charging": the BQ25896 registers decoded, the BQ27220 capacity. */
+void t5_charger_dump(void)
+{
+    uint8_t r[0x15] = {0};
+    if (reg_read(s_charger, 0x00, r, sizeof(r)) != ESP_OK) {
+        printf("BQ25896: read failed\n");
+        return;
+    }
+    printf("BQ25896 regs:");
+    for (size_t i = 0; i < sizeof(r); i++) {
+        printf(" %02x=%02x", (unsigned)i, r[i]);
+    }
+    static const char *const vbus[] = {"none", "USB SDP", "USB CDP", "USB DCP",
+                                       "adjustable", "unknown adapter", "non-standard", "OTG"};
+    static const char *const chrg[] = {"not charging", "pre-charge", "fast charge", "done"};
+    static const char *const cfault[] = {"ok", "input fault", "thermal shutdown", "TIMER EXPIRED"};
+    /* REG0C latches faults: the first read returns the latched value, the second the live one. */
+    uint8_t st = 0, flt = 0;
+    reg_read(s_charger, 0x0C, &flt, 1);
+    reg_read(s_charger, 0x0C, &flt, 1);
+    reg_read(s_charger, 0x0B, &st, 1);
+    printf("\n  status: VBUS %s, %s, power %s, VSYS %s\n", vbus[(st >> 5) & 7], chrg[(st >> 3) & 3],
+           (st & 4) ? "good" : "NOT good", (st & 1) ? "in regulation (battery low or disabled)" : "ok");
+    printf("  CHG_CONFIG (REG03 b4) %s, OTG b5 %s, HIZ (REG00 b7) %s\n", (r[3] & 0x10) ? "on" : "OFF",
+           (r[3] & 0x20) ? "on" : "off", (r[0] & 0x80) ? "ON (input off)" : "off");
+    printf("  input limit %d mA (ILIM pin %s)\n", 100 + (r[0] & 0x3f) * 50,
+           (r[0] & 0x40) ? "used" : "ignored");
+    printf("  fast charge %d mA, precharge %d mA, term %d mA\n", (r[4] & 0x7f) * 64,
+           ((r[5] >> 4) & 15) * 64 + 64, (r[5] & 15) * 64 + 64);
+    printf("  charge target %d mV, recharge %d mV, charge timer %s\n",
+           3840 + ((r[6] >> 2) & 0x3f) * 16, (r[6] & 1) ? 200 : 100, (r[7] & 0x08) ? "on" : "off");
+    printf("  fault: watchdog %d, boost %d, charge %s, battery %s, NTC %d (REG0C 0x%02x)\n",
+           (flt >> 7) & 1, (flt >> 6) & 1, cfault[(flt >> 4) & 3], (flt & 8) ? "OVERVOLTAGE" : "ok",
+           flt & 7, flt);
+    printf("  ADC: battery %d mV, system %d mV, VBUS %d mV, charge current %d mA\n",
+           2304 + (r[0x0e] & 0x7f) * 20, 2304 + (r[0x0f] & 0x7f) * 20, 2600 + (r[0x11] & 0x7f) * 100,
+           (r[0x12] & 0x7f) * 50);
+    uint16_t temp = 0, flags = 0, rem = 0, full = 0, design = 0;
+    gauge_read16(0x06, &temp);
+    gauge_read16(0x0A, &flags);
+    gauge_read16(0x10, &rem);
+    gauge_read16(0x12, &full);
+    gauge_read16(0x3C, &design);
+    printf("BQ27220: temp %d.%d C, status 0x%04x, remaining %u mAh, full %u mAh, design %u mAh\n",
+           (temp - 2731) / 10, abs((int)temp - 2731) % 10, flags, rem, full, design);
+}
+
 /* ---- RTC (PCF8563) ---- */
 
 static int bcd(uint8_t v)
