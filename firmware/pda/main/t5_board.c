@@ -221,6 +221,8 @@ t5_wake_t t5_board_wake_reason(void)
     return s_wake;
 }
 
+static void gauge_heal(void);
+
 esp_err_t t5_board_init(void)
 {
     const bool timer_wake = t5_board_wake_reason() == T5_WAKE_TIMER;
@@ -288,6 +290,7 @@ esp_err_t t5_board_init(void)
         return err;
     }
     t5_board_log_i2c();
+    gauge_heal();
     power_init();
     return ESP_OK;
 }
@@ -400,6 +403,108 @@ void t5_charger_dump(void)
     gauge_read16(0x3C, &design);
     printf("BQ27220: temp %d.%d C, status 0x%04x, remaining %u mAh, full %u mAh, design %u mAh\n",
            (temp - 2731) / 10, abs((int)temp - 2731) % 10, flags, rem, full, design);
+}
+
+/* BQ27220 control sub-command (little-endian write to 0x00), as TI documents them. */
+static esp_err_t gauge_ctl(uint16_t sub)
+{
+    const uint8_t b[3] = {0x00, (uint8_t)(sub & 0xff), (uint8_t)(sub >> 8)};
+    return i2c_master_transmit(s_gauge, b, sizeof(b), I2C_TIMEOUT_MS);
+}
+
+/* Control sub-command whose answer comes back in the MAC data area (0x40). */
+static esp_err_t gauge_mac16(uint16_t sub, uint16_t *out)
+{
+    esp_err_t err = gauge_ctl(sub);
+    vTaskDelay(pdMS_TO_TICKS(20));
+    if (err == ESP_OK) {
+        err = gauge_read16(0x40, out);
+    }
+    return err;
+}
+
+/* Security level: 1 full access, 2 unsealed, 3 sealed (OperationStatus SEC bits 2:1). */
+static int gauge_sec(void)
+{
+    uint16_t op = 0;
+    return gauge_read16(0x3A, &op) == ESP_OK ? (op >> 1) & 3 : -1;
+}
+
+static void gauge_print_state(const char *label)
+{
+    uint16_t op = 0, bs = 0, gs = 0, rem = 0, full = 0, soc = 0, mv = 0;
+    gauge_read16(0x3A, &op);
+    gauge_read16(0x0A, &bs);
+    gauge_mac16(0x0056, &gs);
+    gauge_read16(0x10, &rem);
+    gauge_read16(0x12, &full);
+    gauge_read16(0x2C, &soc);
+    gauge_read16(0x08, &mv);
+    printf("gauge %s: op 0x%04x (sec %d), batt 0x%04x, gauging 0x%04x, %u mV, remaining %u / full %u mAh, %u%%\n",
+           label, op, (op >> 1) & 3, bs, gs, mv, rem, full, soc);
+}
+
+/* Ask the gauge for an open-circuit-voltage reading and wait (up to 3 s) for it to re-derive the
+ * charge level. The battery must be resting (~0 mA). Seals the chip again if it was sealed. */
+static void gauge_ocv(bool verbose)
+{
+    const int sec = gauge_sec();
+    if (sec == 3) {
+        gauge_ctl(0x0414); /* unseal keys, from TI's BQ27220 technical reference */
+        vTaskDelay(pdMS_TO_TICKS(20));
+        gauge_ctl(0x3672);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    const esp_err_t err = gauge_ctl(0x000C); /* OCV_CMD */
+    uint16_t before = 0, after = 0;
+    gauge_read16(0x10, &before);
+    for (int i = 0; i < 30 && err == ESP_OK; i++) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        gauge_read16(0x10, &after);
+        if (after != before) {
+            break;
+        }
+    }
+    if (sec == 3) {
+        gauge_ctl(0x0030); /* SEALED */
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (verbose) {
+        printf("gauge: OCV_CMD %s, remaining %u -> %u mAh (security %d, now %d)\n", esp_err_to_name(err),
+               before, after, sec, gauge_sec());
+    }
+}
+
+/* console `gauge [ocv]`: print the gauge state; `ocv` re-derives the charge level from the
+ * resting cell voltage (fixes a gauge that never saw the cell full). */
+void t5_gauge_cmd(bool ocv)
+{
+    gauge_print_state("now");
+    if (ocv) {
+        gauge_ocv(true);
+        gauge_print_state("after OCV");
+    }
+}
+
+/* The BQ27220 has been seen at 49% on a cell the charger had finished at 4.14 V: it never
+ * detected the full charge. At boot, if the charger says "done", the cell rests (< 10 mA) at
+ * >= 4.1 V and the gauge disagrees by a lot, let it re-derive the level from the voltage. */
+static void gauge_heal(void)
+{
+    uint8_t st = 0;
+    uint16_t mv = 0, ma = 0, soc = 0;
+    if (reg_read(s_charger, 0x0B, &st, 1) != ESP_OK || ((st >> 3) & 3) != 3 ||
+        gauge_read16(0x08, &mv) != ESP_OK || gauge_read16(0x0C, &ma) != ESP_OK ||
+        gauge_read16(0x2C, &soc) != ESP_OK) {
+        return;
+    }
+    const int cur = (int16_t)ma;
+    if (mv >= 4100 && cur > -10 && cur < 10 && soc < 85) {
+        ESP_LOGW(TAG, "gauge says %u%% at %u mV with the charger done: re-reading from the voltage", soc, mv);
+        gauge_ocv(false);
+        gauge_read16(0x2C, &soc);
+        ESP_LOGI(TAG, "gauge now %u%%", soc);
+    }
 }
 
 /* ---- RTC (PCF8563) ---- */
