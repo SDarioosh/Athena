@@ -38,6 +38,24 @@ static int cmd_batt(int argc, char **argv)
     return 0;
 }
 
+static int cmd_chg(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    t5_charger_dump();
+    return 0;
+}
+
+static int cmd_gauge(int argc, char **argv)
+{
+    if (argc >= 3 && strcmp(argv[1], "dm") == 0) {
+        t5_gauge_dm_dump((uint16_t)strtoul(argv[2], NULL, 16), argc >= 4 ? atoi(argv[3]) : 2);
+        return 0;
+    }
+    t5_gauge_cmd(argc >= 2 && strcmp(argv[1], "ocv") == 0);
+    return 0;
+}
+
 static int cmd_rtc(int argc, char **argv)
 {
     if (argc >= 3 && strcmp(argv[1], "set") == 0) {
@@ -179,6 +197,9 @@ void pda_console_start(void)
     esp_console_register_help_command();
     pda_console_register("i2c", "Probe the board's I2C chips", cmd_i2c);
     pda_console_register("batt", "Battery gauge and charger", cmd_batt);
+    pda_console_register("chg", "Charger registers and gauge capacity (why not charging?)", cmd_chg);
+    pda_console_register("gauge", "gauge [ocv]: gauge state; ocv re-derives charge from resting voltage",
+                         cmd_gauge);
     pda_console_register("rtc", "rtc [set <epoch|ISO>]: read or set the RTC", cmd_rtc);
     pda_console_register("epd", "epd [bench|clean]: refresh stats, timing test, clean refresh",
                          cmd_epd);

@@ -221,6 +221,9 @@ t5_wake_t t5_board_wake_reason(void)
     return s_wake;
 }
 
+static void gauge_heal(void);
+static bool gauge_provision(bool verbose);
+
 esp_err_t t5_board_init(void)
 {
     const bool timer_wake = t5_board_wake_reason() == T5_WAKE_TIMER;
@@ -288,6 +291,8 @@ esp_err_t t5_board_init(void)
         return err;
     }
     t5_board_log_i2c();
+    gauge_provision(false);
+    gauge_heal();
     power_init();
     return ESP_OK;
 }
@@ -353,6 +358,278 @@ esp_err_t t5_battery_read(t5_battery_t *out)
         out->vbus = (st & 0x04) != 0;
     }
     return err == ESP_OK ? cerr : err;
+}
+
+/* Read-only diagnostics for "not charging": the BQ25896 registers decoded, the BQ27220 capacity. */
+void t5_charger_dump(void)
+{
+    uint8_t r[0x15] = {0};
+    if (reg_read(s_charger, 0x00, r, sizeof(r)) != ESP_OK) {
+        printf("BQ25896: read failed\n");
+        return;
+    }
+    printf("BQ25896 regs:");
+    for (size_t i = 0; i < sizeof(r); i++) {
+        printf(" %02x=%02x", (unsigned)i, r[i]);
+    }
+    static const char *const vbus[] = {"none", "USB SDP", "USB CDP", "USB DCP",
+                                       "adjustable", "unknown adapter", "non-standard", "OTG"};
+    static const char *const chrg[] = {"not charging", "pre-charge", "fast charge", "done"};
+    static const char *const cfault[] = {"ok", "input fault", "thermal shutdown", "TIMER EXPIRED"};
+    /* REG0C latches faults: the first read returns the latched value, the second the live one. */
+    uint8_t st = 0, flt = 0;
+    reg_read(s_charger, 0x0C, &flt, 1);
+    reg_read(s_charger, 0x0C, &flt, 1);
+    reg_read(s_charger, 0x0B, &st, 1);
+    printf("\n  status: VBUS %s, %s, power %s, VSYS %s\n", vbus[(st >> 5) & 7], chrg[(st >> 3) & 3],
+           (st & 4) ? "good" : "NOT good", (st & 1) ? "in regulation (battery low or disabled)" : "ok");
+    printf("  CHG_CONFIG (REG03 b4) %s, OTG b5 %s, HIZ (REG00 b7) %s\n", (r[3] & 0x10) ? "on" : "OFF",
+           (r[3] & 0x20) ? "on" : "off", (r[0] & 0x80) ? "ON (input off)" : "off");
+    printf("  input limit %d mA (ILIM pin %s)\n", 100 + (r[0] & 0x3f) * 50,
+           (r[0] & 0x40) ? "used" : "ignored");
+    printf("  fast charge %d mA, precharge %d mA, term %d mA\n", (r[4] & 0x7f) * 64,
+           ((r[5] >> 4) & 15) * 64 + 64, (r[5] & 15) * 64 + 64);
+    printf("  charge target %d mV, recharge %d mV, charge timer %s\n",
+           3840 + ((r[6] >> 2) & 0x3f) * 16, (r[6] & 1) ? 200 : 100, (r[7] & 0x08) ? "on" : "off");
+    printf("  fault: watchdog %d, boost %d, charge %s, battery %s, NTC %d (REG0C 0x%02x)\n",
+           (flt >> 7) & 1, (flt >> 6) & 1, cfault[(flt >> 4) & 3], (flt & 8) ? "OVERVOLTAGE" : "ok",
+           flt & 7, flt);
+    printf("  ADC: battery %d mV, system %d mV, VBUS %d mV, charge current %d mA\n",
+           2304 + (r[0x0e] & 0x7f) * 20, 2304 + (r[0x0f] & 0x7f) * 20, 2600 + (r[0x11] & 0x7f) * 100,
+           (r[0x12] & 0x7f) * 50);
+    uint16_t temp = 0, flags = 0, rem = 0, full = 0, design = 0;
+    gauge_read16(0x06, &temp);
+    gauge_read16(0x0A, &flags);
+    gauge_read16(0x10, &rem);
+    gauge_read16(0x12, &full);
+    gauge_read16(0x3C, &design);
+    printf("BQ27220: temp %d.%d C, status 0x%04x, remaining %u mAh, full %u mAh, design %u mAh\n",
+           (temp - 2731) / 10, abs((int)temp - 2731) % 10, flags, rem, full, design);
+}
+
+/* BQ27220 control sub-command (little-endian write to 0x00), as TI documents them. */
+static esp_err_t gauge_ctl(uint16_t sub)
+{
+    const uint8_t b[3] = {0x00, (uint8_t)(sub & 0xff), (uint8_t)(sub >> 8)};
+    return i2c_master_transmit(s_gauge, b, sizeof(b), I2C_TIMEOUT_MS);
+}
+
+/* Control sub-command whose answer comes back in the MAC data area (0x40). */
+static esp_err_t gauge_mac16(uint16_t sub, uint16_t *out)
+{
+    esp_err_t err = gauge_ctl(sub);
+    vTaskDelay(pdMS_TO_TICKS(20));
+    if (err == ESP_OK) {
+        err = gauge_read16(0x40, out);
+    }
+    return err;
+}
+
+/* Security level: 1 full access, 2 unsealed, 3 sealed (OperationStatus SEC bits 2:1). */
+static int gauge_sec(void)
+{
+    uint16_t op = 0;
+    return gauge_read16(0x3A, &op) == ESP_OK ? (op >> 1) & 3 : -1;
+}
+
+static void gauge_print_state(const char *label)
+{
+    uint16_t op = 0, bs = 0, gs = 0, rem = 0, full = 0, soc = 0, mv = 0;
+    gauge_read16(0x3A, &op);
+    gauge_read16(0x0A, &bs);
+    gauge_mac16(0x0056, &gs);
+    gauge_read16(0x10, &rem);
+    gauge_read16(0x12, &full);
+    gauge_read16(0x2C, &soc);
+    gauge_read16(0x08, &mv);
+    printf("gauge %s: op 0x%04x (sec %d), batt 0x%04x, gauging 0x%04x, %u mV, remaining %u / full %u mAh, %u%%\n",
+           label, op, (op >> 1) & 3, bs, gs, mv, rem, full, soc);
+}
+
+/* Ask the gauge for an open-circuit-voltage reading and wait (up to 3 s) for it to re-derive the
+ * charge level. The battery must be resting (~0 mA). Seals the chip again if it was sealed. */
+static void gauge_ocv(bool verbose)
+{
+    const int sec = gauge_sec();
+    if (sec == 3) {
+        gauge_ctl(0x0414); /* unseal keys, from TI's BQ27220 technical reference */
+        vTaskDelay(pdMS_TO_TICKS(20));
+        gauge_ctl(0x3672);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    const esp_err_t err = gauge_ctl(0x000C); /* OCV_CMD */
+    uint16_t before = 0, after = 0;
+    gauge_read16(0x10, &before);
+    for (int i = 0; i < 30 && err == ESP_OK; i++) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        gauge_read16(0x10, &after);
+        if (after != before) {
+            break;
+        }
+    }
+    if (sec == 3) {
+        gauge_ctl(0x0030); /* SEALED */
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (verbose) {
+        printf("gauge: OCV_CMD %s, remaining %u -> %u mAh (security %d, now %d)\n", esp_err_to_name(err),
+               before, after, sec, gauge_sec());
+    }
+}
+
+/* BQ27220 data memory (TRM SLUUBD4A ch. 3): select an address through 0x3E, read the value
+ * (big-endian) from 0x40. Needs the chip unsealed. */
+static esp_err_t gauge_dm_read(uint16_t addr, uint8_t *buf, size_t len)
+{
+    const uint8_t sel[3] = {0x3E, (uint8_t)(addr & 0xff), (uint8_t)(addr >> 8)};
+    esp_err_t err = i2c_master_transmit(s_gauge, sel, sizeof(sel), I2C_TIMEOUT_MS);
+    if (err != ESP_OK) {
+        return err;
+    }
+    vTaskDelay(pdMS_TO_TICKS(15));
+    return reg_read(s_gauge, 0x40, buf, len);
+}
+
+/* Print `n` data memory bytes from `addr` (console `gauge dm <addr> [n]`). */
+void t5_gauge_dm_dump(uint16_t addr, int n)
+{
+    const int sec = gauge_sec();
+    if (sec == 3) {
+        gauge_ctl(0x0414);
+        vTaskDelay(pdMS_TO_TICKS(20));
+        gauge_ctl(0x3672);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    uint8_t b[16] = {0};
+    n = n < 1 ? 1 : n > (int)sizeof(b) ? (int)sizeof(b) : n;
+    const esp_err_t err = gauge_dm_read(addr, b, (size_t)n);
+    printf("gauge dm 0x%04x (%s, security %d):", addr, esp_err_to_name(err), sec);
+    for (int i = 0; i < n; i++) {
+        printf(" %02x", b[i]);
+    }
+    printf("\n");
+    if (sec == 3) {
+        gauge_ctl(0x0030);
+    }
+}
+
+/* Settings the BQ27220 needs to learn on this board. Found on the owner's T5: Taper Current
+ * 100 mA, but the BQ25896 ends the charge below 256 mA (REG05 ITERM), so the gauge never saw a
+ * charge termination, never set the full-charge flag and stayed at 49% on a full cell; and
+ * 3000 mAh design/full capacity for the 1500 mAh pack LilyGo ships. The gauge ends a charge
+ * when AverageCurrent stays under Taper Current for two 40 s windows while charging, so the
+ * value has to sit well above the charger's termination current. Addresses and the write
+ * procedure: TI SLUUBD4A ch. 3 and LilyGo's BQ27220 driver. */
+static const struct {
+    uint16_t addr;
+    uint16_t value;
+    const char *name;
+} s_gauge_dm[] = {
+    {0x9201, 400, "Taper Current mA"},
+    {0x929D, 1500, "Full Charge Capacity mAh"},
+    {0x929F, 1500, "Design Capacity mAh"},
+};
+
+static bool gauge_dm_matches(void)
+{
+    for (size_t i = 0; i < sizeof(s_gauge_dm) / sizeof(s_gauge_dm[0]); i++) {
+        uint8_t b[2] = {0};
+        if (gauge_dm_read(s_gauge_dm[i].addr, b, 2) != ESP_OK ||
+            (uint16_t)((b[0] << 8) | b[1]) != s_gauge_dm[i].value) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool gauge_cfgupdate(bool want)
+{
+    for (int i = 0; i < 100; i++) {
+        uint16_t op = 0;
+        if (gauge_read16(0x3A, &op) == ESP_OK && (((op & 0x0400) != 0) == want)) {
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return false;
+}
+
+/* Write the settings above if the gauge holds other values. Returns true when it wrote them. */
+static bool gauge_provision(bool verbose)
+{
+    const int sec = gauge_sec();
+    if (sec < 0) {
+        return false;
+    }
+    if (sec == 3) {
+        gauge_ctl(0x0414);
+        vTaskDelay(pdMS_TO_TICKS(20));
+        gauge_ctl(0x3672);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    bool wrote = false;
+    if (gauge_sec() == 3) {
+        ESP_LOGW(TAG, "gauge: could not unseal, settings left as they are");
+    } else if (!gauge_dm_matches()) {
+        const uint8_t enter[4] = {0x3E, 0x90, 0x00, 0x00};
+        bool ok = i2c_master_transmit(s_gauge, enter, 3, I2C_TIMEOUT_MS) == ESP_OK && gauge_cfgupdate(true);
+        for (size_t i = 0; ok && i < sizeof(s_gauge_dm) / sizeof(s_gauge_dm[0]); i++) {
+            uint8_t w[5] = {0x3E, (uint8_t)(s_gauge_dm[i].addr & 0xff), (uint8_t)(s_gauge_dm[i].addr >> 8),
+                            (uint8_t)(s_gauge_dm[i].value >> 8), (uint8_t)(s_gauge_dm[i].value & 0xff)};
+            ok = i2c_master_transmit(s_gauge, w, sizeof(w), I2C_TIMEOUT_MS) == ESP_OK;
+            vTaskDelay(pdMS_TO_TICKS(2));
+            const uint8_t sum = (uint8_t)(0xFF - (uint8_t)(w[1] + w[2] + w[3] + w[4]));
+            const uint8_t cs[3] = {0x60, sum, 2 + 2 + 1 + 1}; /* checksum, then length */
+            ok = ok && i2c_master_transmit(s_gauge, cs, sizeof(cs), I2C_TIMEOUT_MS) == ESP_OK;
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        /* Leave config update and re-initialise: the gauge re-derives its level from the voltage. */
+        gauge_ctl(0x0091);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        ok = gauge_cfgupdate(false) && ok;
+        wrote = ok && gauge_dm_matches();
+        if (verbose || !wrote) {
+            printf("gauge: settings %s\n", wrote ? "written and read back" : "WRITE FAILED");
+        }
+        ESP_LOGW(TAG, "gauge: learning settings %s", wrote ? "written" : "write failed");
+    }
+    if (sec == 3) {
+        gauge_ctl(0x0030);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return wrote;
+}
+
+/* console `gauge [ocv]`: print the gauge state; `ocv` re-derives the charge level from the
+ * resting cell voltage (fixes a gauge that never saw the cell full). */
+void t5_gauge_cmd(bool ocv)
+{
+    gauge_print_state("now");
+    if (ocv) {
+        gauge_ocv(true);
+        gauge_print_state("after OCV");
+    }
+}
+
+/* The BQ27220 has been seen at 49% on a cell the charger had finished at 4.14 V: it never
+ * detected the full charge. At boot, if the charger says "done", the cell rests (< 10 mA) at
+ * >= 4.1 V and the gauge disagrees by a lot, let it re-derive the level from the voltage. */
+static void gauge_heal(void)
+{
+    uint8_t st = 0;
+    uint16_t mv = 0, ma = 0, soc = 0;
+    if (reg_read(s_charger, 0x0B, &st, 1) != ESP_OK || ((st >> 3) & 3) != 3 ||
+        gauge_read16(0x08, &mv) != ESP_OK || gauge_read16(0x0C, &ma) != ESP_OK ||
+        gauge_read16(0x2C, &soc) != ESP_OK) {
+        return;
+    }
+    const int cur = (int16_t)ma;
+    if (mv >= 4100 && cur > -10 && cur < 10 && soc < 85) {
+        ESP_LOGW(TAG, "gauge says %u%% at %u mV with the charger done: re-reading from the voltage", soc, mv);
+        gauge_ocv(false);
+        gauge_read16(0x2C, &soc);
+        ESP_LOGI(TAG, "gauge now %u%%", soc);
+    }
 }
 
 /* ---- RTC (PCF8563) ---- */
